@@ -255,11 +255,25 @@ describe("rotateGrid", () => {
     expect(cellsAt(0)).toEqual([0, 100, 200, 0]);
     expect(cellsAt(1)).toEqual([1, 101, 201, 1]);
     expect(cellsAt(4)).toEqual([4, 104, 204, 0]);
-    // filled 与 R/G/B 同路搬运：源里唯一 filled=0 的是源序号 5，
-    // 它落在目的右上角——若漏搬 filled，这一格会变成 1 而把上面整条断言打红。
     expect(cellsAt(5)).toEqual([5, 105, 205, 1]);
-    // 必须用 cells 取整格：写成 `[r.rgb[i], r.rgb[j], r.filled[k]]` 会被 JS 当成
-    // 逗号运算符（表达式整体只取最后一个值），断言会静默失去判别力。
+    // 以下位置与 filled 值均为实跑打印所得（勿手推）：
+    //   源序号 0 (x=0,y=0) → 目的 (x=2,y=0) 下标 2，filled 0
+    //   源序号 1 (x=1,y=0) → 目的 (x=2,y=1) 下标 5，filled 1
+    //   源序号 4 (x=0,y=2) → 目的 (x=0,y=0) 下标 0，filled 0
+    //   源序号 5 (x=1,y=2) → 目的 (x=0,y=1) 下标 3，filled 1（注意 5 是源右下角，落在目的**左下**，不是右上）
+    // 本 fixture 的 filled = i % 2，源里 filled=0 的是序号 0/2/4（不是「唯一一格」），
+    // 输出 filled 因此是 [0,0,0,1,1,1]。
+    expect(cells.map((c) => c[3])).toEqual([0, 0, 0, 1, 1, 1]);
+    // filled 与 R/G/B 同路搬运：目的下标 0 与 3 的 filled 必须分别为 0 与 1。
+    // 若漏搬 filled（Uint8Array 默认填 0），下标 3 会变成 0 而转红——
+    // 上面那条整数组比较才是真正的判别器，此处的逐格点名只是把结论写明。
+    expect(cells[0][3]).toBe(0);
+    expect(cells[3][3]).toBe(1);
+    // 取整格请用 readChannels：它一次取全 [R, G, B, filled]，避免散落的单通道下标写错。
+    // （附带澄清一个常见误记：`expect([a, b, c])` 括号内以 `[` 开头，就是**数组字面量**，
+    //  不存在逗号运算符；真正的陷阱是不带方括号的 `expect(a, b, c)` —— vitest 的签名是
+    //  `expect(actual, message?)`，第 3 个及之后的实参会被**静默丢弃**。
+    //  本文件全部断言都是单值 or 走 readChannels，未踩此坑。）
   });
 
   it("非法 rotation 抛错，不静默按 270° 处理", () => {
