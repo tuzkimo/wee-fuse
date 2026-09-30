@@ -24,6 +24,57 @@ function expectedRange(g: number, cellCount: number, srcSize: number): { x0: num
   return { x0: Math.min(x0, srcSize - 1), x1: Math.min(x1, srcSize) };
 }
 
+/**
+ * 一维轴的描述子：把「沿某条轴的一维长度」映射成 `width × height` 的调用参数，
+ * 并说明该轴的坐标写在哪个颜色通道上。`toSize` 由调用方（源图各用例）在适当的
+ * 位置换轴——例如源体为 `1 × 15` 时用 `(size) => [1, size]`。
+ */
+const AXES = {
+  x: {
+    /** x 轴的坐标写在 R 通道（下标 0）。 */
+    channel: 0,
+    /** 第 x 列取 R = x。 */
+    pixelAt: (lineSize: number): readonly [number, number, number, number] => [
+      lineSize,
+      0,
+      0,
+      255,
+    ],
+    /** 沿 x 的长度放到宽上。 */
+    toSize: (lineSize: number): readonly [number, number] => [lineSize, 1],
+    key: (srcSize: number, cellCount: number): string => `S=${srcSize},G=${cellCount}`,
+  },
+  y: {
+    /** y 轴的坐标写在 G 通道（下标 1）。 */
+    channel: 1,
+    /** 第 y 行取 G = y。 */
+    pixelAt: (lineSize: number): readonly [number, number, number, number] => [
+      0,
+      lineSize,
+      0,
+      255,
+    ],
+    /** 沿 y 的长度放到高上。 */
+    toSize: (lineSize: number): readonly [number, number] => [1, lineSize],
+    key: (srcSize: number, cellCount: number): string => `H=${srcSize},G=${cellCount}`,
+  },
+} as const;
+
+type Axis = (typeof AXES)[keyof typeof AXES];
+
+/** 造一张「沿 `axis` 的坐标写进该轴通道」的源图。 */
+function makeAxisImage(srcSize: number, axis: Axis): RgbaImage {
+  const [width, height] = axis.toSize(srcSize);
+  const pixels = Array.from({ length: srcSize }, (_, k) => axis.pixelAt(k));
+  return makeImage(width, height, pixels);
+}
+
+/** 读第 `g` 格在该轴通道上的值。 */
+function readAxisChannel(rgb: Float32Array, channel: number, g: number): number {
+  return rgb[g * 3 + channel] ?? Number.NaN;
+}
+
+
 describe("resampleToGrid", () => {
   it("纯色图：平均值就是该色，全部实心", () => {
     const img = makeImage(2, 2, Array.from({ length: 4 }, () => [10, 20, 30, 255] as const));
@@ -154,77 +205,116 @@ describe("resampleToGrid", () => {
     expect(grid.rgb[10 * 3]).toBeCloseTo(127.5, 6);
   });
 
-  it("缩小时每格的平均值等于该格真实整数区间内列号的算术平均", () => {
-    // 属性用例：第 x 列取 R = x、G/B = 0、A = 255，于是每格 R 必然是
-    // 该格真实覆盖列号 [x0, x1) 的算术平均 (x0 + x1 - 1) / 2。
-    // 穷举 S ≤ 40 的全部缩小/等尺寸组合（G ≤ S），漏采任何一列都会被这条抓到。
-    // 每个组合只做一次序列比较（逐格断言会让 11480 个格子拖慢全量测试）。
-    let checked = 0;
+  it("缩小时每格的平均值等于该格真实整数区间内下标（逐轴：x 与 y）的算术平均", () => {
+    // 属性用例：沿该轴的源坐标 k 写进该轴通道，于是每格该通道必然是
+    // 该格真实覆盖下标 [p0, p1) 的算术平均 (p0 + p1 - 1) / 2。
+    // **逐轴参数化**：x（列 → R）与 y（行 → G）是同一段逻辑的两个实例，
+    // 各自穷举源尺寸 ≤ 40 的全部缩小/等尺寸组合（格数 ≤ 源尺寸）。
+    // 把两条轴放进同一次执行，避免为 y 轴再复制一份循环体（上一轮留下的债务）。
+    // 每个组合只做一次序列比较（逐格断言会让两万多个格子拖慢全量测试）。
     let combinations = 0;
+    let checked = 0;
     const bad: string[] = [];
-    for (let srcWidth = 1; srcWidth <= 40; srcWidth++) {
-      const pixels = Array.from({ length: srcWidth }, (_, x) => [x, 0, 0, 255] as const);
-      const img = makeImage(srcWidth, 1, pixels);
-      for (let cellCount = 1; cellCount <= srcWidth; cellCount++) {
-        const grid = resampleToGrid(img, cellCount, 1);
-        const expectedR: number[] = [];
-        for (let gx = 0; gx < cellCount; gx++) {
-          const { x0, x1 } = expectedRange(gx, cellCount, srcWidth);
-          expectedR.push((x0 + x1 - 1) / 2);
+
+    for (const axis of [AXES.x, AXES.y]) {
+      for (let srcSize = 1; srcSize <= 40; srcSize++) {
+        const img = makeAxisImage(srcSize, axis);
+        for (let cellCount = 1; cellCount <= srcSize; cellCount++) {
+          const [width, height] = axis.toSize(cellCount);
+          const grid = resampleToGrid(img, width, height);
+          const expected: number[] = [];
+          for (let g = 0; g < cellCount; g++) {
+            const { x0, x1 } = expectedRange(g, cellCount, srcSize);
+            expected.push((x0 + x1 - 1) / 2);
+          }
+          const actual: number[] = [];
+          for (let g = 0; g < cellCount; g++) {
+            actual.push(readAxisChannel(grid.rgb, axis.channel, g));
+          }
+          const filledAll = grid.filled.every((value) => value === 1);
+          if (!filledAll || actual.some((value, i) => Math.abs(value - expected[i]) > 1e-6)) {
+            bad.push(axis.key(srcSize, cellCount));
+          }
+          combinations += 1;
+          checked += cellCount;
         }
-        const actualR: number[] = [];
-        for (let gx = 0; gx < cellCount; gx++) actualR.push(grid.rgb[gx * 3]);
-        const filledAll = grid.filled.every((value) => value === 1);
-        if (!filledAll || actualR.some((value, i) => Math.abs(value - expectedR[i]) > 1e-6)) {
-          bad.push(`S=${srcWidth},G=${cellCount}`);
-        }
-        combinations += 1;
-        checked += cellCount;
       }
     }
-    // 820 个 (源宽, 格数) 缩小组合、合计 11480 个格子，一个都不许漏列
+
+    // 两条轴 × 820 个缩小组合 = 1640、合计 22960 个格子，一个都不许漏
     expect({ combinations, checked, badCombos: bad.length, bad }).toEqual({
-      combinations: 820,
-      checked: 11480,
+      combinations: 1640,
+      checked: 22960,
       badCombos: 0,
       bad: [],
     });
   });
 
-  it("放大时每格恰好取 1 个源像素（最近邻语义在任意放大倍率下成立）", () => {
-    // 把源像素下标写进 R 通道（每列不同），于是每格 R 精确指出它取了哪个源像素。
-    // 放大路径每格区间必然为空 → 补成 1 像素 → 每格只取一个源像素、无混色，
-    // 且取值随格号单调不减（是最近邻「重复」，不是任意挑像素）。
-    let checked = 0;
+  it("放大时每格恰好取 1 个源像素（逐轴，含补洞分支）", () => {
+    // 沿该轴的源下标写进该轴通道，于是每格该通道精确指出它取了哪个源像素。
+    // 放大路径每格的原始区间**至多含 1 个像素**：非空者直接用，空者被
+    // `if (x1 <= x0) x1 = x0 + 1;` / `if (y1 <= y0) y1 = y0 + 1;` 这个补洞分支补成 1 像素。
+    // 因此每格只取一个源像素、无混色，取值随格号单调不减。
+    // **逐轴参数化**：x 轴与 y 轴各跑一份，y 轴的补洞分支（`resample.ts` 的 `if (y1 <= y0)`）
+    // 在 `G ≤ S` 时恒不触发，只有这条用例能覆盖到它。
     let combinations = 0;
+    let checked = 0;
+    let rawSinglePixel = 0; // 原始区间非空且恰 1 像素
+    let rawEmptyHole = 0; // 原始区间为空 → 必须靠补洞分支
+    let rawTooLong = 0; // 原始区间 > 1 像素（放大时不应出现）
     const bad: string[] = [];
-    for (let srcWidth = 1; srcWidth <= 20; srcWidth++) {
-      const pixels = Array.from({ length: srcWidth }, (_, x) => [x, 0, 0, 255] as const);
-      const img = makeImage(srcWidth, 1, pixels);
-      for (let cellCount = srcWidth + 1; cellCount <= srcWidth * 4; cellCount++) {
-        const grid = resampleToGrid(img, cellCount, 1);
-        const actualR: number[] = [];
-        for (let gx = 0; gx < cellCount; gx++) actualR.push(grid.rgb[gx * 3]);
-        // 期望序列用整数分子推导，与实现同源但独立写一遍：格 g 取唯一的源像素下标
-        const expectedR: number[] = [];
-        for (let gx = 0; gx < cellCount; gx++) {
-          expectedR.push(Math.min(srcWidth - 1, Math.floor((gx * srcWidth) / cellCount)));
+
+    for (const axis of [AXES.x, AXES.y]) {
+      for (let srcSize = 1; srcSize <= 20; srcSize++) {
+        const img = makeAxisImage(srcSize, axis);
+        for (let cellCount = srcSize + 1; cellCount <= srcSize * 4; cellCount++) {
+          const [width, height] = axis.toSize(cellCount);
+          const grid = resampleToGrid(img, width, height);
+          const actual: number[] = [];
+          const expected: number[] = [];
+          for (let g = 0; g < cellCount; g++) {
+            actual.push(readAxisChannel(grid.rgb, axis.channel, g));
+            // 期望用整数分子独立推导：格 g 取唯一的源下标
+            expected.push(Math.min(srcSize - 1, Math.floor((g * srcSize) / cellCount)));
+          }
+          // 直接按规格数一遍原始区间，证明「非空单像素」与「空 → 补洞」两种格子都真实出现；
+          // 同时把原始区间 > 1 的格子计入 rawTooLong，聚合断言为 0——
+          // 这正是「原始区间至多含 1 个像素」这条注释的不变式（逐格 expect 会拖慢全量测试）。
+          for (let g = 0; g < cellCount; g++) {
+            const rawLength =
+              Math.floor(((g + 1) * srcSize) / cellCount) - Math.floor((g * srcSize) / cellCount);
+            if (rawLength === 1) rawSinglePixel += 1;
+            else if (rawLength <= 0) rawEmptyHole += 1;
+            else rawTooLong += 1;
+          }
+          const filledAll = grid.filled.every((value) => value === 1);
+          const monotonic = actual.every((value, i) => i === 0 || value >= (actual[i - 1] ?? 0));
+          if (!filledAll || !monotonic || JSON.stringify(actual) !== JSON.stringify(expected)) {
+            bad.push(axis.key(srcSize, cellCount));
+          }
+          combinations += 1;
+          checked += cellCount;
         }
-        const filledAll = grid.filled.every((value) => value === 1);
-        const monotonic = actualR.every((value, i) => i === 0 || value >= (actualR[i - 1] ?? 0));
-        const unbounded = actualR.every(
-          (value) => Number.isInteger(value) && value >= 0 && value < srcWidth,
-        );
-        if (!filledAll || !monotonic || !unbounded || JSON.stringify(actualR) !== JSON.stringify(expectedR)) {
-          bad.push(`S=${srcWidth},G=${cellCount}`);
-        }
-        combinations += 1;
-        checked += cellCount;
       }
     }
-    expect({ combinations, checked, badCombos: bad.length, bad }).toEqual({
-      combinations: 630,
-      checked: 21840,
+
+    // 两条轴 × 630 个放大组合 = 1260、合计 43680 个格子
+    expect({
+      combinations,
+      checked,
+      rawSinglePixel,
+      rawEmptyHole,
+      rawTooLong,
+      badCombos: bad.length,
+      bad,
+    }).toEqual({
+      combinations: 1260,
+      checked: 43680,
+      // 两条轴各自 8610 / 13230；两轴合计即下面两个数。两者都 > 0，
+      // 说明「非空单像素」与「空 → 补洞」两种分支都被真实执行到。
+      rawSinglePixel: 17220,
+      rawEmptyHole: 26460,
+      rawTooLong: 0,
       badCombos: 0,
       bad: [],
     });
@@ -258,40 +348,5 @@ describe("resampleToGrid", () => {
     expect(grid.height).toBe(11);
     // 末行（第 10 格）的 G 通道
     expect(grid.rgb[10 * 3 + 1]).toBeCloseTo(127.5, 6);
-  });
-
-  it("缩小时每行的平均值等于该行真实整数区间内行号的算术平均（y 方向属性）", () => {
-    // 上一条缩小属性用例的转置：第 y 行取 G = y、R/B = 0、A = 255，
-    // 则每格 G 必等于该格真实覆盖行号 [y0, y1) 的算术平均 (y0 + y1 - 1) / 2。
-    // 与 x 方向用例同域（源尺寸 ≤ 40、格数 ≤ 源尺寸），把 y 路径也纳入回归。
-    let checked = 0;
-    let combinations = 0;
-    const bad: string[] = [];
-    for (let srcHeight = 1; srcHeight <= 40; srcHeight++) {
-      const rows = Array.from({ length: srcHeight }, (_, y) => [0, y, 0, 255] as const);
-      const img = makeImage(1, srcHeight, rows);
-      for (let cellCount = 1; cellCount <= srcHeight; cellCount++) {
-        const grid = resampleToGrid(img, 1, cellCount);
-        const expectedG: number[] = [];
-        for (let gy = 0; gy < cellCount; gy++) {
-          const { x0: y0, x1: y1 } = expectedRange(gy, cellCount, srcHeight);
-          expectedG.push((y0 + y1 - 1) / 2);
-        }
-        const actualG: number[] = [];
-        for (let gy = 0; gy < cellCount; gy++) actualG.push(grid.rgb[gy * 3 + 1]);
-        const filledAll = grid.filled.every((value) => value === 1);
-        if (!filledAll || actualG.some((value, i) => Math.abs(value - expectedG[i]) > 1e-6)) {
-          bad.push(`H=${srcHeight},G=${cellCount}`);
-        }
-        combinations += 1;
-        checked += cellCount;
-      }
-    }
-    expect({ combinations, checked, badCombos: bad.length, bad }).toEqual({
-      combinations: 820,
-      checked: 11480,
-      badCombos: 0,
-      bad: [],
-    });
   });
 });
