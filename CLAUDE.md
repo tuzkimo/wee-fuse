@@ -34,6 +34,12 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
   **不得**引用 DOM 全局（`document`、`window`、`createImageBitmap`、`OffscreenCanvas`、`Image`）。
   只允许 ECMAScript 标准内置对象。违反这条，引擎就无法在 Node 里全量单测。
 - `src/services/**` 是唯一接触平台 API 的层。需要平台能力时，在 core 定义接口，在 services 注入实现。
+- 边界闸门是 `src/__tests__/coreBoundary.test.ts`（随 `npm run test` 执行），按**词法近似**匹配，有已知偏差：
+  把参数命名为 `window`（或清单里其他被禁名）会在函数体内的引用处**误报**（形如
+  `function h(a, window) { return window + 1; }`）；而 `fn(a, window, b)`、`[a, window, b]`
+  这类实参 / 数组元素形态会**反向导致整篇遮蔽**，让该文件的 `window` 检查全线失效。
+- 撞上时的处置是**改掉这个命名**（例如参数改叫 `sampleWindow`），不要放宽闸门规则，
+  也不要在 `src/core/**` 里加任何绕过标记。完整偏差清单见该测试文件头部注释。
 
 ## 技术约束
 

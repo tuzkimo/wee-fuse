@@ -32,7 +32,9 @@
  * 2a. **跳过成员访问**：标识符紧邻的**前一个**非空白字符是 `.` 时不算违规（`?.` 的末位
  *    字符也是 `.`，所以 `opts?.window` 一并跳过）。`options.window`（采样窗口）是最容易
  *    踩坑的命名形态，那里它只是属性名。漏报方向：`globalThis.window`、`self.document`
- *    这类经对象间接取到的全局不再被拦下——正常代码不这么写，故接受。
+ *    这类经对象间接取到的全局不再被拦下；展开运算符的末位字符同样是 `.`，所以
+ *    `[...window]`、`{ ...window }` 也会被静默跳过。这些都是「前邻是 `.`」这个位置
+ *    谓词强制的行为（非刻意设计），正常代码不这么写，故接受。
  * 2b. **跳过属性键与带类型标注的参数**：标识符紧邻的**后一个**非空白字符是 `:`（含
  *    `window?: number` 的 `?:`）时不算违规，覆盖 `interface ResampleOptions { window:
  *    number }`、`{ window: 3 }`、`declare function f(window: number)`、
@@ -40,7 +42,7 @@
  *    **值位置**的 `window`（后面紧邻 `.`）仍被拦下。漏报方向：三元表达式
  *    `flag ? window : fallback` 中间的 `window` 后面紧邻 `:`，会被误当成属性键而漏掉。
  * 3. 本地同名声明视为遮蔽（shadowing）：文件里出现过 `const window = 3;`（或
- *    let / var / function / class / type / interface / enum 形态）时，该文件里的
+ *    let / var / function / class / type / interface / enum / namespace 形态）时，该文件里的
  *    `window` 一律不再报——`const w = window + 1;` 里的 `window` 指本地绑定，不是 DOM
  *    全局，报出来就是误报。解构**只认简写绑定**：标识符紧邻前一个非空白字符是 `{`、`[`
  *    或 `,`，且紧邻后一个非空白字符是 `,`、`}`、`]` 或 `=`——`const { window } = opts;`、
@@ -50,11 +52,17 @@
  *    `const { a = window } = opts;` 里的 `window` 是读取，也不算。不做作用域分析（保守
  *    近似）：只要文件里存在同名声明，整篇都不报；代价是同一文件的另一个作用域里真正引用
  *    `window` 会漏掉，方向仍是宁漏不误。
- *    两个已知偏差：凡是 `{ window }` / `{ window = … }` 形状的文本（对象字面量简写属性
- *    `f({ window })`、类字段 `class C { window = 3 }`）都与解构简写同形，会被当成声明而漏报；
- *    反向地，函数参数只在**声明位置**被规则 2b 跳过，函数体里 `return window;`
- *    仍然会被报（未做参数级遮蔽）——写 `function f(window: number)` 时若体内要使用它，
- *    请改用不叫 `window` 的参数名。
+ *    已知偏差（都源于规则 3 只做**位置谓词**、不判断语法形态）：只要某个 `window` token 的
+ *    前邻非空白字符是 `{`、`[`、`,` 之一，且后邻非空白字符是 `,`、`}`、`]`、`=` 之一，
+ *    就当成同名声明，于是普通文本也会命中——对象字面量简写属性 `f({ window })`、类字段
+ *    `class C { window = 3 }`、**实参** `fn(a, window, b)`、**数组元素**
+ *    `const arr = [x, window, y]`，跨行写法 `log(\n a,\n window,\n b,\n)` 同样命中；
+ *    由于遮蔽按名字对整文件生效，**一个这样的 token 就会让该文件的 `window` 闸门全线失效**
+ *    （漏报）。反向地，**带类型标注**的参数在**声明位置**被规则 2b 跳过，但函数体里
+ *    `return window;` 仍会被报（误报）；**无类型标注**的形参连声明位置也不跳过。
+ *    同一角色因尾随标点不同而结论相反，是最直观的自相矛盾证据：
+ *    `function h(a, window) { return window + 1; }` 报 1 条（假阳性），把同一个形参挪到
+ *    中间写成 `fn(a, window, b)` 却变成整文件遮蔽（漏报）——差别只在尾随的是 `)` 还是 `,`。
  * 4. `OffscreenCanvasRenderingContext2D` 目前**故意不拦截**：它几乎不可能脱离
  *    `OffscreenCanvas` 独立出现（写它基本要先写 `getContext`），届时 `OffscreenCanvas`
  *    会被拦下；换成前缀匹配则有误伤自建类型（例如 `ImageMatrix`）的风险。
@@ -596,6 +604,37 @@ describe("边界扫描器自身的规则", () => {
     ]);
   });
 
+  it("已知漏报（刻意接受）：位置谓词让普通实参 / 数组元素也触发整篇遮蔽", () => {
+    // 前邻是 `,`、后邻也是 `,` —— 与解构简写同形，于是整文件的 window 闸门失效。
+    const callArgument = ["fn(a, window, b);", "export const z = window.location;"].join("\n");
+    expect(findViolationMessages({ "../core/probe.ts": callArgument })).toEqual([]);
+
+    const arrayElement = [
+      "const arr = [x, window, y];",
+      "export const z = window.location;",
+    ].join("\n");
+    expect(findViolationMessages({ "../core/probe.ts": arrayElement })).toEqual([]);
+
+    const multiLineCall = [
+      "log(",
+      "  a,",
+      "  window,",
+      "  b,",
+      ");",
+      "export const z = window.location;",
+    ].join("\n");
+    expect(findViolationMessages({ "../core/probe.ts": multiLineCall })).toEqual([]);
+  });
+
+  it("已知误报（刻意接受）：尾随 `)` 的形参不触发遮蔽，函数体内的引用被报", () => {
+    // 与上一条同根因：`window` 后邻是 `)`（不在 {`,`、`}`、`]`、`=`} 内）→ 不算声明，
+    // 函数体里的 `window` 于是被当成 DOM 全局。同一个形参挪到中间就反过来触发整篇遮蔽。
+    const code = "function h(a, window) { return window + 1; }";
+    expect(findViolationMessages({ "../core/probe.ts": code })).toEqual([
+      "src/core/probe.ts:1 引用了 DOM/BOM 全局 window",
+    ]);
+  });
+
   it("已知漏报（刻意接受）：含引号的正则字面量会把其后代码整段剥掉", () => {
     const code = ["const re = /['\"]/;", "const bad = document.title;"].join("\n");
 
@@ -701,6 +740,9 @@ describe("边界扫描器自身的规则", () => {
       'import "../parent";',
       'import "../nested/deep";',
       'import type { RGB } from "../color/space";',
+      // 文件头第 5 条点名的例子：同样是相对路径，会被放行（闸门挡的是依赖与平台 API，
+      // 不是「解析后的物理位置」）——写成断言，防止后人误以为这里被拦下。
+      'import "../../node_modules/x";',
     ].join("\n");
     expect(findViolations(allowed, "probe.ts")).toEqual([]);
 
