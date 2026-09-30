@@ -29,28 +29,58 @@
  * 2. 所有 DOM/BOM 全局标识符一律**全词匹配**（`/\b名字\b/`）。因此 `Image` 不会命中
  *    `ImageData`，`OffscreenCanvas` 不会命中 `OffscreenCanvasRenderingContext2D`。
  *    两个名字是彼此独立的标识符，`ImageData` 已单独列入清单。
+ * 2a. **跳过成员访问**：标识符紧邻的**前一个**非空白字符是 `.` 时不算违规（`?.` 的末位
+ *    字符也是 `.`，所以 `opts?.window` 一并跳过）。`options.window`（采样窗口）是最容易
+ *    踩坑的命名形态，那里它只是属性名。漏报方向：`globalThis.window`、`self.document`
+ *    这类经对象间接取到的全局不再被拦下——正常代码不这么写，故接受。
+ * 2b. **跳过属性键与带类型标注的参数**：标识符紧邻的**后一个**非空白字符是 `:`（含
+ *    `window?: number` 的 `?:`）时不算违规，覆盖 `interface ResampleOptions { window:
+ *    number }`、`{ window: 3 }`、`declare function f(window: number)`、
+ *    `(window: number) => …`。判定只看右侧，因此 `{ window: window.innerWidth }` 里
+ *    **值位置**的 `window`（后面紧邻 `.`）仍被拦下。漏报方向：三元表达式
+ *    `flag ? window : fallback` 中间的 `window` 后面紧邻 `:`，会被误当成属性键而漏掉。
  * 3. 本地同名声明视为遮蔽（shadowing）：文件里出现过 `const window = 3;`（或
- *    let / var / function / class / type / interface / enum / 解构 形态）时，该文件里的
+ *    let / var / function / class / type / interface / enum 形态）时，该文件里的
  *    `window` 一律不再报——`const w = window + 1;` 里的 `window` 指本地绑定，不是 DOM
- *    全局，报出来就是误报。不做作用域分析（保守近似）：只要文件里存在同名声明，整篇
- *    都不报；代价是同一文件的另一个作用域里真正引用 `window` 会漏掉，方向仍是宁漏不误。
+ *    全局，报出来就是误报。解构**只认简写绑定**：标识符紧邻前一个非空白字符是 `{`、`[`
+ *    或 `,`，且紧邻后一个非空白字符是 `,`、`}`、`]` 或 `=`——`const { window } = opts;`、
+ *    `const { window, a } = opts;`、`const { a, window } = opts;`、
+ *    `const { window = 1 } = opts;`、`const [window] = arr;` 算同名声明；
+ *    `const { window: winSize } = opts;` 绑的是 `winSize`，不算；
+ *    `const { a = window } = opts;` 里的 `window` 是读取，也不算。不做作用域分析（保守
+ *    近似）：只要文件里存在同名声明，整篇都不报；代价是同一文件的另一个作用域里真正引用
+ *    `window` 会漏掉，方向仍是宁漏不误。
+ *    两个已知偏差：凡是 `{ window }` / `{ window = … }` 形状的文本（对象字面量简写属性
+ *    `f({ window })`、类字段 `class C { window = 3 }`）都与解构简写同形，会被当成声明而漏报；
+ *    反向地，函数参数只在**声明位置**被规则 2b 跳过，函数体里 `return window;`
+ *    仍然会被报（未做参数级遮蔽）——写 `function f(window: number)` 时若体内要使用它，
+ *    请改用不叫 `window` 的参数名。
  * 4. `OffscreenCanvasRenderingContext2D` 目前**故意不拦截**：它几乎不可能脱离
  *    `OffscreenCanvas` 独立出现（写它基本要先写 `getContext`），届时 `OffscreenCanvas`
  *    会被拦下；换成前缀匹配则有误伤自建类型（例如 `ImageMatrix`）的风险。
  * 5. import 来源走**白名单**：`src/core/**` 里任何不以 `./` 或 `../` 开头的 module
  *    specifier 一律违规（裸包名、`node:`、绝对路径、`@/` 别名都算）。黑名单必然漏——
- *    `@vue/reactivity`、`lodash` 都能静默通过；白名单只可能漏「相对路径背后的东西」，
- *    而相对路径走不进 `node_modules`。静态 `import … from`、副作用 `import "x"`、
+ *    `@vue/reactivity`、`lodash` 都能静默通过。静态 `import … from`、副作用 `import "x"`、
  *    动态 `import("x")`、`require("x")` 四种写法都识别。
+ *    白名单按「前缀是不是相对路径」判定，不看它最终解析到哪里，所以 `../../node_modules/x`
+ *    这种同样是相对路径的 specifier 会被放行——闸门挡的是「第三方依赖与平台 API」，
+ *    不是「解析后的物理位置」。同理，闸门只看 `src/core/**` **自身的文本**，
+ *    `../services/**` 这种向上跨层的相对 import 是放行的：分层方向由 code review 与
+ *    `AGENTS.md` 约束，不由这条机检约束（它管的是依赖与平台 API，不是模块方向）。
  * 6. 先剥离注释（`//`、`/* *\/`、`/** *\/`）再扫描，否则「这里不能出现 document」这类
  *    正常中文注释会误报；剥离时保留换行，行号与原文件一致。
  *
  * 已知限制（刻意接受，方向都是宁漏不误）：
  * - **不支持正则字面量**（本次不实现正则识别）。扫描器只认字符串，不区分 `/` 是除号、
- *   正则起始还是注释起始，两个方向的后果都存在：
- *   - 含引号的正则（例如 `/['"]/`）会让扫描器误入字符串状态且再无闭合引号，其后所有
- *     `//` 注释都不再被剥离 → 注释里出现 `document` 之类会**误报**（唯一的误报方向）；
- *   - 反向地，`/[//]/` 里的 `//` 会被当成行注释，把该行后续代码整段丢弃 → **漏报**。
+ *   正则起始还是注释起始，两个方向的后果都存在，但**主效果是漏报**：遇到 `/['"]/` 这类
+ *   含引号的正则时，第一遍把引号当成字符串起始，打开的是一段在本处永无闭合引号的幽灵
+ *   字符串；第二遍（剥字符串内容的那份文本）便从该处起把其后内容——真实代码与注释一并
+ *   ——整段剥掉，直到文件里再出现同种引号为止。于是 `/['"]/` 之后的 `document` 不再被拦
+ *   （旧版本此处描述反了：误报不是主效果）。误报只在更窄的条件下才复现：被幽灵字符串吞掉
+ *   的区段里恰好有一条注释含同种引号（例如 `// 别用 'document'`），使字符串状态提前闭合、
+ *   其后注释文本重新进入扫描范围；第一遍（保留字符串内容的那份文本）同样是「幽灵字符串
+ *   期间不剥注释」，所以注释里写成 `// 参考 from "vue"` 也会被 import 检测误报。
+ *   反向地，`/[//]/` 里的 `//` 会被当成行注释，把该行后续代码整段丢弃 → 漏报。
  *   区分正则与除法只在语法层可行，识别代价高于收益。
  * - 全局检测剥掉字符串内容，因此 `globalThis["window"]`、模板字面量插值
  *   （`` `${document.title}` ``）里的引用会漏掉。
@@ -209,26 +239,98 @@ function stripStringContents(source: string): string {
   return stripSource(source, false);
 }
 
+/** 返回 `offset` 之前最近的非空白字符（`offset` 之前全是空白则返回 null）。 */
+function previousNonWhitespace(text: string, offset: number): string | null {
+  for (let index = offset - 1; index >= 0; index -= 1) {
+    const char = text[index] ?? "";
+    if (!/\s/.test(char)) return char;
+  }
+  return null;
+}
+
+/** 返回自 `offset` 起最近的非空白字符（其后再无内容则返回 null）。 */
+function nextNonWhitespace(text: string, offset: number): string | null {
+  const index = nextNonWhitespaceIndex(text, offset);
+  return index === text.length ? null : (text[index] ?? null);
+}
+
+/** 返回自 `offset` 起第一个非空白字符的下标（找不到则返回 `text.length`）。 */
+function nextNonWhitespaceIndex(text: string, offset: number): number {
+  for (let index = offset; index < text.length; index += 1) {
+    if (!/\s/.test(text[index] ?? "")) return index;
+  }
+  return text.length;
+}
+
+/**
+ * 规则 2a：标识符紧邻的前一个非空白字符是 `.` → 它是属性名，不是全局引用。
+ * `?.` 的末位字符同样是 `.`，所以 `opts?.window` 一并跳过。
+ * 漏报方向：`globalThis.window`、`self.document` 这类经对象间接取到的全局不再被拦下。
+ */
+function isMemberAccess(text: string, offset: number): boolean {
+  return previousNonWhitespace(text, offset) === ".";
+}
+
+/**
+ * 规则 2b：标识符紧邻的后一个非空白字符是 `:`（含 `?:` 里的 `:`）→ 它是属性键或带类型
+ * 标注的参数名，不是全局引用。判定只看右侧，所以 `{ window: window.innerWidth }` 里值位置
+ * 的 `window`（后面紧邻 `.`）照常被拦下。
+ * 漏报方向：三元表达式 `flag ? window : fallback` 中间的 `window` 后面紧邻 `:`，漏掉。
+ */
+function isPropertyKeyOrTypedParameter(text: string, offset: number, nameLength: number): boolean {
+  const after = offset + nameLength;
+  const nextIndex = nextNonWhitespaceIndex(text, after);
+  const next = nextIndex === text.length ? null : (text[nextIndex] ?? null);
+  if (next === ":") return true;
+  if (next === "?") return nextNonWhitespace(text, nextIndex + 1) === ":";
+  return false;
+}
+
+/** 规则 3 的简写绑定：前 / 后紧邻的非空白字符分别落在这两个集合内。 */
+const SHORTHAND_BINDING_BEFORE: ReadonlySet<string> = new Set(["{", "[", ","]);
+const SHORTHAND_BINDING_AFTER: ReadonlySet<string> = new Set([",", "}", "]", "="]);
+
+/**
+ * 规则 3：只有简写绑定才算同名声明——`{ window }`、`[window]`、`{ a, window }`、
+ * `{ window = 1 }` 是；`{ window: winSize }`（改名绑定，后紧邻 `:`）与
+ * `{ a = window }`（默认值，前紧邻 `=`，此处是读取）不是。
+ * 漏报方向：对象字面量简写属性 `f({ window })`、类字段 `class C { window = 3 }`
+ * 都与解构简写同形，会被当成声明。
+ */
+function isShorthandBinding(text: string, offset: number, nameLength: number): boolean {
+  const before = previousNonWhitespace(text, offset);
+  if (before === null || !SHORTHAND_BINDING_BEFORE.has(before)) return false;
+  const after = nextNonWhitespace(text, offset + nameLength);
+  return after !== null && SHORTHAND_BINDING_AFTER.has(after);
+}
+
 const GLOBAL_PATTERNS = FORBIDDEN_GLOBALS.map((name) => ({
   name,
-  pattern: new RegExp(`\\b${name}\\b`),
+  pattern: new RegExp(`\\b${name}\\b`, "g"),
 }));
 
-/** 判定「该名字在本文件里被本地声明遮蔽」用的声明形态（保守近似，不做作用域分析）。 */
+/** 直接声明形态（`const window = …`、`interface window` 等）的判定正则。 */
 const DECLARATION_PATTERNS = FORBIDDEN_GLOBALS.map((name) => ({
   name,
-  patterns: [
-    new RegExp(`\\b(?:const|let|var|function|class|type|interface|enum|namespace)\\s+${name}\\b`),
-    new RegExp(`\\b(?:const|let|var)\\s*\\{[^{}]*\\b${name}\\b[^{}]*\\}`),
-    new RegExp(`\\b(?:const|let|var)\\s*\\[[^\\[\\]]*\\b${name}\\b[^\\[\\]]*\\]`),
-  ],
+  pattern: new RegExp(
+    `\\b(?:const|let|var|function|class|type|interface|enum|namespace)\\s+${name}\\b`,
+  ),
 }));
 
 /** 返回本文件里被本地同名声明遮蔽的禁止全局名。 */
 function locallyDeclaredNames(code: string): Set<string> {
   const shadowed = new Set<string>();
-  for (const { name, patterns } of DECLARATION_PATTERNS) {
-    if (patterns.some((pattern) => pattern.test(code))) shadowed.add(name);
+  for (const { name, pattern } of DECLARATION_PATTERNS) {
+    if (pattern.test(code)) {
+      shadowed.add(name);
+      continue;
+    }
+    for (const match of code.matchAll(new RegExp(`\\b${name}\\b`, "g"))) {
+      if (isShorthandBinding(code, match.index ?? 0, name.length)) {
+        shadowed.add(name);
+        break;
+      }
+    }
   }
   return shadowed;
 }
@@ -261,15 +363,22 @@ function findViolations(code: string, file: string): Violation[] {
   const globalText = stripStringContents(importText);
   const shadowed = locallyDeclaredNames(globalText);
   const violations: Violation[] = [];
+  /** 同一行同一个名字只报一次，与旧版「按行匹配」的粒度保持一致。 */
+  const reported = new Set<string>();
 
-  globalText.split("\n").forEach((text, index) => {
-    for (const { name, pattern } of GLOBAL_PATTERNS) {
-      if (shadowed.has(name)) continue;
-      if (pattern.test(text)) {
-        violations.push({ file, line: index + 1, kind: "dom-global", token: name });
-      }
+  for (const { name, pattern } of GLOBAL_PATTERNS) {
+    if (shadowed.has(name)) continue;
+    for (const match of globalText.matchAll(pattern)) {
+      const offset = match.index ?? 0;
+      if (isMemberAccess(globalText, offset)) continue;
+      if (isPropertyKeyOrTypedParameter(globalText, offset, name.length)) continue;
+      const line = lineOf(globalText, offset);
+      const key = `${line}:${name}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      violations.push({ file, line, kind: "dom-global", token: name });
     }
-  });
+  }
 
   for (const pattern of IMPORT_PATTERNS) {
     for (const match of importText.matchAll(pattern)) {
@@ -405,6 +514,104 @@ describe("边界扫描器自身的规则", () => {
         "../core/b.ts": "export const w = window.innerWidth;",
       }),
     ).toEqual(["src/core/b.ts:1 引用了 DOM/BOM 全局 window"]);
+  });
+
+  it("规则 2a：成员访问形态不算引用（options.window / opts?.window），真正的 window 仍被拦下", () => {
+    const memberAccess = [
+      "const a = options.window;",
+      "const b = options?.window;",
+      "const c = options.sample.window;",
+    ].join("\n");
+    expect(findViolationMessages({ "../core/probe.ts": memberAccess })).toEqual([]);
+
+    const realGlobals = [
+      "const d = window.location;",
+      "const e = window;",
+      'const f = window["a"];',
+      "const g = window?.title;",
+      "const h = document.title;",
+    ].join("\n");
+    expect(findViolationMessages({ "../core/probe.ts": realGlobals })).toEqual([
+      "src/core/probe.ts:1 引用了 DOM/BOM 全局 window",
+      "src/core/probe.ts:2 引用了 DOM/BOM 全局 window",
+      "src/core/probe.ts:3 引用了 DOM/BOM 全局 window",
+      "src/core/probe.ts:4 引用了 DOM/BOM 全局 window",
+      "src/core/probe.ts:5 引用了 DOM/BOM 全局 document",
+    ]);
+  });
+
+  it("规则 2b：属性键与带类型标注的形参不算引用，值位置的 window 仍被拦下", () => {
+    const keysAndParameters = [
+      "interface ResampleOptions { window: number }",
+      "const o = { window: 3 };",
+      "declare function f(window: number): void;",
+      "declare function g(window?: number): void;",
+      "const h = (window: number): number => 0;",
+    ].join("\n");
+    expect(findViolationMessages({ "../core/probe.ts": keysAndParameters })).toEqual([]);
+
+    // 值位置的 window 后面紧邻 `.`（不是 `:`），必须照样报
+    const valuePosition = "const c = { window: window.innerWidth };";
+    expect(findViolationMessages({ "../core/probe.ts": valuePosition })).toEqual([
+      "src/core/probe.ts:1 引用了 DOM/BOM 全局 window",
+    ]);
+  });
+
+  /** 解构声明后跟一行真实 `window` 使用：被遮蔽则无违规，未遮蔽则第 2 行报错。 */
+  const destructuredThenUsed = (declaration: string): string[] =>
+    findViolationMessages({
+      "../core/probe.ts": `${declaration}\nexport const z = window.innerWidth;`,
+    });
+
+  it("规则 3：const { window } = opts;（后紧邻 }）算同名声明", () => {
+    expect(destructuredThenUsed("const { window } = opts;")).toEqual([]);
+  });
+
+  it("规则 3：const { window, a } = opts;（后紧邻 ,）算同名声明", () => {
+    expect(destructuredThenUsed("const { window, a } = opts;")).toEqual([]);
+  });
+
+  it("规则 3：const { a, window } = opts;（前紧邻 ,）算同名声明", () => {
+    expect(destructuredThenUsed("const { a, window } = opts;")).toEqual([]);
+  });
+
+  it("规则 3：const { window = 1 } = opts;（后紧邻 =）算同名声明", () => {
+    expect(destructuredThenUsed("const { window = 1 } = opts;")).toEqual([]);
+  });
+
+  it("规则 3：const [window] = arr;（前 [ 后 ]）算同名声明", () => {
+    expect(destructuredThenUsed("const [window] = arr;")).toEqual([]);
+  });
+
+  it("规则 3：const { window: winSize } = opts; 绑的是 winSize，不遮蔽真正的 window", () => {
+    expect(destructuredThenUsed("const { window: winSize } = opts;")).toEqual([
+      "src/core/probe.ts:2 引用了 DOM/BOM 全局 window",
+    ]);
+  });
+
+  it("规则 3：const { a = window } = opts; 里的 window 是读取，不遮蔽", () => {
+    expect(destructuredThenUsed("const { a = window } = opts;")).toEqual([
+      "src/core/probe.ts:1 引用了 DOM/BOM 全局 window",
+      "src/core/probe.ts:2 引用了 DOM/BOM 全局 window",
+    ]);
+  });
+
+  it("已知漏报（刻意接受）：含引号的正则字面量会把其后代码整段剥掉", () => {
+    const code = ["const re = /['\"]/;", "const bad = document.title;"].join("\n");
+
+    // 幽灵字符串从 `/['"]/` 的引号开始吞掉其后所有内容，第 2 行的 document 静默漏报。
+    // 这是文件头「已知限制」里描述的真实后果，本任务不实现正则识别。
+    expect(findViolationMessages({ "../core/probe.ts": code })).toEqual([]);
+  });
+
+  it("已知误报（刻意接受）：幽灵字符串被注释里的同种引号提前闭合时，注释文本重新入扫描范围", () => {
+    const code = ["const re = /['\"]/;", "// 别用 'document'", "const a = 1;"].join("\n");
+
+    // 误报只在「被吞掉的区段里恰好有一条含同种引号的注释」这个窄条件下复现：
+    // 注释里那个 `'` 提前闭合幽灵字符串，其后的 `document` 于是重新参与匹配。
+    expect(findViolationMessages({ "../core/probe.ts": code })).toEqual([
+      "src/core/probe.ts:2 引用了 DOM/BOM 全局 document",
+    ]);
   });
 
   it("全词匹配：Image 不误伤 ImageData，两者各自按名字精确命中", () => {
