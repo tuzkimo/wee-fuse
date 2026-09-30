@@ -18,6 +18,16 @@ npm run test:watch       # 单元测试（监听模式）
 npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 ```
 
+### 依赖安装与 npm 版本 hazard
+
+- 权威安装方式是 `npm ci`；**`package-lock.json` 必须入库**，删掉它会让装依赖失败。
+- 在没有 lockfile 的干净环境里跑裸 `npm install` 会撞上 npm 11.5.2（Node 24.19.0 自带）的
+  arborist bug：`Cannot read properties of null (reading 'edgesOut')`。触发链是 vitest 的 peer
+  范围让 npm 去探索 `vite@8` → `@vitejs/devtools` → `vitest@5` 这条环。与本机依赖版本、镜像、
+  项目配置均无关；npm 12.1.0 已修。
+- 解法：用 `npm install --legacy-peer-deps` 生成 lockfile，或把 npm 升到 12.x。
+- 不要为此添加 `.npmrc`，也不要改动依赖版本。
+
 ## 分层边界（硬约束）
 
 - `src/core/**` 是纯计算层：**不得** import `vue` / `vue-router` / `pinia` / `@tauri-apps/*`，
