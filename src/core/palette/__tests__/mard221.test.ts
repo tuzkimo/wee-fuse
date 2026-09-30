@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import raw from "../builtin/mard221.json";
 import { createPaletteRuntime, loadPalette } from "../registry";
 
+/** 九个色系各自的色号数量，与抓取时实测一致。 */
+const SERIES_SIZES: Record<string, number> = {
+  A: 26,
+  B: 32,
+  C: 29,
+  D: 26,
+  E: 24,
+  F: 25,
+  G: 21,
+  H: 23,
+  M: 15,
+};
+
 describe("MARD 221 内置色卡", () => {
   const palette = loadPalette(raw);
   const runtime = createPaletteRuntime(palette);
@@ -10,18 +23,23 @@ describe("MARD 221 内置色卡", () => {
     expect(palette.colors).toHaveLength(221);
   });
 
-  it("色号唯一", () => {
-    const codes = palette.colors.map((c) => c.code);
-    expect(new Set(codes).size).toBe(codes.length);
+  it("色号与期望全集完全相等（缺号与多余色号都算失败）", () => {
+    const expected = new Set<string>();
+    for (const [series, size] of Object.entries(SERIES_SIZES)) {
+      for (let i = 1; i <= size; i += 1) expected.add(`${series}${i}`);
+    }
+    expect(expected.size).toBe(221);
+
+    const actual = new Set(palette.colors.map((c) => c.code));
+    const missing = [...expected].filter((code) => !actual.has(code));
+    const extra = [...actual].filter((code) => !expected.has(code));
+    expect(missing, `缺少色号：${missing.join(" ")}`).toEqual([]);
+    expect(extra, `多余色号：${extra.join(" ")}`).toEqual([]);
   });
 
-  it("每个色号的 rgb 都在合法范围", () => {
-    for (const c of palette.colors) {
-      for (const v of c.rgb) {
-        expect(Number.isInteger(v)).toBe(true);
-        expect(v).toBeGreaterThanOrEqual(0);
-        expect(v).toBeLessThanOrEqual(255);
-      }
+  it("原始 JSON 里每个色号的 hex 都是 6 位十六进制", () => {
+    for (const c of raw.colors) {
+      expect(c.hex, `色号 ${c.code} 的 hex 非法`).toMatch(/^#[0-9a-f]{6}$/);
     }
   });
 
@@ -51,6 +69,8 @@ describe("MARD 221 内置色卡", () => {
 
   it("声明了数据来源与精度说明", () => {
     expect(palette.source).toMatch(/^https:\/\//);
-    expect(palette.accuracy.length).toBeGreaterThan(10);
+    expect(palette.accuracy).toMatch(/第三方/);
+    expect(palette.accuracy).toMatch(/实物/);
+    expect(palette.accuracy).toMatch(/不同公开来源/);
   });
 });

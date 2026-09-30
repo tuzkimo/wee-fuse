@@ -40,6 +40,37 @@ describe("loadPalette", () => {
     expect(p.colors[0]?.name).toBe("");
   });
 
+  it("name 为 null 时回落，为空串时保持为空串", () => {
+    const withNull = loadPalette({
+      ...valid,
+      colors: [{ code: "A1", name: null, hex: "#ffffff" }],
+    });
+    expect(withNull.colors[0]?.name).toBe("");
+    const withEmpty = loadPalette({
+      ...valid,
+      colors: [{ code: "A1", name: "", hex: "#ffffff" }],
+    });
+    expect(withEmpty.colors[0]?.name).toBe("");
+  });
+
+  it("name 存在但不是字符串时抛错", () => {
+    expect(() => loadPalette({ ...valid, colors: [{ code: "A1", name: 123, hex: "#ffffff" }] })).toThrow(
+      /name/,
+    );
+    expect(() =>
+      loadPalette({ ...valid, colors: [{ code: "A1", name: ["白"], hex: "#ffffff" }] }),
+    ).toThrow(/name/);
+  });
+
+  it("非法 hex 在 loadPalette 层也抛错", () => {
+    expect(() => loadPalette({ ...valid, colors: [{ code: "A1", hex: "#zzzzzz" }] })).toThrow(
+      /非法色值/,
+    );
+    expect(() => loadPalette({ ...valid, colors: [{ code: "A1", hex: "#fff" }] })).toThrow(
+      /非法色值/,
+    );
+  });
+
   it("缺字段时抛错", () => {
     expect(() => loadPalette({ ...valid, source: undefined })).toThrow(/source/);
     expect(() => loadPalette({ ...valid, colors: [] })).toThrow(/没有颜色数据/);

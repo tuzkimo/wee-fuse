@@ -2,7 +2,7 @@
   "id": "mard221",
   "name": "MARD 221 色",
   "source": "https://www.doudougongfang.com/kb/beads/mard-palette",
-  "accuracy": "MARD 官方未公开色值，本表由第三方公开资料整理，屏幕显示色与实物豆存在偏差，请以实物为准。",
+  "accuracy": "MARD 官方未公开色值，本表由第三方公开资料整理；不同公开来源的色值互有差异，屏幕显示色与实物豆也存在偏差，请以实物为准。",
   "colors": [
     {
       "code": "A1",

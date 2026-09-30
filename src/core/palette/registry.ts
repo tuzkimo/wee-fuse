@@ -56,7 +56,15 @@ export function loadPalette(raw: unknown): Palette {
     const hex = requireString(c.hex, `colors[${i}].hex`);
     if (seen.has(code)) throw new Error(`色号重复：${code}`);
     seen.add(code);
-    const name = typeof c.name === "string" ? c.name : "";
+    // 只有「来源未提供名字」（undefined / null）才回落为空串；名字字段存在但类型不对
+    // 属于数据损坏，按本文件的一贯做法直接抛错，而不是静默变成无名色号。
+    let name = "";
+    if (c.name !== undefined && c.name !== null) {
+      if (typeof c.name !== "string") {
+        throw new Error(`色卡字段 colors[${i}].name 必须是字符串`);
+      }
+      name = c.name;
+    }
     return { code, name, rgb: parseHex(hex) };
   });
 
