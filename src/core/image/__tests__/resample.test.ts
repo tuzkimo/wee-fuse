@@ -240,4 +240,58 @@ describe("resampleToGrid", () => {
     expect(Array.from(grid.rgb.filter((_, i) => i % 3 === 0))).toEqual([10, 10, 200, 200]);
     expect(Array.from(grid.filled)).toEqual([1, 1, 1, 1]);
   });
+
+  it("末格必须覆盖到最后一行像素（源高 15 → 11 格，转置定点）", () => {
+    // 上一条定点用例是「宽 15 → 11 列」，这条是它的转置（高 15 → 11 行）。
+    // 必要性：其余用例的 height 要么是 1（y 路径退化为恒等映射），要么缩放比是精确整数
+    // （2×2 / 4×4，新旧公式逐格相同），所以 y 方向（resample.ts 的 y0/y1 两行）
+    // 原先没有任何回归覆盖——把 `src.height` 误写成 `src.width`，或在两者恰好相等的
+    // 2×2 / 4×4 场合改回浮点，旧用例都会全绿而末行 bug 复活。
+    // 第 14 行取黑、其余全白：漏采时末格 G 仍是 255，正确覆盖 [13,15) 时是 (255+0)/2 = 127.5。
+    const rows: Array<readonly [number, number, number, number]> = [];
+    for (let y = 0; y < 15; y++) {
+      rows.push(y === 14 ? ([0, 0, 0, 255] as const) : ([255, 255, 255, 255] as const));
+    }
+    const img = makeImage(1, 15, rows);
+    const grid = resampleToGrid(img, 1, 11);
+    expect(grid.width).toBe(1);
+    expect(grid.height).toBe(11);
+    // 末行（第 10 格）的 G 通道
+    expect(grid.rgb[10 * 3 + 1]).toBeCloseTo(127.5, 6);
+  });
+
+  it("缩小时每行的平均值等于该行真实整数区间内行号的算术平均（y 方向属性）", () => {
+    // 上一条缩小属性用例的转置：第 y 行取 G = y、R/B = 0、A = 255，
+    // 则每格 G 必等于该格真实覆盖行号 [y0, y1) 的算术平均 (y0 + y1 - 1) / 2。
+    // 与 x 方向用例同域（源尺寸 ≤ 40、格数 ≤ 源尺寸），把 y 路径也纳入回归。
+    let checked = 0;
+    let combinations = 0;
+    const bad: string[] = [];
+    for (let srcHeight = 1; srcHeight <= 40; srcHeight++) {
+      const rows = Array.from({ length: srcHeight }, (_, y) => [0, y, 0, 255] as const);
+      const img = makeImage(1, srcHeight, rows);
+      for (let cellCount = 1; cellCount <= srcHeight; cellCount++) {
+        const grid = resampleToGrid(img, 1, cellCount);
+        const expectedG: number[] = [];
+        for (let gy = 0; gy < cellCount; gy++) {
+          const { x0: y0, x1: y1 } = expectedRange(gy, cellCount, srcHeight);
+          expectedG.push((y0 + y1 - 1) / 2);
+        }
+        const actualG: number[] = [];
+        for (let gy = 0; gy < cellCount; gy++) actualG.push(grid.rgb[gy * 3 + 1]);
+        const filledAll = grid.filled.every((value) => value === 1);
+        if (!filledAll || actualG.some((value, i) => Math.abs(value - expectedG[i]) > 1e-6)) {
+          bad.push(`H=${srcHeight},G=${cellCount}`);
+        }
+        combinations += 1;
+        checked += cellCount;
+      }
+    }
+    expect({ combinations, checked, badCombos: bad.length, bad }).toEqual({
+      combinations: 820,
+      checked: 11480,
+      badCombos: 0,
+      bad: [],
+    });
+  });
 });
