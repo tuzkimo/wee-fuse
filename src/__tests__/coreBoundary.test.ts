@@ -77,6 +77,17 @@
  *    `AGENTS.md` 约束，不由这条机检约束（它管的是依赖与平台 API，不是模块方向）。
  * 6. 先剥离注释（`//`、`/* *\/`、`/** *\/`）再扫描，否则「这里不能出现 document」这类
  *    正常中文注释会误报；剥离时保留换行，行号与原文件一致。
+ * 7. **测试文件不在扫描范围内**：项目根相对路径含 `/__tests__/` 路径段，或文件名以
+ *    `.test.ts` / `.spec.ts` 结尾的文件**整文件跳过**（不是只放行 import）。理由是闸门
+ *    守的是「要交付的 core 代码」必须零依赖、与平台无关，而 `__tests__/` 下的文件是开发期
+ *    产物：计划为任务 2/3/4/5/7/8 规定的测试全部落在 `src/core/**` 的 `__tests__/` 子目录
+ *    下，且必须 `import … from "vitest"`，规则 5 的相对路径白名单会命中它们——不排除就等于
+ *    闸门在拒绝计划自己的文件（这是本条规则存在的唯一原因）。
+ *    取舍（刻意接受，不粉饰）：排除之后，若有人在 core 的测试文件里用 DOM 全局（例如
+ *    `document`），这道闸门不会拦。判定为可接受——那不影响交付代码的纯度，测试本来就跑在
+ *    happy-dom 环境里，真出问题会以测试失败的形式暴露。
+ *    漏报方向：目录名必须恰好是 `__tests__` 这个路径段，`my__tests__`、`__tests__backup`
+ *    这类形近目录名不排除；`.test.ts` / `.spec.ts` 是后缀匹配，`x.test.util.ts` 不算测试文件。
  *
  * 已知限制（刻意接受，方向都是宁漏不误）：
  * - **不支持正则字面量**（本次不实现正则识别）。扫描器只认字符串，不区分 `/` 是除号、
@@ -413,19 +424,32 @@ function toProjectPath(globKey: string): string {
   return normalized.startsWith("../") ? `src/${normalized.slice(3)}` : normalized;
 }
 
+/**
+ * 规则 7：测试文件不参与扫描——项目根相对路径含 `/__tests__/` 路径段，或文件名以
+ * `.test.ts` / `.spec.ts` 结尾。闸门守的是「要交付的 core 代码」，而计划规定的 core 测试
+ * 全部位于 `src/core/**` 的 `__tests__/` 子目录且必须 import `vitest`（规则 5 会判它违规）。
+ * 是整文件从扫描集合里剔除，不是只放行 import。
+ */
+function isTestFile(projectPath: string): boolean {
+  const fileName = projectPath.slice(projectPath.lastIndexOf("/") + 1);
+  return projectPath.includes("/__tests__/") || /\.(?:test|spec)\.ts$/.test(fileName);
+}
+
 function describeViolation(violation: Violation): string {
   return violation.kind === "dom-global"
     ? `${violation.file}:${violation.line} 引用了 DOM/BOM 全局 ${violation.token}`
     : `${violation.file}:${violation.line} import 了非相对来源 ${violation.token}（src/core 只允许 ./ 或 ../）`;
 }
 
-/** 扫描一组源码，返回每条违规的一行描述（`文件:行号 …`）。 */
+/** 扫描一组源码，返回每条违规的一行描述（`文件:行号 …`）；测试文件按规则 7 剔除。 */
 function findViolationMessages(sources: Record<string, string>): string[] {
   return Object.keys(sources)
     .sort()
-    .flatMap((key) =>
-      findViolations(sources[key] ?? "", toProjectPath(key)).map(describeViolation),
-    );
+    .flatMap((key) => {
+      const file = toProjectPath(key);
+      if (isTestFile(file)) return [];
+      return findViolations(sources[key] ?? "", file).map(describeViolation);
+    });
 }
 
 describe("src/core 分层边界（闸门）", () => {
@@ -757,6 +781,52 @@ describe("边界扫描器自身的规则", () => {
       "pinia-plugin",
       "@tauri-apps-extra/x",
       "my-vue",
+    ]);
+  });
+
+  it("规则 7：core 的 __tests__ 文件不在扫描范围内（import vitest、用 document 都不报）", () => {
+    const code = [
+      'import { describe, expect, it } from "vitest";',
+      "const title = document.title;",
+    ].join("\n");
+
+    // 计划为任务 2/3/4/5/7/8 规定的测试都放在 src/core/**/__tests__/ 下，且必须
+    // import 测试框架；闸门若扫它们，就会拒绝计划自己的文件。
+    expect(findViolationMessages({ "../core/color/__tests__/space.test.ts": code })).toEqual([]);
+    // 文件名形态同样排除：`.test.ts` / `.spec.ts` 不必待在 `__tests__` 目录里
+    expect(findViolationMessages({ "../core/color/space.spec.ts": code })).toEqual([]);
+    // `__tests__` 目录下的任意层、任意文件名的文件都排除（测试辅助模块也常在里边）
+    expect(
+      findViolationMessages({ "../core/color/__tests__/helpers/load.ts": code }),
+    ).toEqual([]);
+  });
+
+  it("规则 7 不是整层放行：同内容的非测试文件照样两条都报", () => {
+    const code = [
+      'import { describe, expect, it } from "vitest";',
+      "const title = document.title;",
+    ].join("\n");
+
+    expect(findViolationMessages({ "../core/color/space.ts": code })).toEqual([
+      "src/core/color/space.ts:1 import 了非相对来源 vitest（src/core 只允许 ./ 或 ../）",
+      "src/core/color/space.ts:2 引用了 DOM/BOM 全局 document",
+    ]);
+  });
+
+  it("规则 7 的排除按完整路径段与后缀匹配，形近名字不被误排除", () => {
+    const code = "const title = document.title;";
+
+    // `my__tests__` 里的 `__tests__` 前面不是 `/`，不是 `__tests__` 路径段
+    expect(findViolationMessages({ "../core/my__tests__/x.ts": code })).toEqual([
+      "src/core/my__tests__/x.ts:1 引用了 DOM/BOM 全局 document",
+    ]);
+    // `__tests__backup` 同理，是另一个目录名
+    expect(findViolationMessages({ "../core/__tests__backup/x.ts": code })).toEqual([
+      "src/core/__tests__backup/x.ts:1 引用了 DOM/BOM 全局 document",
+    ]);
+    // `.test.ts` / `.spec.ts` 是后缀，`x.test.util.ts` 不是测试文件
+    expect(findViolationMessages({ "../core/x.test.util.ts": code })).toEqual([
+      "src/core/x.test.util.ts:1 引用了 DOM/BOM 全局 document",
     ]);
   });
 });
