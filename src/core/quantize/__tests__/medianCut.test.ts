@@ -192,3 +192,41 @@ describe("[补充] 切割轴、切点与代表色", () => {
     expect(clusters[2]?.rgb[0]).toBeCloseTo(192, 4);
   });
 });
+
+/**
+ * —— 任务 9 断言审计补充 ——
+ * 上面「颜色多于档位时压到档位数」只断言了 `length <= 8` 与 `length > 1`，**只钉上界**：
+ * 把切割循环改成「只切一次」（`boxes.length < 2`）后它仍然全绿（实测：该变异穿透了这条用例，
+ * 只被 `maxColors` 为 1 / 3 的两条用例从旁边拦下）。也就是说「压到档位数」这个标题声称的
+ * 判别力并不成立——真正压到几档没有任何断言。下面两条把档位数钉成**精确值**。
+ * 简报原文的断言一条未改、一条未删。
+ */
+describe("[审计补充] 档位数是精确值，不只是上界", () => {
+  it("8 个互不相邻的颜色压到 4 档：簇数恰为 4", () => {
+    // 8 个颜色各落在自己的 5bit 桶里（0 与 255 分属首末桶），逐次切割直到盒子数 == maxColors。
+    const histogram = buildHistogram(
+      gridFromColors([
+        [0, 0, 0],
+        [255, 0, 0],
+        [0, 255, 0],
+        [0, 0, 255],
+        [255, 255, 0],
+        [255, 0, 255],
+        [0, 255, 255],
+        [255, 255, 255],
+      ]),
+    );
+    const clusters = medianCut(histogram, 4);
+    expect(clusters).toHaveLength(4);
+    expect(clusters.reduce((s, c) => s + c.count, 0)).toBe(8);
+  });
+
+  it("64 个颜色压到 8 档：簇数恰为 8", () => {
+    const colors: Array<[number, number, number]> = [];
+    for (let i = 0; i < 64; i++) colors.push([i * 4, 255 - i * 4, (i * 8) % 256]);
+    const histogram = buildHistogram(gridFromColors(colors));
+    const clusters = medianCut(histogram, 8);
+    expect(clusters).toHaveLength(8);
+    expect(clusters.reduce((s, c) => s + c.count, 0)).toBe(64);
+  });
+});

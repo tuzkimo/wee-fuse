@@ -250,6 +250,34 @@ describe("resampleToGrid", () => {
     });
   });
 
+  it("缩小时输出尺寸必须等于请求尺寸，且缓冲区长度自洽（NaN 吞不掉尺寸回归）", () => {
+    // 账本「任务 4 延后 Minor」第 1 条：上面那条收缩属性用例只读通道值，而
+    // `readAxisChannel` 对越界下标返回 NaN、`Math.abs(NaN - expected) > 1e-6` 恒为 false，
+    // 因此「输出网格比请求的小」这类回归会被静默吞掉（假绿路径）。这条与它互补：
+    // 不看颜色，只钉尺寸与缓冲区长度，任一处缩水都会响亮转红。
+    let mismatches = 0;
+    let combinations = 0;
+    for (const axis of [AXES.x, AXES.y]) {
+      for (let srcSize = 1; srcSize <= 40; srcSize++) {
+        const img = makeAxisImage(srcSize, axis);
+        for (let cellCount = 1; cellCount <= srcSize; cellCount++) {
+          const [width, height] = axis.toSize(cellCount);
+          const grid = resampleToGrid(img, width, height);
+          if (
+            grid.width !== width ||
+            grid.height !== height ||
+            grid.rgb.length !== width * height * 3 ||
+            grid.filled.length !== width * height
+          ) {
+            mismatches += 1;
+          }
+          combinations += 1;
+        }
+      }
+    }
+    expect({ combinations, mismatches }).toEqual({ combinations: 1640, mismatches: 0 });
+  });
+
   it("放大时每格恰好取 1 个源像素（逐轴，含补洞分支）", () => {
     // 沿该轴的源下标写进该轴通道，于是每格该通道精确指出它取了哪个源像素。
     // 放大路径每格的原始区间**至多含 1 个像素**：非空者直接用，空者被

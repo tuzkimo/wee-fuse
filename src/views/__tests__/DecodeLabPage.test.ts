@@ -481,4 +481,46 @@ describe("实验台的其它行为", () => {
 
     wrapper.unmount();
   });
+
+  it("原生长边恰等于 RAW_PREVIEW_MAX_EDGE 时照常渲染（上限是闭区间）", async () => {
+    // 3200×3200 → 裁剪边长 round(3200 × 0.5) = 1600，**恰好压在上限上**。
+    // 账本「任务 6 延后 Minor」第 3 条：原来的用例只覆盖了 1620 > 1600 那一侧，
+    // 判据若被写成 `<`（开区间），这张 1600² 的 1:1 诊断视图会静默消失、而所有既有断言
+    // 仍然全绿。这条钉住 `<=` 的闭区间语义（改成 `<` 时它会红）。
+    const side = RAW_PREVIEW_MAX_EDGE;
+    const big: RgbaImage = {
+      width: side * 2,
+      height: side * 2,
+      data: new Uint8ClampedArray(side * 2 * side * 2 * 4),
+    };
+    big.data.fill(128);
+    stubImage(side * 2, side * 2);
+    stubBitmapApi({ source: big, mode: "box" });
+    stubOffscreenCanvas();
+    const canvases = stubCanvasElement();
+
+    const wrapper = mount(DecodeLabPage);
+    await runLab(wrapper);
+    await waitForText(wrapper, "116² 首段滤波差异");
+
+    // 快路径 116²、保底路径 1600²（== 上限），两侧都渲染
+    const rawViews = wrapper.findAll('[data-testid="raw-view"]');
+    expect(rawViews).toHaveLength(2);
+    expect(wrapper.findAll('[data-testid="raw-view"] img')).toHaveLength(2);
+    expect(rawViews.filter((view) => !view.find("img").exists())).toHaveLength(0);
+    const sizes = wrapper
+      .findAll('[data-testid="raw-view"] img')
+      .map((view) => {
+        const canvas = canvasByUrl(canvases, view.attributes("src"));
+        return [canvas?.width, canvas?.height];
+      });
+    expect(sizes).toEqual([
+      [STAGE_CELLS, STAGE_CELLS],
+      [side, side],
+    ]);
+    // 那张 1600² 的原生画布确实被创建了（不是被上限拦掉后从别处凑出来的尺寸）
+    expect(canvases.some((canvas) => canvas.width === side && canvas.height === side)).toBe(true);
+
+    wrapper.unmount();
+  });
 });

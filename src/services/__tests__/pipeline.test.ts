@@ -216,7 +216,13 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
     expect(exact.requests).toHaveLength(0);
   });
 
-  it("裁剪尺寸非有限时同样在解码之前抛错（Infinity 曾能走完一次解码）", async () => {
+  // 标题如实写明本用例证明的范围：它在修复前后都绿（chooseDecoderPath 本轮未改，
+  // 非有限尺寸在它那里就会抛错），真正判别「Infinity 曾静默算出看似正常的网格」的是
+  // build.test.ts 里 `computeGridSize` 的两条用例——「裁剪尺寸非有限时抛错」与
+  // 「裁剪高非法同样抛错（不只是宽）」（按标题定位，不写行号）。原标题声称
+  // 「Infinity 曾能走完一次解码」，会让后人以为 build.test.ts 那条冗余而删掉它
+  // ——账本「任务 8 延后 Minor」第 1 条。
+  it("裁剪尺寸非有限时同样在解码之前抛错（解码器一次都不被调用）", async () => {
     const exact = makeStub("exact", "native");
     await expect(
       generatePattern(
