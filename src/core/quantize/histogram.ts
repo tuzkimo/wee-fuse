@@ -9,8 +9,15 @@ const BUCKET_COUNT = LEVELS * LEVELS * LEVELS;
 
 /** RGB 三维直方图。 */
 export interface Histogram {
-  /** 桶内像素数，长度 32768。 */
-  readonly counts: Uint32Array;
+  /**
+   * 桶内像素权重之和，长度 32768。
+   *
+   * 用 `Float64Array` 而不是 `Uint32Array`：`addToHistogram` 的 `weight` 是公开参数，
+   * 允许小数（例如按覆盖率加权），而整型数组的 `+= 0.5` 会被 `ToUint32` 静默截断成 0，
+   * 导致该桶被 `histogramBuckets` 跳过、`total` 却把它算进去，破坏 `sum(counts) === total`。
+   * 与 `sums`、`total` 的浮点语义保持一致。
+   */
+  readonly counts: Float64Array;
   /** 桶内各通道之和（非加权），长度 32768*3，用于精确求桶平均色。 */
   readonly sums: Float64Array;
   /** 参与统计的像素总数。 */
@@ -18,7 +25,7 @@ export interface Histogram {
 }
 
 export function createHistogram(): Histogram {
-  return { counts: new Uint32Array(BUCKET_COUNT), sums: new Float64Array(BUCKET_COUNT * 3), total: 0 };
+  return { counts: new Float64Array(BUCKET_COUNT), sums: new Float64Array(BUCKET_COUNT * 3), total: 0 };
 }
 
 /** 把 0–255 的分量映射到桶下标的一个维度。 */
@@ -32,7 +39,13 @@ export function bucketIndex(r: number, g: number, b: number): number {
   return (bucketLevel(r) << (HISTOGRAM_BITS * 2)) | (bucketLevel(g) << HISTOGRAM_BITS) | bucketLevel(b);
 }
 
-/** 把一个像素计入直方图。 */
+/**
+ * 把一个像素计入直方图。
+ *
+ * `weight` 允许小数（按覆盖率 / 面积加权），但必须是有限的非负数：`NaN` / `Infinity` 会
+ * 静默污染 `sums` 与 `total`，负数会让中位切割的累计和倒退并选出错误的切点。
+ * `weight === 0` 合法（等价于不计入）。
+ */
 export function addToHistogram(
   histogram: Histogram,
   r: number,
@@ -40,6 +53,7 @@ export function addToHistogram(
   b: number,
   weight = 1,
 ): void {
+  if (!Number.isFinite(weight) || weight < 0) throw new Error(`权重非法：${weight}`);
   const index = bucketIndex(r, g, b);
   histogram.counts[index] += weight;
   histogram.sums[index * 3] += r * weight;

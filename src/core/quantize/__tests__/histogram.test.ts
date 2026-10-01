@@ -163,3 +163,54 @@ describe("[补充] 多行网格与桶顺序", () => {
     expect(buckets.map((bk) => bk.b)).toEqual([0, 255]);
   });
 });
+
+/**
+ * —— 第 1 轮修复补充断言 ——
+ * `weight` 是公开参数，任务 8 的 `build.ts` 是下一个消费者，可能传小数权重（覆盖率 / 面积）。
+ * 这里钉住三件事：小数权重被保留（不被整型数组截断）、像素守恒、非法权重在入口抛错。
+ * 上面所有断言一条未改。
+ */
+describe("[修复] 小数权重与非法权重", () => {
+  it("小数权重被原样保留，且该桶不会被 histogramBuckets 跳过", () => {
+    const histogram = createHistogram();
+    addToHistogram(histogram, 100, 100, 100, 0.5);
+    // 用 Uint32Array 时这里会被 ToUint32 截断成 0
+    expect(histogram.counts[bucketIndex(100, 100, 100)]).toBe(0.5);
+    const buckets = histogramBuckets(histogram);
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]?.count).toBe(0.5);
+    expect(buckets[0]?.r).toBeCloseTo(100, 6);
+    expect(histogram.total).toBe(0.5);
+  });
+
+  it("含小数权重时像素守恒：所有桶 count 之和 ≈ total", () => {
+    const histogram = createHistogram();
+    addToHistogram(histogram, 10, 10, 10, 0.5);
+    addToHistogram(histogram, 12, 12, 12, 0.25); // 与上一条同桶（级 1）
+    addToHistogram(histogram, 100, 100, 100, 0.5);
+    addToHistogram(histogram, 200, 100, 50, 1.75);
+    expect(histogram.total).toBe(3);
+    const buckets = histogramBuckets(histogram);
+    const counted = buckets.reduce((sum, bk) => sum + bk.count, 0);
+    // 浮点累加顺序不同会有末位差，用 6 位精度比较
+    expect(counted).toBeCloseTo(histogram.total, 6);
+    expect(buckets).toHaveLength(3);
+  });
+
+  it("非有限或负的权重在入口抛错，且不污染直方图", () => {
+    for (const weight of [NaN, -1, Infinity, -Infinity]) {
+      const histogram = createHistogram();
+      expect(() => addToHistogram(histogram, 100, 100, 100, weight)).toThrow(/权重非法/);
+      // 入口判定，抛错发生在任何写入之前
+      expect(histogram.total).toBe(0);
+      expect(histogramBuckets(histogram)).toEqual([]);
+    }
+  });
+
+  it("weight 为 0 合法：等价于不计入（不抛错、不产生桶）", () => {
+    const histogram = createHistogram();
+    expect(() => addToHistogram(histogram, 100, 100, 100, 0)).not.toThrow();
+    expect(histogram.total).toBe(0);
+    expect(histogramBuckets(histogram)).toEqual([]);
+  });
+});
