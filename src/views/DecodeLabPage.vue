@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import type { DecodeRequest, Decoder } from "@/core/image/decode";
 import type { SampledGrid } from "@/core/image/types";
 import { resampleToGrid } from "@/core/image/resample";
+import { PIXELS_PER_CELL } from "@/core/pattern/build";
 import { createExactDecoder, createFastDecoder, createDomBitmapPlatform } from "@/services/decoders";
 import { compareGrids, VISIBLE_DELTA_RGB_THRESHOLD, type GridDelta } from "@/services/gridDelta";
 import {
@@ -20,8 +21,13 @@ const busy = ref(false);
 const error = ref("");
 
 const CELLS = 29;
-const PIXELS_PER_CELL = 4;
-/** 首段滤波度量的网格边长：与快路径的解码目标一致（29 × 4 = 116）。 */
+/**
+ * 首段滤波度量的网格边长：与快路径的解码目标一致（29 × 4 = 116）。
+ *
+ * `PIXELS_PER_CELL` 从 `@/core/pattern/build` 引入，**不在本页另写一份**：那个常量绑着
+ * 规格 §12.1 的 R1 读数（116 = 29 × 4）与「不可改」的注释，页面自己算一份就等于该口径有了
+ * 两个来源，改一处漏一处会静默改变实验台的度量尺度。core → views 这个方向允许。
+ */
 const STAGE_CELLS = CELLS * PIXELS_PER_CELL;
 /** 成品对比视图的长边（像素）：29 格 × 每格像素数。 */
 const COMPARISON_LONG_EDGE = CELLS * GRID_CELL_PREVIEW_PX;

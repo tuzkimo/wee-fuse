@@ -19,6 +19,13 @@ import DecodeLabPage from "@/views/DecodeLabPage.vue";
 const FILE = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
 
 const CELLS = 29;
+/**
+ * **刻意写死的字面量**（最终审查 F4）：它是「钉住常量值」的那一类，不是重复计算——
+ * 页面自己的 `STAGE_CELLS` 现改为从 `@/core/pattern/build` 引入 `PIXELS_PER_CELL`
+ * （29 × 4 = 116），若有人把那个常量改成别的值，页面会跟着变、而这里的 116 会转红。
+ * `build.test.ts` 里另有一条 `expect(PIXELS_PER_CELL).toBe(4)`，两处锚点各守一个方向：
+ * 那边守常量本身，这边守实验台实际用的度量尺度（规格 §12.1 的 R1 读数绑在 116 上）。
+ */
 const STAGE_CELLS = 116;
 const COMPARISON_LONG_EDGE = CELLS * GRID_CELL_PREVIEW_PX; // 464
 
