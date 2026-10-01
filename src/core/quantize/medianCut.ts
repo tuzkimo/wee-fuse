@@ -1,0 +1,135 @@
+import { rgbToLab, type Lab, type RGB } from "../color/space";
+import { histogramBuckets, type Histogram, type HistogramBucket } from "./histogram";
+
+/** 一个颜色簇：代表色 + 该簇覆盖的像素数。 */
+export interface ColorCluster {
+  readonly rgb: RGB;
+  readonly count: number;
+}
+
+interface Entry {
+  readonly rgb: RGB;
+  readonly lab: Lab;
+  readonly count: number;
+}
+
+/** 盒子的最长轴（Lab 空间）与轴上的跨度。 */
+function longestAxis(entries: readonly Entry[]): { axis: 0 | 1 | 2; extent: number } {
+  let minL = Infinity;
+  let maxL = -Infinity;
+  let minA = Infinity;
+  let maxA = -Infinity;
+  let minB = Infinity;
+  let maxB = -Infinity;
+
+  for (const e of entries) {
+    const [l, a, b] = e.lab;
+    if (l < minL) minL = l;
+    if (l > maxL) maxL = l;
+    if (a < minA) minA = a;
+    if (a > maxA) maxA = a;
+    if (b < minB) minB = b;
+    if (b > maxB) maxB = b;
+  }
+
+  const extents = [maxL - minL, maxA - minA, maxB - minB];
+  let axis: 0 | 1 | 2 = 0;
+  let extent = extents[0];
+  for (let i = 1; i < 3; i++) {
+    if ((extents[i] as number) > extent) {
+      extent = extents[i] as number;
+      axis = i as 0 | 1 | 2;
+    }
+  }
+  return { axis, extent };
+}
+
+/**
+ * 选出要切割的盒子：Lab 空间跨度最大的那个（Heckbert 中位切割的经典策略）。
+ *
+ * 备选策略是按盒子像素数选（把颜色预算更多给像素密集的区域）。两者各有适用场景，
+ * 此处先用跨度策略，因为它对「画面里有若干明显不同的色块」这类典型图纸效果更好。
+ * 需要换策略时只改这个函数，其余逻辑与测试结构不变。
+ */
+function selectBoxToSplit(boxes: readonly Entry[][]): number {
+  let best = -1;
+  let bestExtent = 0;
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i] as Entry[];
+    if (box.length < 2) continue;
+    const { extent } = longestAxis(box);
+    if (extent > bestExtent) {
+      bestExtent = extent;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** 沿最长轴按像素数加权的中位数把盒子切成两个。 */
+function splitBox(box: Entry[]): [Entry[], Entry[]] {
+  const { axis } = longestAxis(box);
+  const sorted = [...box].sort((x, y) => (x.lab[axis] as number) - (y.lab[axis] as number));
+  const total = sorted.reduce((sum, e) => sum + e.count, 0);
+
+  let accumulated = 0;
+  let cut = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    accumulated += (sorted[i] as Entry).count;
+    if (accumulated * 2 >= total) {
+      cut = i + 1;
+      break;
+    }
+  }
+  if (cut <= 0) cut = 1;
+  if (cut >= sorted.length) cut = sorted.length - 1;
+
+  return [sorted.slice(0, cut), sorted.slice(cut)];
+}
+
+/** 盒子的代表色 = 盒内桶按像素数加权的平均色。 */
+function boxToCluster(box: readonly Entry[]): ColorCluster {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (const e of box) {
+    r += e.rgb[0] * e.count;
+    g += e.rgb[1] * e.count;
+    b += e.rgb[2] * e.count;
+    count += e.count;
+  }
+  if (count === 0) return { rgb: [0, 0, 0], count: 0 };
+  return { rgb: [r / count, g / count, b / count], count };
+}
+
+/**
+ * 中位切割聚类：把直方图里的颜色压到 maxColors 个代表色以内。
+ *
+ * maxColors <= 0 或颜色本来就少于 maxColors 时不切割，直接把每个桶当作一个簇。
+ */
+export function medianCut(histogram: Histogram, maxColors: number): ColorCluster[] {
+  const buckets: HistogramBucket[] = histogramBuckets(histogram);
+  if (buckets.length === 0) return [];
+
+  const entries: Entry[] = buckets.map((bk) => ({
+    rgb: [bk.r, bk.g, bk.b],
+    lab: rgbToLab(bk.r, bk.g, bk.b),
+    count: bk.count,
+  }));
+
+  if (maxColors <= 0 || entries.length <= maxColors) {
+    return entries.map((e) => ({ rgb: e.rgb, count: e.count }));
+  }
+
+  const boxes: Entry[][] = [entries];
+  while (boxes.length < maxColors) {
+    const index = selectBoxToSplit(boxes);
+    if (index < 0) break;
+    const [left, right] = splitBox(boxes[index] as Entry[]);
+    if (left.length === 0 || right.length === 0) break;
+    boxes.splice(index, 1, left, right);
+  }
+
+  return boxes.map(boxToCluster);
+}
