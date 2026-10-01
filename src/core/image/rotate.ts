@@ -26,10 +26,17 @@ export function rotatedSize(
  * 否则会污染传入的网格。非 0 角度返回新分配的数组，无此约束。
  *
  * `rotation` 只接受 0–3；其它值（例如从未经校验的持久化参数读入的 number）
- * 会**抛错**，而不是静默按某个角度处理。
+ * 会**抛错**，而不是静默按某个角度处理。校验发生在进入循环**之前**——放在循环里时，
+ * 0 格网格（宽或高为 0）的循环体一次都不执行，非法角度会静默返回一个空网格，
+ * 与本 JSDoc 的契约不符（账本「任务 5 延后 Minor」第 2 条的根因，已修）。
  */
 export function rotateGrid(grid: SampledGrid, rotation: Rotation): SampledGrid {
   if (rotation === 0) return grid;
+  if (rotation !== 1 && rotation !== 2 && rotation !== 3) {
+    // 偏离简报：简报此处是裸 `else`，会把非法 rotation 静默当成 270°，
+    // 配合 TypedArray 越界写静默丢弃 = 静默损坏。改为响亮失败（与 resample.ts 的抛错风格一致）。
+    throw new Error(`旋转角度非法：${rotation}`);
+  }
 
   const { width: sw, height: sh } = grid;
   const { width: dw, height: dh } = rotatedSize(sw, sh, rotation);
@@ -48,14 +55,11 @@ export function rotateGrid(grid: SampledGrid, rotation: Rotation): SampledGrid {
         // 180°：(sx, sy) → (sw - 1 - sx, sh - 1 - sy)
         dx = sw - 1 - sx;
         dy = sh - 1 - sy;
-      } else if (rotation === 3) {
-        // 顺时针 270°（逆时针 90°）：(sx, sy) → (sy, sw - 1 - sx)
+      } else {
+        // rotation === 3（其余取值已被上面的守卫拦下）：顺时针 270°（逆时针 90°）：
+        // (sx, sy) → (sy, sw - 1 - sx)
         dx = sy;
         dy = sw - 1 - sx;
-      } else {
-        // 偏离简报：简报此处是裸 `else`，会把非法 rotation 静默当成 270°，
-        // 配合 TypedArray 越界写静默丢弃 = 静默损坏。改为响亮失败（与 resample.ts 的抛错风格一致）。
-        throw new Error(`旋转角度非法：${rotation}`);
       }
 
       const si = sy * sw + sx;

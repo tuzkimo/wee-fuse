@@ -168,9 +168,13 @@ describe("rotateGrid", () => {
   });
 
   it("对每个旋转角度，宽高都与 rotatedSize 一致", () => {
+    // 期望值写成**字面量**而不是再调一次 `rotatedSize`：rotateGrid 自己就是用 rotatedSize
+    // 算输出尺寸的，拿它当期望值等于拿实现当自己的尺子——两者一起错（例如换轴规则写反成
+    // 0/2 换轴）时这条断言仍会全绿。字面量才能钉住「1/3 交换 2×3 → 3×2，0/2 不变」。
     for (const rotation of [0, 1, 2, 3] as Rotation[]) {
       const r = rotateGrid(original, rotation);
-      expect({ width: r.width, height: r.height }).toEqual(rotatedSize(2, 3, rotation));
+      const expected = rotation % 2 === 1 ? { width: 3, height: 2 } : { width: 2, height: 3 };
+      expect({ width: r.width, height: r.height }).toEqual(expected);
     }
   });
 
@@ -282,5 +286,23 @@ describe("rotateGrid", () => {
     }
     // 合法值不受影响
     expect(() => rotateGrid(original, 3)).not.toThrow();
+  });
+
+  it("0 格网格传非法 rotation 同样抛错（校验必须发生在循环之前）", () => {
+    // 账本「任务 5 延后 Minor」第 2 条：校验原在循环体内，0 格网格的循环体一次都不执行，
+    // 于是非法 rotation 会静默返回一个空网格，与 JSDoc 的「非法值抛错」契约不符。
+    // 修法是把守卫提到循环之前；这条用例钉住修复后的行为（修复前第一行就是红的）。
+    const grids: readonly SampledGrid[] = [
+      { width: 0, height: 0, rgb: new Float32Array(0), filled: new Uint8Array(0) },
+      { width: 0, height: 3, rgb: new Float32Array(0), filled: new Uint8Array(0) },
+      { width: 3, height: 0, rgb: new Float32Array(0), filled: new Uint8Array(0) },
+    ];
+    for (const empty of grids) {
+      for (const bad of [4, -1, 1.5, Number.NaN]) {
+        expect(() => rotateGrid(empty, bad as unknown as Rotation)).toThrow(/旋转角度非法/);
+      }
+      // 0° 仍然原样返回（这条早退在守卫之前，不属于非法值路径）
+      expect(rotateGrid(empty, 0)).toBe(empty);
+    }
   });
 });
