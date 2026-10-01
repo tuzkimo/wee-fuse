@@ -103,8 +103,9 @@ wee-fuse/
 │   │
 │   │   # 上表是目标结构。计划 A（引擎）实际交付的 core 模块：color / palette / image /
 │   │   # quantize / pattern。**没有 `image/crop.ts`**——裁剪框是 `GenerateRequest.crop`
-│   │   # 参数，实现在 `services/pipeline.ts`；`image/decode.ts` 只有接口与类型，
-│   │   # 两个解码器实现在 `services/decoders.ts`。
+│   │   # 参数，由 `services/pipeline.ts` **透传**给解码器；真正的裁剪与缩放发生在
+│   │   # `services/decoders.ts`（快路径 = 裁剪 + 平台缩放，保底路径 = 只裁剪）。
+│   │   # `image/decode.ts` 只有接口与类型。
 │   ├── services/                  # 唯一碰平台的层
 │   │   ├── imageSource.ts         # 相册/拍照/share-target → 统一 ImageSource
 │   │   ├── projectStore.ts        # 工程文件读写与列表
@@ -180,6 +181,8 @@ interface Pattern {
 1. **落盘存色号字符串，不存色卡数组下标。** 若将来校准色值或重排色卡顺序，按下标存的旧工程会全部静默错位——图纸看起来正常，色号全错。存色号永远对得上。
 
    **⚠️ 载入时有一处必须显式重映射**：上面 `grid` 的下标是**到 `palette.codes`（本次图纸用到的色号子集）**，而引擎运行时 `Pattern.cells` 用的是**全色卡下标**（`0..palette.colors.length-1`，`EMPTY = 0xffff` 表空格）。两者在「图纸只用了部分色号」时**不同**。载入工程时必须做一次「子集 codes → 全色卡下标」的映射；只比对 `palette.id` 是**抓不到**这个错配的（同 id 但传了子集色卡），结果会是**每个色号静默标成别的名字**。计划 B 应在工程文件载入处集中做这一次重映射。
+
+   **⚠️ 同一处还要做一次字段映射**：落盘格式写的是 `crop.w` / `crop.h` / `crop.rotate`，而运行期是 `Rect.width` / `Rect.height`（`core/image/types.ts`）**加上一个独立的** `rotation` 参数（`services/pipeline.ts`）——**字段名不同、且 `rotate` 从 `crop` 内部挪到了外面**。载入时不映射就会静默拿到 `undefined` 尺寸（进而是 NaN 网格）。
 2. **原图只存一张最长边 1600px 的缩略副本**（WebP，约 200–400KB），不存全尺寸原图。这样「对比预览」和「回头改裁剪框/色数档位重跑」都可用，工程文件也不会膨胀到数 MB。
 3. `params` 必须落盘，否则打开旧工程无法回到原始参数重新生成。
 
