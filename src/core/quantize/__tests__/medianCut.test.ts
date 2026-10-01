@@ -172,4 +172,23 @@ describe("[补充] 切割轴、切点与代表色", () => {
       expect(clusters.reduce((s, c) => s + c.count, 0)).toBe(3);
     }
   });
+
+  it("选盒子用「Lab 跨度最大」策略，不是「像素数最多」策略（此处两者指向不同的盒子）", () => {
+    // 四个灰桶：0 与 32 各 5 像素（共 10 像素，L 跨度 12.29）；
+    // 128 与 192 各 1 像素（共 2 像素，L 跨度 24.12）。
+    // 首次切割按累计像素数切在 2 处 → 左盒 {0,32}（像素多、跨度小），右盒 {128,192}（像素少、跨度大）。
+    // 第二次切割：跨度策略切右盒 → 簇代表色 16(=10 像素) / 128 / 192；
+    // 若换成像素数策略会切左盒 → 0 / 32 / 160，第 1、3 个簇完全不同。
+    const histogram = createHistogram();
+    addToHistogram(histogram, 0, 0, 0, 5);
+    addToHistogram(histogram, 32, 32, 32, 5);
+    addToHistogram(histogram, 128, 128, 128, 1);
+    addToHistogram(histogram, 192, 192, 192, 1);
+    const clusters = medianCut(histogram, 3);
+    expect(clusters).toHaveLength(3);
+    expect(clusters.map((c) => c.count)).toEqual([10, 1, 1]);
+    expect(clusters[0]?.rgb[0]).toBeCloseTo(16, 4);
+    expect(clusters[1]?.rgb[0]).toBeCloseTo(128, 4);
+    expect(clusters[2]?.rgb[0]).toBeCloseTo(192, 4);
+  });
 });
