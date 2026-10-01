@@ -136,6 +136,15 @@ describe("读像素必须在释放位图之前（简报外补充）", () => {
  * 补之前的口径矛盾：`DecodeRequest.targetWidth/Height` 文档写「输出位图宽/高」，而保底路径
  * 完全忽略它们、返回裁剪原生尺寸（1500² 而不是 116²），下游照文档假设就会静默拿到尺寸不同的位图。
  * 这两条用例把「哪种解码器承诺哪种尺寸」钉住，避免文档与行为再次漂移。
+ *
+ * **最终审查 F8 如实说明（判别力边界）**：下面两条读的位图是 `makePlatform(...)` 按
+ * `request.targetWidth` / `request.crop.width` **自己造出来的假平台输出**，所以
+ * `image.width === request.targetWidth`（以及 fast 那条 `not.toBe(crop.width)`）是**夹具自证**、
+ * 构造性恒真：把 `createFastDecoder` 里传给 `createRegionResized` 的缩放实参删掉，
+ * 这两条也不会红。它们证明的只是「`decode()` 把平台返回对象的字段原样回传」。
+ * 真正的判别器是同文件里**实参顺序**的断言（`createRegionResized` 收到
+ * `(source, 10, 20, 100, 50, 232, 116)`、`createRegion` 收到 `(source, 10, 20, 100, 50)`）
+ * 与 `outputSize` 字段值断言——尺寸口径靠那三条守，不是靠这两条。
  */
 describe("解码输出的尺寸口径（审查第 1 轮补充）", () => {
   it("fast 声明 target：返回值是 116 级的目标尺寸，而不是裁剪尺寸", async () => {

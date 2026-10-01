@@ -15,6 +15,13 @@ import type { Palette } from "@/core/palette/types";
  * 且偏差与降采样倍率基本无关。于是「保真度正确的保底路径（只裁剪 + 自研面积平均）在内存
  * 允许时就该用」。2048 取自规格 §12.1「设计含义」第 3 条给出的内存预算建议：
  * 长边 ≤ 2048 ⇒ 两边都 ≤ 2048 ⇒ 原生 RGBA 位图 ≤ 2048 × 2048 × 4 B = 16 MiB。
+ *
+ * **这 16 MiB 只算了 `ImageData` 一份，峰值要按约 2–3 倍读**（最终审查 F10）：保底路径在
+ * `readPixels` 期间同时持有 ①`createImageBitmap` 的原生位图、②新建的同尺寸
+ * `OffscreenCanvas`（或回落 `<canvas>`）后备存储、③`getImageData` 返回的 `ImageData` 副本
+ * ——三份同尺寸 RGBA，即 ≈ 2–3 × 16 MiB ≈ 32–48 MiB（见 `decoders.ts` 的 `readPixels`），
+ * 另加解码来源位图本身。阈值**不改**：口径是长边（见 `chooseDecoderPath`），16 MiB 是规格
+ * 给出的预算锚点，2–3 倍的峰值仍在目标平板可接受的范围内。
  */
 export const MAX_EXACT_CROP_EDGE = 2048;
 
@@ -126,7 +133,8 @@ export async function generatePattern(
   const image = await decoder.decode(request.source, { crop, targetWidth, targetHeight });
 
   // 不假设解码器返回的就是 target 尺寸：快路径承诺 target、保底路径返回裁剪原生尺寸，
-  // 两者都与 target 可能不同（decode.ts 的 outputSize 契约），所以按返回值实际尺寸重采样。
+  // 两者都与 target 可能不同（两种口径见 decode.ts 的 `outputSize`；那里也写明它是
+  // 自我描述的文档字段、没有生产读取者），所以按返回值实际尺寸重采样。
   const sampled: SampledGrid = resampleToGrid(image, rawGrid.width, rawGrid.height);
   // rotation === 0 时 rotateGrid 返回入参本身（同一引用）。buildPattern 只读网格的
   // rgb / filled，不会就地改写，故这里安全；下游任何新增的写操作都要先复制。

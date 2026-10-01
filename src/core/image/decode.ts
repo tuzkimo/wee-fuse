@@ -33,6 +33,13 @@ export interface Decoder {
    *
    * 两种口径都可能与 `targetWidth/Height` 不同，所以下游要按 `request` 与 `outputSize`
    * 判断内存与尺寸，而不是照 target 假设。
+   *
+   * **如实说明（最终审查 F9）**：本字段目前是**自我描述 / 测试用**的文档字段，`src/services/`
+   * 里没有任何生产代码读它——`generatePattern` 一律按 `decode()` 返回值的**实际尺寸**重采样
+   * （`pipeline.ts` 的对应注释与 `pipeline.test.ts` 的「不假设解码器返回 target 尺寸」用例
+   * 钉着这一点），所以它不是运行期的契约执行点。保留它的理由：偏离 7 需要下游能区分两种口径，
+   * 而 `decoders.test.ts` 与 `pipeline.test.ts` 用它做行为断言（「哪条解码器被选中」）；
+   * 将来若真有代码按口径分支（例如内存预算判定），这里是唯一定义处。
    */
   readonly outputSize: "target" | "native";
   decode(source: Blob, request: DecodeRequest): Promise<RgbaImage>;
