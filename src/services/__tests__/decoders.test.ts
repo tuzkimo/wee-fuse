@@ -107,10 +107,13 @@ describe("读像素必须在释放位图之前（简报外补充）", () => {
           order.push("close");
         },
       };
+      // 记录 readPixels 收到的**那个对象**（不是它的结构）
+      let received: BitmapLike | null = null;
       const platform: BitmapPlatform = {
         createRegion: vi.fn(async () => bitmap),
         createRegionResized: vi.fn(async () => bitmap),
-        readPixels: vi.fn(() => {
+        readPixels: vi.fn((arg: BitmapLike) => {
+          received = arg;
           order.push("readPixels");
           return owned;
         }),
@@ -119,7 +122,51 @@ describe("读像素必须在释放位图之前（简报外补充）", () => {
       const result = await create(platform).decode(source, request);
 
       expect(result).toBe(owned);
+      // 用 toBe（同一对象）而不是 toHaveBeenCalledWith：后者是深比较，
+      // `readPixels({ ...bitmap })` 这种浅拷贝会照样通过（真实平台上它不是 CanvasImageSource，会崩）
+      expect(received).toBe(bitmap);
       expect(order).toEqual(["readPixels", "close"]);
     });
   }
+});
+
+/**
+ * 审查 I2：`Decoder.outputSize` 是 2026-09-30 审查第 1 轮补上的字段。
+ *
+ * 补之前的口径矛盾：`DecodeRequest.targetWidth/Height` 文档写「输出位图宽/高」，而保底路径
+ * 完全忽略它们、返回裁剪原生尺寸（1500² 而不是 116²），下游照文档假设就会静默拿到尺寸不同的位图。
+ * 这两条用例把「哪种解码器承诺哪种尺寸」钉住，避免文档与行为再次漂移。
+ */
+describe("解码输出的尺寸口径（审查第 1 轮补充）", () => {
+  it("fast 声明 target：返回值是 116 级的目标尺寸，而不是裁剪尺寸", async () => {
+    const targetPixels: RgbaImage = {
+      width: request.targetWidth,
+      height: request.targetHeight,
+      data: new Uint8ClampedArray(request.targetWidth * request.targetHeight * 4),
+    };
+    const { platform } = makePlatform(targetPixels);
+    const decoder = createFastDecoder(platform);
+
+    expect(decoder.outputSize).toBe("target");
+    const image = await decoder.decode(source, request);
+    expect(image.width).toBe(request.targetWidth);
+    expect(image.height).toBe(request.targetHeight);
+    expect(image.width).not.toBe(request.crop.width);
+  });
+
+  it("exact 声明 native：返回值是裁剪原生尺寸，而不是请求里的目标尺寸", async () => {
+    const nativePixels: RgbaImage = {
+      width: request.crop.width,
+      height: request.crop.height,
+      data: new Uint8ClampedArray(request.crop.width * request.crop.height * 4),
+    };
+    const { platform } = makePlatform(nativePixels);
+    const decoder = createExactDecoder(platform);
+
+    expect(decoder.outputSize).toBe("native");
+    const image = await decoder.decode(source, request);
+    expect(image.width).toBe(request.crop.width);
+    expect(image.height).toBe(request.crop.height);
+    expect(image.width).not.toBe(request.targetWidth);
+  });
 });

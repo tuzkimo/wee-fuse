@@ -27,6 +27,8 @@ interface FakeImageOptions {
   readonly height: number;
   /** 传了就让 `decode()` 拒绝。 */
   readonly decodeError?: Error;
+  /** true 时连 `decode` 方法都没有（模拟老 WebView，调用会抛 TypeError）。 */
+  readonly missingDecode?: boolean;
 }
 
 function stubImage(options: FakeImageOptions) {
@@ -38,7 +40,8 @@ function stubImage(options: FakeImageOptions) {
   class FakeImage {
     readonly naturalWidth = options.width;
     readonly naturalHeight = options.height;
-    readonly decode = decode;
+    /** 老 WebView 上 `img.decode` 不存在——这里把它删掉，调用处会抛 TypeError。 */
+    readonly decode: typeof decode | undefined = options.missingDecode === true ? undefined : decode;
 
     get src(): string {
       return assignedSrc;
@@ -71,11 +74,23 @@ describe("probeImageSize", () => {
     expect(url.revokeObjectURL.mock.calls).toEqual([[OBJECT_URL]]);
   });
 
-  it("解码失败时抛出该错误，并照样回收 object URL", async () => {
+  it("解码失败时抛出带中文前缀的错误，并照样回收 object URL", async () => {
     const url = stubUrlApi();
-    stubImage({ width: 0, height: 0, decodeError: new Error("解码失败") });
+    stubImage({ width: 0, height: 0, decodeError: new Error("EncodingError: 解码失败") });
 
-    await expect(probeImageSize(source)).rejects.toThrow("解码失败");
+    // 审查第 1 轮：失败路径必须能被页面读懂，所以统一包一层中文前缀并保留原始详情
+    await expect(probeImageSize(source)).rejects.toThrow(
+      /图片解码失败（EncodingError: 解码失败）/,
+    );
+
+    expect(url.revokeObjectURL.mock.calls).toEqual([[OBJECT_URL]]);
+  });
+
+  it("老 WebView 没有 img.decode（TypeError）时同样包成中文前缀错误", async () => {
+    const url = stubUrlApi();
+    stubImage({ width: 0, height: 0, missingDecode: true });
+
+    await expect(probeImageSize(source)).rejects.toThrow(/图片解码失败（/);
 
     expect(url.revokeObjectURL.mock.calls).toEqual([[OBJECT_URL]]);
   });

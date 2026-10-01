@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { DecodeRequest, Decoder } from "@/core/image/decode";
-import type { RgbaImage, SampledGrid } from "@/core/image/types";
+import type { SampledGrid } from "@/core/image/types";
 import { resampleToGrid } from "@/core/image/resample";
 import { createExactDecoder, createFastDecoder, createDomBitmapPlatform } from "@/services/decoders";
 import { compareGrids, VISIBLE_DELTA_RGB_THRESHOLD, type GridDelta } from "@/services/gridDelta";
+import { PREVIEW_LONG_EDGE, renderPreview } from "@/services/preview";
 import { probeImageSize } from "@/services/probe";
 
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -22,7 +23,8 @@ interface PathResult {
   name: string;
   canvasUrl: string;
   filledCount: number;
-  ms: number;
+  /** 解码 + 重采样耗时（毫秒）。**不含**预览画布渲染。 */
+  decodeAndResampleMs: number;
   /** 该路径的解码结果重采样到 CELLS×CELLS 后的网格，用于两条路径逐格对比。 */
   grid: SampledGrid;
 }
@@ -36,25 +38,11 @@ const results = ref<PathResult[]>([]);
  */
 const delta = ref<GridDelta | null>(null);
 
-function imageToCanvas(image: RgbaImage, scale: number): string {
-  const canvas = document.createElement("canvas");
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext("2d");
-  if (ctx === null) throw new Error("无法获取 2D 上下文");
-  const data = ctx.createImageData(image.width, image.height);
-  data.data.set(image.data);
-  ctx.putImageData(data, 0, 0);
-
-  const scaled = document.createElement("canvas");
-  scaled.width = image.width * scale;
-  scaled.height = image.height * scale;
-  const sctx = scaled.getContext("2d");
-  if (sctx === null) throw new Error("无法获取 2D 上下文");
-  sctx.imageSmoothingEnabled = false;
-  sctx.drawImage(canvas, 0, 0, scaled.width, scaled.height);
-  return scaled.toDataURL("image/png");
-}
+/**
+ * 只有一条路径成功时，页面上会剩下一张图 + 一行错误，很容易被当成有效对比读。
+ * 这种情况必须显式标注；`results.length === 0`（两条都失败）由 error 行覆盖，不必重复提示。
+ */
+const comparisonIncomplete = computed(() => !busy.value && results.value.length === 1);
 
 async function run() {
   const file = fileInput.value?.files?.[0];
@@ -90,17 +78,21 @@ async function run() {
     const decoders: Decoder[] = [createFastDecoder(platform), createExactDecoder(platform)];
 
     for (const decoder of decoders) {
+      // 计时必须把重采样算进去：保底路径的重采样是整条链路上最贵的一步（对最多 1500² 像素
+      // 做面积平均），只包住 decode 会让展示的耗时系统性偏向保底路径。
+      // 预览渲染（建画布 + PNG 编码）不属于产品链路，留在计时之外。
       const started = performance.now();
       const image = await decoder.decode(file, request);
-      const ms = performance.now() - started;
       // 保底路径返回原生像素，这里统一重采样到同样的 29×29，才能逐格对比
       const grid = resampleToGrid(image, CELLS, CELLS);
+      const decodeAndResampleMs = performance.now() - started;
+
       gridSize.value = `${grid.width} × ${grid.height}`;
       results.value.push({
         name: decoder.name,
-        canvasUrl: imageToCanvas(image, 4),
+        canvasUrl: renderPreview(image),
         filledCount: grid.filled.reduce((sum, v) => sum + v, 0),
-        ms,
+        decodeAndResampleMs,
         grid,
       });
     }
@@ -128,8 +120,10 @@ async function run() {
     <h1 class="text-2xl font-bold text-slate-900">解码实验台（R1）</h1>
     <p class="mt-2 max-w-3xl text-sm text-slate-600">
       同一张图、同一个裁剪框，分别走快路径（createImageBitmap 裁剪 + resizeQuality: high）
-      与保底路径（裁剪出原生像素 + 自研面积平均）。把两张图放大后对比细节：快路径若出现
-      块状边缘或摩尔纹，说明平台缩放在了偷工减料，正式流水线必须改用保底路径。
+      与保底路径（裁剪出原生像素 + 自研面积平均）。两侧预览都被归一化到同一条长边后并排显示：
+      视野、预览位图尺寸、显示缩放三者对两侧完全一致，因此「哪边更糊」只可能来自解码输出本身。
+      把两张图放大后对比细节：快路径若出现块状边缘或摩尔纹，说明平台缩放在了偷工减料，
+      正式流水线必须改用保底路径。
     </p>
 
     <div class="mt-4 flex flex-wrap items-center gap-3">
@@ -143,17 +137,25 @@ async function run() {
       </button>
       <span class="text-sm text-slate-500">原图尺寸：{{ sourceSize }}</span>
       <span class="text-sm text-slate-500">网格：{{ gridSize }}</span>
+      <span class="text-sm text-slate-500">预览长边：{{ PREVIEW_LONG_EDGE }} px</span>
     </div>
 
     <p v-if="error" class="mt-3 text-sm text-red-600">{{ error }}</p>
+
+    <p
+      v-if="comparisonIncomplete"
+      class="mt-3 rounded bg-amber-50 p-3 text-sm font-semibold text-amber-800"
+    >
+      对比不完整：两条路径只有一条成功，下面这张图不能与另一条路径对比，请不要据此判断解码质量。
+    </p>
 
     <div class="mt-6 grid gap-6 md:grid-cols-2">
       <section v-for="r in results" :key="r.name" class="rounded bg-white p-4 shadow">
         <h2 class="text-sm font-semibold text-slate-800">{{ r.name }}</h2>
         <p class="mt-1 text-xs text-slate-500">
-          耗时 {{ r.ms.toFixed(1) }} ms · 实心格 {{ r.filledCount }}
+          解码 + 重采样 {{ r.decodeAndResampleMs.toFixed(1) }} ms · 实心格 {{ r.filledCount }}
         </p>
-        <img :src="r.canvasUrl" alt="" class="mt-3 w-full [image-rendering:pixelated]" />
+        <img :src="r.canvasUrl" alt="" class="mt-3 w-full" />
       </section>
     </div>
 
@@ -171,6 +173,11 @@ async function run() {
         都判为实心的格子，一边实心一边空格的格子单独计为「空格判定不一致」，不参与颜色比较。
         阈值 {{ VISIBLE_DELTA_RGB_THRESHOLD }} 只是「大概能看出来」的经验参考值，不是任何标准。
         这组数字用于跨设备复核 R1：人眼判断之外留一份可比对的记录。
+      </p>
+      <p class="mt-2 text-xs text-slate-500">
+        注意两条路径进入预览时的倍率仍然不同：快路径的 116² 被放大到 {{ PREVIEW_LONG_EDGE }} px
+        （约 4 倍，天然偏软），保底路径的原生像素被缩小到同一长边。所以「快路径看着软一点」
+        本身不构成结论——要看的是块状锯齿 / 摩尔纹 / 偏色，以及上面这组 ΔRGB 数字。
       </p>
     </section>
   </main>
