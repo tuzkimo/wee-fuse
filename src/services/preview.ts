@@ -1,50 +1,78 @@
-import type { RgbaImage } from "@/core/image/types";
+import type { RgbaImage, SampledGrid } from "@/core/image/types";
 
 /**
- * 预览画布的长边（像素）。
+ * 成品对比视图里每格豆子占多少预览像素。
  *
- * 两条路径的**解码输出内禀尺寸完全不同**：快路径恒为 116×116（`CELLS × PIXELS_PER_CELL`），
- * 保底路径是裁剪区原生尺寸 `side × side`（4000×3000 的照片是 1500×1500，`CROP_FRACTION = 1`
- * 时是 3000×3000）。若按「同一个放大倍数」渲染，两侧进入屏幕时的缩放比会差一两个数量级：
- * 一侧接近 1:1，另一侧要在 `image-rendering: pixelated` 下被最近邻抽点十几倍——「哪边更糊/更花」
- * 里就掺进了纯属预览的假象，而 R1 的结论恰恰靠人眼比较两侧清晰度得出。
- *
- * 所以两侧一律渲染到**同一个固定长边**：视野、预览位图尺寸、CSS 显示缩放三者对两侧完全一致，
- * 剩下的差异只可能来自解码输出本身。顺带把内存钉死：无论输入多大，预览画布都只有 464²
- * （旧写法对 1500² 的保底输出会建 6000² ＝ 144MB 的画布，`CROP_FRACTION = 1` 时是 12000² ＝ 576MB，
- * 预览会先于解码器崩，实验台自己就成了 OOM 的那个变量）。
- *
- * 464 = `CELLS`(29) × 16，也正好是快路径 116×116 输出的 4 倍。
+ * 29 格 × 16 px = 464 px 长边：足够看清每格边界，又不会把两侧搞成不同的显示倍率。
  */
-export const PREVIEW_LONG_EDGE = 464;
+export const GRID_CELL_PREVIEW_PX = 16;
 
 /**
- * 把 RGBA 位图渲染成**固定长边**的 PNG data URL，供实验台并排对比。
+ * 「原始解码输出」诊断视图的渲染上限（像素，长边）。
  *
- * 两侧共用完全相同的显示管线与 `imageSmoothingEnabled` 设定（浏览器高质量滤波），
- * 因此不存在「一侧最近邻抽点、另一侧平滑」这种显示级不对等。这里刻意**不开**最近邻：
- * 最近邻缩小（1500 → 464）会凭空造出摩尔纹与块状边缘——而「有没有摩尔纹/块状边缘」
- * 正是 R1 要在**解码输出**上找的东西，不能让预览自己造一份出来。
+ * 诊断视图按各自原生像素 **1:1、不重采样**渲染，所以画布尺寸随输入线性增长
+ * （保底路径在 `CROP_FRACTION = 1`、4000×3000 照片下是 3000²，画布本身约 36MB，PNG 编码更贵）。
+ * 超过这个上限就**不渲染**、只在页面上说明——否则实验台自己的预览内存会重新变成
+ * 「保底路径 OOM 阈值」里那个不可归因的变量（第 1 轮 I1(a)）。
+ * 1600 与全局约束「预览解码位图长边 ≤ 1600」一致，且 4000×3000 照片在
+ * `CROP_FRACTION = 0.5`（推荐用法）下裁剪边长 1500 ≤ 1600，诊断视图照常渲染。
  */
-export function renderPreview(image: RgbaImage): string {
-  const source = document.createElement("canvas");
-  source.width = image.width;
-  source.height = image.height;
-  const ctx = source.getContext("2d");
+export const RAW_PREVIEW_MAX_EDGE = 1600;
+
+/**
+ * 把豆格渲染成预览位图：**每格 `pixelsPerCell` 像素、最近邻放大**。
+ *
+ * 两条路径的成品都从各自的网格出发走这一个函数，因此视图的信息量与显示倍率完全相同——
+ * 两侧唯一的差别就是格子颜色，也就是产品真正要交付的东西，与 ΔRGB 数字一一对应。
+ * 空格画成透明（两侧同规则，不引入不对称）。
+ */
+export function renderGridPreview(
+  grid: SampledGrid,
+  pixelsPerCell: number = GRID_CELL_PREVIEW_PX,
+): string {
+  const cellCanvas = document.createElement("canvas");
+  cellCanvas.width = grid.width;
+  cellCanvas.height = grid.height;
+  const cellCtx = cellCanvas.getContext("2d");
+  if (cellCtx === null) throw new Error("无法获取 2D 上下文");
+
+  const cells = cellCtx.createImageData(grid.width, grid.height);
+  const count = grid.width * grid.height;
+  for (let i = 0; i < count; i += 1) {
+    const from = i * 3;
+    const to = i * 4;
+    cells.data[to] = Math.round(grid.rgb[from]);
+    cells.data[to + 1] = Math.round(grid.rgb[from + 1]);
+    cells.data[to + 2] = Math.round(grid.rgb[from + 2]);
+    cells.data[to + 3] = grid.filled[i] === 1 ? 255 : 0;
+  }
+  cellCtx.putImageData(cells, 0, 0);
+
+  const preview = document.createElement("canvas");
+  preview.width = grid.width * pixelsPerCell;
+  preview.height = grid.height * pixelsPerCell;
+  const previewCtx = preview.getContext("2d");
+  if (previewCtx === null) throw new Error("无法获取 2D 上下文");
+  // 网格视图必须用最近邻：每格边界要看得清；两侧同一设定，因此不产生显示级差异
+  previewCtx.imageSmoothingEnabled = false;
+  previewCtx.drawImage(cellCanvas, 0, 0, preview.width, preview.height);
+  return preview.toDataURL("image/png");
+}
+
+/**
+ * 「原始解码输出」诊断视图：把位图按**原生像素 1:1** 放进画布，不缩放、不重采样。
+ *
+ * 只用于看首段滤波到底把像素变成了什么样。**不可用于对比**：两条路径的原生尺寸本就不同
+ * （快路径 116²，保底路径 `side²`），并排显示时倍率天然不一致。
+ */
+export function renderRawPreview(image: RgbaImage): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
   if (ctx === null) throw new Error("无法获取 2D 上下文");
   const data = ctx.createImageData(image.width, image.height);
   data.data.set(image.data);
   ctx.putImageData(data, 0, 0);
-
-  const longEdge = Math.max(image.width, image.height);
-  const scale = PREVIEW_LONG_EDGE / longEdge;
-  const preview = document.createElement("canvas");
-  preview.width = Math.max(1, Math.round(image.width * scale));
-  preview.height = Math.max(1, Math.round(image.height * scale));
-  const previewCtx = preview.getContext("2d");
-  if (previewCtx === null) throw new Error("无法获取 2D 上下文");
-  previewCtx.imageSmoothingEnabled = true;
-  previewCtx.imageSmoothingQuality = "high";
-  previewCtx.drawImage(source, 0, 0, preview.width, preview.height);
-  return preview.toDataURL("image/png");
+  return canvas.toDataURL("image/png");
 }
