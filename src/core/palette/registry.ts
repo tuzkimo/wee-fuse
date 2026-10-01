@@ -42,6 +42,14 @@ function requireString(value: unknown, field: string): string {
 /**
  * 校验并载入一份色卡数据。数据有问题时直接抛错——内置色卡不该失败，
  * 而静默失败会产生「色号全错但图纸看起来正常」的隐蔽 bug。
+ *
+ * **这里是白名单式的逐字段重建，不是透传**：返回对象只包含本函数显式列出的字段。
+ * 因此给 `Palette` / `PaletteColor` 增加字段时，必须同步改本函数与
+ * `src/core/palette/builtin/mard221.json`（三处同步）：
+ * - 新增字段若是**必填**，漏改会编译报错（有声）；
+ * - 若是**可选**字段，漏改会被这里**静默丢弃**（JSON 里有值、运行时读到 undefined，
+ *   无声）。走「部分数据 + note」这类分支时，`note` 必须定义为**必填**字段，否则它的
+ *   缺失不会有任何信号。见账本「任务 3 第 6 条」延后项。
  */
 export function loadPalette(raw: unknown): Palette {
   if (typeof raw !== "object" || raw === null) throw new Error("色卡数据不是对象");

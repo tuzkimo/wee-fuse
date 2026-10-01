@@ -59,10 +59,11 @@ function extractColors(html) {
 }
 
 function sortColors(codes) {
-  const seriesOrder = ["A", "B", "C", "D", "E", "F", "G", "H", "M"];
+  // 用模块级的 SERIES_ORDER，不再就地复制一份：副本漏更新时 `indexOf` 会返回 -1，
+  // 新色系会被静默排到最前面（色卡顺序错但数量仍是 221，闸门拦不住）。
   return [...codes].sort((x, y) => {
-    const sx = seriesOrder.indexOf(x[0]);
-    const sy = seriesOrder.indexOf(y[0]);
+    const sx = SERIES_ORDER.indexOf(x[0]);
+    const sy = SERIES_ORDER.indexOf(y[0]);
     if (sx !== sy) return sx - sy;
     return Number(x.slice(1)) - Number(y.slice(1));
   });

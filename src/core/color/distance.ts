@@ -67,6 +67,10 @@ export function deltaE2000(a: Lab, b: Lab, kL = 1, kC = 1, kH = 1): number {
 
   let hBarP: number;
   if (c1p * c2p === 0) {
+    // 论文在此处写 h̄' = h1' + h2'（不做角度平均，因为没有色相可平均）。**这个取值不影响结果**：
+    // 同一条件下 `dhp = 0` → `dHp = 0` → `termH = 0`，于是 rT 项 `rT * termC * termH` 也归零，
+    // h̄' 只进入 `t`、`dTheta`、`sH`，而它们最终都只通过 `termH` 影响返回值。
+    // 因此改写成任何有限值都不会改变 CIEDE2000 的数值（34 组官方向量无法分辨这一点）。
     hBarP = h1p + h2p;
   } else {
     const sum = h1p + h2p;

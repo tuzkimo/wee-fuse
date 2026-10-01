@@ -16,15 +16,19 @@ export interface PatternStats {
   /** 实际用到的色号数。 */
   readonly colorCount: number;
   /**
-   * 按用量降序排列；用量相同时按色号升序（码点序），不依赖 locale，保证结果稳定。
+   * 按用量降序排列；用量相同时按色号升序（**UTF-16 代码单元序**，见 `compareCodes`），
+   * 不依赖 locale，保证结果稳定。
    */
   readonly usages: readonly ColorUsage[];
 }
 
 /**
- * 按码点升序比较色号。
+ * 按色号升序比较。
  *
- * 用 `<` 比较：它比的是 UTF-16 代码单元，在色号这种 ASCII 串上与码点序完全一致。
+ * 用 `<` 比较：它比的**不是**码点序，而是 **UTF-16 代码单元序**——两者只在非 BMP 字符
+ * （代理对）上不同，而色号是 `[A-M]` + 数字的 ASCII 串，两种序在定义域内完全一致，
+ * 所以这里不需要 `codePointAt`。写「码点序」是不准确的，本注释按实际语义更正。
+ *
  * 不用 `String.prototype.localeCompare`——它依赖 locale/ICU 数据（ICU 默认把大小写、标点
  * 折叠到主级，`"a1".localeCompare("B1") < 0`），同一份图纸在不同设备上可能排出不同顺序。
  * 这里要的是**跨环境稳定**的纯函数契约。

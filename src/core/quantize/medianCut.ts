@@ -104,6 +104,10 @@ function boxToCluster(box: readonly Entry[]): ColorCluster {
     b += e.rgb[2] * e.count;
     count += e.count;
   }
+  // 防御性分支，当前不可达：盒子只由 `medianCut` 的切割产生，而 `histogramBuckets` 已在
+  // 源头滤掉 `count === 0` 的桶、`addToHistogram` 又拦住了负权重与非有限分量，所以任何
+  // 盒子的 `count` 之和要么 > 0、要么是 +Infinity（巨权重溢出的理论边界，见账本延后项）。
+  // 保留它是为了不让「除以 0 得 NaN」成为一条无标记的静默路径。
   if (count === 0) return { rgb: [0, 0, 0], count: 0 };
   return { rgb: [r / count, g / count, b / count], count };
 }
@@ -130,8 +134,13 @@ export function medianCut(histogram: Histogram, maxColors: number): ColorCluster
   const boxes: Entry[][] = [entries];
   while (boxes.length < maxColors) {
     const index = selectBoxToSplit(boxes);
+    // 防御性分支，当前不可达：进入循环的前提是 `entries.length > maxColors`，而盒子是 entries
+    // 的一个划分——若所有盒子都不足 2 个条目，盒子数就会等于 entries.length > maxColors，
+    // 与循环条件矛盾。`selectBoxToSplit` 因此必然返回一个可切的盒子。
     if (index < 0) break;
     const [left, right] = splitBox(boxes[index] as Entry[]);
+    // 防御性分支，同样不可达：`splitBox` 把切点夹在 [1, len-1]，而可切盒子的 len ≥ 2，
+    // 因此两侧必然非空。保留是为了让「盒子没变小 → 死循环」这条路径有个响亮的出口。
     if (left.length === 0 || right.length === 0) break;
     boxes.splice(index, 1, left, right);
   }
