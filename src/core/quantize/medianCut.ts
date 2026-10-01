@@ -1,7 +1,12 @@
 import { rgbToLab, type Lab, type RGB } from "../color/space";
 import { histogramBuckets, type Histogram, type HistogramBucket } from "./histogram";
 
-/** 一个颜色簇：代表色 + 该簇覆盖的像素数。 */
+/**
+ * 一个颜色簇：代表色 + `count`。
+ *
+ * `count` 是簇内桶的 `count` 之和，也就是**权重和**（默认权重为 1 时等于像素数）；
+ * `addToHistogram` 允许小数权重，那时它不是像素个数。
+ */
 export interface ColorCluster {
   readonly rgb: RGB;
   readonly count: number;

@@ -214,3 +214,44 @@ describe("[修复] 小数权重与非法权重", () => {
     expect(histogramBuckets(histogram)).toEqual([]);
   });
 });
+
+/**
+ * —— 第 2 轮修复补充断言 ——
+ * `bucketLevel` 的夹取对 `NaN` 无效（`NaN < 0` 与 `NaN > 255` 都为假，`NaN >> 3` 得 0），
+ * 于是 `NaN` 会被写进 `sums`，桶平均色永久为 `NaN`，下游 `nearestIndexOf` 的
+ * `NaN < bestDistance` 恒假 → 静默选中色卡下标 0。这里钉住「非有限分量在入口抛错」，
+ * 与上一轮的 `weight` 校验对称。上面所有断言一条未改。
+ */
+describe("[修复] 非有限颜色分量在入口抛错", () => {
+  it("三分量中的任意一个非有限都抛错，且不污染直方图", () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const cases: ReadonlyArray<readonly [number, number, number]> = [
+        [bad, 100, 100],
+        [100, bad, 100],
+        [100, 100, bad],
+      ];
+      for (const [r, g, b] of cases) {
+        const histogram = createHistogram();
+        expect(() => addToHistogram(histogram, r, g, b)).toThrow(/颜色分量非法/);
+        // 入口判定，抛错发生在任何写入之前
+        expect(histogram.total).toBe(0);
+        expect(histogramBuckets(histogram)).toEqual([]);
+      }
+    }
+  });
+
+  it("越界但有限的分量不抛错，仍按 bucketLevel 夹取后入桶（防御性夹取保留）", () => {
+    const histogram = createHistogram();
+    expect(() => addToHistogram(histogram, -10, 999, 300)).not.toThrow();
+    expect(histogram.counts[bucketIndex(0, 255, 255)]).toBe(1);
+    expect(histogram.total).toBe(1);
+  });
+
+  it("buildHistogram 遇到 NaN 分量就抛错，而不是产出平均色永久 NaN 的桶", () => {
+    // 修复前：counts 记 1、sums 记 NaN → 桶平均色 NaN → 下游静默选中色卡下标 0
+    const grid = gridOf([null, [0, 0, 0]]);
+    grid.rgb[0] = Number.NaN;
+    grid.filled[0] = 1;
+    expect(() => buildHistogram(grid)).toThrow(/颜色分量非法/);
+  });
+});

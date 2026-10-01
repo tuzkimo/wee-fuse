@@ -38,6 +38,10 @@ export function clustersToPaletteIndices(
   const labs = palette.colors.map((c) => rgbToLab(c.rgb[0], c.rgb[1], c.rgb[2]));
   const picked = new Set<number>();
   for (const cluster of clusters) {
+    // 防御性分支：当前管线里并不可达。`medianCut` 产不出 `count === 0` 的簇——空桶早在
+    // `histogramBuckets` 就被 `count === 0` 滤掉，负权重被 `addToHistogram` 的入口守卫拦住，
+    // 权重全是有限的非负数，所以任何盒子的 count 之和要么为正、要么是 +Infinity（巨权重溢出）。
+    // 唯一可达路径是调用方手工构造的簇（测试就是这么做的）。
     if (cluster.count === 0) continue;
     const lab = rgbToLab(cluster.rgb[0], cluster.rgb[1], cluster.rgb[2]);
     picked.add(nearestIndexOf(lab, labs, "cie2000"));
