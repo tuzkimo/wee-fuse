@@ -62,12 +62,17 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 漏一处就是一条静默产出错误结果的路径（本分支的 I2/I3/I4/M5/M6 五处缺口全部落在这条上）。
 新增/修改公开导出时按下面的清单自查，校验写在**任何写操作之前**：
 
-- **网格 / 尺寸类**（重采样目标尺寸、网格尺寸、裁剪尺寸、解码目标尺寸）必须是**整数且 ≥ 1**。
-  只查 `< 1` 拦不住 `NaN`（`NaN < 1` 为假），也拦不住小数（缓冲区会按小数截断、循环越界写被
-  TypedArray 静默丢弃）。既有例外：`patternStats` 接受 0×0 的空图纸（此时缓冲长度必须为 0）。
+- **网格 / 尺寸类**（重采样目标尺寸、网格尺寸、解码目标尺寸）必须是**整数且 ≥ 1**——已落地在
+  `resampleToGrid`、`computeDecodeSize`。**裁剪尺寸目前只要求有限且 ≥ 1**（`computeGridSize` /
+  `chooseDecoderPath`），小数会被 `Math.round` 收敛成整数网格，故未拦。只查 `< 1` 拦不住 `NaN`
+  （`NaN < 1` 为假），也拦不住小数（缓冲区会按小数截断、循环越界写被 TypedArray 静默丢弃）。
+  既有例外：`patternStats` 接受 0×0 的空图纸（此时缓冲长度必须为 0）。
 - **颜色分量与权重**必须**有限**；越界的**有限**值按各处已有口径夹取（`bucketLevel`、
-  `rgbToLab`、`labToRgb` 都夹到 0–255）或明确拒绝，**并把口径写进 JSDoc**。非有限值一律抛错：
+  `rgbToLab`、`labToRgb` 都夹到 0–255）或明确拒绝，**并把口径写进 JSDoc**。非有限值应当抛错：
   `NaN` 无法被夹取，会一路传成 `NaN` 的 Lab，最终静默选中色卡下标 0。
+  **已落地**：`addToHistogram`、`rgbToLab`、`nearestIndexOf`。**尚未落地**（生产路径暂无暴露，
+  但要补）：`labToRgb(NaN, …)` 仍静默返回 `[NaN, NaN, NaN]`；`bucketLevel` / `bucketIndex`
+  对 `NaN` 仍静默落桶 0（只被已守门的 `addToHistogram` 调用）。
 - **用色档位**必须是 `16 | 32 | null`，运行期也校验——它是规格 §4.4 里要落盘并回读的
   `params.maxColors`，TS 类型挡不住 `JSON.parse` + 强转；`NaN` 会静默产出单色图纸，
   `Infinity` 会让每桶各自成簇（CIEDE2000 调用量 7k → 7.2M）。
@@ -77,8 +82,9 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
   走完整个缓冲区，派生量（如 `total`）会静默算成缓冲长度。
 
 **公开 API ≠ 被使用的 API**：导出即承诺。只被测试消费的导出要么收窄到内部，要么在 JSDoc 里
-写明它为何公开（现有的两个例子：`Decoder.outputSize` 是自我描述的文档字段、生产路径不读它；
-`nearestCellColor` 是 sRGB 入参的姊妹 API、流水线不用它）。
+写明它为何公开。**已写明**：`Decoder.outputSize`（自我描述的文档字段、生产路径不读它）、
+`nearestCellColor`（sRGB 入参的姊妹 API、流水线不用它）。**尚未写明**（当前仍无生产消费者）：
+`buildPatternFromImage`、`patternStats`、`edit.ts` 的全部导出——下次动到它们时补上。
 
 ## 关键常量（改动需同步规格文档）
 
