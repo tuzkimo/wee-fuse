@@ -20,13 +20,24 @@ export const PIXELS_PER_CELL = 4;
  * 按裁剪区域的宽高比与长边豆数算出网格尺寸。
  *
  * 长边取 longSide，短边按比例四舍五入，且至少 1。返回的宽高均已保证 >= 1。
+ *
+ * 裁剪宽高必须是**有限**且 >= 1 的数：`Infinity` 让 `Infinity < 1` 为假、还能算出一个
+ * 看似正常的网格（如 4×1），`NaN` 则一路算出 NaN 网格、直到下游才以别的形式炸开。
+ * 与 `chooseDecoderPath` 同一口径：非法尺寸在这里就抛错。
  */
 export function computeGridSize(
   cropWidth: number,
   cropHeight: number,
   longSide: number,
 ): { width: number; height: number } {
-  if (cropWidth < 1 || cropHeight < 1) throw new Error("裁剪区域尺寸非法");
+  if (
+    !Number.isFinite(cropWidth) ||
+    !Number.isFinite(cropHeight) ||
+    cropWidth < 1 ||
+    cropHeight < 1
+  ) {
+    throw new Error("裁剪区域尺寸非法");
+  }
   if (!Number.isInteger(longSide) || longSide < MIN_LONG_SIDE || longSide > MAX_LONG_SIDE) {
     throw new Error(`长边豆数必须在 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 之间`);
   }

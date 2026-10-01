@@ -268,3 +268,80 @@ describe("pointToCell（追加：格子边界、负数 cellSize、y 越界）", 
     expect(pointToCell(p, { x: 15, y: -15 }, shifted)).toEqual({ x: 2, y: 0 });
   });
 });
+
+describe("编辑入口（追加：非整数下标与非有限坐标不得静默产出幽灵改动）", () => {
+  it("buildPaintCommand 忽略 NaN / 小数下标：不产生 changes，也就不会吃掉撤销额度", () => {
+    // 修复前 `index < 0 || index >= cells.length` 对 NaN 与 1.5 两个比较**同时为假**，
+    // 下标被放行；`cells[NaN]` 是 undefined，于是入账一条 `from: undefined` 的改动，
+    // applyChanges 写 cells[NaN] 被 TypedArray 静默丢弃，commit 却照常入栈。
+    const cells = Uint16Array.from([1, 1, 1]);
+    expect(buildPaintCommand(cells, [Number.NaN], 2, "涂色")).toBeNull();
+    expect(buildPaintCommand(cells, [1.5], 2, "涂色")).toBeNull();
+    expect(buildPaintCommand(cells, [0, Number.NaN], 1, "涂色")).toBeNull();
+    expect([...cells]).toEqual([1, 1, 1]);
+    // 合法下标仍然照常入账，非法下标不会把整批拖下水
+    expect(buildPaintCommand(cells, [Number.NaN, 1.5, 0], 2, "涂色")?.changes).toEqual([
+      { index: 0, from: 1, to: 2 },
+    ]);
+  });
+
+  it("cellAt 对非整数坐标返回 EMPTY（NaN 的越界比较全为假，会被整条放行）", () => {
+    const p = pattern([0, 1, 2, 3, 4, 5], 3, 2);
+    expect(cellAt(p, Number.NaN, 0)).toBe(EMPTY);
+    expect(cellAt(p, 0, Number.NaN)).toBe(EMPTY);
+    expect(cellAt(p, Number.NaN, Number.NaN)).toBe(EMPTY);
+    expect(cellAt(p, 1.5, 0)).toBe(EMPTY);
+    expect(cellAt(p, 0, 1.5)).toBe(EMPTY);
+  });
+
+  it("pointToCell 对非有限的 cellSize / point / 偏移抛错，而不是返回 NaN 格子", () => {
+    const p = pattern([0, 0, 0, 0, 0, 0], 3, 2);
+    const view = { offsetX: 10, offsetY: 20, cellSize: 8 };
+    // 退化的布局尺寸（0 宽元素上的除法）会给出 NaN 的 cellSize
+    expect(() => pointToCell(p, { x: 0, y: 0 }, { ...view, cellSize: Number.NaN })).toThrow(
+      /cellSize/,
+    );
+    expect(() => pointToCell(p, { x: Number.NaN, y: 0 }, view)).toThrow(/point/);
+    expect(() => pointToCell(p, { x: 0, y: Number.POSITIVE_INFINITY }, view)).toThrow(/point/);
+    expect(() => pointToCell(p, { x: 0, y: 0 }, { ...view, offsetX: Number.NaN })).toThrow(
+      /偏移/,
+    );
+    expect(() => pointToCell(p, { x: 0, y: 0 }, { ...view, offsetY: Number.NaN })).toThrow(
+      /偏移/,
+    );
+  });
+});
+
+describe("buildPaintCommand（追加：目标色号越界必须响亮失败）", () => {
+  it("拒绝非整数或超出 0–0xffff 的 to（-1 会被 TypedArray 静默变成 EMPTY）", () => {
+    const cells = Uint16Array.from([1]);
+    // -1 是 UI 常见的「橡皮」哨兵：Uint16Array 把它截成 0xffff = EMPTY → 静默变成空格；
+    // 70000 截成 4464 → 静默涂成另一个色号。两者都不报错，只留下错的图纸。
+    expect(() => buildPaintCommand(cells, [0], -1, "橡皮")).toThrow(/目标色号/);
+    expect(() => buildPaintCommand(cells, [0], 70_000, "涂色")).toThrow(/目标色号/);
+    expect(() => buildPaintCommand(cells, [0], 1.5, "涂色")).toThrow(/目标色号/);
+    expect(() => buildPaintCommand(cells, [0], Number.NaN, "涂色")).toThrow(/目标色号/);
+    expect(() => buildPaintCommand(cells, [0], 0x1_0000, "涂色")).toThrow(/目标色号/);
+    // 全部没有写进 cells
+    expect([...cells]).toEqual([1]);
+  });
+
+  it("0 与 EMPTY 两个边界值都合法（EMPTY 是「清除」而不是越界）", () => {
+    const cells = Uint16Array.from([1]);
+    expect(buildPaintCommand(cells, [0], 0, "涂色")?.changes).toEqual([
+      { index: 0, from: 1, to: 0 },
+    ]);
+    expect(buildPaintCommand(cells, [0], EMPTY, "清除")?.changes).toEqual([
+      { index: 0, from: 1, to: EMPTY },
+    ]);
+  });
+
+  it("框选与整体换色两条入口同样受 to 校验保护（它们都走 buildPaintCommand）", () => {
+    const p = pattern([1, 1], 2, 1);
+    expect(() =>
+      buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 1 }, -1, "橡皮"),
+    ).toThrow(/目标色号/);
+    expect(() => buildReplaceCommand(p, 1, 70_000, "整体换色")).toThrow(/目标色号/);
+    expect([...p.cells]).toEqual([1, 1]);
+  });
+});

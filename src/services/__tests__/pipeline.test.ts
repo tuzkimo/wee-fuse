@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DecodeRequest, Decoder } from "@/core/image/decode";
-import type { RgbaImage } from "@/core/image/types";
+import type { RgbaImage, Rotation } from "@/core/image/types";
 import { loadPalette } from "@/core/palette/registry";
 import { EMPTY } from "@/core/pattern/types";
 import {
@@ -213,6 +213,56 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
         { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
       ),
     ).rejects.toThrow(/裁剪区域尺寸非法/);
+    expect(exact.requests).toHaveLength(0);
+  });
+
+  it("裁剪尺寸非有限时同样在解码之前抛错（Infinity 曾能走完一次解码）", async () => {
+    const exact = makeStub("exact", "native");
+    await expect(
+      generatePattern(
+        {
+          source,
+          crop: { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 10 },
+          rotation: 0,
+          longSide: 4,
+          maxColors: 16,
+        },
+        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+      ),
+    ).rejects.toThrow(/裁剪区域尺寸非法/);
+    await expect(
+      generatePattern(
+        {
+          source,
+          crop: { x: 0, y: 0, width: Number.NaN, height: 10 },
+          rotation: 0,
+          longSide: 4,
+          maxColors: 16,
+        },
+        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+      ),
+    ).rejects.toThrow(/裁剪区域尺寸非法/);
+    expect(exact.requests).toHaveLength(0);
+  });
+
+  it("rotation 非法时在解码之前抛错，解码器一次都不被调用", async () => {
+    const exact = makeStub("exact", "native");
+    // 刻意构造契约外的值：Rotation 类型只允许 0–3，但持久化参数/平台回传都可能是任意 number。
+    // 不先拦下就会白跑一次原生解码 + 面积平均重采样，再由 rotateGrid 抛错。
+    for (const bad of [5, -1, 1.5, Number.NaN]) {
+      await expect(
+        generatePattern(
+          {
+            source,
+            crop,
+            rotation: bad as unknown as Rotation,
+            longSide: 4,
+            maxColors: 16,
+          },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        ),
+      ).rejects.toThrow(/旋转角度非法/);
+    }
     expect(exact.requests).toHaveLength(0);
   });
 });

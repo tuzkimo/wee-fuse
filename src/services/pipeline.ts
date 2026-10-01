@@ -1,5 +1,5 @@
 import type { Decoder } from "@/core/image/decode";
-import { rotateGrid } from "@/core/image/rotate";
+import { rotateGrid, rotatedSize } from "@/core/image/rotate";
 import { resampleToGrid } from "@/core/image/resample";
 import type { Rect, Rotation, SampledGrid } from "@/core/image/types";
 import { buildPattern, computeDecodeSize, computeGridSize } from "@/core/pattern/build";
@@ -99,24 +99,29 @@ export async function generatePattern(
 ): Promise<Pattern> {
   const { crop, rotation, longSide, maxColors } = request;
 
-  // 网格尺寸在「最终朝向」下计算，因此长边一定落在成品的长边上
-  const oriented =
-    rotation === 1 || rotation === 3
-      ? { width: crop.height, height: crop.width }
-      : { width: crop.width, height: crop.height };
+  // rotation 在解码之前 fail-fast：非法值若不先拦下，会白跑一次「原生解码 + 面积平均
+  // 重采样」才由 `rotateGrid` 抛错。longSide（computeGridSize）与 crop 都做到了解码前抛错，
+  // rotation 同样处理，代价只是一次整数比较。
+  if (!Number.isInteger(rotation) || rotation < 0 || rotation > 3) {
+    throw new Error(`旋转角度非法：${rotation}`);
+  }
+
+  // 网格尺寸在「最终朝向」下计算，因此长边一定落在成品的长边上。
+  // 换轴规则只从 `rotatedSize` 来（1/3 换轴、0/2 恒等）——同一规则有两份手写分支时，
+  // 漏改一处就会得到转错方向的图纸。
+  const oriented = rotatedSize(crop.width, crop.height, rotation);
 
   const finalGrid = computeGridSize(oriented.width, oriented.height, longSide);
 
-  // 解码与重采样在「未旋转」朝向下进行
-  const rawGrid =
-    rotation === 1 || rotation === 3
-      ? { width: finalGrid.height, height: finalGrid.width }
-      : finalGrid;
+  // 解码与重采样在「未旋转」朝向下进行。`rotatedSize` 对 1/3 是自逆、对 0/2 是恒等，
+  // 所以这一次调用正好把 finalGrid 换回未旋转朝向。
+  const rawGrid = rotatedSize(finalGrid.width, finalGrid.height, rotation);
 
   const { targetWidth, targetHeight } = computeDecodeSize(rawGrid.width, rawGrid.height);
 
   // 择路只看裁剪框（解码对象就是裁剪区的原生像素），与旋转、网格尺寸无关。
-  // computeGridSize 已在校验过裁剪尺寸，这里不会因非法裁剪而走到抛错分支。
+  // 非法裁剪尺寸（非有限、< 1）由上面的 computeGridSize 抛错——校验的就是 crop 的宽高本身
+  // （oriented 只是把它们换了个轴），所以走到这里 crop 必定合法。
   const decoder = chooseDecoderPath(crop) === "exact" ? deps.exactDecoder : deps.fastDecoder;
   const image = await decoder.decode(request.source, { crop, targetWidth, targetHeight });
 

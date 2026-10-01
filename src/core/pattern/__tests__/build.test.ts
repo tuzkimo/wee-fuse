@@ -104,6 +104,18 @@ describe("computeGridSize（追加：长边落在哪一维、四舍五入方向�
     expect(() => computeGridSize(100, 0, 29)).toThrow(/裁剪区域尺寸非法/);
     expect(() => computeGridSize(100, -3, 29)).toThrow(/裁剪区域尺寸非法/);
   });
+
+  it("裁剪尺寸非有限时抛错（NaN / Infinity 曾静默算出 NaN 网格或看似正常的网格）", () => {
+    // 修复前只查 `< 1`：`Infinity < 1` 为假 → 算出看似正常的 {4,1}；`NaN < 1` 为假 →
+    // 一路算出 NaN 网格，直到下游才以别的形式炸开（真正的拒绝发生在 chooseDecoderPath）。
+    expect(() => computeGridSize(Number.NaN, 100, 29)).toThrow(/裁剪区域尺寸非法/);
+    expect(() => computeGridSize(100, Number.NaN, 29)).toThrow(/裁剪区域尺寸非法/);
+    expect(() => computeGridSize(Number.POSITIVE_INFINITY, 100, 29)).toThrow(/裁剪区域尺寸非法/);
+    expect(() => computeGridSize(100, Number.NEGATIVE_INFINITY, 29)).toThrow(/裁剪区域尺寸非法/);
+    expect(() => computeGridSize(Number.POSITIVE_INFINITY, Number.NaN, 29)).toThrow(
+      /裁剪区域尺寸非法/,
+    );
+  });
 });
 
 describe("computeDecodeSize", () => {

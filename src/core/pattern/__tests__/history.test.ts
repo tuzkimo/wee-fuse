@@ -230,13 +230,46 @@ describe("EditHistory（追加：上限身份、深度读数、脏格下标与�
     expect(cells[0]).toBe(0);
   });
 
-  it("空命令由调用方过滤：历史本身不筛（buildPaintCommand 才是返回 null 的那一层）", () => {
+  it("空命令不消耗撤销额度：不入栈、不清重做栈，返回空下标数组", () => {
+    // 控制者裁定：一条什么都没改的命令不该占掉 HISTORY_LIMIT 的一个额度
+    //（栈满 50 时会挤掉一条真命令），这与 buildPaintCommand 注释里「避免产生空的
+    // 撤销记录」的承诺一致。旧行为是照常入栈，本用例取代了钉死旧行为的那一条断言。
     const cells = Uint16Array.from([0]);
     const history = new EditHistory();
     expect(history.commit(cells, { label: "空", changes: [] })).toEqual([]);
-    expect(history.undoDepth).toBe(1);
-    expect(history.undo(cells)).toEqual([]);
+    expect(history.undoDepth).toBe(0);
+    expect(history.canUndo).toBe(false);
+    expect(history.undo(cells)).toBeNull();
     expect([...cells]).toEqual([0]);
+  });
+
+  it("空命令也不清重做栈（它没有产生任何改动，没有理由丢掉用户的重做链）", () => {
+    const cells = Uint16Array.from([0]);
+    const history = new EditHistory();
+    commitPaint(cells, history, 0, 1);
+    history.undo(cells);
+    expect(history.redoDepth).toBe(1);
+
+    expect(history.commit(cells, { label: "空", changes: [] })).toEqual([]);
+    expect(history.undoDepth).toBe(0);
+    expect(history.redoDepth).toBe(1);
+    expect(history.canRedo).toBe(true);
+
+    // 重做链仍然可用
+    expect(history.redo(cells)).toEqual([0]);
+    expect(cells[0]).toBe(1);
+  });
+
+  it("空命令不占额度：连续提交 50 条真命令后仍能撤销满 50 次", () => {
+    const cells = Uint16Array.from([0]);
+    const history = new EditHistory();
+    for (let i = 1; i <= HISTORY_LIMIT; i++) {
+      commitPaint(cells, history, 0, i % 200);
+      history.commit(cells, { label: "空", changes: [] });
+    }
+    expect(history.undoDepth).toBe(HISTORY_LIMIT);
+    for (let i = 0; i < HISTORY_LIMIT; i++) history.undo(cells);
+    expect(cells[0]).toBe(0);
     expect(history.canUndo).toBe(false);
   });
 });

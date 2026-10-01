@@ -104,3 +104,47 @@ describe("patternStats（追加：降序判别、守恒、下标越界与 EMPTY 
     expect(stats.colorCount).toBe(0);
   });
 });
+
+describe("patternStats（追加：排序不依赖 locale，色卡必须与图纸一致）", () => {
+  it("用量相同时按码点升序，而不是 locale 感知的顺序", () => {
+    // 码点（UTF-16 代码单元）序：'B'(0x42) < 'a'(0x61) → "B1" 在前。
+    // 用 localeCompare 时 ICU 把大小写折叠到主级，得到 "a1".localeCompare("B1") < 0
+    // → "a1" 在前——同一份图纸在不同设备上会排出不同顺序，不能当契约。
+    const mixed = loadPalette({
+      id: "mixed",
+      name: "大小写色卡",
+      source: "https://example.com",
+      accuracy: "仅测试用",
+      colors: [
+        { code: "a1", name: "小写", hex: "#ffffff" },
+        { code: "B1", name: "大写", hex: "#000000" },
+      ],
+    });
+    const p: Pattern = {
+      width: 2,
+      height: 1,
+      paletteId: "mixed",
+      cells: Uint16Array.from([0, 1]),
+    };
+    const stats = patternStats(p, mixed);
+    expect(stats.usages.map((u) => [u.code, u.count])).toEqual([
+      ["B1", 1],
+      ["a1", 1],
+    ]);
+  });
+
+  it("色卡与图纸的 paletteId 不一致时抛错，而不是把每个色号静默标成别的名字", () => {
+    const other = loadPalette({
+      id: "other",
+      name: "别的色卡",
+      source: "https://example.com",
+      accuracy: "仅测试用",
+      colors: [{ code: "Z9", name: "别的白", hex: "#ffffff" }],
+    });
+    // 传错色卡时统计表本身看起来完全正常（数量对、格式对），只有色号名字是错的
+    expect(() => patternStats(pattern([0]), other)).toThrow(/色卡不一致/);
+    expect(() => patternStats(pattern([], 0, 0), other)).toThrow(/色卡不一致/);
+    // 一致时照常工作
+    expect(patternStats(pattern([0]), palette).usages[0]?.code).toBe("A1");
+  });
+});

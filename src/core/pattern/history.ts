@@ -30,8 +30,15 @@ export class EditHistory {
     return this.redoStack.length;
   }
 
-  /** 应用命令并入栈，返回被改动的格子下标。 */
+  /**
+   * 应用命令并入栈，返回被改动的格子下标。
+   *
+   * **空命令不消耗撤销额度**：`changes` 为空时直接返回空数组，不入栈、也不清重做栈。
+   * 一条什么都没改的命令入栈只会占掉一个 `HISTORY_LIMIT` 额度（栈满 50 时挤掉一条真命令），
+   * 与 `buildPaintCommand` 注释里「避免产生空的撤销记录」的承诺冲突；它也不该清掉用户的重做链。
+   */
   commit(cells: Uint16Array, command: EditCommand): number[] {
+    if (command.changes.length === 0) return [];
     applyChanges(cells, command.changes);
     this.undoStack.push(command);
     if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
