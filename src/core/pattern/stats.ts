@@ -42,10 +42,19 @@ function compareCodes(a: string, b: string): number {
  *
  * 色卡必须与图纸自己声明的 `paletteId` 一致：色号只是色卡里的下标，传错色卡不会报错，
  * 只会把每个色号**静默标成另一个名字**（统计表看起来完全正常）。与 `loadPalette` 一样响亮失败。
+ *
+ * `cells` 长度必须等于 `width * height`：长度不符时遍历仍会走完整个缓冲区，`total` 等于
+ * **缓冲区长度**而不是图纸格数，于是「豆子总数」静默算成一个既不是图纸尺寸、也不是任何
+ * 真实计数的数。0×0 的空图纸（`cells` 长度为 0）是既有契约、照常通过。
  */
 export function patternStats(pattern: Pattern, palette: Palette): PatternStats {
   if (palette.id !== pattern.paletteId) {
     throw new Error(`色卡不一致：图纸使用的是 ${pattern.paletteId}，传入的是 ${palette.id}`);
+  }
+  if (pattern.cells.length !== pattern.width * pattern.height) {
+    throw new Error(
+      `图纸数据与尺寸不一致：${pattern.width}×${pattern.height} 需要 ${pattern.width * pattern.height} 格，实际 ${pattern.cells.length} 格`,
+    );
   }
 
   const counts = new Map<number, number>();

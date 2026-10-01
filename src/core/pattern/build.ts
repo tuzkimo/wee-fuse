@@ -47,11 +47,26 @@ export function computeGridSize(
   return { width: Math.max(1, Math.round((longSide * cropWidth) / cropHeight)), height: longSide };
 }
 
-/** 生成解码目标像素尺寸：网格尺寸 × 4，且每边至少 1 像素。 */
+/**
+ * 生成解码目标像素尺寸：网格尺寸 × 4。
+ *
+ * 网格尺寸必须是**整数且 >= 1**（与 `resampleToGrid`、`computeGridSize` 同一口径）：
+ * `Math.max(1, v)` 只把 `< 1` 的值抬到 1，对 `NaN` 返回的仍是 `NaN`——于是 `NaN` 网格会
+ * 静默产出 `NaN` 目标尺寸并一路传给平台解码器；`2.5` 则会算出看似正常的 10 像素目标尺寸、
+ * 掩盖上游网格尺寸算错。校验放在乘法之前，`Math.max(1, …)` 保留为本函数自己的下界防御。
+ */
 export function computeDecodeSize(
   gridWidth: number,
   gridHeight: number,
 ): { targetWidth: number; targetHeight: number } {
+  if (
+    !Number.isInteger(gridWidth) ||
+    !Number.isInteger(gridHeight) ||
+    gridWidth < 1 ||
+    gridHeight < 1
+  ) {
+    throw new Error(`网格尺寸非法：${gridWidth}×${gridHeight}`);
+  }
   return {
     targetWidth: Math.max(1, gridWidth * PIXELS_PER_CELL),
     targetHeight: Math.max(1, gridHeight * PIXELS_PER_CELL),
@@ -75,8 +90,19 @@ export interface BuildOptions {
  *
  * maxColors 为 null 时不聚类，直接在全色卡里逐格取最近色——这是「不限」的真实语义，
  * 代价是用色数可能很多，界面需要如实展示给用户。
+ *
+ * **maxColors 必须是 `16 | 32 | null` 三者之一**，运行期也校验（类型只挡得住 TS 调用方，
+ * 挡不住 `JSON.parse` + 强转——它是规格 §4.4 里要落盘并回读的 `params.maxColors`）：
+ * - `NaN`：`medianCut` 的 `while (boxes.length < NaN)` 一次都不进入，全部桶当一个盒子 →
+ *   **静默产出「整图仅 1 色」的图纸**；
+ * - `0` / 负数：走 `medianCut` 的 `maxColors <= 0` 早退分支 → 静默等价「不限」，与档位语义冲突；
+ * - `16.5` / `Infinity`：非整数值可切出超出档位的簇数；`Infinity` 更是让**每个桶各自成簇**
+ *   （最多 32768 个），CIEDE2000 调用量从约 7k 暴涨到约 7.2M（计划的任务 8 注意事项）。
  */
 export function buildPattern(grid: SampledGrid, palette: Palette, options: BuildOptions): Pattern {
+  if (options.maxColors !== null && options.maxColors !== 16 && options.maxColors !== 32) {
+    throw new Error(`用色档位非法：${String(options.maxColors)}（只允许 16 / 32 / null）`);
+  }
   const runtime: PaletteRuntime = createPaletteRuntime(palette);
   const cellCount = grid.width * grid.height;
   const cells = new Uint16Array(cellCount).fill(EMPTY);

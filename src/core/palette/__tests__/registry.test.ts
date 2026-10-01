@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { EMPTY } from "../../pattern/types";
 import { createPaletteRuntime, loadPalette, parseHex } from "../registry";
 
 const valid = {
@@ -87,6 +88,23 @@ describe("loadPalette", () => {
         ],
       }),
     ).toThrow(/色号重复/);
+  });
+
+  /**
+   * —— 最终审查 F5 追加 ——
+   * 图纸的 `cells` 是 `Uint16Array`，色卡下标与空格标记 `EMPTY = 0xffff` 共用值域：
+   * 色数达到 65536 时下标 `0xffff` 与空格**无法区分**，`patternStats` 会把该色当空格
+   * 静默吞掉（用量表少一个色号、`total` 偏小，图纸本身看起来正常）。内置 MARD221 只有
+   * 221 色无碍，但规格 §13 计划支持自定义色卡导入 → 载入处必须有闸门。
+   * 边界两侧都测：恰好 `EMPTY` 色合法（下标 0…0xfffe 碰不到 0xffff），再多一色非法。
+   */
+  it("[追加] 色数超过 EMPTY 时抛错，恰好 EMPTY 色仍合法", () => {
+    const make = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({ code: `C${i}`, hex: "#ffffff" }));
+    expect(() => loadPalette({ ...valid, colors: make(EMPTY + 1) })).toThrow(/超过上限/);
+    const atLimit = loadPalette({ ...valid, colors: make(EMPTY) });
+    expect(atLimit.colors).toHaveLength(EMPTY);
+    expect(atLimit.colors[EMPTY - 1]?.code).toBe(`C${EMPTY - 1}`);
   });
 });
 

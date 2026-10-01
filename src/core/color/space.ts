@@ -17,6 +17,11 @@ function srgbToLinear(channel: number): number {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
+/** 把有限但越界的分量夹取到 0–255（与 `bucketLevel` / `linearToSrgb` 同一口径）。 */
+function clampChannel(value: number): number {
+  return value < 0 ? 0 : value > 255 ? 255 : value;
+}
+
 /** sRGB 传输函数正变换：线性光（0–1）→ gamma 编码值（0–255，四舍五入并夹取）。 */
 function linearToSrgb(linear: number): number {
   const c = linear <= 0.0031308 ? linear * 12.92 : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
@@ -34,11 +39,24 @@ function fInv(t: number): number {
   return t3 > 216 / 24389 ? t3 : (116 * t - 16) * 27 / 24389;
 }
 
-/** sRGB → CIE Lab（D65）。 */
+/**
+ * sRGB → CIE Lab（D65）。
+ *
+ * 三个分量必须是**有限**数：非有限值在入口抛错。`NaN` 无法被夹取（`NaN < 0` 与 `NaN > 255`
+ * 皆假），会一路算成 `NaN` 的 Lab，而 Lab 距离比较里的 `NaN < bestDistance` 恒假，
+ * 最终**静默选中色卡下标 0**（`histogram.ts` 的入口守卫正是为了拦这条链）。
+ *
+ * **越界但有限的分量夹取到 0–255**，与 `bucketLevel`（直方图分桶）、`labToRgb`（输出端夹取）
+ * 同一口径：本函数不再外推。例：`rgbToLab(300, 0, 0)` 现在的结果是 `rgbToLab(255, 0, 0)`
+ * 的 Lab，而不是外推出的 `[62.36, 90.64, 76.05]`（负值同理夹到 0）。
+ */
 export function rgbToLab(r: number, g: number, b: number): Lab {
-  const rl = srgbToLinear(r);
-  const gl = srgbToLinear(g);
-  const bl = srgbToLinear(b);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+    throw new Error(`颜色分量非法：(${r}, ${g}, ${b})`);
+  }
+  const rl = srgbToLinear(clampChannel(r));
+  const gl = srgbToLinear(clampChannel(g));
+  const bl = srgbToLinear(clampChannel(b));
 
   const x = (0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl) / WHITE_X;
   const y = (0.2126729 * rl + 0.7151522 * gl + 0.072175 * bl) / WHITE_Y;

@@ -1,4 +1,5 @@
 import { rgbToLab, type Lab } from "../color/space";
+import { EMPTY } from "../pattern/types";
 import type { Palette, PaletteColor } from "./types";
 
 /** 运行时色卡：原始色卡 + 预先算好的 Lab 表（Lab 表按颜色下标对齐）。 */
@@ -50,11 +51,20 @@ function requireString(value: unknown, field: string): string {
  * - 若是**可选**字段，漏改会被这里**静默丢弃**（JSON 里有值、运行时读到 undefined，
  *   无声）。走「部分数据 + note」这类分支时，`note` 必须定义为**必填**字段，否则它的
  *   缺失不会有任何信号。见账本「任务 3 第 6 条」延后项。
+ *
+ * 色数上限是 `EMPTY`（0xffff）：图纸的 `cells` 是 `Uint16Array`，色卡下标与空格标记共用
+ * 同一个值域，**下标 `0xffff` 与空格无法区分**——`patternStats` 会把该色当空格静默吞掉
+ * （用量表少一个色号、`total` 偏小，而图纸看起来完全正常）。内置 MARD221 只有 221 色，
+ * 安全；但规格 §13 计划支持自定义色卡导入，导入的数据是外部输入，所以在载入处就拦下。
+ * （`EMPTY` 从 `../pattern/types` 引：那个模块是零依赖叶子，不构成循环依赖。）
  */
 export function loadPalette(raw: unknown): Palette {
   if (typeof raw !== "object" || raw === null) throw new Error("色卡数据不是对象");
   const r = raw as RawPalette;
   if (!Array.isArray(r.colors) || r.colors.length === 0) throw new Error("色卡没有颜色数据");
+  if (r.colors.length > EMPTY) {
+    throw new Error(`色卡色数 ${r.colors.length} 超过上限 ${EMPTY}（下标会与空格标记冲突）`);
+  }
 
   const seen = new Set<string>();
   const colors: PaletteColor[] = r.colors.map((item, i) => {

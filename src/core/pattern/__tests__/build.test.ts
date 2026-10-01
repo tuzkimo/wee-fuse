@@ -7,7 +7,7 @@ import {
   computeGridSize,
   PIXELS_PER_CELL,
 } from "../build";
-import { EMPTY, MAX_LONG_SIDE, MIN_LONG_SIDE, type Pattern } from "../types";
+import { EMPTY, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors, type Pattern } from "../types";
 import type { RgbaImage, SampledGrid } from "../../image/types";
 
 const palette = loadPalette({
@@ -124,10 +124,22 @@ describe("computeDecodeSize", () => {
   });
 });
 
-describe("computeDecodeSize（追加：夹到 1 像素与常量锁定）", () => {
-  it("网格尺寸为 0 时每边至少 1 像素", () => {
-    expect(computeDecodeSize(0, 0)).toEqual({ targetWidth: 1, targetHeight: 1 });
-    expect(computeDecodeSize(0, 5)).toEqual({ targetWidth: 1, targetHeight: 20 });
+describe("computeDecodeSize（追加：入口整数校验与常量锁定）", () => {
+  /**
+   * **本用例在最终审查 F1 轮被改写（原断言「网格尺寸为 0 时每边至少 1 像素」已删）**：
+   * 原断言钉的是 `Math.max(1, v)` 的静默夹取（`computeDecodeSize(0, 0)` → `{1, 1}`），
+   * 而 F1/F12 确立的口径是「网格/尺寸类入口必须整数且 >= 1，非法输入响亮失败」——
+   * 0 正是非法网格尺寸，静默抬成 1 像素会掩盖上游算错。`Math.max(1, …)` 作为函数内部
+   * 下界防御仍在，但不再对非法入口生效。这是**既有追加用例的契约变更**，非简报原文
+   * （简报原文的 `computeDecodeSize` 用例只有「是网格尺寸的 4 倍」一条，见本文件上文）。
+   */
+  it("[F1 改写] 网格尺寸必须为整数且 >= 1：0 / 负数 / 小数 / 非有限在宽高两个方向都抛错", () => {
+    const bad: number[] = [0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY];
+    for (const value of bad) {
+      expect(() => computeDecodeSize(value, 1)).toThrow(/网格尺寸非法/);
+      expect(() => computeDecodeSize(1, value)).toThrow(/网格尺寸非法/);
+    }
+    expect(() => computeDecodeSize(0, 0)).toThrow(/网格尺寸非法/);
   });
 
   it("PIXELS_PER_CELL 锁定为 4（规格 §12.1 的 116 = 29×4 绑在它上面）", () => {
@@ -184,6 +196,18 @@ describe("buildPattern", () => {
     const used = new Set([...pattern.cells].filter((v) => v !== EMPTY));
     expect(used.size).toBeLessThanOrEqual(palette.colors.length);
     expect(used.size).toBeGreaterThanOrEqual(1);
+
+    /**
+     * **最终审查 F7 追加**：上面两条是**简报原文**（一字未改），但它们用的是 5 色色卡，
+     * 所以 `used.size <= palette.colors.length` 是**构造性恒真**——审查者实测：把
+     * `buildPattern` 的档位分支改成永远「不限」，这两条仍然全绿。
+     * 下面这条在同一处补上有判别力的性质：换一张 24 色色卡（远多于 16 档），
+     * 「限制到 16 档」必须真的把用色压到 ≤ 16；改成「不限」会用到全部 24 → 转红。
+     */
+    const wide = buildPattern(grid(24, 1, WIDE_RGB), widePalette, { maxColors: 16 });
+    const wideUsed = new Set([...wide.cells].filter((v) => v !== EMPTY));
+    expect(wideUsed.size).toBeLessThanOrEqual(16);
+    expect(wideUsed.size).toBeGreaterThan(0);
   });
 
   it("不限档位时每个格子仍然映射到某个色号", () => {
@@ -290,6 +314,40 @@ describe("buildPattern（追加：逐格阶段必须用 ΔE76，不是 CIEDE2000
     // 若把 build.ts 里的度量换成 cie2000，会取紫（下标 1）→ 断言转红。
     const g = grid(1, 1, [[0, 34, 34]]);
     expect([...buildPattern(g, metricPalette, { maxColors: null }).cells]).toEqual([0]);
+  });
+});
+
+/**
+ * —— 最终审查 F2 追加 ——
+ * `maxColors` 是规格 §4.4 里**要落盘并回读**的 `params.maxColors`，属外部输入；类型
+ * `16 | 32 | null` 只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转。修复前实测：
+ * `NaN` → `medianCut` 的 `while (boxes.length < NaN)` 一次都不进入，全部桶当一个盒子 →
+ * **静默产出「整图仅 1 色」的图纸**；`0` / `-1` → 走 `maxColors <= 0` 早退 → 静默等价
+ * 「不限」，与 `16 | 32` 的档位语义冲突；`16.5` → 可切出 17 个簇，超出档位；
+ * `Infinity` → 每桶各自成簇（计划「任务 8 使用 medianCut 时的注意事项」里 7k → 7.2M
+ * 的 CIEDE2000 悬崖），此前没有任何运行时防线。
+ */
+describe("buildPattern（追加：用色档位入口校验）", () => {
+  it("非 16 / 32 / null 的档位一律抛错，而不是静默产出单色图纸或静默「不限」", () => {
+    const g = grid(2, 1, [
+      [250, 0, 0],
+      [0, 0, 250],
+    ]);
+    const bads: number[] = [Number.NaN, 0, -1, 16.5, Number.POSITIVE_INFINITY, 8];
+    for (const bad of bads) {
+      expect(() => buildPattern(g, palette, { maxColors: bad as MaxColors })).toThrow(/用色档位非法/);
+    }
+  });
+
+  it("三个合法档位照常通过（16 / 32 / null 各自的语义不变）", () => {
+    const g = grid(3, 1, [
+      [250, 0, 0],
+      [0, 250, 0],
+      [0, 0, 250],
+    ]);
+    expect([...buildPattern(g, palette, { maxColors: 16 }).cells]).toEqual([2, 3, 4]);
+    expect([...buildPattern(g, palette, { maxColors: 32 }).cells]).toEqual([2, 3, 4]);
+    expect([...buildPattern(g, palette, { maxColors: null }).cells]).toEqual([2, 3, 4]);
   });
 });
 

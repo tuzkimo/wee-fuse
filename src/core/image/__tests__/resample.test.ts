@@ -187,6 +187,25 @@ describe("resampleToGrid", () => {
     expect(() => resampleToGrid(img, 1, -1)).toThrow(/目标网格尺寸非法/);
   });
 
+  /**
+   * —— 最终审查 F1 追加 ——
+   * 上一条只覆盖 `0` 与 `-1`，而修复前的守卫是 `width < 1 || height < 1`：
+   * - `NaN < 1` 为假 → `resampleToGrid(src, NaN, 1)` **不抛错**，返回
+   *   `{ width: NaN, height: 1, rgb: length 0, filled: length 0 }`；
+   * - `2.5` 也过闸，缓冲区按 `2.5 × 1` 截断成 2 格，而循环跑到第 3 格，
+   *   越界写被 TypedArray **静默丢弃**（`filled` 长 2、`rgb` 长 7）。
+   * 两个方向的每个非法值都要测：只测宽度会漏掉 `height` 上同一段代码的复制粘贴错误。
+   * 简报原文的断言一条未改。
+   */
+  it("[追加] 目标尺寸必须为整数且 >= 1：NaN / 小数 / 0 / 负数在宽高两个方向都抛错", () => {
+    const img = makeImage(1, 1, [[0, 0, 0, 255]]);
+    const bad: number[] = [Number.NaN, 2.5, 0, -1, Number.POSITIVE_INFINITY];
+    for (const value of bad) {
+      expect(() => resampleToGrid(img, value, 1)).toThrow(/目标网格尺寸非法/);
+      expect(() => resampleToGrid(img, 1, value)).toThrow(/目标网格尺寸非法/);
+    }
+  });
+
   it("源数据长度与尺寸不符时抛错", () => {
     const bad: RgbaImage = { width: 2, height: 2, data: new Uint8ClampedArray(4) };
     expect(() => resampleToGrid(bad, 1, 1)).toThrow(/长度与尺寸不一致/);

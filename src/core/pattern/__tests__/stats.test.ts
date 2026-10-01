@@ -148,3 +148,21 @@ describe("patternStats（追加：排序不依赖 locale，色卡必须与图纸
     expect(patternStats(pattern([0]), palette).usages[0]?.code).toBe("A1");
   });
 });
+
+/**
+ * —— 最终审查 F6 追加 ——
+ * `patternStats` 只遍历 `pattern.cells`，从不看 `width/height`，所以缓冲区长度与尺寸不符时
+ * `total` 会静默等于**缓冲区长度**——一个既不是图纸格数、也不是任何真实计数的数。
+ * 0×0 的空图纸（`cells` 长度为 0）是既有契约，照常通过。
+ */
+describe("patternStats（追加：cells 长度必须与宽高自洽）", () => {
+  it("缓冲区长度与 width×height 不符时抛错，而不是把 total 算成缓冲区长度", () => {
+    const short: Pattern = { width: 2, height: 2, paletteId: "fake", cells: Uint16Array.from([0, 1, 2]) };
+    const long: Pattern = { width: 1, height: 1, paletteId: "fake", cells: Uint16Array.from([0, 1]) };
+    expect(() => patternStats(short, palette)).toThrow(/图纸数据与尺寸不一致/);
+    expect(() => patternStats(long, palette)).toThrow(/图纸数据与尺寸不一致/);
+    // 对照：长度自洽时照常工作，0×0 空图纸仍是既有契约
+    expect(patternStats(pattern([0, 1, 2, EMPTY], 2, 2), palette).total).toBe(3);
+    expect(patternStats(pattern([], 0, 0), palette).total).toBe(0);
+  });
+});

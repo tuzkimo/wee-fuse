@@ -10,12 +10,20 @@ import type { ColorCluster } from "./medianCut";
  * 两者名字相近、都返回「最近色的下标」，但输入空间不同：把 Lab 喂进 `nearestCellColor`
  * 会被再转换一次（Lab → 当 sRGB → Lab），静默选中错误的色号。任务 8 的计划缺陷 D1 正是
  * `core/pattern/build.ts` 把这两个入口接反；手上已有 Lab 时一律走本函数。
+ *
+ * `target` 的三个分量必须是**有限**数：`NaN` 分量会让 `d < bestDistance` 恒假（`NaN` 与任何数
+ * 比较都为假），于是**静默返回下标 0**——一个看起来完全正常的色号。这是缺陷 D1 的成因形态
+ * （Lab 被当成 sRGB 喂进来），也让「上游算错了」变成一张看不出问题的图纸，所以在入口抛错。
+ * 代价是每次调用 3 次 `Number.isFinite`，相对逐格 1.28 万次距离计算可忽略。
  */
 export function nearestIndexOf(
   target: Lab,
   labs: readonly Lab[],
   metric: ColorMetric,
 ): number {
+  if (!Number.isFinite(target[0]) || !Number.isFinite(target[1]) || !Number.isFinite(target[2])) {
+    throw new Error(`目标 Lab 分量非法：(${target[0]}, ${target[1]}, ${target[2]})`);
+  }
   if (labs.length === 0) throw new Error("Lab 表为空，无法查找最近色");
   let bestIndex = 0;
   let bestDistance = Infinity;

@@ -26,9 +26,16 @@ import { FILL_COVERAGE_THRESHOLD, type RgbaImage, type SampledGrid } from "./typ
  * `G * (S / G) < S` 只是「漏列子集」的特征，**不是「输出被改变」的全集**（后者还要多出内部移位）。
  * 整数分子是精确整数（远小于 2^53）：整除时 IEEE 除法给出精确整数商，非整除时真值离整数
  * 至少 1/width 远、远大于浮点误差，`floor` 不会错。**不要「顺手简化」回浮点写法。**
+ *
+ * 目标尺寸必须是**整数且 >= 1**：光查 `< 1` 拦不住 `NaN`（`NaN < 1` 为假），会返回一张
+ * `width: NaN`、缓冲区长度为 0 的「网格」；也拦不住 `2.5`（缓冲区按 `2.5 × 1` 截断成 2 格，
+ * 而循环跑到第 3 格，越界写被 TypedArray 静默丢弃）。与 `computeGridSize`、`chooseDecoderPath`
+ * 同一口径：非法尺寸在入口抛错。
  */
 export function resampleToGrid(src: RgbaImage, width: number, height: number): SampledGrid {
-  if (width < 1 || height < 1) throw new Error(`目标网格尺寸非法：${width}×${height}`);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`目标网格尺寸非法：${width}×${height}`);
+  }
   if (src.width < 1 || src.height < 1) throw new Error("源位图尺寸非法");
   if (src.data.length !== src.width * src.height * 4) {
     throw new Error("源位图数据长度与尺寸不一致");

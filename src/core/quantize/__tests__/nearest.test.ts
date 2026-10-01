@@ -165,3 +165,43 @@ describe("[审计补充] 兜底色号的身份", () => {
     expect(clustersToPaletteIndices([{ rgb: [9, 9, 9], count: 0 }], palette)).toEqual([1]);
   });
 });
+
+/**
+ * —— 最终审查 F3 追加 ——
+ * 缺陷 D1 的成因形态是「Lab 被当成 sRGB 喂进姊妹入口」，而它的可观测后果是**静默**的：
+ * `NaN` 分量下 `d < bestDistance` 恒假（`NaN` 与任何数比较都为假），于是
+ * `nearestIndexOf([NaN, NaN, NaN], labs, "de76")` 修复前返回 **0**——一个看起来完全正常的色号。
+ * 同一条链上的三个公开入口（`nearestIndexOf` / `nearestCellColor` / `clustersToPaletteIndices`）
+ * 现在都在入口响亮失败。以上断言一条未改。
+ */
+describe("[F3 追加] 非法颜色分量不再静默选中色卡下标 0", () => {
+  it("nearestIndexOf 遇到非有限目标分量抛错", () => {
+    expect(() => nearestIndexOf([Number.NaN, Number.NaN, Number.NaN], labs, "de76")).toThrow(
+      /目标 Lab 分量非法/,
+    );
+    expect(() => nearestIndexOf([0, Number.POSITIVE_INFINITY, 0], labs, "cie2000")).toThrow(
+      /目标 Lab 分量非法/,
+    );
+    // 对照：合法分量照常工作（修复不能把正常路径一起拒掉）
+    expect(nearestIndexOf([1, 2, 3], [[1, 2, 3]], "de76")).toBe(0);
+  });
+
+  it("nearestCellColor 的 NaN 分量在 rgbToLab 处就被拦下", () => {
+    expect(() => nearestCellColor(Number.NaN, Number.NaN, Number.NaN, labs)).toThrow(
+      /颜色分量非法/,
+    );
+    expect(() => nearestCellColor(0, 0, Number.NaN, labs)).toThrow(/颜色分量非法/);
+  });
+
+  it("clustersToPaletteIndices 不再把 NaN 簇映射成色卡下标 0", () => {
+    expect(() => clustersToPaletteIndices([{ rgb: [Number.NaN, 0, 0], count: 5 }], palette)).toThrow(
+      /颜色分量非法/,
+    );
+  });
+
+  it("越界但有限的簇颜色按 rgbToLab 的口径夹取，不再外推到别的色号", () => {
+    // [300, 0, 0] 夹成纯红 → 命中 A3（下标 2）；外推实现在色卡里会选到别处
+    expect(clustersToPaletteIndices([{ rgb: [300, 0, 0], count: 5 }], palette)).toEqual([2]);
+    expect(nearestCellColor(300, 0, 0, labs)).toBe(2);
+  });
+});
