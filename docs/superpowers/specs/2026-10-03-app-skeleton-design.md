@@ -233,8 +233,10 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
 
 ### 6.2 数据模型按「工程 = 一个目录」设计，不按 IndexedDB 的形状设计
 
-真机（Tauri）上工程应当落在 App 私有目录的一个文件夹里，而不是 IndexedDB。浏览器端把
-`project.json` 与 `source` 放进 IndexedDB 的**同一条记录**里，作为该模型的一种实现。
+真机（Tauri）上工程应当落在 App 私有目录的一个文件夹里，而不是 IndexedDB。浏览器端把同一个模型
+放进 IndexedDB 的**两个 object store**——`projects`（`meta` + `doc`）与 `sources`（原图字节 + `type`）——
+作为该模型的一种实现。**分成两个 store 是有意的**：`list()` 只读 `projects`，于是天然碰不到 MB 级
+原图（见 §6.1）。
 
 理由（按重要性排序）：
 
