@@ -31,8 +31,9 @@ npm run build
   选图后一次点按即生成并自动保存，然后跳回图纸库。
   规格要求的「拖动缩放选区 → 尺寸 / 色卡 / 档位设置 → 生成」由计划 **B2** 用真正的选区页与
   设置页**替换本页**；现在这个入口只用于把 B1 的链路跑通。
-- `/edit/:id` **只读编辑器**：显示名称、尺寸与用色数，并区分「原图已保存，可以改参数重新生成」
-  与「这个工程没有原图」。画笔、框选、吸管与撤销是计划 **B3**，导出是计划 **B4**。
+- `/edit/:id` **只读编辑器**：B1 只到「载入并显示只读**参数**」（名称、尺寸、用色数，以及是否
+  保存了原图），并区分「原图已保存，可以改参数重新生成」与「这个工程没有原图」。
+  **图纸预览与编辑属计划 B3**（画笔、框选、吸管、撤销、缩放平移），导出是计划 **B4**。
 - `/lab/decode` **解码实验台**：同一张图对比两条解码路径的画质（回答规格 §12.1 的 R1）。
 
 下一步：计划 B2（选区与设置页）→ B3（编辑器）→ B4（导出），以及 Tauri Android 壳。
@@ -102,18 +103,28 @@ npm run build
 同样是「判定为可接受、明确不修」的项，逐条记此以免后来者当成待办。完整记录（含 9 处计划缺陷、
 控制者的错误清单、被推翻的结论、以及环境事实）见[计划 B1 构建记录](docs/superpowers/notes/2026-10-03-app-b1-build-log.md)。
 
+**编号与构建记录 §8 逐条对齐**（B1-1…B1-17 在两份文档里指的是同一件事；B1-15…B1-17 是收尾轮
+新增的延后项，已在构建记录 §8 同步）。**一行一条**，不再把多条并成一行。
+
 | # | 是什么 | 为什么接受 / 何时该修 |
 |---|---|---|
-| B1-1 | `GeneratePage` 的成功路径在 happy-dom 下**无法自动化**（真实解码、真实 canvas、真实 IDB 都不可用），靠**平台边界桩** + 一次真实浏览器人工验证覆盖。 | 桩只替换平台 I/O（`naturalWidth/Height` 与 `BitmapPlatform`），断言落在「交给平台的源矩形」与「落盘数据」两个外部可观察量上，且变异打在**生产代码**上仍会红。真实解码链路仍只靠浏览器那次验证。 |
-| B1-2 | `renderPatternThumbnail` 的**像素内容无断言**（happy-dom 的 canvas 是桩，`toDataURL` 返回空字节的 data URL）。 | CI 只守到「创建了两个 canvas（均 58×58）、`toDataURL` 被调用、落盘封面等于画布产出的串」。**任何断言缩略图像素的写法在本环境都是恒真**，所以不写。 |
-| B1-3 | `probeSourceSize` 的**成功路径在 CI 中零覆盖**。 | happy-dom 的 `fetch` 拒绝 `blob:` scheme ⇒ `<img>` 永不 load、`naturalWidth` 恒 0 使该路径**不可能达成**。`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖，而 `probeSourceSize` 只是单行直返。 |
-| B1-4 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字的文件名会让 `put` 抛错，而 B1 没有改名入口 → 用户无出路）。 | 响亮失败但死路。B2 会整体替换这一页，为即将被删的代码加 `slice` 不划算。**B2 替换该页时一并解决。** |
-| B1-5 | `LibraryPage` 在**存储级失败**（库打不开）时只给琥珀色错误条，**新建按钮不禁用**。 | 「未注入」（`current === null`）那一支才显示「存储不可用 + 禁用新建」。真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径。 |
-| B1-6 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` **仅参数变化**时不重载。 | B1 的导航图生不出这个跳转，B3 会。 |
-| B1-7 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`）。 | 它是 B2 / B3 的接口面，注释已改为与事实一致；不收窄不删除。 |
-| B1-8 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走）。 | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。 |
-| B1-9 | `crop.x/y` 允许负数（规格 §5.4 只要求「有限」）→ 越界源矩形在 Chromium 上**不抛错、填透明**，即静默产出带透明边的图纸。 | B1 生产路径可**证明**永不越界（居中内接正方形，`x + s ≤ w`）。是否在 `generatePattern` 入口按源图尺寸夹取/拒绝 `crop`，交 **B2** 决策。 |
-| B1-10 | 两个实现的 `rename("nope", "   ")` 错误文案优先级不同；`data:image/` 是前缀判定故 `data:image/svg+xml` 放行；`LibraryPage` 的 rename/delete `catch` 分支与若干 UI 分支未断言。 | 契约未定义优先级（两条都对）；`data:image/` 前缀是规格 §12 的既有口径；未断言项已逐条自曝，属覆盖面。 |
+| B1-1 | `GeneratePage` 的成功路径在 happy-dom 下**无法覆盖**（真实解码、真实 canvas、真实 IDB 都不可用），靠**平台边界桩** + 真实浏览器人工验证。 | 桩只替换平台 I/O，断言落在「交给平台的源矩形」与「落盘数据」两个外部可观察量上；真实解码 / canvas / IDB 链路仍只靠浏览器那一次验证。 |
+| B1-2 | `renderPatternThumbnail` 的**像素内容无断言**（happy-dom canvas 是桩，`toDataURL` 返回空字节的 data URL）。 | CI 只守到「创建了两个 canvas + `toDataURL` 被调用」；**任何断言缩略图像素的写法在本环境都是恒真**，所以不写。 |
+| B1-3 | `estimateUsage()` 的「`navigator.storage` 根本不存在」这一支无断言。 | 三条有判别力的分支已用 `vi.stubGlobal` 覆盖。 |
+| B1-4 | `setProjectStore` / `getProjectStore` 的覆盖推后到 B2。 | 它们是两个单例适配器，B2 装配路由与页面时会真实消费。 |
+| B1-5 | `probeSourceSize` 的**成功路径在 CI 中零覆盖**。 | happy-dom 使该路径不可能达成；`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖。 |
+| B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口）。 | 响亮失败但用户无出路；**本轮已修**（`GeneratePage.defaultName` 夹到 100，并补断言）。 |
+| B1-7 | `LibraryPage` 在**存储级失败**时不置 `storeUnavailable`（只给琥珀错误条，新建**不禁用**）。 | 真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径。 |
+| B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载**。 | B1 的导航图生不出这个跳转，B3 会遇到。 |
+| B1-9 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`）。 | 它是 B2/B3 的接口面；注释已改为与事实一致。 |
+| B1-10 | `data:image/` 是**前缀**判定，故 `data:image/svg+xml` 会放行。 | 规格 §12 的既有口径。 |
+| B1-11 | 两个实现的 `rename("nope", "   ")` 错误文案优先级不同（IDB 先校验 name、内存先查存在性）。 | 契约未定义优先级，两条都对。 |
+| B1-12 | `crop.x/y` 允许负数 → 越界源矩形**静默产出带透明边的图纸**（构建记录 §5）。 | B1 生产路径可证明永不越界；是否在入口夹取/拒绝交 B2。 |
+| B1-13 | `generatePattern` 未按源图尺寸校验 `crop`。 | 同上，B2 决策。 |
+| B1-14 | `LibraryPage` 的 rename/delete `catch` 分支、改名预填值、「算了」取消按钮、`maxColors: null` 的 `save→load` 往返未断言。 | 已自曝，属覆盖面。 |
+| B1-15 | 「打开」在 B1 只显示只读**参数**（名称 / 尺寸 / 用色数 / 是否存了原图），**不渲染 `session.pattern` 预览**（`fromProjectDocument` 的 `pattern` / `params` 在应用层无 UI 消费者）。 | 渲染 `pattern` 是 B3 的核心交付（Canvas 分层渲染），B1 的临时预览会被整体替换；本轮**如实收窄规格口径**而不补预览（构建记录 §8）。 |
+| B1-16 | `src/components/ui/*.vue` 不存在：B1 的 UI 组件以内联 Tailwind class 写在各 view 内。 | 抽公共组件推迟到出现第二个消费者时（构建记录 §8）。**不为对齐规格新建 `components/` 目录**——那会造出没有消费者的抽象。 |
+| B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error`。 | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）；本轮裁决维持现状（构建记录 §8）。 |
 
 ## 文档
 

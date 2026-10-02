@@ -13,7 +13,12 @@ import { fileFromInput, probeSourceSize } from "@/services/imageSource";
 import { getBuiltinPalette } from "@/services/palette";
 import { renderPatternThumbnail } from "@/services/patternThumbnail";
 import { generatePattern } from "@/services/pipeline";
-import { getProjectStore, type ProjectMeta, type ProjectRecord } from "@/services/projectStore";
+import {
+  getProjectStore,
+  PROJECT_NAME_MAX,
+  type ProjectMeta,
+  type ProjectRecord,
+} from "@/services/projectStore";
 
 const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -135,10 +140,17 @@ function createId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** 默认工程名：原文件名去掉扩展名；为空时给一个中性名。 */
+/**
+ * 默认工程名：原文件名去掉扩展名；为空时给一个中性名。
+ *
+ * **必须夹到 `PROJECT_NAME_MAX`**：文件名 basename 超过 100 字（长时间戳 / 长标题的相册文件名
+ * 很常见）时，不夹就会让 `put` → `normalizeProjectName` 抛「工程名称不能超过 100 个字符」——
+ * 而工程根本没进库，图纸库里没有这一行，唯一的改名入口（卡片上的「改名」）对这条不存在的记录
+ * 也不存在。也就是说这是一条**响亮失败但用户无出路**的死路，必须在源头截断。
+ */
 function defaultName(fileName: string): string {
   const base = fileName.replace(/\.[^.]+$/, "").trim();
-  return base.length === 0 ? "新图纸" : base;
+  return base.length === 0 ? "新图纸" : base.slice(0, PROJECT_NAME_MAX);
 }
 
 const canGenerate = computed(() => !busy.value && storeError.value === "");

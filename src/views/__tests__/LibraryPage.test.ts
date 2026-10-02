@@ -150,6 +150,43 @@ describe("LibraryPage", () => {
     expect(hidden.text()).not.toContain("已用");
   });
 
+  // -------------------------------------------------------------------------
+  // `updatedAt` 相对时间（规格 B1 §7.1）。口径本身由 `src/views/__tests__/relativeTime.test.ts`
+  // 逐档钉死（那组用例给的是**固定 `now`**，不看机器时钟）；这里只钉**接线**：
+  // 卡片上真的有这一行、且读的是 `meta.updatedAt`。
+  //
+  // 为什么这两条也不用假时钟 / 不用 `new Date()` 做期望值：夹具时间戳必须选在机器时钟的
+  // **两侧**（过去 / 将来）才能让期望值在任意时刻都成立——本机时钟是 2026-10-02，而夹具常量
+  // 写的是 2026-10-03（构建记录 §6 的 R17 就是踩了这个坑）。
+  // -------------------------------------------------------------------------
+
+  it("每张卡片显示 updatedAt 的相对时间（过去 → 日期串）", async () => {
+    const base = await createMemoryProjectStore();
+    await base.put(makeRecord("old", "老图纸", "2020-01-02T03:04:05.000Z"));
+    setProjectStore(base);
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    const line = wrapper.find("[data-testid='project-updated-at']");
+    expect(line.exists()).toBe(true);
+    // 2020 年远早于任何运行时刻 → 必走「≥ 一周」那一档 → 本地日期串。这不是恒真断言：
+    // 去掉模板里那一行、或把相对时间写死成「刚刚」，都会红。
+    expect(line.text()).toBe("2020-01-02");
+  });
+
+  it("未来的 updatedAt 显示「刚刚」，不渲染负的时长（本机时钟早于夹具时最容易出的一支）", async () => {
+    const base = await createMemoryProjectStore();
+    await base.put(makeRecord("future", "未来图纸", "2030-01-01T00:00:00.000Z"));
+    setProjectStore(base);
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    const line = wrapper.find("[data-testid='project-updated-at']");
+    expect(line.text()).toBe("刚刚");
+  });
+
   it("存储存在但读取失败时把原因显示出来，而不是留一片空白", async () => {
     // 「注入了存储」不等于「读得出来」：`getProjectStore()` 成功、`list()` 抛错（配额用尽 /
     // 隐私模式）是真实会发生的一支。没有这条断言时，去掉 refresh 里包住 list 的 try/catch

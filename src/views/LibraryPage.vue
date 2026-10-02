@@ -7,6 +7,7 @@ import {
   type ProjectMeta,
   type ProjectStore,
 } from "@/services/projectStore";
+import { formatRelativeTime } from "@/views/relativeTime";
 
 const router = useRouter();
 const projects = ref<ProjectMeta[]>([]);
@@ -144,6 +145,9 @@ function open(id: string): void {
             {{ meta.name }}
           </p>
           <p class="mt-1 text-base text-slate-500">{{ meta.width }} × {{ meta.height }} · {{ meta.colorCount }} 种颜色</p>
+          <p data-testid="project-updated-at" class="mt-1 text-base text-slate-400">
+            {{ formatRelativeTime(meta.updatedAt, new Date()) }}
+          </p>
           <div class="mt-3 flex flex-wrap gap-3">
             <button data-testid="open-project" class="min-h-12 flex-1 rounded bg-slate-900 px-4 text-white" @click="open(meta.id)">
               打开

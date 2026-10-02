@@ -313,6 +313,39 @@ describe("GeneratePage 成功路径（假平台驱动真实流水线）", () => 
     expect(push).toHaveBeenCalledWith({ name: "home" });
   });
 
+  it("超长文件名把默认工程名夹到 100 字，而不是让 put 抛错（否则这条记录根本进不了库，用户无出路）", async () => {
+    const store = await createMemoryProjectStore();
+    setProjectStore(store);
+    stubProbe(800, 600);
+    stubBitmapApi(solidPixels(255));
+    stubOffscreenCanvas();
+    stubCanvasElement();
+
+    // 121 字的 basename（带长时间戳 / 长标题的相册文件名很常见）。不夹的话
+    // `put` → `normalizeProjectName` 会抛「工程名称不能超过 100 个字符」，而工程没进库 ⇒
+    // 图纸库里没有这一行 ⇒ 唯一的改名入口（卡片上的「改名」）对不存在的记录也不存在。
+    const basename = "a".repeat(121);
+    const longFile = new File([new Uint8Array([1, 2, 3, 4])], `${basename}.png`, {
+      type: "image/png",
+    });
+
+    const wrapper = mount(GeneratePage);
+    await flushPromises();
+    const input = wrapper.find('input[type="file"]').element as HTMLInputElement;
+    attachFile(input, longFile);
+    await wrapper.find("[data-testid='generate-run']").trigger("click");
+    await flushPromises();
+
+    // 不是抛错（错误条不存在）、不是跳走（没落盘就不要说成功）
+    expect(wrapper.find("[data-testid='generate-error']").exists()).toBe(false);
+    const metas = await store.list();
+    expect(metas).toHaveLength(1);
+    // 长度断言用**字面量 100**：写成 `PROJECT_NAME_MAX` 的话，常量被改坏时两边一起变、断言恒绿。
+    expect(metas[0]?.name).toHaveLength(100);
+    expect(metas[0]?.name).toBe("a".repeat(100));
+    expect(push).toHaveBeenCalledWith({ name: "home" });
+  });
+
   it("高比宽大时裁到另一根轴上（600×800 → 0,100,600,600），不是把 x/y 写死", async () => {
     const store = await createMemoryProjectStore();
     setProjectStore(store);
