@@ -12,6 +12,10 @@ const palette = loadPalette({
     { code: "A1", hex: "#ffffff" },
     { code: "A2", hex: "#000000" },
     { code: "A3", hex: "#ff0000" },
+    // 三通道互不相等：上面的白 / 黑 / 红**每一个都满足 G === B**（255/255、0/0、0/0），
+    // 单靠它们，把 `rgb[2]` 写进 G 通道、`rgb[1]` 写进 B 通道这种互换是**全绿地**通过的
+    // （实现者用变异实测过，见 task-4-report.md 的 M8 阶段 A）。
+    { code: "A4", hex: "#123456" },
   ],
 });
 
@@ -52,6 +56,22 @@ describe("patternToRgbaImage", () => {
         palette,
       ),
     ).toThrow(/越界/);
+  });
+
+  it("行优先逐格对位，且 R/G/B 各自对位（2×2、四色、含 G≠B 的色号）", () => {
+    // 两件事一起钉：① 上面 2×1 的用例分辨不出行优先与列优先写序（2×1 下两者同形），
+    // 而 `RgbaImage` 的契约是「行优先」（image/types.ts），写序错了图就整体转置；
+    // ② 通道次序需要 G 与 B 不相等的色号才钉得住（理由见夹具处注释）。
+    const image = patternToRgbaImage(
+      { width: 2, height: 2, paletteId: "fake", cells: Uint16Array.from([0, 3, 1, 2]) },
+      palette,
+    );
+    expect([...image.data]).toEqual([
+      255, 255, 255, 255, // (0,0) A1 白
+      0x12, 0x34, 0x56, 255, // (1,0) A4 —— G/B 互换 → [18,86,52,255]；列优先 → 排到 (1,1)
+      0, 0, 0, 255, // (0,1) A2 黑
+      255, 0, 0, 255, // (1,1) A3 红
+    ]);
   });
 
   it("宽高不是 ≥1 的整数时抛错（小数宽高会被 cells 长度校验放过）", () => {
