@@ -128,6 +128,7 @@ npm run build
 | B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error`。 | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）；本轮裁决维持现状（构建记录 §8）。 |
 | B1-18 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走）。 | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文（规格 §14 的 B1-R3）；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。 |
 | B1-19 | `LibraryPage` 的相对时间在**每次渲染时取 `new Date()`**，列表停留期间**不自动刷新**（不会自己从「3 分钟前」跳到「4 分钟前」）。 | 图纸库不是实时面板；要跳秒就得加定时器，会带来 happy-dom 下的定时器测试复杂度。**维持现状**（修复轮 1 复审同判）。 |
+| B1-20 | **CI 对「日期用本地日还是 UTC 日」这条实现选择没有判别力**：`relativeTime.ts` 用本地 getter，而 runner 是 `ubuntu-latest`（偏移 0）——偏移 0 时两种实现输出**逐字节相同**，任何同进程断言都无法区分（信息层面不存在）。现有用例能在**偏移 ≥ +2h 的时区**抓到该变异（实测：改成 `toISOString().slice(0,10)`，`Asia/Shanghai` 下红、UTC 下绿）。 | **不是放水**：曾有一条「断言本地日 ≠ UTC 日」的自证断言充当守门，但它判别力为零、且夹具只在偏移 ≥ +2h 跨日 → 在 UTC 与西半球/UTC+1 下**必红**（实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed；先用 `getTimezoneOffset() !== 0` 守卫属**必要但不充分**）。已删除它并把真实判别力所在写进注释。**要补 CI 侧的证伪能力只能给测试步骤一个非零 `TZ`**（属 `.github/` 变更，需授权）。 |
 
 ## 文档
 
