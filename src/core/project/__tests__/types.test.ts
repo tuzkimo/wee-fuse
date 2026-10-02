@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { EMPTY } from "../../pattern/types";
 import { loadPalette } from "../../palette/registry";
+import type { Palette, PaletteColor } from "../../palette/types";
+import mardRaw from "../../palette/builtin/mard221.json";
 import { validateProjectDocument } from "../types";
+
+/** 造一个长度为 `length` 的真实颜色数组（循环复用 `base` 的颜色值，只改色号）。 */
+function makeColors(base: PaletteColor, length: number): readonly PaletteColor[] {
+  const colors: PaletteColor[] = [];
+  for (let i = 0; i < length; i++) {
+    colors.push({ code: `C${i}`, name: "", rgb: base.rgb });
+  }
+  return colors;
+}
 
 /** 测试色卡：5 色，code 与全色卡下标一一对应（A1=0 A2=1 A3=2 A4=3 A5=4）。 */
 const palette = loadPalette({
@@ -16,6 +28,9 @@ const palette = loadPalette({
     { code: "A5", hex: "#0000ff" },
   ],
 });
+
+/** 内置 MARD221 色卡里的一个真实颜色，供上界测试色卡复用（不是手搓的假颜色对象）。 */
+const realBase = loadPalette(mardRaw).colors[0] as PaletteColor;
 
 /** 一份合法文档。各条非法用例都从它派生，保证「只有被测字段不同」。 */
 function validDoc(): Record<string, unknown> {
@@ -201,6 +216,35 @@ describe("validateProjectDocument", () => {
     );
     expect(empty.palette.codes).toEqual([]);
     expect(empty.grid).toEqual([65535, 65535, 65535, 65535]);
+  });
+
+  it("palette.codes 长度不得超过 EMPTY（65535）", () => {
+    // 色号数达到 EMPTY 时，该色下标与空格标记撞在同一个值上，`patternStats` 会把它当空格
+    // 静默吞掉。而 `loadPalette` 自己不许色数 > EMPTY，所以**没法用 loadPalette 造出越界
+    // 色卡**——这里的色卡在内存里拼：颜色对象取自真实的内置色卡（已经过 loadPalette 校验，
+    // 不是手搓的假对象），只是把数组长度拉到上界两侧，用来钉死这条长度检查本身。
+    const real = loadPalette(mardRaw);
+    const oversized: Palette = { ...real, colors: makeColors(realBase, EMPTY + 1) };
+    const atLimit: Palette = { ...real, colors: makeColors(realBase, EMPTY) };
+
+    const codesAtLimit = atLimit.colors.map((color) => color.code);
+    expect(codesAtLimit.length).toBe(EMPTY);
+    expect(() =>
+      validateProjectDocument(
+        { ...validDoc(), palette: { id: atLimit.id, codes: codesAtLimit }, grid: [0, 1, 0, 1] },
+        atLimit,
+      ),
+    ).not.toThrow();
+
+    // 越界色号表每个元素都是合法色号，所以唯一能拦下它的就是长度上限本身
+    // （把上限检查删掉时这条必须转红 —— 实测过，见报告 M6）。
+    const codesOverLimit = oversized.colors.map((color) => color.code);
+    expect(() =>
+      validateProjectDocument(
+        { ...validDoc(), palette: { id: oversized.id, codes: codesOverLimit }, grid: [0, 1, 0, 1] },
+        oversized,
+      ),
+    ).toThrow(/超过上限/);
   });
 
   it("palette.id 必须与传入色卡一致", () => {
