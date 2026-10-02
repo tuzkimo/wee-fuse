@@ -52,6 +52,18 @@ interface RecordedDraw {
 
 let draws: RecordedDraw[] = [];
 
+/** 每次 `putImageData` 收到的字节与坐标（格画布那一层）。 */
+interface RecordedPut {
+  /** 调用 `getContext("2d")` 那一刻，该上下文所属画布的尺寸。 */
+  readonly target: { w: number; h: number };
+  readonly x: number;
+  readonly y: number;
+  /** 直接持有替身缓冲的引用（不展开：大图纸下展开会多出上千万个元素）。 */
+  readonly bytes: Uint8ClampedArray;
+}
+
+let puts: RecordedPut[] = [];
+
 /** 最小 2D 上下文替身：只实现被测代码用到的成员。 */
 function createStubContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const target = { w: canvas.width, h: canvas.height };
@@ -62,7 +74,9 @@ function createStubContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2
       height,
       data: new Uint8ClampedArray(width * height * 4),
     }),
-    putImageData: () => {},
+    putImageData: (data: { data: Uint8ClampedArray }, x: number, y: number) => {
+      puts.push({ target, x, y, bytes: data.data });
+    },
     drawImage: (...drawArgs: unknown[]) => {
       draws.push({
         target,
@@ -78,6 +92,7 @@ function createStubContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2
 
 beforeEach(() => {
   draws = [];
+  puts = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (
     this: HTMLCanvasElement,
     ...args: unknown[]
@@ -157,6 +172,25 @@ describe("renderPatternThumbnail", () => {
     expect(draws).toHaveLength(1);
     expect([draws[0]?.target.w, draws[0]?.target.h]).toEqual([1, 1]);
     expect([draws[0]?.dw, draws[0]?.dh]).toEqual([1, 1]);
+  });
+
+  it("把栅格化结果逐字节交给 putImageData（漏掉这一步缩略图就是一张全透明图）", () => {
+    // 与 raster.test.ts 的分工：那里钉 patternToRgbaImage 自己的输出，这里钉**接线**
+    // ——4 通道字节必须原样进格画布、且落在 (0,0)。两端各自正确、错在接线的缺陷
+    // （本项目 D1 的形态）只有这一层能抓：删掉 putImageData 或改错坐标，drawImage 的
+    // 实参与 toDataURL 都不变，上面五条断言全绿。
+    renderPatternThumbnail(
+      { width: 2, height: 2, paletteId: "fake", cells: Uint16Array.from([0, 1, 1, 0]) },
+      palette,
+    );
+
+    expect(puts).toHaveLength(1);
+    expect([puts[0]?.target.w, puts[0]?.target.h]).toEqual([2, 2]);
+    expect([puts[0]?.x, puts[0]?.y]).toEqual([0, 0]);
+    // A1 白 / A2 黑 / A2 黑 / A1 白，逐字节（R、G、B、A 四通道都读）
+    expect([...(puts[0]?.bytes ?? [])]).toEqual([
+      255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255,
+    ]);
   });
 
   it("长边上限就是规格的 512；非法上限响亮失败，且守卫在任何画布写操作之前", () => {
