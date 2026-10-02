@@ -156,6 +156,10 @@ describe("fromProjectDocument", () => {
     };
     const a = fromProjectDocument(validateProjectDocument(base, palette), palette).pattern;
     const b = fromProjectDocument(validateProjectDocument(shuffled, palette), palette).pattern;
+    // 只比对 a 与 b 还不够：若实现把子集顺序**整体翻了个面**（codes 与 grid 一致地换序），
+    // a 与 b 会「一致地错」——两者相等但这张图的色号全错。实测：子集降序变异下这一条仍然绿。
+    // 所以必须再钉住它们等于原始图纸，否则这条用例只能判别「按下标直接搬」，判别不了顺序翻转。
+    expect([...a.cells]).toEqual([...p.cells]);
     expect([...b.cells]).toEqual([...a.cells]);
   });
 
@@ -194,19 +198,24 @@ describe("fromProjectDocument", () => {
       paletteId: "fake",
       cells: Uint16Array.from([2, EMPTY, 4, 4, 2, EMPTY]),
     };
+    // longSide 刻意取 8：既不等于宽 3 也不等于高 2，写死或与尺寸互换都读得出来。
+    // 顺带钉住 `maxColors` / `longSide` 这两个**此前没有任何断言读过**的回读字段。
     const asymmetric: ProjectParams = {
-      longSide: 3,
+      longSide: 8,
       maxColors: 32,
       crop: { x: 3, y: 5, w: 12, h: 7, rotate: 2 },
     };
     const doc = toProjectDocument(p, palette, asymmetric);
     expect(doc.width).toBe(3);
     expect(doc.height).toBe(2);
+    expect(doc.params.longSide).toBe(8);
     expect(doc.params.maxColors).toBe(32);
     const reparsed: unknown = JSON.parse(JSON.stringify(doc));
     const back = fromProjectDocument(reparsed, palette);
     expect(back.pattern.width).toBe(3);
     expect(back.pattern.height).toBe(2);
+    expect(back.params.longSide).toBe(8);
+    expect(back.params.maxColors).toBe(32);
     expect(back.params.crop).toEqual({ x: 3, y: 5, width: 12, height: 7 });
     expect(back.params.rotation).toBe(2);
     expect([...back.pattern.cells]).toEqual([...p.cells]);
