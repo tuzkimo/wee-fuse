@@ -129,7 +129,7 @@ R9 问的是「`crop.x/y` 为负（越界裁剪）会怎样」。任务 2 的实
 | B1-3 | `estimateUsage()` 的「`navigator.storage` 根本不存在」这一支无断言 | 三条有判别力的分支已用 `vi.stubGlobal` 覆盖 |
 | B1-4 | `setProjectStore` / `getProjectStore` 的覆盖推后到 B2 | 它们是两个单例适配器，B2 装配路由与页面时会真实消费 |
 | B1-5 | `probeSourceSize` 的**成功路径在 CI 中零覆盖** | happy-dom 使该路径不可能达成；`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖 |
-| B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口） | 响亮失败但用户无出路；B2 会整体替换这一页 |
+| B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口） | 响亮失败但用户无出路；~~B2 会整体替换这一页~~ **收尾轮（任务 9）改判：这是死路，必须修**——`defaultName` 改为 `.slice(0, PROJECT_NAME_MAX)` 并补断言（第 121 字的文件名落盘名字长 100）。「B2 会替换它」不构成不修的理由：在那之前用户会被卡死 |
 | B1-7 | `LibraryPage` 在**存储级失败**时不置 `storeUnavailable`（只给琥珀错误条，新建**不禁用**） | 真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径 |
 | B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载** | B1 的导航图生不出这个跳转，B3 会遇到 |
 | B1-9 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`） | 它是 B2/B3 的接口面；注释已改为与事实一致 |

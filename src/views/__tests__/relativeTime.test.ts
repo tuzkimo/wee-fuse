@@ -82,14 +82,25 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
   });
 
   it("超过一周 → 本地日期串 YYYY-MM-DD（不是 ISO 串、不是 UTC 日期）", () => {
-    const timestamp = ago(8 * DAY);
+    // 这个夹具刻意选在**本地日期与 UTC 日期不同**的时刻：2026-09-24T22:00Z 在 UTC+8 下是
+    // 本地 2026-09-25 06:00。若实现改用 `toISOString().slice(0, 10)`（UTC 日期），本机时区上
+    // 就会给出 2026-09-24 → 第 94 行的相等断言转红。
+    // （最初选的 8 天整 = 2026-09-25T12:00Z 在 UTC+8 下是本地 09-25 20:00，两侧**日期相同**，
+    // 于是那条断言对「本地 vs UTC」零判别力——变异实测（M3f 第一次跑）发现，已修。）
+    const timestamp = ago(8 * DAY + 14 * HOUR);
     const result = formatRelativeTime(timestamp, NOW);
-    // 形状：是一段 `YYYY-MM-DD`，不是原始 ISO 串（`2026-09-25T04:00:00.000Z`）
+    // 形状：是一段 `YYYY-MM-DD`，不是原始 ISO 串
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // 值是**本地**日期：本机时区是 UTC+8（+8 小时），基准 NOW = 2026-10-03T12:00Z 的本地日期
-    // 是 2026-10-03，8 天前是本地 2026-09-25。若实现改用 `toISOString().slice(0, 10)`（UTC 日期），
-    // 在 UTC 为正偏移的时区上会差一天 → 转红。
-    expect(result).toBe(localDateString(new Date(NOW.getTime() - 8 * DAY)));
+    expect(result).toBe(localDateString(new Date(timestamp)));
+    // 显式证明这个夹具本身有判别力：运行时刻两侧的日期真的不同（UTC 日 ≠ 本地日）
+    expect(timestamp.slice(0, 10)).not.toBe(localDateString(new Date(timestamp)));
+
+    // 恰 7 天（下限闭区间）：把「超过一周」的阈值写成 `dayDiff <= 7` 时，这里会得到「7 天前」
+    // 而不是日期串 → 转红。（上面那条 8 天整的用例对 `<= 7` 零判别力，变异实测 M3i 证明过。）
+    // 这一条只钉「7 天该走日期分支」，不重复钉本地 / UTC 之差（那是上面那个夹具的职责：
+    // `ago(7 * DAY)` = 2026-09-26T12:00Z 在 UTC+8 下是本地 09-26 20:00，两侧日期恰好相同）。
+    const sevenDays = ago(7 * DAY);
+    expect(formatRelativeTime(sevenDays, NOW)).toBe(localDateString(new Date(sevenDays)));
   });
 
   it("未来时间戳 → 刚刚，不渲染负的时长（本机时钟早于夹具时常踩的一支）", () => {
