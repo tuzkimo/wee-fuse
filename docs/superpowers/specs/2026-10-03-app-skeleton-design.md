@@ -242,12 +242,14 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
    落私有目录（卸载即清）是可接受的，塞进浏览器存储配额里则不是。
 2. 数据模型若照 IndexedDB 的形状写死，引入壳时 `list()` 要重写；按目录模型写，只需换实现。
 
-**已验证（B1 第 0 步，探针 `src/services/__tests__/idbBlobProbe.test.ts`）：走退路**——落盘存
-`ArrayBuffer`（`type` 已在记录里单列），读时由 `idbProjectStore.ts` 包回 `Blob`；该差异对上层
-不可见（它是唯一接触平台存储的文件）。
+**已验证（B1 第 0 步，探针 `src/services/__tests__/idbBlobProbe.test.ts`）：走退路**——`source` 在
+IndexedDB 里的**落盘形态是 `ArrayBuffer` + `type` 字符串**（两部分都存在 `sources` 那条记录里），
+`Blob ↔ ArrayBuffer` 的转换在 `idbProjectStore.ts` **内部**完成；`ProjectStore` 接口仍然收发 `Blob`，
+调用方无感（该文件是唯一接触平台存储的文件）。
 
-实测环境是 **fake-indexeddb 6.2.5 + happy-dom 20.14.5**（Node 24.19.0），**不是真实浏览器**；
-浏览器侧仍需任务 3 之后用 `npm run dev` 人工确认一次。
+实测环境是 **fake-indexeddb 6.2.5 + happy-dom 20.14.5**（Node 24.19.0），**不是真实浏览器**。
+**真机浏览器侧能否直接存 `Blob` 本次仍未实测**——按结构化克隆的规范它应当可以，但这一点没有量过，
+仍需任务 3 之后用 `npm run dev` 人工确认一次。
 
 两条实测事实必须合起来读，只看任一条都会得出错误判断：
 
@@ -265,6 +267,10 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
 「结构化克隆保留 Blob」的行为；否则测试里唯一能通过的写法是拿 `node:buffer` 的 `Blob` 冒充浏览器
 `Blob`，那是一条只在测试里成立的路径。代价是保存时把 2–6 MB 原图完整读进 JS 内存一次；
 §6.1 的列表路径不受影响（`list()` 本来就不碰 `source`）。
+
+探针里守这条事实的承重断言是「克隆结果**没有 `arrayBuffer`、只剩 `type`**」。同用例里
+`expect(cloned).not.toBeInstanceOf(Blob)` 那条**不作数**（恒真）：`structuredClone` 是 Node 的，而
+`Blob` 是 happy-dom 另一个 realm 的类，它无论如何都不会返回该类的实例——换成合规 `Blob` 它照样通过。
 
 ### 6.3 与 Pinia store 的关系
 
@@ -338,7 +344,7 @@ B1 用它把链路跑通：选图 → 居中**正方**裁剪（边长 = 短边�
 | 载入方向对 code 的依赖（判别力） | 取**同一批色号**、同一张 `grid`，但把 `codes` 换成**另一种顺序**，断言载入结果**完全相同**。这条专打「按下标直接搬、不按 code 查表」这一种实现——它是 §5.2 唯一会静默错的做法（图纸看起来正常，色号全错）。若按 code 查表则两种顺序结果必然一致；若按下标搬则必然不同，故这条断言有判别力。**注意方向**：这里要的是「不同输入顺序 → 相同结果」，而不是「结果不同」 |
 | 字段搬位 | `crop.w/h` → `Rect.width/height`、`crop.rotate` → 独立 `rotation` 逐项断言 |
 | `validateProjectDocument` | §5.4 每一行各一条用例；重点是「不合法时报错**而不是**产出一个看起来正常的对象」 |
-| `idbProjectStore` | fake-indexeddb + happy-dom：`put` / `get` 往返（含 `Blob`）、`list` 按 `updatedAt` 倒序、`remove`、`rename` 不碰 `doc`、`get` 不存在返回 `null`、冗余字段（`meta.width/height/colorCount`）由 `put` 从 `doc` 覆盖而非采信入参 |
+| `idbProjectStore` | fake-indexeddb + happy-dom：`put` / `get` 往返（**含原图字节逐字节比对**；落盘是 `ArrayBuffer`，见 §6.2）、`list` 按 `updatedAt` 倒序、`remove`、`rename` 不碰 `doc`、`get` 不存在返回 `null`、冗余字段（`meta.width/height/colorCount`）由 `put` 从 `doc` 覆盖而非采信入参、`get` 返回的是副本（改它不写回库） |
 | `memoryProjectStore` | 同上一组（两个实现共用同一套用例，保证可替换） |
 | `LibraryPage.vue` | 空列表提示、列表渲染、重命名、删除确认、损坏条目不影响其他条目 |
 
@@ -393,6 +399,6 @@ npm run dev       # 浏览器人工走一遍：新建 → 生成 → 首页看�
 
 | # | 风险 | 验证方式 | 降级方案 |
 |---|---|---|---|
-| B1-R1 | IndexedDB / fake-indexeddb 对 `Blob` 的存取行为是否一致 | B1 第 0 步：fake-indexeddb 下存取一个 `Blob` 并逐字节比对 | 改存 `ArrayBuffer` + 手动包 `Blob`，差异关在 `idbProjectStore.ts` 内 |
+| B1-R1 | ~~IndexedDB / fake-indexeddb 对 `Blob` 的存取行为~~ **已定论（2026-10-02，B1 第 0 步）**：合规 `Blob` 能原样往返（Node 原生 `Blob` 实测逐字节一致），**失败的是 happy-dom 的假 `Blob`**（过不了结构化克隆）→ 故生产落盘改用 `ArrayBuffer` + `type`，让测试与生产走同一条路径。详见 §6.2 | 探针 `src/services/__tests__/idbBlobProbe.test.ts`（环境事实 + `ArrayBuffer` 生产路径两条用例） | **已生效**：落盘 `ArrayBuffer`，转换关在 `idbProjectStore.ts` 内。**仍未做的**：真实浏览器 / WebView 上的直接确认（属任务 3 之后的人工验证） |
 | B1-R2 | 多工程下的存储配额（单工程 2–6 MB） | 人工：连续存 10 个工程，读 `estimateUsage()` | UI 已显示占用（§7.3）；必要时在新建前提示剩余空间 |
 | B1-R3 | 平板浏览器上 `crypto.randomUUID` 可用性 | 人工 + 代码里带 `Math.random` 兜底 | 兜底路径（注意：仅兜底，不作为默认） |
