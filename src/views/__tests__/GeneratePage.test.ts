@@ -211,11 +211,16 @@ describe("GeneratePage 状态机与失败路径", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("存储未初始化时给出明确错误而不是白屏", async () => {
+  it("存储未初始化时给出明确错误而不是白屏，并且不允许开工", async () => {
     setProjectStore(null);
     const wrapper = mount(GeneratePage);
     await flushPromises();
     expect(wrapper.text()).toContain("工程存储");
+    // 只断言那行红字的话，把 `canGenerate` 里的 `storeError === ""` 去掉也照样绿：
+    // 用户会先点一次注定失败（「工程存储尚未初始化」）的生成。
+    expect(
+      (wrapper.find("[data-testid='generate-run']").element as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("长边档位选择器默认 58，并可切到 116", async () => {
@@ -353,5 +358,25 @@ describe("GeneratePage 成功路径（假平台驱动真实流水线）", () => 
     expect(metas[0]?.height).toBe(116);
     const record = await store.get(metas[0]?.id ?? "");
     expect(record?.doc.params.longSide).toBe(116);
+  });
+
+  it("档位选「不限」时落盘的就是 null（不会被悄悄换成 16）", async () => {
+    const store = await createMemoryProjectStore();
+    setProjectStore(store);
+    stubProbe(800, 600);
+    stubBitmapApi(solidPixels(255));
+    stubOffscreenCanvas();
+    stubCanvasElement();
+
+    const wrapper = mount(GeneratePage);
+    await flushPromises();
+    // 第三个选项的 value 是空串，代表「颜色不限」。落盘的 `params.maxColors` 是规格 §4.4
+    // 要求回读的字段：这里错成 16，用户拿到的就是一张被强行压成 16 色的图纸。
+    await wrapper.find("[data-testid='max-colors']").setValue("");
+    await clickGenerate(wrapper);
+
+    const metas = await store.list();
+    const record = await store.get(metas[0]?.id ?? "");
+    expect(record?.doc.params.maxColors).toBeNull();
   });
 });
