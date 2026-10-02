@@ -6,10 +6,24 @@ import {
   type ProjectStore,
 } from "./projectStore";
 
-/** 默认数据库名。测试传自己的名字，避免用例之间互相污染。 */
+/**
+ * 默认数据库名。
+ *
+ * **为何公开**：`main.ts` 在挂载前建库时要报出这个名字（换实现 / 排查用户数据问题时也要），
+ * 它因此是正式的契约面而不是实现细节。测试传自己的名字，避免用例之间互相污染。
+ */
 export const IDB_DATABASE_NAME = "wee-fuse";
 
 const STORE_PROJECTS = "projects";
+/**
+ * 与 `projects` 同一份 meta 的**第二副本**，只给 `list()` 读。
+ *
+ * 为什么不直接从 `projects` 里 `getAll()` 再把 `doc` 丢掉：那样 `grid` 已经被整条读进内存了。
+ * 长边 500 的图纸 grid 是 25 万个数，几十个工程就是数十 MB 的瞬时分配——而 §4.4 冗余字段
+ * （`meta.width/height/colorCount`）存在的**全部理由**就是让列表页不必载入 grid（规格 §7.1）。
+ * 两份 meta 在同一事务里写，因此不会漂移。
+ */
+const STORE_METAS = "metas";
 const STORE_SOURCES = "sources";
 const DB_VERSION = 1;
 
@@ -17,8 +31,10 @@ const DB_VERSION = 1;
  * IndexedDB 实现。**本文件是全项目唯一 import `indexedDB` 的地方**——真机换成 App
  * 私有目录时，只替换这个文件，上层的 `ProjectStore` 接口与数据模型都不动。
  *
- * 记录分成两个 object store：`projects`（meta + doc）与 `sources`（原图，**落盘为 `ArrayBuffer` + `type`**）。
- * `list()` 因此天然不会读到 MB 级的原图——这对图纸库有几十个工程的情况很重要。
+ * 记录分成三个 object store：`projects`（meta + doc）、`metas`（只有 meta，供 `list()` 读）与
+ * `sources`（原图，**落盘为 `ArrayBuffer` + `type`**）。`list()` 只开 `metas` 的事务，
+ * 因此既不会读到 MB 级的原图，也不会把几十万格的 `grid` 载入内存——这对图纸库有几十个
+ * 工程的情况很重要（规格 §7.1）。`metas` 与 `projects` 的 meta 在同一事务里写，不会漂移。
  *
  * **为什么原图落盘 `ArrayBuffer` 而不是 `Blob`**（任务 0 的实测结论，账本 R3）：happy-dom 的全局
  * `Blob` 过不了结构化克隆（无 `Symbol.toStringTag`，字节挂在 symbol 键上），裸 `structuredClone`
@@ -41,6 +57,20 @@ function promisifyRequest<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
+/**
+ * 陈旧数据库（本分支早期版本建的，只有 `projects` + `sources`）没有 `metas`。
+ * `list()` 必须**响亮失败**：静默返回空数组会让用户以为图库空了，那正是本项目要消灭的
+ * 「看起来正常、数据其实没读到」形态。（`DB_VERSION` 保持 1：尚未发布，不需要迁移，
+ * 测试都用自己的新鲜数据库名。）
+ */
+function requireStore(db: IDBDatabase, name: string): void {
+  if (!db.objectStoreNames.contains(name)) {
+    throw new Error(
+      `数据库 ${db.name} 里没有 ${name} object store（疑似旧版本残留）：请删除该库后重建，不要把它当空图库`,
+    );
+  }
+}
+
 /** 用完即关：不做连接缓存。本项目写操作是低频的用户动作，正确性优先于这点开销。 */
 function openDatabase(name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -49,6 +79,9 @@ function openDatabase(name: string): Promise<IDBDatabase> {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_PROJECTS)) {
         db.createObjectStore(STORE_PROJECTS, { keyPath: "meta.id" });
+      }
+      if (!db.objectStoreNames.contains(STORE_METAS)) {
+        db.createObjectStore(STORE_METAS, { keyPath: "meta.id" });
       }
       if (!db.objectStoreNames.contains(STORE_SOURCES)) {
         db.createObjectStore(STORE_SOURCES);
@@ -62,6 +95,11 @@ function openDatabase(name: string): Promise<IDBDatabase> {
 interface StoredProject {
   readonly meta: ProjectMeta;
   readonly doc: ProjectRecord["doc"];
+}
+
+/** `metas` store 记录的形状：**只有** meta，没有 doc / source。 */
+interface StoredMeta {
+  readonly meta: ProjectMeta;
 }
 
 /** `sources` store 记录的形状：原图字节 + MIME 类型。**存 `ArrayBuffer`，不存 `Blob`**（见文件头注释）。 */
@@ -115,10 +153,12 @@ export async function createIdbProjectStore(
   return {
     async list(): Promise<ProjectMeta[]> {
       return withDb(async (db) => {
-        const tx = db.transaction(STORE_PROJECTS, "readonly");
-        const all = await promisifyRequest<StoredProject[]>(
-          tx.objectStore(STORE_PROJECTS).getAll(),
-        );
+        requireStore(db, STORE_METAS);
+        // **只碰 `metas`**：`projects` 里有整张 grid，读它再丢掉就等于把几十万个数拉进内存
+        // （规格 §7.1「grid 与 source 不进列表内存」）。改回读 `projects` 会被
+        // `idbProjectStore.test.ts` 里的白盒用例打红。
+        const tx = db.transaction(STORE_METAS, "readonly");
+        const all = await promisifyRequest<StoredMeta[]>(tx.objectStore(STORE_METAS).getAll());
         return sortByUpdatedAtDesc(all.map((entry) => entry.meta));
       });
     },
@@ -131,6 +171,17 @@ export async function createIdbProjectStore(
       if (typeof record.meta.id !== "string" || record.meta.id.length === 0) {
         throw new Error("工程 id 必须是非空字符串");
       }
+      // §12：`thumbnail` 是外部可影响的展示字段，而列表页会把它直接塞进 `<img src>`。
+      // 只放行空串与 `data:image/`——`javascript:` / 远程 URL / `data:text/html` 一律拒绝，
+      // 且必须在**任何写操作之前**拒绝。
+      if (
+        typeof record.meta.thumbnail !== "string" ||
+        (record.meta.thumbnail !== "" && !record.meta.thumbnail.startsWith("data:image/"))
+      ) {
+        throw new Error(
+          `工程封面图必须是 data:image/ 开头的字符串或空串（当前 ${String(record.meta.thumbnail)}）`,
+        );
+      }
       const meta = deriveMeta(
         { ...record.meta, name: normalizeProjectName(record.meta.name) },
         record.doc,
@@ -141,9 +192,11 @@ export async function createIdbProjectStore(
       const sourceBytes =
         record.source === null ? null : await record.source.blob.arrayBuffer();
       await withDb(async (db) => {
-        // 两条记录在同一个事务里写：不能出现「meta 写进去了、原图没写进去」的半状态。
-        const tx = db.transaction([STORE_PROJECTS, STORE_SOURCES], "readwrite");
+        // 三条记录在同一个事务里写：不能出现「meta 写进去了、原图没写进去」的半状态，
+        // 也不能出现 `metas` 与 `projects` 的 meta 不一致（列表显示旧名字、详情是新名字）。
+        const tx = db.transaction([STORE_PROJECTS, STORE_METAS, STORE_SOURCES], "readwrite");
         tx.objectStore(STORE_PROJECTS).put({ meta, doc: record.doc } satisfies StoredProject);
+        tx.objectStore(STORE_METAS).put({ meta } satisfies StoredMeta);
         if (sourceBytes === null) {
           tx.objectStore(STORE_SOURCES).delete(record.meta.id);
         } else {
@@ -162,8 +215,9 @@ export async function createIdbProjectStore(
 
     async remove(id: string): Promise<void> {
       await withDb(async (db) => {
-        const tx = db.transaction([STORE_PROJECTS, STORE_SOURCES], "readwrite");
+        const tx = db.transaction([STORE_PROJECTS, STORE_METAS, STORE_SOURCES], "readwrite");
         tx.objectStore(STORE_PROJECTS).delete(id);
+        tx.objectStore(STORE_METAS).delete(id);
         tx.objectStore(STORE_SOURCES).delete(id);
         await new Promise<void>((resolve, reject) => {
           tx.oncomplete = () => resolve();
@@ -183,8 +237,11 @@ export async function createIdbProjectStore(
           name: normalized,
           updatedAt: new Date().toISOString(),
         };
-        const tx = db.transaction(STORE_PROJECTS, "readwrite");
+        const tx = db.transaction([STORE_PROJECTS, STORE_METAS], "readwrite");
         tx.objectStore(STORE_PROJECTS).put({ meta, doc: record.doc } satisfies StoredProject);
+        // `metas` 这份副本必须跟着改：`list()` 只读它，漏改就会出现「列表还是旧名字、
+        // 点进去是新名字」——`list()` 与 `get()` 的 meta 必须逐字段相等（契约里有断言）。
+        tx.objectStore(STORE_METAS).put({ meta } satisfies StoredMeta);
         await new Promise<void>((resolve, reject) => {
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error ?? new Error("重命名失败"));

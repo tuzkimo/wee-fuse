@@ -45,7 +45,12 @@ export interface ProjectStore {
   estimateUsage(): Promise<{ usage: number; quota: number } | null>;
 }
 
-/** 工程名长度上限。 */
+/**
+ * 工程名长度上限。
+ *
+ * **为何公开**：UI（改名对话框、图纸库）要在用户输入时就给出上限提示与计数，
+ * 而不是等 `put` / `rename` 抛错；它因此是契约面而不是实现细节。
+ */
 export const PROJECT_NAME_MAX = 100;
 
 /** 校验并归一化工程名；非法时抛错。`rename` 与 `put` 共用。 */

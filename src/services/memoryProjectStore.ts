@@ -19,16 +19,23 @@ export async function createMemoryProjectStore(): Promise<ProjectStore> {
 
   /**
    * 落库与出库都做一次深拷贝，**为的是与 IndexedDB 实现语义一致**：
-   * IDB 读出的记录是结构化克隆的副本，调用方改它不会影响库里；若内存实现交出引用，
-   * 同一个调用方在两套实现下行为不同——「换实现不影响调用方」这个承诺就破了。
+   * IDB 走结构化克隆，**每一层**都是新对象。若这里只换掉 `doc` 本身、让 `params` /
+   * `params.crop` / `palette.codes` 继续共享引用，调用方改 `doc.params.crop.x` 或
+   * `palette.codes[0]` 就只会写进内存实现——「换实现不影响调用方」这个承诺就破了。
+   * 所以逐层展开：`doc`、`doc.params`、`doc.params.crop`、`doc.palette`、
+   * `doc.palette.codes`、`doc.grid` 全是新对象 / 新数组。
    *
-   * `grid` 要显式复制：`[...doc.grid]` 浅拷数组元素，但数组本身必须换一个。
    * `source.blob` 沿用同一引用（Blob 按约定不可变；IDB 实现读回时也是新建一个 Blob 包同一批字节）。
    */
   function cloneRecord(record: ProjectRecord): ProjectRecord {
     return {
       meta: { ...record.meta },
-      doc: { ...record.doc, palette: { ...record.doc.palette }, grid: [...record.doc.grid] },
+      doc: {
+        ...record.doc,
+        palette: { ...record.doc.palette, codes: [...record.doc.palette.codes] },
+        grid: [...record.doc.grid],
+        params: { ...record.doc.params, crop: { ...record.doc.params.crop } },
+      },
       source: record.source === null ? null : { ...record.source },
     };
   }
@@ -58,6 +65,16 @@ export async function createMemoryProjectStore(): Promise<ProjectStore> {
     async put(record: ProjectRecord): Promise<void> {
       if (typeof record.meta.id !== "string" || record.meta.id.length === 0) {
         throw new Error("工程 id 必须是非空字符串");
+      }
+      // §12：与 IDB 实现同一条守卫（同一份口径，写在任何写操作之前）。
+      // 列表页会把 `thumbnail` 直接塞进 `<img src>`，所以只放行空串与 `data:image/`。
+      if (
+        typeof record.meta.thumbnail !== "string" ||
+        (record.meta.thumbnail !== "" && !record.meta.thumbnail.startsWith("data:image/"))
+      ) {
+        throw new Error(
+          `工程封面图必须是 data:image/ 开头的字符串或空串（当前 ${String(record.meta.thumbnail)}）`,
+        );
       }
       const name = normalizeProjectName(record.meta.name);
       const stored = withDerivedMeta({ ...record, meta: { ...record.meta, name } });
