@@ -59,9 +59,13 @@ function promisifyRequest<T>(request: IDBRequest<T>): Promise<T> {
 
 /**
  * 陈旧数据库（本分支早期版本建的，只有 `projects` + `sources`）没有 `metas`。
- * `list()` 必须**响亮失败**：静默返回空数组会让用户以为图库空了，那正是本项目要消灭的
+ * 缺 store 必须**响亮失败**：静默降级会让用户以为图库空了，那正是本项目要消灭的
  * 「看起来正常、数据其实没读到」形态。（`DB_VERSION` 保持 1：尚未发布，不需要迁移，
  * 测试都用自己的新鲜数据库名。）
+ *
+ * **五个入口统一用 `requireStores`**（见 `withDb`）：不做「`list()` 中文报错、
+ * `put`/`remove`/`rename` 抛英文 `NotFoundError`」这种半可用状态——那种错误
+ * 对用户不可行动，而统一守卫只要一行。
  */
 function requireStore(db: IDBDatabase, name: string): void {
   if (!db.objectStoreNames.contains(name)) {
@@ -69,6 +73,11 @@ function requireStore(db: IDBDatabase, name: string): void {
       `数据库 ${db.name} 里没有 ${name} object store（疑似旧版本残留）：请删除该库后重建，不要把它当空图库`,
     );
   }
+}
+
+/** 三处 store 必须齐全。任一缺失都以同一句中文文案抛错。 */
+function requireStores(db: IDBDatabase): void {
+  for (const name of [STORE_PROJECTS, STORE_METAS, STORE_SOURCES]) requireStore(db, name);
 }
 
 /** 用完即关：不做连接缓存。本项目写操作是低频的用户动作，正确性优先于这点开销。 */
@@ -144,6 +153,10 @@ export async function createIdbProjectStore(
   async function withDb<T>(run: (db: IDBDatabase) => Promise<T>): Promise<T> {
     const db = await openDatabase(databaseName);
     try {
+      // 五个入口（list / get / put / remove / rename）开完连接的第一件事：三处 store 齐全性。
+      // 放在这里而不是各写一遍，是为了让陈旧库的行为**一致**——中文、响亮、可行动，
+      // 而不是「list 中文、写路径英文 NotFoundError」的半可用状态。
+      requireStores(db);
       return await run(db);
     } finally {
       db.close();
@@ -153,10 +166,9 @@ export async function createIdbProjectStore(
   return {
     async list(): Promise<ProjectMeta[]> {
       return withDb(async (db) => {
-        requireStore(db, STORE_METAS);
         // **只碰 `metas`**：`projects` 里有整张 grid，读它再丢掉就等于把几十万个数拉进内存
-        // （规格 §7.1「grid 与 source 不进列表内存」）。改回读 `projects` 会被
-        // `idbProjectStore.test.ts` 里的白盒用例打红。
+        // （规格 §7.1「grid 与 source 不进列表内存」）。「只开 metas 事务」这件事由
+        // `idbProjectStore.test.ts` 里 spy `IDBDatabase.prototype.transaction` 的用例直接断言。
         const tx = db.transaction(STORE_METAS, "readonly");
         const all = await promisifyRequest<StoredMeta[]>(tx.objectStore(STORE_METAS).getAll());
         return sortByUpdatedAtDesc(all.map((entry) => entry.meta));

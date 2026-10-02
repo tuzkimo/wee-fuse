@@ -163,12 +163,16 @@ export function describeProjectStoreContract(
       // 会让这两处静默写回库里（IDB 的结构化克隆是**逐层**拷贝，内存实现必须一致）。
       (first?.doc.params.crop as { x: number }).x = 999;
       (first?.doc.palette.codes as string[])[0] = "被改坏了";
+      // `params` 这一层**自身**也要试（修复轮 2 补）：只展开 `params.crop` 而共享
+      // `params` 对象时，改 `longSide` / `maxColors` 同样是「只在内存实现上写进库」。
+      (first?.doc.params as { longSide: number }).longSide = 999;
 
       const second = await store.get("a");
       expect(second?.meta.name).toBe("小猫");
       expect(second?.doc.grid).toEqual([0, EMPTY]);
       expect(second?.doc.params.crop.x).toBe(0);
       expect(second?.doc.palette.codes).toEqual(["A3"]);
+      expect(second?.doc.params.longSide).toBe(2);
     });
 
     it("put 之后调用方改自己那份 record，也不会改到库里（写入侧同样要拷贝）", async () => {
@@ -210,7 +214,11 @@ export function describeProjectStoreContract(
     });
 
     // -----------------------------------------------------------------------
-    // 以下四条是**实现者事后变异自审时的补充**（简报的 13 条用例逐字未改）：
+    // 以下四条是**实现者事后变异自审时的补充**。简报 13 条用例的名称与原有断言**未删改**，
+    // 但**不是**「逐字未改」：修复轮 1 在「get 返回的是副本」那一条里追加了 `params.crop.x`
+    // 与 `palette.codes` 两行断言（见 :155 的注释），修复轮 2 又追加了 `params.longSide`
+    // 一行。这里如实写明，免得后人以为整个文件从未被改过。
+    //
     // 变异实测证明简报原有断言**读不到**这几处行为——把 `normalizeProjectName` 的
     // `return trimmed` 改成 `return name`，13 条用例在两个实现上**全绿**；把 `put` 的
     // id 守卫整段删掉也全绿；把长度上限的 `>` 改成 `>=` 同样全绿；IDB 的 `put` 覆盖时
@@ -376,6 +384,21 @@ export function describeProjectStoreContract(
       const after = await store.get("a");
       expect(after?.doc.params.crop.x).toBe(0);
       expect(after?.doc.palette.codes).toEqual(["A3"]);
+    });
+
+    it("doc.params 这一层自身也是拷贝：改调用方的 longSide / maxColors 不会改到库里", async () => {
+      // 修复轮 2 补。上面几条只钉住了 `params.crop` 与 `palette.codes`；若实现
+      // **只**展开 `params.crop` 而把 `params` 对象本身共享出去（`params: record.doc.params`），
+      // 改 `longSide` / `maxColors` 仍会静默写进内存实现那份库，而 IDB 因为结构化克隆不会。
+      const store = await createStore();
+      const mine = makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z");
+      await store.put(mine);
+      (mine.doc.params as { longSide: number }).longSide = 999;
+      (mine.doc.params as { maxColors: number | null }).maxColors = 32;
+
+      const after = await store.get("a");
+      expect(after?.doc.params.longSide).toBe(2);
+      expect(after?.doc.params.maxColors).toBe(16);
     });
   });
 }

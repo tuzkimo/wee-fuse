@@ -105,7 +105,10 @@ function createLegacyDatabase(databaseName: string): Promise<void> {
 }
 
 describe("IndexedDB 实现：列表不读 grid（白盒）", () => {
-  it("list() 只读 metas：把 projects 清空后仍能返回全部 meta", async () => {
+  it("list() 的结果不依赖 projects 的内容（projects 清空后仍返回全部 meta）", async () => {
+    // 这条断言的是**结果完整性**：`list()` 返回的 meta 不来自 `projects` 的内容。
+    // 它**打不掉**「同时读 projects 与 metas、最终用 metas 的结果」那种实现——那种实现
+    // 照样把整张 grid 拉进了内存。要禁那件事，靠下面那条对事务 scope 的直接断言。
     const databaseName = "wee-fuse-list-hygiene";
     const store: ProjectStore = await createIdbProjectStore({ databaseName });
     await store.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
@@ -113,18 +116,50 @@ describe("IndexedDB 实现：列表不读 grid（白盒）", () => {
 
     await clearStore(databaseName, "projects");
 
-    // 若 list() 是靠 projects 拿 meta 的，这里会变成空数组或读失败。
+    // 若 list() 的 meta 取自 projects，这里会变成空数组。
     expect((await store.list()).map((m) => m.id)).toEqual(["b", "a"]);
   });
 
-  it("陈旧库（没有 metas store）时 list() 响亮失败，而不是返回空图库", async () => {
+  it("list() 期间只开 metas 的事务（不碰 projects，因而 grid 不进内存）", async () => {
+    // 规格 §7.1「grid 与 source 不进列表内存」。上面那条只能证明「结果不依赖 projects」，
+    // 证明不了「没有读 projects」；这条直接断言事务 scope，把「读了但不用」也拦下。
+    const databaseName = "wee-fuse-list-tx-scope";
+    const store: ProjectStore = await createIdbProjectStore({ databaseName });
+    await store.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
+
+    const scopes: string[][] = [];
+    const original = IDBDatabase.prototype.transaction;
+    const spy = vi
+      .spyOn(IDBDatabase.prototype, "transaction")
+      .mockImplementation(function (this: IDBDatabase, ...args: unknown[]) {
+        const scope = args[0];
+        scopes.push(Array.isArray(scope) ? (scope as string[]) : [scope as string]);
+        return (original as (...a: unknown[]) => IDBTransaction).apply(this, args);
+      });
+
+    try {
+      await store.list();
+    } finally {
+      spy.mockRestore();
+    }
+
+    // 只要出现 `projects`（哪怕结果仍取 metas），这条就红——那才是「grid 没进内存」的证明。
+    expect(scopes).toEqual([["metas"]]);
+  });
+
+  it("陈旧库（没有 metas store）时五个入口都中文响亮失败，而不是返回空图库/抛英文错", async () => {
     const databaseName = "wee-fuse-legacy-db";
     await createLegacyDatabase(databaseName);
     const store: ProjectStore = await createIdbProjectStore({ databaseName });
+    const record = makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z");
 
-    // 匹配的必须是「没有 metas」这条专属文案：没有这条守卫时，fake-indexeddb 抛的是
+    // 匹配的必须是「没有 metas」这条专属文案：没有这道守卫时，fake-indexeddb 抛的是
     // 英文 `No objectStore named metas in this database`（实测），不会命中这个 matcher。
     await expect(store.list()).rejects.toThrow(/没有 metas/);
+    await expect(store.get("a")).rejects.toThrow(/没有 metas/);
+    await expect(store.put(record)).rejects.toThrow(/没有 metas/);
+    await expect(store.remove("a")).rejects.toThrow(/没有 metas/);
+    await expect(store.rename("a", "小狗")).rejects.toThrow(/没有 metas/);
   });
 });
 
@@ -160,9 +195,16 @@ describe("estimateUsage：平台能力是注入出来的", () => {
     expect(await store.estimateUsage()).toBeNull();
   });
 
-  it("usage / quota 不是数字时返回 null（不把字符串或 undefined 透传出去）", async () => {
+  it("usage 不是数字时返回 null（不把字符串或 undefined 透传出去）", async () => {
     stubStorage(async () => ({ usage: "1", quota: 2 }));
-    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-badtype" });
+    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-badusage" });
+    expect(await store.estimateUsage()).toBeNull();
+  });
+
+  it("quota 不是数字时返回 null（两半守卫各自可判别）", async () => {
+    // 修复轮 2 补：原来只测了 `usage: "1"`，删掉 `typeof quota !== "number"` 那半仍然全绿。
+    stubStorage(async () => ({ usage: 1, quota: "2" }));
+    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-badquota" });
     expect(await store.estimateUsage()).toBeNull();
   });
 
