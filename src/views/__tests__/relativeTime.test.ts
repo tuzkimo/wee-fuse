@@ -75,6 +75,10 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
   it("2 天 / 6 天 → 「2 天前」/「6 天前」（天数按 24 小时时长向下取整）", () => {
     expect(formatRelativeTime(ago(2 * DAY), NOW)).toBe("2 天前");
     expect(formatRelativeTime(ago(6 * DAY), NOW)).toBe("6 天前");
+    // 3 天这条也留着：把 `dayDiff === 1` 误写成 `dayDiff >= 1` 时它会得到「昨天」而转红。
+    expect(formatRelativeTime(ago(3 * DAY), NOW)).toBe("3 天前");
+    // 贴着一周下边界：把「超过一周」的阈值写成 `<= 7` 时，这条会得到「6 天前」而转红。
+    expect(formatRelativeTime(ago(6 * DAY + 23 * HOUR), NOW)).toBe("6 天前");
   });
 
   it("超过一周 → 本地日期串 YYYY-MM-DD（不是 ISO 串、不是 UTC 日期）", () => {
