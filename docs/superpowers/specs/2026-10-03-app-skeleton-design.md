@@ -242,9 +242,29 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
    落私有目录（卸载即清）是可接受的，塞进浏览器存储配额里则不是。
 2. 数据模型若照 IndexedDB 的形状写死，引入壳时 `list()` 要重写；按目录模型写，只需换实现。
 
-**已知未验证点（B1 第 0 步）**：IndexedDB 与 fake-indexeddb 能否原样存取 `Blob`，以及二者行为
-是否一致，**本规格不做假定**。退路是改存 `ArrayBuffer` + 手动包 `Blob`，该差异对上层不可见
-（`idbProjectStore.ts` 是唯一接触它的文件）。验证结论回写本节。
+**已验证（B1 第 0 步，探针 `src/services/__tests__/idbBlobProbe.test.ts`）：走退路**——落盘存
+`ArrayBuffer`（`type` 已在记录里单列），读时由 `idbProjectStore.ts` 包回 `Blob`；该差异对上层
+不可见（它是唯一接触平台存储的文件）。
+
+实测环境是 **fake-indexeddb 6.2.5 + happy-dom 20.14.5**（Node 24.19.0），**不是真实浏览器**；
+浏览器侧仍需任务 3 之后用 `npm run dev` 人工确认一次。
+
+两条实测事实必须合起来读，只看任一条都会得出错误判断：
+
+1. **合规 `Blob` 在 fake-indexeddb 下原样往返通过。** 用 `node:buffer` 的 `Blob` 存入再取回，
+   取回值是 `[object Blob]`、`size` 6、`type` `image/jpeg`、逐字节等于 `[0,1,2,253,254,255]`。
+   所以「IndexedDB 存不住 Blob」这个说法**不成立**。
+2. **happy-dom 自带的 `Blob` 过不了结构化克隆**，这才是探针里 `new Blob(…)` 往返失败的原因：
+   它没有 `Symbol.toStringTag`、字节存在 symbol 键的字段上，`Object.prototype.toString.call` 为
+   `[object Object]`；Node 的 `structuredClone` 因此按普通对象处理、只复制可枚举自有属性，取回值
+   恰好是 `{ type: "image/jpeg" }`，`arrayBuffer()` 抛 `TypeError`。裸 `structuredClone(该 Blob)`
+   就能复现，与 IndexedDB 无关。
+
+**决策理由**：退路的价值不在于「IDB 存不了 Blob」，而在于**让测试路径与生产路径是同一条**。
+生产代码对 `ArrayBuffer` 落盘、读回再包 `Blob`，测试里跑的就是这条路径本身，不依赖任何平台
+「结构化克隆保留 Blob」的行为；否则测试里唯一能通过的写法是拿 `node:buffer` 的 `Blob` 冒充浏览器
+`Blob`，那是一条只在测试里成立的路径。代价是保存时把 2–6 MB 原图完整读进 JS 内存一次；
+§6.1 的列表路径不受影响（`list()` 本来就不碰 `source`）。
 
 ### 6.3 与 Pinia store 的关系
 
