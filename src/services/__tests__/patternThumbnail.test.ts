@@ -65,6 +65,14 @@ interface RecordedPut {
 
 let puts: RecordedPut[] = [];
 
+/**
+ * 第几次 `getContext` 调用返回 `null`（1 起数；默认 `Infinity` = 永不）。
+ * 用来分别打到两处「拿不到 2D 上下文」守卫——它们文案相同，只有「格画布是否已经写过」
+ * 能把两者分开。
+ */
+let failContextAt = Number.POSITIVE_INFINITY;
+let getContextCalls = 0;
+
 /** 最小 2D 上下文替身：只实现被测代码用到的成员。 */
 function createStubContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const target = { w: canvas.width, h: canvas.height };
@@ -94,10 +102,14 @@ function createStubContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2
 beforeEach(() => {
   draws = [];
   puts = [];
+  getContextCalls = 0;
+  failContextAt = Number.POSITIVE_INFINITY;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (
     this: HTMLCanvasElement,
     ...args: unknown[]
   ) {
+    getContextCalls += 1;
+    if (getContextCalls === failContextAt) return null;
     return args[0] === "2d" ? createStubContext2D(this) : null;
   });
 });
@@ -192,6 +204,24 @@ describe("renderPatternThumbnail", () => {
     expect([...(puts[0]?.bytes ?? [])]).toEqual([
       255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255,
     ]);
+  });
+
+  it("拿不到 2D 上下文时在自己那一层响亮失败（格画布 / 输出画布两处守卫）", () => {
+    // 两处守卫文案完全一样（简报如此），所以「是哪一处拦下的」只能由 `puts` 的长度区分：
+    // 第 1 次 getContext 失败 → 还没写过任何字节；第 2 次失败 → 格画布那层已经写过了。
+    // 删掉任一处守卫，失败都会从这条中文错误退化成裸 `TypeError: Cannot read properties
+    // of null`（改 `.imageSmoothingEnabled` / `.createImageData` 时抛出）。
+    const pattern = { width: 2, height: 2, paletteId: "fake", cells: new Uint16Array(4) };
+
+    failContextAt = 1;
+    getContextCalls = 0;
+    expect(() => renderPatternThumbnail(pattern, palette)).toThrow(/无法获取 2D 上下文/);
+    expect(puts).toEqual([]);
+
+    failContextAt = 2;
+    getContextCalls = 0; // 计数按「每次调用 renderPatternThumbnail」重新起算
+    expect(() => renderPatternThumbnail(pattern, palette)).toThrow(/无法获取 2D 上下文/);
+    expect(puts).toHaveLength(1);
   });
 
   it("长边上限就是规格的 512；非法上限响亮失败，且守卫在任何画布写操作之前", () => {
