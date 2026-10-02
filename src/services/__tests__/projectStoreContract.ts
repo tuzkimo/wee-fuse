@@ -161,6 +161,23 @@ export function describeProjectStoreContract(
       expect(second?.doc.grid).toEqual([0, EMPTY]);
     });
 
+    it("put 之后调用方改自己那份 record，也不会改到库里（写入侧同样要拷贝）", async () => {
+      // 这条不是简报原文（同文件末尾那几条补充）：上面那条只盖住了**出库侧**的引用泄漏。
+      // 把内存实现的 `put` 改成 `records.set(record.meta.id, stored)`（不 clone），
+      // 上面的用例仍然全绿——因为出库时又 clone 了一次。可调用方（编辑器）会在 put 之后
+      // 继续就地改同一份 `doc.grid` 做下一轮生成，那样「已保存的版本」会被静默改掉，
+      // 而 IDB 实现因为结构化克隆不会。这正是「换实现不影响调用方」要挡住的事。
+      const store = await createStore();
+      const mine = makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z");
+      await store.put(mine);
+      (mine.doc.grid as number[])[0] = 999;
+      (mine as { meta: { name: string } }).meta.name = "被改坏了";
+
+      const after = await store.get("a");
+      expect(after?.meta.name).toBe("小猫");
+      expect(after?.doc.grid).toEqual([0, EMPTY]);
+    });
+
     it("rename 不存在的 id 抛错", async () => {
       const store = await createStore();
       await expect(store.rename("nope", "x")).rejects.toThrow(/找不到/);
@@ -180,6 +197,51 @@ export function describeProjectStoreContract(
       const list = await store.list();
       expect(list).toHaveLength(1);
       expect(list[0]?.name).toBe("小猫二号");
+    });
+
+    // -----------------------------------------------------------------------
+    // 以下三条是**实现者事后变异自审时的补充**（简报的 13 条用例逐字未改）：
+    // 变异实测证明简报原有断言**读不到**这三处行为——把 `normalizeProjectName` 的
+    // `return trimmed` 改成 `return name`，13 条用例在两个实现上**全绿**；把 `put` 的
+    // id 守卫整段删掉也全绿；把长度上限的 `>` 改成 `>=` 同样全绿。
+    // 「换实现不影响调用方」这个承诺要成立，这三处也是契约的一部分，故补上断言。
+    // -----------------------------------------------------------------------
+
+    it("名称归一化：put 与 rename 都去掉首尾空白", async () => {
+      const store = await createStore();
+      await store.put(makeRecord("a", "  小猫  ", "2026-10-03T01:00:00.000Z"));
+      expect((await store.get("a"))?.meta.name).toBe("小猫");
+
+      const renamed = await store.rename("a", "  小狗  ");
+      expect(renamed.name).toBe("小狗");
+      expect((await store.get("a"))?.meta.name).toBe("小狗");
+    });
+
+    it("名称长度上限是闭区间：恰好 100 字接受，101 字拒绝", async () => {
+      const store = await createStore();
+      await store.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
+      const atLimit = await store.rename("a", "x".repeat(100));
+      expect(atLimit.name).toHaveLength(100);
+      await expect(store.rename("a", "x".repeat(101))).rejects.toThrow(/名称/);
+    });
+
+    it("put 拒绝空 id（写库之前就响亮失败）", async () => {
+      const store = await createStore();
+      await expect(store.put(makeRecord("", "小猫", "2026-10-03T01:00:00.000Z"))).rejects.toThrow(
+        /id/,
+      );
+      expect(await store.list()).toEqual([]);
+    });
+
+    it("用 source=null 覆盖已有记录后，get 不再返回旧原图", async () => {
+      // 这条也不是简报原文（同上面三条）：把 IDB 实现 `put` 里
+      // `if (sourceBytes === null) delete(...)` 的分支改成只在非 null 时才动 `sources`，
+      // 原有的 16 条用例在两个实现上**全绿**——也就是「覆盖后残留旧原图」这个
+      // 「看起来正常、其实给的是上一张图」的静默形态，原先没有任何断言在读。
+      const store = await createStore();
+      await store.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z", { withSource: true }));
+      await store.put(makeRecord("a", "小猫", "2026-10-03T02:00:00.000Z"));
+      expect((await store.get("a"))?.source).toBeNull();
     });
   });
 }
