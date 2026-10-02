@@ -155,30 +155,41 @@ describe("LibraryPage", () => {
   // 逐档钉死（那组用例给的是**固定 `now`**，不看机器时钟）；这里只钉**接线**：
   // 卡片上真的有这一行、且读的是 `meta.updatedAt`。
   //
-  // 为什么这两条也不用假时钟 / 不用 `new Date()` 做期望值：夹具时间戳必须选在机器时钟的
-  // **两侧**（过去 / 将来）才能让期望值在任意时刻都成立——本机时钟是 2026-10-02，而夹具常量
-  // 写的是 2026-10-03（构建记录 §6 的 R17 就是踩了这个坑）。
+  // 模板里调用的是 `formatRelativeTime(meta.updatedAt, new Date())`，所以这两条的夹具刻意取
+  // **相对当前时钟**的位置（30 天前 / 2030 年），而期望值要么是稳定的常量（「刚刚」），要么
+  // 由夹具用**本地 getter** 现算——不硬编码日期串，也不假设本机时区。
   // -------------------------------------------------------------------------
 
   it("每张卡片显示 updatedAt 的相对时间（过去 → 日期串）", async () => {
-    const base = await createMemoryProjectStore();
-    await base.put(makeRecord("old", "老图纸", "2020-01-02T03:04:05.000Z"));
-    setProjectStore(base);
+    const store = await createMemoryProjectStore();
+    // 30 天前（`setDate` 做本地日历日减法，跨月由 Date 自己进位）。刻意**不硬编码时间戳**：
+    // 写死的时刻在偏移 ≤ −3:04 的机器上（美洲）本地日会差一天，那是会咬到真人开发机的假红
+    // （本轮复审指出：旧版写死 `2020-01-02T03:04:05Z` → 期望 `"2020-01-02"`）。
+    // 「30 天前」在 −12…+14 的任何偏移下都远在 7 天之外，必然落进日期串那一档。
+    const old = new Date();
+    old.setDate(old.getDate() - 30);
+    await store.put(makeRecord("old", "老图纸", old.toISOString()));
+    setProjectStore(store);
 
     const wrapper = mount(LibraryPage);
     await flushPromises();
 
     const line = wrapper.find("[data-testid='project-updated-at']");
     expect(line.exists()).toBe(true);
-    // 2020 年远早于任何运行时刻 → 必走「≥ 一周」那一档 → 本地日期串。这不是恒真断言：
-    // 去掉模板里那一行、或把相对时间写死成「刚刚」，都会红。
-    expect(line.text()).toBe("2020-01-02");
+    // 期望值用**本地 getter** 现算（不硬编码某个时区的日期，也不调被测函数自比）：去掉模板里
+    // 那一行、或把相对时间写死成「刚刚」，都会红。
+    const expected = [
+      old.getFullYear(),
+      String(old.getMonth() + 1).padStart(2, "0"),
+      String(old.getDate()).padStart(2, "0"),
+    ].join("-");
+    expect(line.text()).toBe(expected);
   });
 
   it("未来的 updatedAt 显示「刚刚」，不渲染负的时长（本机时钟早于夹具时最容易出的一支）", async () => {
-    const base = await createMemoryProjectStore();
-    await base.put(makeRecord("future", "未来图纸", "2030-01-01T00:00:00.000Z"));
-    setProjectStore(base);
+    const store = await createMemoryProjectStore();
+    await store.put(makeRecord("future", "未来图纸", "2030-01-01T00:00:00.000Z"));
+    setProjectStore(store);
 
     const wrapper = mount(LibraryPage);
     await flushPromises();

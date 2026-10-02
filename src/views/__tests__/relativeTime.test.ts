@@ -31,15 +31,22 @@ function localDateString(date: Date): string {
   ].join("-");
 }
 
+/** 同一时刻的 UTC 日期串（`toISOString().slice(0, 10)`），用来判断夹具在**本机时区**下能不能区分两种实现。 */
+function utcDateString(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
 describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
   it("同一时刻 → 刚刚", () => {
     expect(formatRelativeTime(ago(0), NOW)).toBe("刚刚");
   });
 
   it("不到 1 分钟 → 刚刚", () => {
+    // 59 秒：钉「分钟档的上界」——把 `diff < MINUTE` 改成 `diff < 30_000` 时这条会红。
     expect(formatRelativeTime(ago(59_000), NOW)).toBe("刚刚");
-    // 1 毫秒前也必须走「刚刚」分支：只测 59 秒的话，把 `diff < MINUTE` 误写成 `diff < 1`
-    // 全绿，而 1 毫秒前的记录会渲染成「0 分钟前」。
+    // 1 毫秒：钉「刚刚」这一档的**下界**。只有 59 秒那条时，把 `diff < MINUTE` 误写成
+    // `diff < 1` 不会有任何断言在 1 毫秒这个点转红（59 秒会落进分钟档输出「0 分钟前」，
+    // 但那是 59 秒那条自己先红，管不到 1 毫秒附近）。
     expect(formatRelativeTime(ago(1), NOW)).toBe("刚刚");
   });
 
@@ -61,14 +68,28 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
     expect(formatRelativeTime(ago(23 * HOUR), NOW)).toBe("23 小时前");
   });
 
-  it("24 小时 → 「昨天」（满一天后不再按小时数显示）", () => {
+  it("「昨天」按 24 小时时长判，不按日历日", () => {
+    // 24 小时整：本机时区无论偏移多少，24 小时前的**本地日期**都是前一天（偏移 > 0 时跨到 D+1；
+    // 偏移 = 0 时是 D−1；偏移 < 0 时是 D−2 —— 日期不同，但时长恒为 24h），所以「昨天」这个
+    // 期望值在所有时区都成立。把实现改成「本地日历日不同就显示昨天」时本条照样绿（它也判本地日），
+    // 但它把「按 24 小时时长分档」这条钉住了：`< 1 天` 那一档的上边界就在 24h。
     expect(formatRelativeTime(ago(DAY), NOW)).toBe("昨天");
+    // 36 小时同样落在「昨天」这一档（1 ≤ diff/24h < 2）。
     expect(formatRelativeTime(ago(DAY + 12 * HOUR), NOW)).toBe("昨天");
+    // 上边界（2 天整）由下面那条 `ago(2 * DAY) → "2 天前"` 钉住。
+    // 这里刻意**不**再加一条贴着 2 天的断言：本轮实测把 `dayDiff === 1` 写成 `dayDiff < 2`
+    // 时全绿 —— 在 `< DAY` 已经把 dayDiff = 0 拦掉的前提下，`< 2` 与 `=== 1` 在本函数的
+    // 可观测范围内等价（等价变异体），多写一条也证不出判别力，不如不写。
   });
 
-  it("「昨天」按 24 小时时长判，不按日历日（16 小时前仍是「16 小时前」）", () => {
-    // 若改成「日期不同就显示昨天」，本条会红：基准 NOW 是本地 20:00，16 小时前是当天 04:00
-    // 同一天——真的按日历日判就会输出「昨天」。
+  it("16 小时前走小时档，不因为「本地日期不同」被提前判成昨天", () => {
+    // 本用例的期望值「16 小时前」在偏移 −12…+11 内都成立：16 小时前那一瞬（20:00Z 的**前一天**，
+    // 即 2026-10-02T20:00Z）与基准 NOW 落在**同一个本地日**（偏移 ≥ +5 时它是 10-03 的凌晨，
+    // 偏移 ≤ +4 时是 10-02 的下午到晚上）。也就是说，一个「本地日历日不同就显示昨天」的实现在
+    // 这个区间里**不会**被这条钉到——被钉到的是「按 24 小时时长分档」这件事本身
+    // （`< 1 天` 那一档不该在 16 小时处被截断）。
+    // 偏移 ≥ +12（如 Pacific/Kiritimati）时 16 小时前确实跨到前一天，本条会随实现语义一起变，
+    // 属已知边界（本轮取证只覆盖 TZ=UTC 与 TZ=UTC+8，见报告）。
     expect(formatRelativeTime(ago(16 * HOUR), NOW)).toBe("16 小时前");
   });
 
@@ -82,23 +103,32 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
   });
 
   it("超过一周 → 本地日期串 YYYY-MM-DD（不是 ISO 串、不是 UTC 日期）", () => {
-    // 这个夹具刻意选在**本地日期与 UTC 日期不同**的时刻：2026-09-24T22:00Z 在 UTC+8 下是
-    // 本地 2026-09-25 06:00。若实现改用 `toISOString().slice(0, 10)`（UTC 日期），本机时区上
-    // 就会给出 2026-09-24 → 第 94 行的相等断言转红。
-    // （最初选的 8 天整 = 2026-09-25T12:00Z 在 UTC+8 下是本地 09-25 20:00，两侧**日期相同**，
-    // 于是那条断言对「本地 vs UTC」零判别力——变异实测（M3f 第一次跑）发现，已修。）
+    // **不硬编码日期**：这个分支的输出按定义是**运行机器的本地日**，所以期望值必须用同一套本地
+    // getter 从同一时刻现算，否则就是拿某一台机器（UTC+8）的时区当契约——在 TZ=UTC 的 CI 上必红
+    // （本轮复审独立复现过；上一版这里硬编码 "2026-09-24"，是错的）。
     const timestamp = ago(8 * DAY + 14 * HOUR);
+    const moment = new Date(timestamp);
     const result = formatRelativeTime(timestamp, NOW);
     // 形状：是一段 `YYYY-MM-DD`，不是原始 ISO 串
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(result).toBe(localDateString(new Date(timestamp)));
-    // 显式证明这个夹具本身有判别力：运行时刻两侧的日期真的不同（UTC 日 ≠ 本地日）
-    expect(timestamp.slice(0, 10)).not.toBe(localDateString(new Date(timestamp)));
+    expect(result).toBe(localDateString(moment));
+
+    // 判别力（本地日 vs UTC 日）只在**本机时区偏移不为 0** 时可证：偏移为 0 时本地日与 UTC 日
+    // 按定义相同，「实现改用 toISOString()」在那个环境下**不可能**被任何同进程内的断言区分
+    // （信息不存在）。所以这里：① 常量的 **UTC 日**断言（与偏移无关，是所有时区都成立的夹具
+    // 性质，保证这个夹具真的跨在日期边界附近）；② 偏移非 0 时断言「本地日 ≠ UTC 日」——那正是
+    // 能区分两种实现的充分条件。TZ=UTC 与 TZ=Asia/Shanghai 下都必须绿。
+    const utcDay = utcDateString(moment);
+    const localDay = localDateString(moment);
+    expect(utcDay).toBe("2026-09-24");
+    if (moment.getTimezoneOffset() !== 0) {
+      expect(localDay).not.toBe(utcDay);
+    }
 
     // 恰 7 天（下限闭区间）：把「超过一周」的阈值写成 `dayDiff <= 7` 时，这里会得到「7 天前」
     // 而不是日期串 → 转红。（上面那条 8 天整的用例对 `<= 7` 零判别力，变异实测 M3i 证明过。）
-    // 这一条只钉「7 天该走日期分支」，不重复钉本地 / UTC 之差（那是上面那个夹具的职责：
-    // `ago(7 * DAY)` = 2026-09-26T12:00Z 在 UTC+8 下是本地 09-26 20:00，两侧日期恰好相同）。
+    // 这一条只钉「7 天该走日期分支」，不重复钉本地 / UTC 之差。（`ago(7 * DAY)` 在 UTC+8 下
+    // 本地日与 UTC 日恰好相同，所以它从来不是本地 / UTC 的判别式。）
     const sevenDays = ago(7 * DAY);
     expect(formatRelativeTime(sevenDays, NOW)).toBe(localDateString(new Date(sevenDays)));
   });
