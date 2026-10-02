@@ -143,6 +143,22 @@ describe("renderPatternThumbnail", () => {
     expect(url.startsWith("data:image/png")).toBe(true);
   });
 
+  it("极端长宽比 + 极小上限时也不会开出 0 宽/0 高的画布（0 尺寸画布的 toDataURL 是 \"data:,\"）", () => {
+    // `Math.max(1, Math.round(...))` 这个夹取在 1×500 的图纸 + maxEdge=1 时才生效：
+    // 去掉它，输出画布宽度就是 round(1 × 1/500) = 0。真浏览器对 0 尺寸画布返回 "data:,"，
+    // 而任务 3 的 `meta.thumbnail` 校验要求 `data:image/` 前缀 —— 于是「保存工程」会以一个
+    // 与缩略图毫无关系的文案失败。
+    renderPatternThumbnail(
+      { width: 1, height: 500, paletteId: "fake", cells: new Uint16Array(500) },
+      palette,
+      1,
+    );
+
+    expect(draws).toHaveLength(1);
+    expect([draws[0]?.target.w, draws[0]?.target.h]).toEqual([1, 1]);
+    expect([draws[0]?.dw, draws[0]?.dh]).toEqual([1, 1]);
+  });
+
   it("长边上限就是规格的 512；非法上限响亮失败，且守卫在任何画布写操作之前", () => {
     // 上一条用例把 THUMBNAIL_MAX_EDGE 同时用在输入构造与期望值上，改常量照样全绿，
     // 故这里钉住规格 §3 的「≤512px」字面量（与 preview.test.ts 钉 1600 同一形态）。
