@@ -55,7 +55,7 @@ npm run build
   - `quantize/`：直方图、中位切割聚类、最近色查找
   - `pattern/`：图纸构建、用量统计、增量编辑、撤销栈
 - `src/services/` — 唯一接触平台 API 的层（图片解码、尺寸探测、网格差异、预览渲染、生成流水线）
-- `src/views/` — 页面（`HomePage.vue`、`DecodeLabPage.vue` 解码实验台）
+- `src/views/` — 页面（`LibraryPage.vue` 图纸库、`GeneratePage.vue` 生成、`EditorPage.vue` 编辑、`DecodeLabPage.vue` 解码实验台）
 - `docs/superpowers/specs/` — 设计规格
 - `docs/superpowers/plans/` — 实现计划
 
