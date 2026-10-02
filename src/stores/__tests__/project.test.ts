@@ -96,9 +96,12 @@ describe("工程会话 store", () => {
     expect(isReactive(session.pattern)).toBe(false);
   });
 
-  it("load 找不到 id 时返回 false 并把原因写进 error，不留下半截会话", async () => {
+  it("load 找不到 id 时返回 false、把原因写进 error，并清掉当前会话（不留下半截）", async () => {
     await seedStore();
     const session = useProjectSession();
+    // 先开一个会话（dirty=true）。否则下面的「全 null」是被空白初始态满足的，对「清空」零判别力。
+    session.adopt(makePattern(), PARAMS, META, null, makeDoc());
+    expect(session.dirty).toBe(true);
 
     await expect(session.load("nope")).resolves.toBe(false);
 
@@ -106,16 +109,55 @@ describe("工程会话 store", () => {
     expect(session.record).toBeNull();
     expect(session.pattern).toBeNull();
     expect(session.params).toBeNull();
+    expect(session.dirty).toBe(false);
+  });
+
+  it("load 遇到损坏的 doc 时返回 false 并清空会话（不会留下「record 是新的、图纸是旧的」）", async () => {
+    // `put` 侧不校验 doc（两个实现都只从 doc 派生 width / height / colorCount），
+    // 所以「存储里躺着过不了 validateProjectDocument 的 doc」是可达状态：
+    // 旧版本文件、被改坏的备份、将来某条写入路径。这里用「grid 长度与 width×height 不自洽」
+    // 造一个必然解析失败的记录。
+    const store = await seedStore();
+    const badMeta: ProjectMeta = {
+      ...META,
+      id: "bad",
+      name: "坏记录",
+      updatedAt: "2026-10-02T00:00:00.000Z",
+    };
+    await store.put({ meta: badMeta, doc: { ...makeDoc(), grid: [0] }, source: null });
+
+    const session = useProjectSession();
+    // 先处于「正开着 p1、且有未保存改动」的状态：这是半截会话会造成实际损害的前提
+    session.adopt(makePattern(), PARAMS, META, null, makeDoc());
+    expect(session.dirty).toBe(true);
+
+    await expect(session.load("bad")).resolves.toBe(false);
+
+    // 失败原因必须是「doc 解析失败」，而不是别的什么
+    expect(session.error).toContain("不自洽");
+    // 载入失败 ⇒ 当前没有工程（而不是「record 换成了 bad、pattern/params 还是 p1 的」）
+    expect(session.record).toBeNull();
+    expect(session.pattern).toBeNull();
+    expect(session.params).toBeNull();
+    expect(session.dirty).toBe(false);
+
+    // 半截会话的真实后果：save() 会把上一个工程的图纸与参数写进坏记录的 id。
+    // 会话已清空时必须写不进去。
+    await expect(session.save()).resolves.toBe(false);
+    expect((await store.get("bad"))?.meta.updatedAt).toBe(badMeta.updatedAt);
   });
 
   it("存储未注入时 load 返回 false 并把「未初始化」写进 error（不把异常抛给调用方）", async () => {
     await seedStore();
     setProjectStore(null);
     const session = useProjectSession();
+    session.adopt(makePattern(), PARAMS, META, null, makeDoc());
 
     await expect(session.load("p1")).resolves.toBe(false);
 
     expect(session.error).toContain("工程存储尚未初始化");
+    expect(session.record).toBeNull();
+    expect(session.dirty).toBe(false);
   });
 
   it("adopt 用新生成的图纸开启会话：record 三件套齐全且 dirty 为 true", async () => {

@@ -69,6 +69,9 @@ describe("LibraryPage", () => {
     await flushPromises();
     await wrapper.findAll("[data-testid='rename-project']")[0]?.trigger("click");
     const input = wrapper.find("[data-testid='rename-input']");
+    // 名称上限由输入框自己挡住（PROJECT_NAME_MAX = 100），不是等点「好」之后由 store 抛错。
+    // 这里写**字面量 100**：若改成 `String(PROJECT_NAME_MAX)`，常量被改坏时两边一起变、断言恒绿。
+    expect(input.attributes("maxlength")).toBe("100");
     await input.setValue("新名字");
     await wrapper.find("[data-testid='rename-confirm']").trigger("click");
     await flushPromises();
@@ -114,6 +117,12 @@ describe("LibraryPage", () => {
     expect(
       (wrapper.find("[data-testid='new-project']").element as HTMLButtonElement).disabled,
     ).toBe(true);
+    // 红字提示已经把原因说清楚了：不能再叠一条琥珀错误条（`v-if="error && !storeUnavailable"`
+    // 里的合取项原先没有任何断言在读）。`error` 此时就是「存储尚未初始化」那句话。
+    expect(wrapper.text()).not.toContain("工程存储尚未初始化");
+    expect(wrapper.find("[data-testid='error-hint']").exists()).toBe(false);
+    // 也不该同时说「还没有图纸」（`!storeUnavailable` 的另一个合取项）
+    expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -155,6 +164,8 @@ describe("LibraryPage", () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
     expect(wrapper.text()).toContain("读库失败：配额用尽");
+    // 读失败时不能同时说「还没有图纸」——两句自相矛盾（原先 `!error` 这个合取项没人守）
+    expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(false);
     // 存储是存在的，只是读失败：不该冒充「浏览器不支持本地保存」
     expect(wrapper.find("[data-testid='store-unavailable']").exists()).toBe(false);
   });

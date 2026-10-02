@@ -30,22 +30,41 @@ export const useProjectSession = defineStore("projectSession", () => {
   const dirty = ref(false);
   const error = ref("");
 
-  /** 从存储载入一个工程。失败时把原因写进 `error` 并返回 false。 */
+  /** 清空会话状态（`reset` 与「载入失败」共用）。刻意不动 `error`。 */
+  function clearSession(): void {
+    record.value = null;
+    pattern.value = null;
+    params.value = null;
+    dirty.value = false;
+  }
+
+  /**
+   * 从存储载入一个工程。失败时把原因写进 `error`、**把会话清空**并返回 false。
+   *
+   * 「载入失败」的语义是**当前没有工程**，不是「保留上一个」更不是「留下半截」：
+   * `record` 若在 `fromProjectDocument` 之前落位，解析一旦抛错就会剩下「`record` 是新工程、
+   * `pattern` / `params` 还是上一个工程」，之后任意一次 `save()` 都会把**上一个工程的图纸与
+   * 参数写进新工程的 id**。损坏的 doc 是现实存在的：`put` 侧不校验 doc（两个实现都只从 doc
+   * 派生 width / height / colorCount），旧版本文件、被改坏的备份、将来某条写入路径都能产出它。
+   * 所以顺序是**先解析、成功了再一次性提交会话状态**。
+   */
   async function load(id: string): Promise<boolean> {
     error.value = "";
     try {
       const loaded = await getProjectStore().get(id);
       if (loaded === null) {
+        clearSession();
         error.value = `找不到工程：${id}`;
         return false;
       }
-      record.value = loaded;
       const parsed = fromProjectDocument(loaded.doc, getBuiltinPalette());
+      record.value = loaded;
       pattern.value = markRaw(parsed.pattern);
       params.value = parsed.params;
       dirty.value = false;
       return true;
     } catch (e) {
+      clearSession();
       error.value = e instanceof Error ? e.message : String(e);
       return false;
     }
@@ -100,10 +119,7 @@ export const useProjectSession = defineStore("projectSession", () => {
   }
 
   function reset(): void {
-    record.value = null;
-    pattern.value = null;
-    params.value = null;
-    dirty.value = false;
+    clearSession();
     error.value = "";
   }
 

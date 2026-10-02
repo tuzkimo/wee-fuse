@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { getProjectStore, type ProjectMeta, type ProjectStore } from "@/services/projectStore";
+import {
+  getProjectStore,
+  PROJECT_NAME_MAX,
+  type ProjectMeta,
+  type ProjectStore,
+} from "@/services/projectStore";
 
 const router = useRouter();
 const projects = ref<ProjectMeta[]>([]);
@@ -92,11 +97,11 @@ function open(id: string): void {
     <p v-if="storeUnavailable" data-testid="store-unavailable" class="mt-4 rounded bg-red-50 p-4 text-lg text-red-700">
       这个浏览器不允许本地保存（可能是隐私模式），所以暂时不能新建或打开图纸。
     </p>
-    <p v-if="error && !storeUnavailable" class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800">
+    <p v-if="error && !storeUnavailable" data-testid="error-hint" class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800">
       {{ error }}
     </p>
 
-    <p v-if="!storeUnavailable && !hasProjects" data-testid="empty-hint" class="mt-8 text-lg text-slate-500">
+    <p v-if="!error && !storeUnavailable && !hasProjects" data-testid="empty-hint" class="mt-8 text-lg text-slate-500">
       还没有图纸。点右上角「新建图纸」选一张图片开始吧。
     </p>
 
@@ -121,6 +126,7 @@ function open(id: string): void {
           <input
             v-model="renameDraft"
             data-testid="rename-input"
+            :maxlength="PROJECT_NAME_MAX"
             class="min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
           />
           <div class="mt-2 flex gap-3">
