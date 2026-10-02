@@ -15,9 +15,10 @@ const palette = loadPalette({
 });
 
 /**
- * happy-dom 的 canvas 是桩实现，`toDataURL` 返回固定占位串、不反映像素。
- * 故这里**不**断言图像内容（那需要真实 canvas），只断言契约：调用了哪些平台 API、
- * 画布尺寸怎么算、空图纸是否被拒绝。像素内容的验证在任务 9 的人工流程里做。
+ * happy-dom 的 canvas 是桩实现，`toDataURL` 返回固定占位串、不反映像素，故这里**不**断言
+ * 编码后的 PNG 内容（那会变成恒真断言）。这里断言的是契约：调用了哪些平台 API、画布尺寸
+ * 怎么算、交给 `putImageData` 的 4 通道字节与坐标、全空格图纸照常渲染、非法上限是否被拒绝。
+ * 真实像素的观感验证在任务 9 的人工流程里做。
  *
  * **本环境的额外事实（实现者实测，见 task-4-report.md 偏差 D1）**：happy-dom 20.14.5
  * 在未注册 canvas adapter 时 `getContext("2d")` **返回 `null`**

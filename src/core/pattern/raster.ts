@@ -16,9 +16,10 @@ export function patternToRgbaImage(pattern: Pattern, palette: Palette): RgbaImag
     throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
   }
   // 宽高必须是 ≥1 的整数（AGENTS.md「入口校验」的网格 / 尺寸类口径）：小数宽高会让
-  // 下面的长度校验**互相放过**（width 2.5 × height 2 与 5 格 cells 自洽），
-  // 于是函数静默返回一个 `width: 2.5` 的畸形 RgbaImage，直到下游 `createImageData`
-  // 才以 RangeError 的形式在别处炸开；`NaN` 宽高则会让长度校验的报错文案变成「NaN×NaN」。
+  // 下面的长度校验**互相放过**（width 2.5 × height 2 与 5 格 cells 自洽），于是函数静默
+  // 返回一个 `width: 2.5` 的畸形 RgbaImage；下游画布层把它截断成 2×2 的 ImageData 后，
+  // `cellData.data.set(image.data)`（源 5 格 20 字节、目标 4 格 16 字节）才以 RangeError
+  // 在离现场很远的地方炸开。`NaN` 宽高则会让长度校验的报错文案变成「NaN×NaN」。
   if (!Number.isInteger(pattern.width) || pattern.width < 1) {
     throw new Error(`图纸宽度非法：${pattern.width}`);
   }
