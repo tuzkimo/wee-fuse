@@ -122,8 +122,8 @@ describe("IndexedDB 实现：列表不读 grid（白盒）", () => {
     await createLegacyDatabase(databaseName);
     const store: ProjectStore = await createIdbProjectStore({ databaseName });
 
-    // 匹配的必须是「没有 metas」这条专属文案：没有这条守卫时 IndexedDB 自己抛的是
-    // 英文 `NotFoundError: ...object stores was not found`，不会命中这个 matcher。
+    // 匹配的必须是「没有 metas」这条专属文案：没有这条守卫时，fake-indexeddb 抛的是
+    // 英文 `No objectStore named metas in this database`（实测），不会命中这个 matcher。
     await expect(store.list()).rejects.toThrow(/没有 metas/);
   });
 });
