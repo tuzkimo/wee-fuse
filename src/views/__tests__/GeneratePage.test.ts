@@ -131,7 +131,7 @@ interface FakeCanvasElement {
     drawImage: ReturnType<typeof vi.fn>;
   };
   getContext(kind: string): unknown;
-  toDataURL(type?: string): string;
+  readonly toDataURL: ReturnType<typeof vi.fn>;
 }
 
 /** 封面缩略图要走 `<canvas>`：换掉 `document.createElement("canvas")`，其余标签原样透传。 */
@@ -153,13 +153,11 @@ function stubCanvasElement(): FakeCanvasElement[] {
       putImageData: vi.fn(),
       drawImage: vi.fn(),
     };
+    /** 是 `vi.fn`：用例要断言「封面确实是由画布渲染出来的」，而不是一个 data URL 常量。 */
+    readonly toDataURL = vi.fn(() => `data:image/png;base64,canvas-${this.id}`);
 
     getContext(kind: string): unknown {
       return kind === "2d" ? this.ctx : null;
-    }
-
-    toDataURL(): string {
-      return `data:image/png;base64,canvas-${this.id}`;
     }
   }
 
@@ -263,20 +261,21 @@ describe("GeneratePage 成功路径（假平台驱动真实流水线）", () => 
     stubProbe(800, 600);
     const createBitmap = stubBitmapApi(solidPixels(255));
     stubOffscreenCanvas();
-    stubCanvasElement();
+    const canvases = stubCanvasElement();
 
     const wrapper = mount(GeneratePage);
     await flushPromises();
     await clickGenerate(wrapper);
 
     // 源矩形：宽 800 比高 600 多出 200，居中裁掉左右各 100。宽高对调就会变成 [0, 100, …]。
+    // 这条 `toEqual` 同时也钉住了「走的是保底路径」：`slice(1)` 只有 4 个元素就说明
+    // `createImageBitmap` 拿到的实参恰好 5 个（没有 resizeWidth/Height）——
+    // 两条解码器接反时会多出 resize 选项，这里立刻红。（原先另写一条 `toHaveLength(5)`
+    // 是冗余的：上一行先抛，它永远轮不到执行，也不可能独立转红，已删。）
     const firstCall = createBitmap.mock.calls[0];
     expect(firstCall).toBeDefined();
     expect(firstCall?.[0]).toBe(FILE);
     expect(firstCall?.slice(1)).toEqual([100, 0, 600, 600]);
-    // 恰好 5 个实参 = 走了保底路径（`createExactDecoder` → `createRegion`，不带 resize 选项）。
-    // 若两条解码器接反，这里会多出 resizeWidth/resizeHeight 两个参数。
-    expect(firstCall).toHaveLength(5);
 
     expect(wrapper.find("[data-testid='generate-error']").exists()).toBe(false);
 
@@ -288,7 +287,18 @@ describe("GeneratePage 成功路径（假平台驱动真实流水线）", () => 
     expect(meta?.width).toBe(58);
     expect(meta?.height).toBe(58);
     expect(meta?.colorCount).toBe(1);
-    expect(meta?.thumbnail.startsWith("data:image/")).toBe(true);
+    // 只断言形状（`data:image/`）挡不住「凭空写一个 data URL 常量」：改成常量照样绿。
+    // 所以再钉住**平台边界上的可观察量**：封面必须由 `renderPatternThumbnail` 真的渲染出来——
+    // 它建两张 canvas（图纸格画布 + 输出画布），两张都是**图纸尺寸 58×58**（`renderPatternThumbnail`
+    // 只缩不放）。若封面来自原图（800×600）或来自常量，这两个断言必红。
+    // 不断言像素：happy-dom 的 canvas 是桩，像素内容在这里无法有意义地断言（真实像素由浏览器人工验证覆盖）。
+    expect(canvases).toHaveLength(2);
+    expect([canvases[0]?.width, canvases[0]?.height]).toEqual([58, 58]);
+    expect([canvases[1]?.width, canvases[1]?.height]).toEqual([58, 58]);
+    const outputCanvas = canvases[1];
+    expect(outputCanvas?.toDataURL).toHaveBeenCalled();
+    // 落盘的封面就是那张输出画布产出的 data URL（不是常量、不是别处的字符串）
+    expect(meta?.thumbnail).toBe(outputCanvas?.toDataURL.mock.results[0]?.value);
 
     // 落盘的参数就是本次生成用的参数（crop 用的是**未旋转坐标系**的 x/y/w/h）
     const record = await store.get(meta?.id ?? "");
@@ -378,5 +388,29 @@ describe("GeneratePage 成功路径（假平台驱动真实流水线）", () => 
     const metas = await store.list();
     const record = await store.get(metas[0]?.id ?? "");
     expect(record?.doc.params.maxColors).toBeNull();
+  });
+
+  it("档位选「16」时落盘的就是 16（首项与 `parseMaxColors` 的 16 分支都要有人读）", async () => {
+    const store = await createMemoryProjectStore();
+    setProjectStore(store);
+    stubProbe(800, 600);
+    stubBitmapApi(solidPixels(255));
+    stubOffscreenCanvas();
+    stubCanvasElement();
+
+    const wrapper = mount(GeneratePage);
+    await flushPromises();
+    // 第一个选项的 value 是 "16"。这条与「不限」那条同形：只覆盖 32（默认）与 null 的话，
+    // 把 `parseMaxColors` 的 `if (raw === "16") return 16;` 改成 `return 32` 不会有任何用例转红。
+    // 档位对**输出**的作用（16 档实际用色数不超过色卡数、逐格映射受档位约束）由
+    // `src/core/pattern/__tests__/build.test.ts` 直接覆盖，这里只钉「页面把用户选的档位
+    // 原样交给流水线并原样落盘」这段接线。
+    await wrapper.find("[data-testid='max-colors']").setValue("16");
+    await clickGenerate(wrapper);
+
+    const metas = await store.list();
+    const record = await store.get(metas[0]?.id ?? "");
+    expect(record?.doc.params.maxColors).toBe(16);
+    expect(record?.doc.params.longSide).toBe(58);
   });
 });

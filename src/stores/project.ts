@@ -70,7 +70,14 @@ export const useProjectSession = defineStore("projectSession", () => {
     }
   }
 
-  /** 用一份新生成的图纸开启会话（生成页用）。 */
+  /**
+   * 用一份新生成的图纸开启会话。
+   *
+   * **B1 里没有生产消费者**（如实记录，别当成「生成页在用」）：B1 的生成页直接把新工程
+   * `put` 进存储——它落盘后立刻跳回图纸库，不需要「当前会话」这个概念。这个方法是 B2/B3 的
+   * 接口面（规格 §4.4 的会话模型：改参数重跑、编辑器接着改都要先采纳一份新图纸），
+   * 本分支的 `project.test.ts` 覆盖了它。
+   */
   function adopt(
     newPattern: Pattern,
     newParams: RuntimeParams,
