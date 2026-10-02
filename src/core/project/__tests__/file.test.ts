@@ -54,10 +54,52 @@ describe("toProjectDocument", () => {
     expect(doc.grid).toEqual([0, 0, EMPTY, 1, 0, 1, EMPTY, 1, 0]);
   });
 
-  it("同一张图，改变涂画顺序不改变落盘字节（子集恒为升序）", () => {
-    const a = toProjectDocument(pattern3x3(), palette, params);
-    const b = toProjectDocument(pattern3x3(), palette, params);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  it("同一组颜色、首次出现顺序相反时，codes 逐位相同（子集顺序不由涂画顺序决定）", () => {
+    // 「涂画顺序」只影响 cells 里各色**首次出现**的先后。p1 先遇到 A5(4)、p2 先遇到 A3(2)，
+    // 两者用的颜色集合相同。若实现拿 Set 的首现顺序当子集顺序（丢掉升序 sort），两条 codes
+    // 会互为反序——这正是「子集恒为升序」要挡住的。
+    //
+    // 注意这里能断言「逐位相同」的只有 codes，**不能是整个 doc 的 JSON**：两张图排布不同，
+    // grid 是 cells 在子集里的像（给定 codes 是单射），所以 grid 必然不同。要求两张不同的图
+    // 落盘字节相同在数学上不可能，除非它们本来就是同一张图（那样断言就退化成 f(x) === f(x)）。
+    const p1: Pattern = {
+      width: 3,
+      height: 1,
+      paletteId: "fake",
+      cells: Uint16Array.from([4, EMPTY, 2]),
+    };
+    const p2: Pattern = {
+      width: 3,
+      height: 1,
+      paletteId: "fake",
+      cells: Uint16Array.from([2, EMPTY, 4]),
+    };
+    const d1 = toProjectDocument(p1, palette, params);
+    const d2 = toProjectDocument(p2, palette, params);
+    expect(JSON.stringify(d1.palette.codes)).toBe(JSON.stringify(d2.palette.codes));
+    expect(d1.palette.codes).toEqual(["A3", "A5"]);
+    expect(d2.palette.codes).toEqual(["A3", "A5"]);
+    // 两张图各自的 grid 按子集下标对位，且各自忠实往返。
+    expect(d1.grid).toEqual([1, EMPTY, 0]);
+    expect(d2.grid).toEqual([0, EMPTY, 1]);
+    expect([...roundTrip(p1).cells]).toEqual([...p1.cells]);
+    expect([...roundTrip(p2).cells]).toEqual([...p2.cells]);
+  });
+
+  it("高下标先出现时，codes 仍按升序、grid 的下标随之对位", () => {
+    // 全套夹具里出现过 ≥2 个色的图，首现顺序恰好都是升序（2 先于 4），所以「升序」这条
+    // 规格要求此前没有任何判别力：把 `sort((a,b) => a-b)` 删掉、改用 Set 的首现顺序，
+    // 所有用例照样全绿。这条夹具让 A5(4) 先于 A3(2) 出现。
+    const p: Pattern = {
+      width: 3,
+      height: 1,
+      paletteId: "fake",
+      cells: Uint16Array.from([4, EMPTY, 2]),
+    };
+    const doc = toProjectDocument(p, palette, params);
+    expect(doc.palette.codes).toEqual(["A3", "A5"]); // 升序，不是首现顺序
+    expect(doc.grid).toEqual([1, EMPTY, 0]); // A5 落到子集下标 1
+    expect([...roundTrip(p).cells]).toEqual([...p.cells]);
   });
 
   it("宽高与长边来自图纸与参数，不从 grid 反推", () => {
@@ -221,20 +263,50 @@ describe("fromProjectDocument", () => {
     expect([...back.pattern.cells]).toEqual([...p.cells]);
   });
 
-  it("R9：crop.x = -8 原样保留，不被 Math.max(0, …) / Math.round 静默收敛", () => {
+  it("R9：crop.x = -8.5（非整数负值）原样保留，不被取整或夹取静默收敛", () => {
     // R9 口径二选一：抛明确错误，或原样保留负值。这里选**原样保留**，理由：
     // 负原点在 §5.4 口径下是合法输入（x/y 只要求有限），而「裁剪框是否越出原图」的判定
     // 需要原图尺寸，`file.ts` 拿不到，也不该在这里替 pipeline 猜。file.ts 的职责只是字段搬位，
-    // 一旦它在映射途中做 Math.max(0, …) 这类静默收敛，越界裁剪就会变成「合法但错误」的网格。
+    // 一旦它在映射途中做夹取或取整，越界 / 带小数的裁剪就会变成「合法但错误」的网格。
+    //
+    // 取值刻意用**非整数**的 -8.5：-8 是 Math.round / Math.floor / Math.trunc 的不动点，
+    // 只有 Math.max(0, x) 这类夹取会被它抓到；-8.5 才能同时钉住「取整」与「夹取」两种收敛。
     const doc = toProjectDocument(pattern3x3(), palette, {
       ...params,
-      crop: { ...params.crop, x: -8 },
+      crop: { ...params.crop, x: -8.5 },
     });
     // 落盘方向也不得悄悄把它改成 0。
-    expect(doc.params.crop.x).toBe(-8);
+    expect(doc.params.crop.x).toBe(-8.5);
     const reparsed: unknown = JSON.parse(JSON.stringify(doc));
     const loaded = fromProjectDocument(reparsed, palette).params.crop;
-    expect(loaded.x).toBe(-8);
-    expect(loaded).toEqual({ x: -8, y: 0, width: 12, height: 12 });
+    expect(loaded.x).toBe(-8.5);
+    expect(loaded).toEqual({ x: -8.5, y: 0, width: 12, height: 12 });
+  });
+
+  it("maxColors = null（不限色）往返后仍是 null，不静默回落成 16", () => {
+    // 此前只断言过 16 与 32：`checked.params.maxColors ?? 16` 这类静默回落会全绿。
+    const p = pattern3x3();
+    const doc = toProjectDocument(p, palette, { ...params, maxColors: null });
+    expect(doc.params.maxColors).toBeNull();
+    const reparsed: unknown = JSON.parse(JSON.stringify(doc));
+    const back = fromProjectDocument(reparsed, palette);
+    expect(back.params.maxColors).toBeNull();
+    expect([...back.pattern.cells]).toEqual([...p.cells]);
+  });
+
+  it("用到全色卡下标 0（A1）时往返仍忠实，不被 falsy 判断当成空格跳过", () => {
+    // 全集只出现过 2/3/4，从未出现过下标 0。把复制循环写成 `if (!value) continue` 时，
+    // 0 会被跳过 → grid 落进 undefined（JSON 后是 null），要到载入才响亮失败。
+    const p: Pattern = {
+      width: 2,
+      height: 2,
+      paletteId: "fake",
+      cells: Uint16Array.from([0, EMPTY, 4, 0]),
+    };
+    const doc = toProjectDocument(p, palette, params);
+    expect(doc.palette.codes).toEqual(["A1", "A5"]);
+    expect(doc.grid).toEqual([0, EMPTY, 1, 0]);
+    const back = roundTrip(p);
+    expect([...back.cells]).toEqual([...p.cells]);
   });
 });

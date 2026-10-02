@@ -1,9 +1,14 @@
+import type { Rect, Rotation } from "../image/types";
 import type { Palette } from "../palette/types";
-import { EMPTY, MAX_LONG_SIDE, type Pattern } from "../pattern/types";
+import { EMPTY, MAX_LONG_SIDE, type MaxColors, type Pattern } from "../pattern/types";
 import { validateProjectDocument, type ProjectDocument, type ProjectParams } from "./types";
 
 /**
  * 把图纸落盘成工程文件。
+ *
+ * **为何公开**：本模块是计划 B1 的正式契约面（规格 §5）——工程落盘 / 载入的唯一入口，
+ * 由后续的 `projectStore`、编辑器与导出路径消费。当前仓库内只有测试在调用它，但收窄为
+ * 内部会破坏这份契约，故保持公开（见 `AGENTS.md`「公开 API ≠ 被使用的 API」）。
  *
  * 两个方向都做**子集**处理：`Pattern.cells` 用的是**全色卡下标**，而落盘的 `grid`
  * 用的是**到 `palette.codes` 的子集下标**。存色号字符串而不是色卡下标，是为了将来
@@ -104,13 +109,22 @@ export function toProjectDocument(
  *
  * 这两件事不许拆成两个各自正确的函数：本项目最严重的一次缺陷（`build.ts` 把 Lab 分量
  * 喂给入参为 sRGB 的函数）正是「两端各自都对、错在接线」，只有端到端跑一次才会暴露。
+ *
+ * **为何公开**：与 `toProjectDocument` 成对，是计划 B1 的正式契约面（规格 §5），由后续的
+ * `projectStore`、编辑器与导出路径消费；当前仓库内只有测试在调用它。返回形状直接复用
+ * `Rect` / `Rotation` / `MaxColors`，不另写内联副本——运行期契约日后扩展时这里跟着变。
  */
 export function fromProjectDocument(
   doc: unknown,
   fullPalette: Palette,
 ): {
   pattern: Pattern;
-  params: { longSide: number; maxColors: ProjectParams["maxColors"]; crop: { x: number; y: number; width: number; height: number }; rotation: 0 | 1 | 2 | 3 };
+  params: {
+    longSide: number;
+    maxColors: MaxColors;
+    crop: Rect;
+    rotation: Rotation;
+  };
 } {
   const checked = validateProjectDocument(doc, fullPalette);
 
@@ -145,7 +159,7 @@ export function fromProjectDocument(
       longSide: checked.params.longSide,
       maxColors: checked.params.maxColors,
       crop: { x, y, width: w, height: h },
-      rotation: rotate as 0 | 1 | 2 | 3,
+      rotation: rotate as Rotation,
     },
   };
 }
