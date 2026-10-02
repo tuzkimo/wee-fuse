@@ -189,10 +189,10 @@ describe("validateProjectDocument", () => {
         { ...validDoc(), palette: { id: "fake", codes: ["A3", 3] } },
         palette,
       ),
-    ).toThrow(/色卡/);
+    ).toThrow(/非字符串色号/);
     expect(() =>
       validateProjectDocument({ ...validDoc(), palette: { id: "fake", codes: "A3" } }, palette),
-    ).toThrow(/色卡/);
+    ).toThrow(/codes 不是数组/);
     expect(() =>
       validateProjectDocument({ ...validDoc(), palette: { codes: ["A3", "A4"] } }, palette),
     ).toThrow(/色卡/);
