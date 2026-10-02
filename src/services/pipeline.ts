@@ -16,12 +16,18 @@ import type { Palette } from "@/core/palette/types";
  * 允许时就该用」。2048 取自规格 §12.1「设计含义」第 3 条给出的内存预算建议：
  * 长边 ≤ 2048 ⇒ 两边都 ≤ 2048 ⇒ 原生 RGBA 位图 ≤ 2048 × 2048 × 4 B = 16 MiB。
  *
- * **这 16 MiB 只算了 `ImageData` 一份，峰值要按约 2–3 倍读**（最终审查 F10）：保底路径在
+ * **这 16 MiB 只算了 `ImageData` 一份，峰值要乘一个系数**（最终审查 F10）：保底路径在
  * `readPixels` 期间同时持有 ①`createImageBitmap` 的原生位图、②新建的同尺寸
  * `OffscreenCanvas`（或回落 `<canvas>`）后备存储、③`getImageData` 返回的 `ImageData` 副本
- * ——三份同尺寸 RGBA，即 ≈ 2–3 × 16 MiB ≈ 32–48 MiB（见 `decoders.ts` 的 `readPixels`），
- * 另加解码来源位图本身。阈值**不改**：口径是长边（见 `chooseDecoderPath`），16 MiB 是规格
- * 给出的预算锚点，2–3 倍的峰值仍在目标平板可接受的范围内。
+ * ——三份同尺寸 RGBA（见 `decoders.ts` 的 `readPixels`），另加解码来源位图本身。
+ *
+ * **那个系数已实测，约 1.5 倍而不是 2–3 倍**（2026-10-02，Android 16 手机，规格 §12.1.2）：
+ * 2048² 裁剪（正好压在阈值线上）带来的图形内存（GL mtrack）增量 **+18.7 MB = 1.14 × 单张
+ * RGBA 缓冲**，Native Heap 另 +5.5 MB，合计约 **24 MB**；峰值只持续 1–2 秒（解码 + 重采样
+ * 期间）即回落。早先按「三份全尺寸常驻」估的 32–48 MiB **偏保守**——`getImageData` 的副本
+ * 并不在 `readPixels` 全程与自己叠加。
+ * 阈值**不改**：口径是长边（见 `chooseDecoderPath`），16 MiB 是规格给出的预算锚点，
+ * 实测约 24 MB 的峰值对当代设备微不足道。
  */
 export const MAX_EXACT_CROP_EDGE = 2048;
 
