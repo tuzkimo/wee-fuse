@@ -52,7 +52,7 @@ npm run build
   不聚类、直接在全库逐格取最近色，候选从 ≤32 变成 **221**（内置 MARD221）。按 32 档的数字外推会低估它约 **4.6 倍**
   （58×58 只差 1.4 倍——格子少时固定开销占比大）。即使取最坏档位与最慢负载，也仍在 3 s 预算内约一个数量级；
   真机上的**解码**耗时另算，那才是主要瓶颈（见规格 §12.1）。
-- **全量测试**：**35 文件 / 475 用例**全绿（2026-10-03 应用层 B1 完成时回原始清单重数；
+- **全量测试**：**35 文件 / 476 用例**全绿（2026-10-03 应用层 B1 完成时回原始清单重数；
   引擎阶段该行记的是 22 文件 / 312 用例）；`npm run test` 冷启动约 9.4 s（vitest 内部 5.87 s），
   热复跑约 2.6 s。
 - **构建**：`npm run build`（`vue-tsc --noEmit` + Vite）约 2.6 s，其中 Vite 构建 578 ms。
@@ -97,9 +97,29 @@ npm run build
 | L10 | `vite.config.ts` 不在任何类型检查范围内（根 `tsconfig.json` 的 `include` 不含它；`tsconfig.node.json` 的 `composite` 因从无 `tsc -b` 而未生效）（任务 1）。 | 任务 9 实测补了一条更硬的理由：账本里建议的稳妥做法 `vue-tsc --noEmit -p tsconfig.node.json` **本身也会在仓库根写出 `tsconfig.node.tsbuildinfo`**（144 KB，实测，脚本退出码 0），而 `.gitignore` 不含 `*.tsbuildinfo` → 这个「稳妥做法」并没有避开 `tsc -b` 的 emit 副作用，只是把它换了个名字。要让该文件进 CI 必须先解决产物落地问题，属配置变更，不在收尾任务范围内。风险：该文件日后若加入逻辑，类型错误不会在 CI 暴露。 |
 | L11 | 边界闸门（`src/__tests__/coreBoundary.test.ts`）对**形参名** `window`（及清单里其他被禁名）在函数体/表达式中的引用会**误报**（任务 1 / 1b，E/F 探针确认）。 | 已文档化（测试文件头规则 3 与 `CLAUDE.md` / `AGENTS.md`），且给出处置约定：**改命名**（例如参数改叫 `sampleWindow`），不放宽规则、不加绕过标记。触发概率低：`grep` 扫实现计划全文，为 `src/core/**` 规定的字面代码里**零处**使用 `window` 标识符。正确修法需走 TypeScript AST（有把 `@types/node` 拉进程序、削弱 Node 全局闸门的风险），或引入会制造新漏报的启发式，两者都比问题本身贵。 |
 
+## 计划 B1 的延后项
+
+同样是「判定为可接受、明确不修」的项，逐条记此以免后来者当成待办。完整记录（含 9 处计划缺陷、
+控制者的错误清单、被推翻的结论、以及环境事实）见[计划 B1 构建记录](docs/superpowers/notes/2026-10-03-app-b1-build-log.md)。
+
+| # | 是什么 | 为什么接受 / 何时该修 |
+|---|---|---|
+| B1-1 | `GeneratePage` 的成功路径在 happy-dom 下**无法自动化**（真实解码、真实 canvas、真实 IDB 都不可用），靠**平台边界桩** + 一次真实浏览器人工验证覆盖。 | 桩只替换平台 I/O（`naturalWidth/Height` 与 `BitmapPlatform`），断言落在「交给平台的源矩形」与「落盘数据」两个外部可观察量上，且变异打在**生产代码**上仍会红。真实解码链路仍只靠浏览器那次验证。 |
+| B1-2 | `renderPatternThumbnail` 的**像素内容无断言**（happy-dom 的 canvas 是桩，`toDataURL` 返回空字节的 data URL）。 | CI 只守到「创建了两个 canvas（均 58×58）、`toDataURL` 被调用、落盘封面等于画布产出的串」。**任何断言缩略图像素的写法在本环境都是恒真**，所以不写。 |
+| B1-3 | `probeSourceSize` 的**成功路径在 CI 中零覆盖**。 | happy-dom 的 `fetch` 拒绝 `blob:` scheme ⇒ `<img>` 永不 load、`naturalWidth` 恒 0 使该路径**不可能达成**。`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖，而 `probeSourceSize` 只是单行直返。 |
+| B1-4 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字的文件名会让 `put` 抛错，而 B1 没有改名入口 → 用户无出路）。 | 响亮失败但死路。B2 会整体替换这一页，为即将被删的代码加 `slice` 不划算。**B2 替换该页时一并解决。** |
+| B1-5 | `LibraryPage` 在**存储级失败**（库打不开）时只给琥珀色错误条，**新建按钮不禁用**。 | 「未注入」（`current === null`）那一支才显示「存储不可用 + 禁用新建」。真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径。 |
+| B1-6 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` **仅参数变化**时不重载。 | B1 的导航图生不出这个跳转，B3 会。 |
+| B1-7 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`）。 | 它是 B2 / B3 的接口面，注释已改为与事实一致；不收窄不删除。 |
+| B1-8 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走）。 | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。 |
+| B1-9 | `crop.x/y` 允许负数（规格 §5.4 只要求「有限」）→ 越界源矩形在 Chromium 上**不抛错、填透明**，即静默产出带透明边的图纸。 | B1 生产路径可**证明**永不越界（居中内接正方形，`x + s ≤ w`）。是否在 `generatePattern` 入口按源图尺寸夹取/拒绝 `crop`，交 **B2** 决策。 |
+| B1-10 | 两个实现的 `rename("nope", "   ")` 错误文案优先级不同；`data:image/` 是前缀判定故 `data:image/svg+xml` 放行；`LibraryPage` 的 rename/delete `catch` 分支与若干 UI 分支未断言。 | 契约未定义优先级（两条都对）；`data:image/` 前缀是规格 §12 的既有口径；未断言项已逐条自曝，属覆盖面。 |
+
 ## 文档
 
 - [第一阶段设计规格](docs/superpowers/specs/2026-09-30-image-to-pattern-design.md)
+- [计划 B1 设计规格](docs/superpowers/specs/2026-10-03-app-skeleton-design.md)
+- [计划 B1 构建记录](docs/superpowers/notes/2026-10-03-app-b1-build-log.md)
 
 ## License
 
