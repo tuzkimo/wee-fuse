@@ -113,17 +113,23 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(result).toBe(localDateString(moment));
 
-    // 判别力（本地日 vs UTC 日）只在**本机时区偏移不为 0** 时可证：偏移为 0 时本地日与 UTC 日
-    // 按定义相同，「实现改用 toISOString()」在那个环境下**不可能**被任何同进程内的断言区分
-    // （信息不存在）。所以这里：① 常量的 **UTC 日**断言（与偏移无关，是所有时区都成立的夹具
-    // 性质，保证这个夹具真的跨在日期边界附近）；② 偏移非 0 时断言「本地日 ≠ UTC 日」——那正是
-    // 能区分两种实现的充分条件。TZ=UTC 与 TZ=Asia/Shanghai 下都必须绿。
+    // **自证断言已删除（合并前复审的阻断项）**：它曾写成「断言本地日 ≠ UTC 日」，用来证明这个
+    // 夹具能区分「本地日实现」与 `toISOString()` 实现。但那不是在证明实现正确，而是在断言**运行
+    // 环境的时区偏移**：夹具时刻固定 `22:00Z`，本地日 ≠ UTC 日**当且仅当偏移 ≥ +2h**。所以它在
+    // UTC+8 绿、在 UTC 与 UTC−5 红——一条对被测实现**零判别力**、却会在真实开发机与 CI 上假红的
+    // 断言（正违「断言存在 ≠ 断言有效」）。
+    // 曾用 `getTimezoneOffset() !== 0` 守卫它，那是**必要但不充分**：只排除了偏移 0，其余不跨日的
+    // 偏移照旧假红（实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed）。
+    //
+    // 真正的判别力在**上面 `expect(result).toBe(localDateString(moment))` 那一行**：把实现从
+    // 「本地日」改成 `toISOString().slice(0, 10)`，在**偏移 ≥ +2h 的时区**（如 UTC+8）会被它抓到；
+    // 在偏移 0 的时区则**任何同进程断言都不可能抓到**——两种实现在那里输出逐字节相同，信息不存在，
+    // 不是写法问题。本仓库 CI 是 `ubuntu-latest`（UTC），故 CI 对这条实现选择**没有**判别力，
+    // 该缺口记为延后项（要补只能给 CI 一个非零 TZ，属 `.github/` 变更）。
     const utcDay = utcDateString(moment);
-    const localDay = localDateString(moment);
+    // 与偏移无关的夹具性质：这个时刻的 **UTC 日**恒为 2026-09-24（所有时区都成立），
+    // 保证夹具确实落在日期边界附近，而不是随便取了一个时刻。
     expect(utcDay).toBe("2026-09-24");
-    if (moment.getTimezoneOffset() !== 0) {
-      expect(localDay).not.toBe(utcDay);
-    }
 
     // 恰 7 天（下限闭区间）：把「超过一周」的阈值写成 `dayDiff <= 7` 时，这里会得到「7 天前」
     // 而不是日期串 → 转红。（上面那条 8 天整的用例对 `<= 7` 零判别力，变异实测 M3i 证明过。）
