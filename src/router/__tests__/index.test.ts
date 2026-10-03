@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { router } from "@/router";
 import PickPage from "@/views/PickPage.vue";
+import SetupPage from "@/views/SetupPage.vue";
 
 /**
  * 路由表的用例（本任务新增）。
@@ -33,5 +34,26 @@ describe("router", () => {
     expect(router.resolve({ name: "home" }).path).toBe("/");
     expect(router.resolve({ name: "editor", params: { id: "a" } }).path).toBe("/edit/a");
     expect(router.resolve({ name: "decode-lab" }).path).toBe("/lab/decode");
+  });
+
+  // 任务 11 新增。`PickPage` 跳的是 `push({ name: "setup" })`，而页面用例一律整替
+  // `vue-router`（假 `useRouter`），看不见路由表——名字打错 / 指向别的组件在别处全是盲区，
+  // 与 `/new` 那条同一个理由。
+  it("/new/setup 是装配页：名字 setup、路径 /new/setup、组件就是 SetupPage", async () => {
+    const route = router.resolve({ name: "setup" });
+
+    expect(route.name).toBe("setup");
+    expect(route.path).toBe("/new/setup");
+
+    // 只断言 name / path 的话，把 `component` 换成任何别的页面照样绿（懒加载器不会因为
+    // `resolve` 就被调用）。这里直接把那个 loader 跑一次，做**恒等**比较。
+    const loader = route.matched[0]?.components?.default;
+    expect(typeof loader).toBe("function");
+    const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
+    expect(mod.default).toBe(SetupPage);
+  });
+
+  it("B1 的临时入口不再占着路由名 generate（任务 14 删页前先把名字腾空）", () => {
+    expect(router.hasRoute("generate")).toBe(false);
   });
 });

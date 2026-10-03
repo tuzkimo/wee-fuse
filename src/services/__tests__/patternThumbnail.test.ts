@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPalette } from "@/core/palette/registry";
 import { EMPTY } from "@/core/pattern/types";
-import { renderPatternThumbnail, THUMBNAIL_MAX_EDGE } from "@/services/patternThumbnail";
+import { renderPatternThumbnail, RESULT_PREVIEW_MAX_EDGE, THUMBNAIL_MAX_EDGE } from "@/services/patternThumbnail";
 
 const palette = loadPalette({
   id: "fake",
@@ -236,5 +236,12 @@ describe("renderPatternThumbnail", () => {
     // AGENTS.md「入口校验」：校验写在**任何写操作之前**。删掉守卫或把它挪到画布之后，
     // 这里就会记录到 drawImage（`draws` 非空）。
     expect(draws).toEqual([]);
+  });
+
+  it("结果预览上限就是 1024（任务 11 新增的第二个消费者）", () => {
+    // 与上面 512 同一条理由：`SetupPage` 只是把它当实参传进来，值本身在别处读不到——
+    // 把它改成 512 的话本文件与 SetupPage 的用例**都不会红**（图纸长边 ≤ 500，只缩不放，
+    // 两个值产出逐像素相同的位图），所以字面量只能在这里钉。
+    expect(RESULT_PREVIEW_MAX_EDGE).toBe(1024);
   });
 });
