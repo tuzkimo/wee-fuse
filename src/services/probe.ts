@@ -33,8 +33,10 @@ export interface DecodedImage {
 /**
  * 一次 `<img>` 解码，同时交出**元素**与**自然尺寸**；object URL 的生命周期交给调用方。
  *
- * 失败一律抛中文原因（不给页面留一句英文或空消息），并在抛出前回收 object URL——失败路径上
- * 调用方拿不到 `release`。成功时**不**回收：调用方拿到 `release()` 自行决定何时撤销。
+ * 失败时**统一补中文前缀并附上原始原因**：`cause.message` 通常是英文（如 `EncodingError: …`），
+ * 拿不到详情时回落「无错误详情」，页面因此不会只剩一句没有上下文的英文或空消息。抛出前先回收
+ * object URL——失败路径上调用方拿不到 `release`。成功时**不**回收：调用方拿到 `release()`
+ * 自行决定何时撤销。
  */
 export async function decodeImageElement(source: Blob): Promise<DecodedImage> {
   const url = URL.createObjectURL(source);
