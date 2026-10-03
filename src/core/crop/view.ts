@@ -219,8 +219,9 @@ export function withZoom(base: ViewTransform, viewport: Size, oriented: Size, zo
 /**
  * 夹取平移：图像**始终铺满视口**（不留空白）。
  *
- * 某个方向上图像比视口小（只可能出现在极小图像上）时，该方向**居中锁定**——
- * 否则用户可以把它拖到只剩空白。
+ * 某个方向上图像比视口小（**fit 档位下非绑定的那一轴必然如此**：800×600 放进 400×400 时
+ * Y 轴 scaled = 300 < 400；2× / 4× 下窄轴也可能仍小于视口，例如 8000×100 放进 400×400）
+ * 时，该方向**居中锁定**——否则用户可以把它拖到只剩空白。
  */
 export function clampView(view: ViewTransform, viewport: Size, oriented: Size): ViewTransform {
   requireViewport(viewport);

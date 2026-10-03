@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampView,
   fitTransform,
+  orientedSizeOf,
   orientedToScreen,
   orientedToSource,
   screenToOriented,
@@ -62,6 +63,15 @@ describe("旋转换算（规格 §4.1 的表）", () => {
     expect(orientedToSource({ x: 0, y: 0 }, 3, SOURCE)).toEqual({ x: 800, y: 0 });
   });
 
+  // `orientedSizeOf` 是**唯一跨模块接线**（转发 `rotatedSize`）且全数字入参的导出：
+  // TS 查不出实参顺序错误（`(600, 800)` 与 `(800, 600)` 都是合法 number），所以必须有一条
+  // 断言钉住「非换轴角度返回原尺寸、换轴角度返回互换后的尺寸」。rotation 0 与 1 一起读，
+  // 才能同时拦住「实参对调」与「换轴判据写反（偶数为换轴）」两类错误。
+  it("orientedSizeOf 转发 rotatedSize（0 不换轴、1 换轴）", () => {
+    expect(orientedSizeOf(SOURCE, 0)).toEqual({ width: 800, height: 600 });
+    expect(orientedSizeOf(SOURCE, 1)).toEqual({ width: 600, height: 800 });
+  });
+
   it("轴对齐矩形在显示空间仍是轴对齐矩形，且 1/3 下换轴", () => {
     const rect = { x: 100, y: 100, width: 200, height: 100 };
     expect(sourceRectToOriented(rect, 0, SOURCE)).toEqual({ x: 100, y: 100, width: 200, height: 100 });
@@ -106,14 +116,72 @@ describe("适配与缩放档位", () => {
     });
   });
 
-  // 「切回去等于适配态」是锚点公式正确性的最便宜证据：锚点写错时它会漂。
-  it("从 4× 切回 fit 得到与直接适配完全相同的变换", () => {
+  // 这条**不是**锚点证据：`zoom === "fit"` 时 `ratio = 1`，锚点项恒等抵消
+  // （`offset = center − (center − base.offset)·1 ≡ base.offset`），锚点取任何值它都是绿的
+  // —— 控制者的变异 4（锚点改 (0,0)）实测证伪了本处旧注释「锚点写错时它会漂」。
+  // 它真正守的是「夹取居中分支里 `scaled` / `extent` 两个实参没有串轴」：fit 算出的居中偏移
+  // 必须与 `clampView` 的 `scaled <= extent` 分支给出同一个数（把 800×600 的两个 scaled
+  // 分量对调，这条立刻红：offsetX 会从 0 变成 (400−300)/2 = 50）。
+  it("从适配态重算 fit 档位不引入漂移（居中分支两轴一致）", () => {
     const viewport = { width: 400, height: 400 };
     const oriented = { width: 800, height: 600 };
     const base = fitTransform(viewport, oriented);
     const zoomed = withZoom(base, viewport, oriented, 4);
     expect(withZoom(base, viewport, oriented, "fit")).toEqual(base);
     expect(zoomed.scale).toBe(2);
+  });
+
+  // 规格 §4.4 的锚点不变量：**换档前后，视口中心处的显示空间坐标不变**。
+  // 这条才真正钉住 `withZoom` 的锚点（上面那条 fit 恒等式做不到）；`zoom: "fit"` 那一档
+  // 按定义恒等，所以只跑 2 / 4。本组数值下夹取不生效（−200/−100 与 −600/−400 都落在
+  // [extent − scaled, 0] 内），不变量在闭式解上严格成立；夹取一旦生效，锚点会被主动放弃
+  // （「图像始终铺满视口」优先），这是规格 §4.4 的取舍——所以这里刻意不构造夹取生效的档位。
+  it("换档前后视口中心的显示空间坐标不变（锚点不变量）", () => {
+    const viewport = { width: 400, height: 400 };
+    const oriented = { width: 800, height: 600 };
+    const base = fitTransform(viewport, oriented);
+    const center = { x: viewport.width / 2, y: viewport.height / 2 };
+    const before = screenToOriented(center, base);
+    for (const zoom of [2, 4] as const) {
+      expect(screenToOriented(center, withZoom(base, viewport, oriented, zoom))).toEqual(before);
+    }
+  });
+});
+
+describe("非方形视口（横屏是生产形态：宽高对调类缺陷在方形视口下完全不可见）", () => {
+  // 500×400：两轴的比例不同，于是「某个实参取错轴」一定会产生不同的数字。
+  const viewport = { width: 500, height: 400 };
+
+  it("fit 的两个偏移各自取本轴的视口尺寸", () => {
+    // 500/800 = 0.625 < 400/600 → 绑定轴是 X（contain 下 offsetX 必为 0），非绑定轴 Y 留 12.5 空边。
+    expect(fitTransform(viewport, { width: 800, height: 600 })).toEqual({
+      scale: 0.625,
+      offsetX: 0,
+      offsetY: 12.5,
+    });
+  });
+
+  it("withZoom 的两个锚点分量各自取本轴的视口中心", () => {
+    const oriented = { width: 800, height: 600 };
+    const base = fitTransform(viewport, oriented);
+    // centerX = 250、centerY = 200：把两轴对调会得到 (−200, −225)。
+    expect(withZoom(base, viewport, oriented, 2)).toEqual({ scale: 1.25, offsetX: -250, offsetY: -175 });
+  });
+
+  it("clampView 的两个 extent 各自取本轴的视口尺寸", () => {
+    const oriented = { width: 800, height: 800 };
+    // 两轴都比视口大：夹到 [extent − scaled, 0]，X 下界 −300、Y 下界 −400。
+    expect(clampView({ scale: 1, offsetX: -350, offsetY: -500 }, viewport, oriented)).toEqual({
+      scale: 1,
+      offsetX: -300,
+      offsetY: -400,
+    });
+    // 两轴都比视口小：各自居中，(500−240)/2 = 130 与 (400−240)/2 = 80。
+    expect(clampView({ scale: 0.3, offsetX: -999, offsetY: 999 }, viewport, oriented)).toEqual({
+      scale: 0.3,
+      offsetX: 130,
+      offsetY: 80,
+    });
   });
 });
 
