@@ -142,8 +142,12 @@ DOM 全局；`src/services/**` 是唯一接触平台 API 的层。B2 新增/改�
 
 `ResizeObserver` 监听容器尺寸变化。**一条决定测试形态的实测事实**：happy-dom 的 `ResizeObserver`
 是空实现（`observe()` 里只有 `// TODO: Not implemented`，实测 `node_modules/happy-dom/lib/resize-observer/ResizeObserver.js`）
-——因此「容器尺寸 → 画布尺寸 / 适配比例」的计算**全部落在 core 纯函数**上直接单测，组件里只断言
-「注册了 `observe`」，**绝不声称测到了重算行为**。
+——因此「容器尺寸 → 画布尺寸 / 适配比例」的计算**全部落在 core 纯函数**上直接单测。
+
+**但组件里的接线仍要有一条用例**（2026-10-03 任务 8 修复轮 1 的审查发现）：测试**自己 stub 掉全局 `ResizeObserver`** 之后，
+驱动那个假对象的回调测的是**组件自己的接线**（`() => resizeCanvas()` 有没有接上），不是 happy-dom 的行为——这条天花板只在「用真的 happy-dom 实现」时才成立。
+实测缺口：不写这条时，把回调换成空函数 `() => {}` 是 **0 红**，而后果是画布停在初始尺寸、遮罩与选框整体错位。
+所以必须有「改桩盒子 → 手动触发回调 → 断言画布尺寸跟着变」的用例。
 
 canvas 尺寸 = CSS 尺寸 × `devicePixelRatio`（happy-dom 的该属性有 setter，实测可设），`ctx.scale(dpr, dpr)`
 （主规格 §6.3.1：不按 DPR 缩放，高分屏上预览发虚）。
