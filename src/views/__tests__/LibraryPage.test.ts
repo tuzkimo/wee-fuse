@@ -215,8 +215,18 @@ describe("LibraryPage", () => {
     expect(wrapper.text()).toContain("读库失败：配额用尽");
     // 读失败时不能同时说「还没有图纸」——两句自相矛盾（原先 `!error` 这个合取项没人守）
     expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(false);
-    // 存储是存在的，只是读失败：不该冒充「浏览器不支持本地保存」
-    expect(wrapper.find("[data-testid='store-unavailable']").exists()).toBe(false);
+    // **装配性同步（B2 §8，唯一一处改到既有断言）**：B1 时这条分支只置一条琥珀错误条、
+    // 且**不禁用新建**——正是 B1-7 记的实测教训（用户白走一遍选图 + 选区 + 生成，到 `put` 才炸）。
+    // 现在它和「未注入」共用同一块红字并一起禁用新建（由本文件新增的 §8 两条用例钉住）。
+    // 原先第三句断言的判别力是「存储是存在的，只是读失败：不该冒充『浏览器不支持本地保存』」，
+    // 这里**不改判别力**，只把它从「这块红字不许出现」换成「这块红字里不许出现那句话」——
+    // 因为「出现」现在是对的行为，而「冒充浏览器能力问题」仍然必须是错的。
+    const notice = wrapper.get("[data-testid='store-unavailable']");
+    expect(notice.text()).toContain("读库失败：配额用尽");
+    expect(notice.text()).not.toContain("不允许本地保存");
+    expect(
+      (wrapper.get("[data-testid='new-project']").element as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("有封面时渲染缩略图，无封面时给占位文字（而不是一张空 img）", async () => {
@@ -240,5 +250,141 @@ describe("LibraryPage", () => {
     await flushPromises();
     expect(second.find("[data-testid='project-card'] img").exists()).toBe(false);
     expect(second.find("[data-testid='project-card']").text()).toContain("没有封面");
+  });
+});
+
+describe("存储失败的两种语义（B2 规格 §8）", () => {
+  it("未注入存储：给出「不允许本地保存」并禁用新建", async () => {
+    setProjectStore(null);
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='store-unavailable']").text()).toContain("不允许本地保存");
+    expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeDefined();
+  });
+
+  it("库打不开（list 抛错）：显示原因并**禁用新建**——否则用户会白走一遍选图与生成", async () => {
+    setProjectStore({
+      list: async () => {
+        throw new Error("库打不开");
+      },
+      get: async () => null,
+      put: async () => {},
+      remove: async () => {},
+      rename: async () => {
+        throw new Error("unused");
+      },
+      estimateUsage: async () => null,
+    });
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='store-unavailable']").text()).toContain("库打不开");
+    expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeDefined();
+  });
+
+  // 这条正是 B1-17：只有占用读不出来时，列表与新建都必须照常。
+  it("只有 estimateUsage 失败：列表正常、占用行消失、新建**不**禁用", async () => {
+    const store = await createMemoryProjectStore();
+    // `updatedAt` 是 `makeRecord` 的**必填**第三参（简报原文只传了两个；`npm run build` 的
+    // vue-tsc 会按 `src/**/*.ts` 类型检查测试文件，漏参直接编译不过）。
+    await store.put(makeRecord("p1", "小猫", "2026-10-03T01:00:00.000Z"));
+    setProjectStore({
+      ...store,
+      // 逐个 `bind` 再展开，而不是只写 `...store`：`store` 将来若换成 class 实现，原型上的方法
+      // 不会出现在展开里，这几行能让桩仍然是一个完整的 `ProjectStore`。
+      list: store.list.bind(store),
+      get: store.get.bind(store),
+      put: store.put.bind(store),
+      remove: store.remove.bind(store),
+      rename: store.rename.bind(store),
+      estimateUsage: async () => {
+        throw new Error("读不到占用");
+      },
+    });
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("[data-testid='project-card']")).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("已用");
+    expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeUndefined();
+    // 简报原文没有这一句——实测：**不加它，这条用例在旧实现上照样全绿**（跑 RED 时亲眼见到
+    // 16 passed / 1 failed）。旧代码里 `estimateUsage` 抛错走的是共享 try 的 catch，只置了一条
+    // 琥珀错误条，列表与新建本来就没被拖累，所以上面三句都读不到 B1-17。B1-17 的原话正是
+    // 「只 `estimateUsage` 失败**也会置错误条**」，故必须把「不置错误条」也断言上。
+    expect(wrapper.find("[data-testid='error-hint']").exists()).toBe(false);
+  });
+
+  it("失败态不是粘死的：库坏掉再恢复，红字与「新建禁用」都要跟着撤销", async () => {
+    // 这条不是简报原文。理由（变异实测）：`refresh()` 开头那句 `storeFailure.value = null`
+    // 原先**没有任何断言在读**——把它删掉，当时本文件 17 条用例全绿（M5）。可它是承重的：库先失败、
+    // 后恢复时不清失败态，红字与「新建禁用」会永久粘在页面上，哪怕库已经好了。
+    // 触发 refresh 的活口只有卡片上的改名 / 删除，所以这里用「删除」把 refresh 再走两次。
+    const base = await createMemoryProjectStore();
+    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
+    let broken = false;
+    setProjectStore({
+      ...base,
+      list: async () => {
+        if (broken) throw new Error("库打不开");
+        return base.list();
+      },
+    });
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    expect(wrapper.findAll("[data-testid='project-card']")).toHaveLength(1);
+
+    // 库坏掉：下一次 refresh（点「删除」→ 确认）才会看到。列表是**上一次成功**的那份，
+    // 所以卡片还在（refresh 失败时不清空列表），用户仍有活口。
+    broken = true;
+    await wrapper.find("[data-testid='delete-project']").trigger("click");
+    await wrapper.find("[data-testid='delete-confirm']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='store-unavailable']").text()).toContain("库打不开");
+    expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeDefined();
+
+    // 库恢复：再走一次 refresh，失败态必须撤销，页面回到正常（列表空 → 空提示）。
+    broken = false;
+    await wrapper.find("[data-testid='delete-project']").trigger("click");
+    await wrapper.find("[data-testid='delete-confirm']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-testid='store-unavailable']").exists()).toBe(false);
+    expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeUndefined();
+    expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(true);
+  });
+
+  it("占用读不到时，原先显示的那一行要撤掉（§8 说的是「占用行消失」，不是「从没显示过」）", async () => {
+    // 这条不是简报原文。简报那条「只有 estimateUsage 失败」里的 `not.toContain("已用")` 是在
+    // **占用从未显示过**的前提下成立的，读不到 ③ 的 `usage.value = null`——实测把它删掉，
+    // 当时本文件 18 条全绿（M6）。可它的作用是清掉**上一次成功读到的旧数字**：不清就是一行过期的
+    // 占用 / 配额挂在页面上，用户不会知道那是旧的。
+    const base = await createMemoryProjectStore();
+    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
+    let usageBroken = false;
+    setProjectStore({
+      ...base,
+      estimateUsage: async () => {
+        if (usageBroken) throw new Error("读不到占用");
+        return { usage: 1024 * 1024, quota: 2 * 1024 * 1024 };
+      },
+    });
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    expect(wrapper.text()).toContain("已用 1.0 MB / 可用约 2.0 MB");
+
+    // 让占用开始读不出来，再走一次 refresh（删除本身是成功的，卡住的是占用那一步）。
+    usageBroken = true;
+    await wrapper.find("[data-testid='delete-project']").trigger("click");
+    await wrapper.find("[data-testid='delete-confirm']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("已用");
+    // 列表该刷的照刷（那一条确实被删了），且不置错误条——占用读不到只是少一行字。
+    expect(wrapper.findAll("[data-testid='project-card']")).toHaveLength(0);
+    expect(wrapper.find("[data-testid='error-hint']").exists()).toBe(false);
   });
 });

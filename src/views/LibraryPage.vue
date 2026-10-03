@@ -12,8 +12,33 @@ import { formatRelativeTime } from "@/views/relativeTime";
 const router = useRouter();
 const projects = ref<ProjectMeta[]>([]);
 const usage = ref<{ usage: number; quota: number } | null>(null);
-const storeUnavailable = ref(false);
 const error = ref("");
+
+/**
+ * 存储失败的两支语义（B2 规格 §8）。**两支都要禁用新建**：「打不开的库」写不进去，
+ * 让用户先走完选图 + 选区 + 生成、到 `put` 才撞墙是白跑一遍（B1-7 的实测教训）。
+ * 但文案不同——`uninjected` 是浏览器能力问题，`unreadable` 是这一份库当下读不出来。
+ *
+ * 用一支判别式状态而不是两个布尔：两个布尔能表示「同时未注入又读不出来」这种不存在的状态。
+ */
+type StoreFailure = "uninjected" | "unreadable";
+
+const storeFailure = ref<StoreFailure | null>(null);
+const storeUnavailable = computed(() => storeFailure.value !== null);
+
+const storeFailureText = computed(() => {
+  if (storeFailure.value === "uninjected") {
+    // 刻意**不**贴 `getProjectStore()` 的原始文案（「工程存储尚未初始化…」）：那是给开发者的
+    // 内部话术，用户看不懂、也没有出路。既有断言（「存储不可用时给出提示并禁用新建」）在守这一点。
+    return "这个浏览器不允许本地保存（可能是隐私模式），所以暂时不能新建或打开图纸。";
+  }
+  if (storeFailure.value === "unreadable") {
+    // **必须带上原始原因**：只写「打不开」，用户拿不到任何可操作的信息。
+    return `本地图纸库现在打不开（${error.value}）。在它恢复之前，新建图纸也没法保存，先别开工。`;
+  }
+  return "";
+});
+
 const renamingId = ref<string | null>(null);
 const renameDraft = ref("");
 const pendingDelete = ref<ProjectMeta | null>(null);
@@ -26,22 +51,38 @@ function formatMb(bytes: number): string {
 
 async function refresh(): Promise<void> {
   error.value = "";
+  storeFailure.value = null;
+
+  // ① 未注入：装配错误（`main.ts` 在挂载前注入，生产不可达）。真实失败都发生在首次使用。
+  //    这里仍然把原始文案写进 `error`，尽管当前模板**不**渲染它（见 `storeFailureText` 的
+  //    第一支）：正是「`error` 里确实有那句内部话术」才让既有断言 `not.toContain("工程存储尚未
+  //    初始化")` 有牙——哪天真把 `{{ error }}` 贴进红字，它会转红；而如果这里不写，`{{ error }}`
+  //    只会渲染空串，那条断言就废了。
   let store: ProjectStore;
   try {
     store = getProjectStore();
   } catch (e) {
-    storeUnavailable.value = true;
+    storeFailure.value = "uninjected";
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }
-  storeUnavailable.value = false;
-  // 存储「注入了」不等于「读得出来」：隐私模式 / 配额用尽会在 `list` / `estimateUsage`
-  // 里抛错。不接住就会变成一条未处理的 rejection + 一片空白的列表——正是「静默失败」。
+
+  // ② 库打不开（隐私模式 / 配额用尽 / 陈旧库缺 object store）。**也禁用新建**：不禁用的话
+  //    用户会一路走到生成页的 `put` 才看到原始报错，白跑一遍选图 + 选区 + 生成（B1-7 的实测教训）。
   try {
     projects.value = await store.list();
-    usage.value = await store.estimateUsage();
   } catch (e) {
+    storeFailure.value = "unreadable";
     error.value = e instanceof Error ? e.message : String(e);
+    return;
+  }
+
+  // ③ 占用读不出来只是少一行字：**单独一个 `try`**，不置错误条、也不影响列表与新建
+  //    （闭合 B1-17：原先它与 `list()` 共用一个 `try`，只 `estimateUsage` 失败也会置错误条）。
+  try {
+    usage.value = await store.estimateUsage();
+  } catch {
+    usage.value = null;
   }
 }
 
@@ -96,7 +137,7 @@ function open(id: string): void {
     </header>
 
     <p v-if="storeUnavailable" data-testid="store-unavailable" class="mt-4 rounded bg-red-50 p-4 text-lg text-red-700">
-      这个浏览器不允许本地保存（可能是隐私模式），所以暂时不能新建或打开图纸。
+      {{ storeFailureText }}
     </p>
     <p v-if="error && !storeUnavailable" data-testid="error-hint" class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800">
       {{ error }}
