@@ -4045,7 +4045,7 @@ export const RESULT_PREVIEW_MAX_EDGE = 1024;
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { isCropResolvable } from "@/core/crop/rect";
+import { centerSquare, isCropResolvable } from "@/core/crop/rect";
 import { orientedSizeOf } from "@/core/crop/view";
 import { computeGridSize } from "@/core/pattern/build";
 import { patternStats } from "@/core/pattern/stats";
@@ -4257,12 +4257,10 @@ function rotate(): void {
 function resetCrop(): void {
   if (draft.sourceSize === null) return;
   draft.setAspect("free");
-  draft.setCrop({
-    x: Math.round((draft.sourceSize.width - Math.min(draft.sourceSize.width, draft.sourceSize.height)) / 2),
-    y: Math.round((draft.sourceSize.height - Math.min(draft.sourceSize.width, draft.sourceSize.height)) / 2),
-    width: Math.min(draft.sourceSize.width, draft.sourceSize.height),
-    height: Math.min(draft.sourceSize.width, draft.sourceSize.height),
-  });
+  // **用 `centerSquare`，不在这里重写一遍居中口径**：同一段「居中正方、边长取短边、奇偶不齐时
+  // `Math.round`」的逻辑在 `core/crop/rect.ts` 里已被四条用例钉住（含 801×600 的奇偶情形），
+  // 视图层再抄一份就是第二处会漂的副本（任务 4 修复轮 3 的审查发现）。
+  draft.setCrop(centerSquare(draft.sourceSize));
 }
 </script>
 
