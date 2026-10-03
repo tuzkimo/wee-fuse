@@ -251,7 +251,9 @@ describe("resizeByHandle", () => {
   it("拖左上角：右下角固定", () => {
     const result = resizeByHandle(BASE, "nw", { x: 50, y: 50 }, "free", 0, SOURCE);
     expect(result).toEqual({ x: 50, y: 50, width: 250, height: 250 });
-    // 对角锚点必须逐位不动——这是「对角固定」的定义，也是把锚点写反时唯一会红的断言。
+    // 对角锚点必须逐位不动——这是「对角固定」的定义。**如实记录**：它**不是**「锚点写反时
+    // 唯一会红的断言」——上面那条 `toEqual` 同样会红（判据重叠）；这条不变量断言独立成立的价值
+    // 在于它**不依赖硬编码的那组数字**，换成别的输入仍然判死。
     expect(result.x + result.width).toBe(BASE.x + BASE.width);
     expect(result.y + result.height).toBe(BASE.y + BASE.height);
   });

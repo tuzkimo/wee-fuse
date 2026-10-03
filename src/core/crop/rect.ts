@@ -30,9 +30,9 @@ export const MIN_CROP_SIDE = 2;
 /**
  * 比例锁。比例定义在**显示空间**（用户看到的形状），所以 1 / 3 下它约束的是源坐标的另一根轴。
  *
- * **为何公开**：本计划内由两处生产代码接上——任务 7 的 `stores/draft.ts` 用它声明草稿里的
- * `params.aspect` 类型，任务 8 的 `CropCanvas` 用它声明 props。**如实记录**：除本文件与用例之外，
- * **目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ * **为何公开**：三处生产代码接上它——`stores/draft.ts` 用它声明草稿里的 `params.aspect` 类型、
+ * `CropCanvas.vue` 用它声明 props（`:aspect`）、`SetupPage.vue` 用它标注 `ASPECT_OPTIONS`
+ * 这张常量表。`isCropResolvable` 这类判定不读它。
  */
 export type AspectLock = "free" | "1:1" | "4:3" | "9:16";
 
@@ -40,8 +40,8 @@ export type AspectLock = "free" | "1:1" | "4:3" | "9:16";
  * 四个角手柄。手柄名按**显示空间**（用户看到的屏幕）的角解释，不按源坐标解释——
  * 见 `resizeByHandle` 的 JSDoc（1 / 3 下源坐标左上 ↦ 显示空间右上）。
  *
- * **为何公开**：任务 8 的 `CropCanvas` 用它声明手势状态的 `resize` 分支、手柄命中表与
- * `update:crop` 事件链上的透传类型。**如实记录**：除本文件与用例之外，**目前暂无生产消费者**。
+ * **为何公开**：`CropCanvas.vue`（任务 8）用它声明手势状态的 `resize` 分支、手柄命中表与
+ * `update:crop` 事件链上的透传类型——它是本类型的唯一生产消费者。
  */
 export type CropHandle = "nw" | "ne" | "sw" | "se";
 
@@ -124,13 +124,10 @@ function requireHandle(handle: CropHandle): CropHandle {
  * 与 B1 临时入口的行为**逐位等价**（`Math.round((长 − 短) / 2)` 的居中口径），
  * 这样「换掉临时入口」不会顺带改变用户看到的初始选区。
  *
- * **为何公开**：本计划内**真正会接上它的只有任务 7 的 `stores/draft.ts`**——它在进入裁剪阶段时用它
- * 初始化草稿里的 `crop`，并在源图更换时重算（计划 2166 / 2274 / 2334 行）。**如实记录**：
- * ① 任务 8 的 `CropCanvas` **没有**导入它（导入清单只有 `applyAspect` / `clampRectToSource` /
- * `moveRect` / `resizeByHandle` 与两个类型）；② 任务 11 `SetupPage` 的「重置选区」按钮目前把
- * 这段居中口径**又内联写了一遍**（计划 4257-4263 行），并没有调用本函数——那正是这段注释要防的漂移，
- * 是否改调本函数由控制者裁决；③ 除本文件与用例之外，**目前暂无生产消费者**
- * （`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ * **为何公开**：两处生产代码在用——`stores/draft.ts` 用它给出初始选区（`adoptImage`，以及
+ * `setSourceSize` 在没有 `pendingCrop` 时兜底），`SetupPage.vue` 的「重置选区」按钮也直接调它。
+ * 任务 11 落地时曾把这段居中口径**又内联写了一遍**，计划 `3459a26` 已改成导入本函数——正是这段
+ * 注释要防的漂移。`CropCanvas`（任务 8）**没有**导入它：画布上的初始形状来自 props 里的 `crop`。
  */
 export function centerSquare(source: Size): Rect {
   requireSize(source, "源图");
@@ -149,13 +146,15 @@ export function centerSquare(source: Size): Rect {
  * 尺寸被夹到 `[MIN_CROP_SIDE, 源图对应边]`（源图本身比最小边长还小时取源图边长），
  * 位置被夹到 `[0, 源图对应边 − 尺寸]`。顺序不能反：先定位再定尺寸会算出负的可用空间。
  *
- * 它是本模块所有出口的最后一站，所以入口校验（`requireRect` / `requireSize`）也落在这里：
- * 宽高 < 1 的退化矩形是**非法输入**，抛错而不是静默夹取——但调用方必须在把结果交给它之前
- * 自己抬底（`applyAspect` / `resizeByHandle` 都这么做），否则合法输入会撞上这道守卫。
+ * 它是本模块**除 `centerSquare` 之外**所有出口的最后一站（`centerSquare` 由源图尺寸直接算出居中
+ * 正方，不经过这里；它自己经 `requireSize` 守卫入参），所以入口校验（`requireRect` / `requireSize`）
+ * 也落在这里：宽高 < 1 的退化矩形是**非法输入**，抛错而不是静默夹取——但调用方必须在把结果交给它
+ * 之前自己抬底（`applyAspect` / `resizeByHandle` 都这么做），否则合法输入会撞上这道守卫。
  *
- * **为何公开**：本计划内由两处生产代码接上——任务 7 的 `stores/draft.ts` 在 `setCrop` 里把
- * 越界矩形夹回来并在源图更换时重建草稿，任务 8 的 `CropCanvas` 在比例锁切换后收尾夹取。
- * **如实记录**：除本文件与用例之外，**目前暂无生产消费者**。
+ * **为何公开**：两处生产代码在用——`stores/draft.ts` 在 `setCrop` 里把越界矩形夹回来、并在
+ * `setSourceSize` 里把旧选区（含 `adoptProject` 留下的 `pendingCrop`）夹进新边界；
+ * `CropCanvas.vue` 在比例锁切换时直接调它收尾（手柄拖动与平移经 `resizeByHandle` / `moveRect`
+ * 间接走到它）。
  */
 export function clampRectToSource(rect: Rect, source: Size): Rect {
   requireRect(rect, "选区");
@@ -173,9 +172,8 @@ export function clampRectToSource(rect: Rect, source: Size): Rect {
 /**
  * 平移选区（`dx` / `dy` 是源图像素增量），越界被夹取。
  *
- * **为何公开**：本计划内由任务 8 的 `CropCanvas` 接上——拖动选区时它把「本次指针位置与手势起点
- * 的差」换算成源图像素增量，再交给本函数夹取。**如实记录**：除本文件与用例之外，
- * **目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ * **为何公开**：`CropCanvas.vue`（任务 8）在拖动选区时把「本次指针位置与手势起点的差」换算成
+ * 源图像素增量，再交给本函数夹取——它是本函数唯一的生产消费者。
  */
 export function moveRect(rect: Rect, dx: number, dy: number, source: Size): Rect {
   requireFinite(dx, "水平位移");
@@ -201,8 +199,8 @@ export function moveRect(rect: Rect, dx: number, dy: number, source: Size): Rect
  *    800×1 源图得到 2×1（宽被抬起、高仍由源图那 1 像素封顶）。中点用**抬底后**的边长重算，
  *    否则矩形会偏离「以当前选区中心为锚」这一定义。
  *
- * **为何公开**：本计划内由任务 8 的 `CropCanvas` 接上——比例锁改 props 后由它的 `watch`
- * 调用本函数把当前选区收进新比例。**如实记录**：除本文件与用例之外，**目前暂无生产消费者**。
+ * **为何公开**：`CropCanvas.vue`（任务 8）在比例锁改 props 后由它的 `watch` 调用本函数，把当前
+ * 选区收进新比例——它是本函数唯一的生产消费者。
  */
 export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, source: Size): Rect {
   requireAspect(aspect);
@@ -247,9 +245,8 @@ export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, 
  * `clampRectToSource` 的 `requireRect` 而被当成非法输入抛错，而不是「停在最小边长」。
  * 比例锁分支里的抬底还兼有第二个作用：不抬的话原始宽高是 0 / 0，比例算式会得到 `NaN`。
  *
- * **为何公开**：本计划内由任务 8 的 `CropCanvas` 接上——缩放拖动时它在 `sourceRectToScreen`
- * 的屏幕矩形上做手柄命中判定，再把同名手柄与源坐标指针透传进本函数。**如实记录**：
- * 除本文件与用例之外，**目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ * **为何公开**：`CropCanvas.vue`（任务 8）在缩放拖动时于 `sourceRectToScreen` 的屏幕矩形上做
+ * 手柄命中判定，再把同名手柄与源坐标指针透传进本函数——它是本函数唯一的生产消费者。
  */
 export function resizeByHandle(
   rect: Rect,

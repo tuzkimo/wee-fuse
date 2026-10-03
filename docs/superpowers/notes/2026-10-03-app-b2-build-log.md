@@ -14,9 +14,9 @@
 |---|---|
 | 分支 | `feat/app-b2`（从 `main` 的 `bcea104` 起） |
 | 任务 | 14 个（1–14），其中 14 是收尾（唯一一次删文件，删文件已获人类伙伴在设计评审阶段批准） |
-| 提交 | 39 笔（`bcea104..d33b4a9`）+ 收尾 1 笔 |
-| 测试 | 从 **36 文件 / 493 用例** → **47 文件 / 749 用例**（净 **+11 文件 / +256 用例**） |
-| 关键交付 | 真正的向导：选图 → 矩形选区（拖动 / 缩放 / 比例锁 / 旋转 90°）→ 尺寸·色卡·档位 → 生成 → 结果预览 → 改参数就地重跑；平板左右分栏 / 手机单栏；B1 的临时生成入口与其用例删除 |
+| 提交 | 39 笔（`bcea104..d33b4a9`）+ 收尾 1 笔（`d2c72e8`）+ 最终审查修复波 1 笔（见 §11） |
+| 测试 | 从 **36 文件 / 493 用例** → **47 文件 / 749 用例**（净 **+11 文件 / +256 用例**）；**最终审查修复波之后 47 文件 / 755 用例**（见 §11） |
+| 关键交付 | 真正的向导：选图 → 矩形选区（拖动 / 缩放 / 比例锁 / 旋转 90°）→ 尺寸·色卡·档位 → 生成 → 结果预览 → 改参数就地重跑；平板左右分栏 / 手机单栏；B1 的临时生成入口与其用例删除。**最终审查修复波另修了三处行为**：离开页面后身份不丢（不再新建重复工程）、结果文案分清「新建 / 覆盖」、`@update:long-side` 接线有断言 |
 
 **测试文件账目**（相对 `bcea104`，用 `git diff --name-status` 重数）：**新增 12 个**测试文件
 （`core/pattern/board`、`core/crop/{view,rect}`、`services/{projectStore,imageSourcePreview,probeDecode}`、
@@ -163,6 +163,9 @@ B1 的任务 7 曾用 headless Chrome + CDP 走过 8 条人工清单；**本轮�
 
 **因此规格 §14 的 B2-R1…R5 全部仍是「待验证风险」**（拖拽手感与容器尺寸变化后的重算、横竖屏状态保持、
 高 DPR 清晰度、500×500 结果预览的耗时与内存、`touch-action` 与指针捕获的相互作用）。
+**规格 §14 的 B2-R6**（用一份越界的假 doc 跑一次重跑路径）在**最终审查修复波中被如实标为「未按该方式
+验证」**——它本来就没执行过，而且原降级方案（「指出越界量、不静默夹取」）与本实现（`draft.setSourceSize`
+用 `clampRectToSource` 静默夹取旧 `crop`）冲突，三处口径已在规格里统一。
 按「单测在原理上覆盖不到、或历史上真出过 bug」排序，**最短人工路径**是：
 
 1. **旋转 90° 后选框是否还框住同一块内容**（任务 8 在此抓到过真 BUG；happy-dom 无像素，只有浏览器能结清）；
@@ -188,27 +191,27 @@ README 表里有完整「为什么接受」，此处只列「是什么」，避�
 4. **B2-4**（88）`projectStore.ts` 与 `GeneratePage.vue` 的逐字重复窗口 —— **已在任务 14 随删页闭环**。
 5. **B2-5**（89）`slice(0,100)` 按 UTF-16 码元，emoji 文件名可切出孤立代理项。
 6. **B2-6**（90）JSDoc「为何公开」时态（与 B2-3 近重复，按账本原文保留）。
-7. **B2-7**（99）`view.test.ts:109` 的注释声称可证锚点公式，**是假的**。
+7. **B2-7**（99）`view.test.ts:109` 的注释声称可证锚点公式，**是假的**——**已闭环**（任务 3 修复轮 `93ec16b` 已改对；修复波另改掉同区域 2×/4× 标题里没有判别力的「并把平移夹进图像范围」）。
 8. **B2-8**（111）`view.test.ts:170-185` 同一 `it` 内第二条断言被第一条遮蔽。
 9. **B2-9**（112）非方形夹具只覆盖横屏 500×400，未补竖屏。
-10. **B2-10**（113）`view.ts:280-281` 的 JSDoc「为何不单独写用例」在修复后变成假陈述。
-11. **B2-11**（114）`view.test.ts:68-69` 对判别力的理由写错。
-12. **B2-12**（115）`view.test.ts:138` 把「夹取优先于锚点」称为「规格 §4.4 的取舍」，属引注过度。
+10. **B2-10**（113）`view.ts:280-281` 的 JSDoc「为何不单独写用例」在修复后变成假陈述——**已闭环**（修复波改成「用例就是 `view.test.ts` 的 `orientedSizeOf` 那条」）。
+11. **B2-11**（114）`view.test.ts:68-69` 对判别力的理由写错——**已闭环**（修复波改成「拦住两类错误只需 rotation 0 一条」）。
+12. **B2-12**（115）`view.test.ts:138` 把「夹取优先于锚点」称为「规格 §4.4 的取舍」，属引注过度——**已闭环**（修复波改成「那是实现选择，规格未定优先级」）。
 13. **B2-13**（116）各公开导出的守卫未被各自读到（删 `requireView` / `requireViewport` 都不红）。
 14. **B2-14**（136）3×3 旧用例的 `x` 由 0.65625 变 0.5（抬底后中点重算的必然结果，无断言覆盖）。
 15. **B2-15**（137）`applyAspect` 在 rotation 2 无专门用例（对 2 是恒等）。
 16. **B2-16**（138）9:16 下极小拖动会让比例失真、固定角漂移 ≤0.875px（JSDoc 已写明的取舍）。
-17. **B2-17**（139）`rect.test.ts:170` 注释称「唯一会红的断言」，实际同用例的 `toEqual` 也会红。
-18. **B2-18**（143）`rect.ts:130-131` 的注释「任务 11 又内联写了一遍」已过时。
-19. **B2-19**（144）`rect.ts:152` 的「本模块**所有**出口的最后一站」措辞过头。
-20. **B2-20**（159）`imageSource.ts:31` 的注释把 `/lab/decode` 写成该函数的调用方。
-21. **B2-21**（160）`probe.ts:76` 与 `imageSource.ts:28` 仍写「失败时抛出中文原因」（实为中文前缀 + 英文 cause）。
-22. **B2-22**（169）`pipeline.ts:124-125` 注释称「**四条**不等式全部为假」，有反例。
+17. **B2-17**（139）`rect.test.ts:170` 注释称「唯一会红的断言」，实际同用例的 `toEqual` 也会红——**已闭环**（修复波删掉「唯一会红」的说法）。
+18. **B2-18**（143）`rect.ts:130-131` 的注释「任务 11 又内联写了一遍」已过时——**已闭环**（修复波重写 `centerSquare` 的「为何公开」整段）。
+19. **B2-19**（144）`rect.ts:152` 的「本模块**所有**出口的最后一站」措辞过头——**已闭环**（改成「除 `centerSquare` 之外」）。
+20. **B2-20**（159）`imageSource.ts:31` 的注释把 `/lab/decode` 写成该函数的调用方——**已闭环**（`/lab/decode` 走的是 `probeImageSize`；`probeSourceSize` 零生产消费者）。
+21. **B2-21**（160）`probe.ts:76` 与 `imageSource.ts:28` 仍写「失败时抛出中文原因」（实为中文前缀 + 英文 cause）——**已闭环**。
+22. **B2-22**（169）`pipeline.ts:124-125` 注释称「**四条**不等式全部为假」，有反例——**已闭环**（改成「涉及它的那一条 / 那两条」并写入反例）。
 23. **B2-23**（170）校验顺序约束实际只被 1 条断言的半边（`Infinity`）钉住。
 24. **B2-24**（171）新用例把整句中文文案写死（`toThrow(string)` 是**子串**匹配）。
 25. **B2-25**（172）未做 `sourceSize` 本身的「存在且为对象」守卫。
 26. **B2-26**（173）越界校验依赖「前面已算过网格」这一隐式不变量；`rotation 1/3` 与越界的组合从未被断言。
-27. **B2-27**（190）校验守卫副本序数账目仍漏计 `core/pattern/build.ts`（至少第五处）。
+27. **B2-27**（190）校验守卫副本序数账目仍漏计 `core/pattern/build.ts`（至少第五处）——**已闭环**（`stores/draft.ts` 的账目补上第五处，并写明「留到第五处再评估」的条件已到达）。
 28. **B2-28**（198）DPR 跨屏变化不重算画布尺寸。
 29. **B2-29**（199）`CropCanvas` 当时无生产消费者 —— **已由任务 11 闭环**。
 30. **B2-30**（203）`onPointerDown` 未校验 `event.button` —— **已被任务 8 修复轮承接**（只剩 B2-35 那一半）。
@@ -224,7 +227,7 @@ README 表里有完整「为什么接受」，此处只列「是什么」，避�
 40. **B2-40**（254）`PickPage.vue` 的 try 同时罩「解码」与「导航」两个失败域、共用一个文案。
 41. **B2-41**（255）「编辑器重跑」草稿下也会显示「继续上次的选区」；`role="alert"` 无断言。
 42. **B2-42**（268）`SetupPage.vue:218` 的新守卫使紧随其后的空值分支成为死代码。
-43. **B2-43**（269）`SetupPage.vue:263` 页面自己盖 `updatedAt: now` 与规格 §6.2 重复（无害）。
+43. **B2-43**（269）`SetupPage.vue:263` 页面自己盖 `updatedAt: now` 与规格 §6.2 重复（无害）——**已闭环（改文档不改代码）**：规格 §6.2 写明两处职责（页面那份服务保存失败的 in-memory 记录，`save()` 那份权威）。
 44. **B2-44**（278）编辑器页未断言 `stage`；crop 拷一份无断言；谓词写两遍；用例重叠；`pushMock` 共享。
 45. **B2-45**（283）`list()` 失败时不清空 `projects` → 卡片仍可点，后续操作各自撞错。
 46. **B2-46**（286）`storeFailureText` 读共享的 `error` ref → 红字原因会被覆写。
@@ -235,7 +238,7 @@ README 表里有完整「为什么接受」，此处只列「是什么」，避�
 51. **B2-51** 生成进度与取消不做（规格 §13 第 2 条、§2）。
 52. **B2-52** 选区页的撤销 / 重做不做（规格 §13 第 3 条、§2）。
 53. **B2-53** `probeSourceSize` 在 B2 之后无生产消费者，保留不删（规格 §13 第 10 条）。
-54. **B2-54** **删页带来的口径收窄**：那条「平台不支持 `createImageBitmap`」的**具体原因**断言没有新家——新家只断言「图片解码失败」这一层（任务 14 裁决 C，如实记档）。
+54. **B2-54** 那条「平台不支持 `createImageBitmap`」的**具体原因**断言随删页失去新家——**理由已在修复波改正**：原文归因于「`probe.ts` 的中文前缀不再回显英文 cause」**失实**，那条文案来自 `services/decoders.ts` 的 `createDomBitmapPlatform`，与选图页的 `<img>` 解码路径无关（所以 `PickPage.test.ts` 无从断言）；原层 `domPlatform.test.ts:107-109` 一直钉着它，修复波另把断言补回真正的新家（`SetupPage.test.ts`：`createImageBitmap = undefined` → `setup-error` 出现中文原因、不落盘）。
 55. **B2-55** 规格 §13 第 4–9 条（B1-8、B1-14、`/lab/decode` 去留、两处「为何公开」JSDoc、共享校验模块、`source` 体积上限）仍在 B2 名下，逐条记在规格 §13。
 56. **B2-56** **浏览器 / 真机人工清单未执行**（规格 §14 的 B2-R1…R5 全部仍是待验证风险，见 §7）。
 57. **B2-57** 复审者留在**仓库外**的探针 `C:\Users\Public\dsh-param-panel-probe.cjs` 未删——删文件是项目红线，须人类伙伴批准（账本行 242）。
@@ -265,9 +268,19 @@ README 表里有完整「为什么接受」，此处只列「是什么」，避�
    `projectStore.ts` / `projectStore.test.ts`（时态改对）。
    改完 `src/` 仍有 **8 行 / 4 个文件**命中 `GeneratePage`，**全部是事实正确的历史叙述**（含新测试自己的头注）。
 
+   > **修复波更正（2026-10-03）**：上面 `imageSource.ts` 那句「生产消费者已归零」只对
+   > **`probeSourceSize`** 成立——同一个文件里的 **`loadImageSource` 有两个生产消费者**
+   > （`PickPage.vue` 选图、`SetupPage.vue` 的重跑路径解码），当时的措辞把两个导出混成了一句，
+   > 修复波已按导出分别写清（也一并改正了「`/lab/decode` 调用 `probeSourceSize`」这处误记：
+   > 修复波已按导出分别写清（也一并改正了「`/lab/decode` 调用 `probeSourceSize`」这处误记：
+   > 它直接 import `services/probe.ts` 的 `probeImageSize`）。修复波之后 `src/` 的命中是
+   > **9 行 / 5 个文件**（多出来的一行是 `SetupPage.test.ts` 里 B2-54 那条新断言的头注）。
+
 ---
 
-## 10. 最终验证（干净环境 + 全量 + `TZ=UTC` 全量）
+## 10. 最终验证（**最终审查修复波之前**的工作树：`d2c72e8`）
+
+> 下面这三条是修复波之前跑的原始输出，**保留作历史**；修复波之后的最新数字见 §11。
 
 ```powershell
 npm run test          # 47 files / 749 tests, exit 0
@@ -302,3 +315,80 @@ dist/assets/index-NinEcDTv.js          103.45 kB │ gzip: 40.58 kB
 > **验证状态如实说明**：以上三条是对**删页后、文档回写后**的工作树跑的；`npm run build` 覆盖测试文件
 > （`vue-tsc` 按 `src/**/*.ts` 检查），所以那条补上去的用例也过了类型检查。
 > **没有**跑真实浏览器人工验证（见 §7），规格 §14 的 B2-R1…R5 仍未验。
+
+---
+
+## 11. 最终审查修复波（2026-10-03，整分支最终审查之后）
+
+整分支最终审查（`bcea104..d2c72e8`，40 笔提交）找出了一批必修项，收在一笔提交里做完。
+**本节的数字是修复波之后的工作树的原始输出**（§10 那三条属于修复波之前）。
+
+### 11.1 改了什么
+
+| 项 | 内容 | 性质 |
+|---|---|---|
+| **A** | 记录身份收敛成 store 的单一来源：`stores/draft.ts` 新增带校验的 `setRerunOf`，`SetupPage.vue` 生成并保存成功后写回 meta、删掉页面级 `savedTarget` | **行为**（修数据损坏路径：离开页面再回来会新建第二条同名记录） |
+| **B** | 结果文案按「本次新建 / 覆盖」分支（新建「已保存到图纸库」、覆盖「已更新这张图纸」），判据是**生成前**store 里有没有身份 | **行为**（首次生成不再说「已更新」） |
+| **C** | `@update:long-side` 的父级接线补断言（面板改 116 → `draft.longSide === 116`） | 只补测试 |
+| **D** | 一批失实注释 / 文档逐处改对（`rect.ts` 5 处「暂无生产消费者」、`draft.ts` 序数账目补第五处 `build.ts`、`view.ts` 的「为何不单独写用例」、`view.test.ts` 三处、`rect.test.ts` 一处、`imageSource.ts` 两处、`probe.ts` 一处、`pipeline.ts` 两处、`board.ts` 一处）+ 规格 §5.2/§6.2/§6.3/§10.3/§13/§14 回写 + README/B2 账目同步 | 文档与注释，**零行为改动** |
+
+**守卫变异（本轮实测，含精确形态与红数）**——A 与 C 是要求的两条，A2 是 A 的姊妹步（补存路径），
+另附一次画法断言的判别力实测：
+
+| 变异 | 改了哪一行 → 改成什么 | 聚焦输出 |
+|---|---|---|
+| A（身份写回） | `SetupPage.vue` 的 `draft.setRerunOf({ id: meta.id, name: meta.name, createdAt: meta.createdAt });` → `void meta.id;`（不写 `rerunOf`） | `SetupPage.test.ts` 33 条里 **4 failed**；其中新用例报 `expected [ {…}, {…} ] to have a length of 1 but got 2`（库里 2 条同名记录） |
+| A2（补存时补写身份，A 的姊妹步） | `retrySave()` 里的 `const meta = session.record?.meta; if (meta !== undefined) { draft.setRerunOf(…) }` 整块 → `void session.record;` | `SetupPage.test.ts` 33 条里 **1 failed**：`expected [ {…}, {…} ] to have a length of 1 but got 2` |
+| C（删监听器） | `SetupPage.vue` 模板删掉 `@update:long-side="draft.setLongSide($event)"` 整行 | `SetupPage.test.ts` 33 条里 **1 failed**：`AssertionError: expected 58 to be 116` |
+
+两条都还原到逐字节相同（`git status` 里 `CropCanvas.vue` 无改动、`SetupPage.vue` 只剩本轮的有意改动）。
+另为规格 §10.3 的话术实测了一次画法断言的判别力：`CropCanvas.vue` 删掉 `ctx.restore()` →
+`CropCanvas.test.ts` **1 failed**（补这条顺序断言之前是 21 条全绿）。再为 D2 的 `view.test.ts` 注释实测一次：
+`withZoom` 的返回值不再经过 `clampView` → `view.test.ts` **31/31 全绿**（证实 2×/4× 那两条确实钉不住
+`withZoom` 里的夹取——注释已如实写明，判别力由 `clampView` 的独立用例承担）。
+
+### 11.2 三条验证命令的原始输出
+
+```powershell
+npm run test
+ Test Files  47 passed (47)
+      Tests  755 passed (755)
+   Start at  16:47:57
+   Duration  4.10s (transform 6.67s, setup 0ms, import 12.19s, tests 3.39s, environment 21.01s)
+
+$env:TZ="UTC"; npm run test      # 与 CI 同环境
+ Test Files  47 passed (47)
+      Tests  755 passed (755)
+   Start at  08:48:02
+   Duration  4.24s (transform 6.01s, setup 0ms, import 11.91s, tests 3.20s, environment 21.76s)
+
+npm run build
+> vue-tsc --noEmit && vite build
+vite v6.4.3 building for production...
+✓ 81 modules transformed.
+dist/index.html                          0.43 kB │ gzip:  0.30 kB
+dist/assets/index-CA8tdIOo.css          13.19 kB │ gzip:  3.50 kB
+dist/assets/types-B3eWZGTT.js            0.05 kB │ gzip:  0.07 kB
+dist/assets/probe-CjLhr5cx.js            0.62 kB │ gzip:  0.47 kB
+dist/assets/imageSource-Bn0352WP.js      0.97 kB │ gzip:  0.63 kB
+dist/assets/PickPage-BYPKXOes.js         1.86 kB │ gzip:  1.08 kB
+dist/assets/registry-CgY0ecNP.js         1.95 kB │ gzip:  1.14 kB
+dist/assets/EditorPage-C-09unJs.js       2.09 kB │ gzip:  1.13 kB
+dist/assets/LibraryPage-BhoEay92.js       5.57 kB │ gzip:  2.46 kB
+dist/assets/decoders-D7htYS46.js         7.38 kB │ gzip:  3.36 kB
+dist/assets/draft-fNVZgO3N.js           11.15 kB │ gzip:  3.54 kB
+dist/assets/DecodeLabPage-mkcEW875.js   11.21 kB │ gzip:  5.21 kB
+dist/assets/project-CuojgYJN.js         14.47 kB │ gzip:  4.73 kB
+dist/assets/SetupPage-C45YU4CZ.js       21.40 kB │ gzip:  8.10 kB
+dist/assets/index--sWPNw2u.js          103.45 kB │ gzip: 40.58 kB
+✓ built in 919ms        # exit 0
+```
+
+用例账目（回原始清单重数）：修复波 +6 条 = `SetupPage.test.ts` +5（A 的离开页面用例、A2 的补存后重跑
+用例、B 的覆盖文案用例、C 的接线用例、B2-54 补回的平台缺能力用例）+ `draft.test.ts` +1（`setRerunOf`
+的校验与副本语义）。47 文件不变，749 → **755**。
+
+> **语义变更如实说明（B）**：既有那条把「已更新这张图纸」钉死的断言**必须**跟着改——
+> 首次生成说「已更新」是假陈述，规格 §6.2 的意图就是让用户分清新建与覆盖。新语义：
+> 首次 → 「已保存到图纸库」，重跑 → 「已更新这张图纸」（两条用例各钉一支），
+> 断言并未放宽，也没有为了让用例变绿而改其他断言的语义。

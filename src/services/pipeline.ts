@@ -122,7 +122,9 @@ export async function generatePattern(
   const { crop, rotation, longSide, maxColors, sourceSize } = request;
 
   // 源图尺寸：整数且 ≥1（AGENTS.md「入口校验」的网格 / 尺寸类口径）。放在最前面是因为下面的
-  // 越界判定要用它，而一个非有限的宽高会让四条不等式全部为假、静默放行（见下方的越界校验）。
+  // 越界判定要用它：源图宽高为 `NaN` 时，**涉及它的那一条**越界不等式恒为假、会静默放行。
+  // 注意不是「四条不等式全为假」——`crop.x = -1` 这类与源图尺寸无关的越界仍会被 `crop.x < 0`
+  // 拦下，所以缺了这道守卫漏掉的是「源图尺寸非有限」这一类，不是全部越界。
   if (!Number.isInteger(sourceSize.width) || sourceSize.width < 1) {
     throw new Error(`原图宽度必须是 ≥1 的整数（当前 ${String(sourceSize.width)}）`);
   }
@@ -155,7 +157,8 @@ export async function generatePattern(
   // 它们之前，`width: Infinity` 这类输入会先撞上「超出原图范围」，等于换掉了既有契约的消息。
   // 这里只负责它们拦不住的那一类：**宽高有限且 ≥1、但不落在原图里**的裁剪框。
   //
-  // 原点必须单独查有限性：`crop.x` 为 `NaN` 时下面四条不等式**全部为假**（NaN 参与的比较恒假），
+  // 原点必须单独查有限性：`crop.x` 为 `NaN` 时，下面四条不等式里**涉及它的那两条**
+  // （`crop.x < 0` 与 `crop.x + crop.width > sourceSize.width`）都恒为假（NaN 参与的比较恒假），
   // 只靠不等式拦不住，会一路解码并静默产出错位图纸。
   if (!Number.isFinite(crop.x) || !Number.isFinite(crop.y)) {
     throw new Error(

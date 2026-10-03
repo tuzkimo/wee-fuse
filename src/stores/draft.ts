@@ -18,18 +18,18 @@ import { MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/typ
  * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：本文件的一切导出都是任务 10
  * （`PickPage`：`adoptImage` / `source` / `sourceSize` / `preview` / `rerunOf`）、任务 11
  * （`SetupPage`）与任务 12（`EditorPage` 重跑入口：`adoptProject` / `DraftParams` /
- * `RerunTarget`）的接口面。
+ * `RerunTarget`）的接口面。**它们现在都在生产路径上被消费**——`PickPage.vue` / `SetupPage.vue` /
+ * `EditorPage.vue` 三个页面各有一处 `useDraft()`，不是「只被用例消费」（`reset` 没有独立调用点，
+ * 经 `onLeaveSetup` 到达）。
  *
  * 任务 11 的接口面**不只是 setter**，它同时**读** `source` / `sourceSize` / `preview` / `crop` /
  * `rotation` / `aspect` / `zoom` / `pan` / `longSide` / `maxColors` / `stage` / `busy` / `error` /
  * `rerunOf`（`task-11-brief.md` 逐项出现），并**写** `setSourceSize` / `setPreview` / `setCrop` /
  * `setRotation` / `setAspect` / `setLongSide` / `setMaxColors` / `setZoom` / `setPan` / `setStage` /
- * `setBusy` / `setError` / `markGenerated` / `onLeaveSetup`。`releasePreview` 与 `reset` 没有独立的
- * 调用点，它们是 `onLeaveSetup` 的两个出口（规格 §9 的「总是释放预览」与「已生成且无改动 → 清空
- * 草稿」），因此同样归任务 11 的离开路径。
- *
- * **如实记录**：截至本任务，除 `draft.test.ts` 之外**暂无生产消费者**——上面那些 setter 目前只被
- * 用例消费。
+ * `setBusy` / `setError` / `markGenerated` / `onLeaveSetup` / `setRerunOf`。`releasePreview` 除了
+ * `onLeaveSetup` 里那一支（规格 §9 的「总是释放预览」）之外，还被 `SetupPage` 的「保存失败 →
+ * 离开」分支直接调用；`reset` 没有独立调用点，它是 `onLeaveSetup` 的另一个出口（§9 的
+ * 「已生成且无改动 → 清空草稿」）。两者同样归任务 11 的离开路径。
  */
 
 /** 向导的三个阶段：选区 → 参数 → 结果。 */
@@ -65,15 +65,20 @@ const DEFAULT_MAX_COLORS: MaxColors = 32;
 //
 // 本文件是这份校验的**第三处副本**（第一处 `core/crop/view.ts`、第二处 `core/crop/rect.ts`），
 // 但**不是最后一处**：`core/project/types.ts` 里还有**第四处**内联的长边 / 档位 / 旋转守卫
-// （它守的是从磁盘 / 本地存储读回来的 JSON，是另一条外部输入路径）。照规格 §13 第 8 条
-// 「共享校验模块不修，保持内联就地校验」执行，现在不抽模块。
+// （它守的是从磁盘 / 本地存储读回来的 JSON，是另一条外部输入路径），`core/pattern/build.ts`
+// 是**第五处**（`computeGridSize` 的长边守卫 + `buildPattern` 的档位守卫——先前只记到第四处，
+// 漏计了它，见 README 的 B2-27）。照规格 §13 第 8 条「共享校验模块不修，保持内联就地校验」
+// 执行，现在不抽模块。
 //
 // **如实记录**：这份决定要付的代价——「错误信息口径漂移」——**已经实际发生**：
 // `core/project/types.ts` 的档位措辞（`用色档位非法：…（只允许 16 / 32 / null）`）与旋转措辞
 // （`旋转角度非法：…（必须是 0–3 的整数）`）与本文件**逐字相同**（`core/pattern/build.ts` 的档位
 // 也是同一句），而长边措辞已经分叉：`core/project/types.ts` 与 `core/pattern/build.ts` 写
-// 「长边豆数必须在 1–500 之间」，本文件写「长边豆数必须是 1–500 的整数」。统一口径留到第五处
-// 消费者出现时再评估，本轮不动代码。
+// 「长边豆数必须在 1–500 之间」，本文件写「长边豆数必须是 1–500 的整数」。
+//
+// 因此「统一口径留到第五处消费者出现时再评估」这个条件**已经到达**（第五处就是 `build.ts`）：
+// 按规格 §13 第 8 条与 `AGENTS.md` 的口径仍维持内联就地校验，本轮**不动代码**——改的是账目，
+// 不是行为。下次再有人想抽共享模块时，从这份账目出发，别再当成「还没到第五处」。
 //
 // 与那两处 core 副本的**实质差异**：这里的守卫要挂在「任何写操作之前」（`AGENTS.md` 入口校验
 // 硬约束），而 core 的守卫是「夹取 / 映射之前的最后一道」。两者的触发时机不同，抽成一个模块会把
@@ -120,6 +125,25 @@ function requireStage(next: Stage): Stage {
     throw new Error(`阶段非法：${String(next)}（只允许 "crop" / "params" / "result"）`);
   }
   return next;
+}
+
+/**
+ * 重跑目标（身份）的三个字段都是**字符串**，`id` 还必须**非空**。
+ *
+ * 为什么运行期要查：这三个字段会被 `save()` 写进存储再回读（`id` 决定 `put` 的键），而类型
+ * 挡不住 `JSON.parse` + 强转。`id` 为空串时 `put` 会造出一条谁也打不开的记录，属静默数据损坏。
+ */
+function requireRerunTarget(target: RerunTarget): RerunTarget {
+  if (typeof target.id !== "string" || target.id === "") {
+    throw new Error(`重跑目标的 id 必须是非空字符串（当前 ${String(target.id)}）`);
+  }
+  if (typeof target.name !== "string") {
+    throw new Error(`重跑目标的名称必须是字符串（当前 ${String(target.name)}）`);
+  }
+  if (typeof target.createdAt !== "string") {
+    throw new Error(`重跑目标的 createdAt 必须是字符串（当前 ${String(target.createdAt)}）`);
+  }
+  return target;
 }
 
 /** 原图尺寸必须**整数且 ≥1**（`AGENTS.md`「入口校验」的网格 / 尺寸类口径）。 */
@@ -273,6 +297,31 @@ export const useDraft = defineStore("draft", () => {
   }
 
   /**
+   * 记下「本草稿指向的落盘记录」，`null` 表示还没有落过盘——**身份的唯一写入口**。
+   *
+   * **为什么身份必须住在 store 里**：它决定下一次生成是**新建**还是**覆盖同一条**。`SetupPage`
+   * 原先把它放在页面级 `ref` 里，组件一销毁就丢——「生成成功 → 改任意参数（`generated` 落回
+   * false）→ 用硬件返回键离开（规格 §9）→ 从 `/new` 的『继续上次的选区』回来 → 再生成」这条
+   * **可达主流程**上，页面级身份与 `rerunOf` 同时为 null，于是库里多出**第二条同名记录**，
+   * 而界面还写着「已更新这张图纸」。现在：`adoptProject`（编辑器重跑入口）种下它、
+   * `SetupPage` 在生成并保存成功后写回它、`adoptImage` / `reset` 清掉它。
+   *
+   * **校验写在任何写操作之前**（`AGENTS.md`「入口校验」）：`id` 必须非空字符串、`name` 与
+   * `createdAt` 必须是字符串，非法抛中文错误——非法输入不会留下「身份是新的、其余状态是旧的」
+   * 半截草稿。
+   */
+  function setRerunOf(target: RerunTarget | null): void {
+    if (target === null) {
+      rerunOf.value = null;
+      return;
+    }
+    const next = requireRerunTarget(target);
+    // 拷一份而不是存引用：调用方（`SetupPage`）手里的 `meta` 是 `ProjectMeta`，原地改它不该
+    // 悄悄改掉这里的身份。
+    rerunOf.value = { id: next.id, name: next.name, createdAt: next.createdAt };
+  }
+
+  /**
    * 原图尺寸就位（新图来自 `loadImageSource` 的返回值；重跑来自 `SetupPage` 的解码）。
    *
    * 这是**唯一**落下初始选区的时机：新图用居中正方，重跑用 `pendingCrop`（经夹取）。
@@ -419,6 +468,7 @@ export const useDraft = defineStore("draft", () => {
     error,
     adoptImage,
     adoptProject,
+    setRerunOf,
     setSourceSize,
     setPreview,
     setCrop,

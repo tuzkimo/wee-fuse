@@ -346,6 +346,35 @@ describe("选区工具条（比例 / 旋转 / 缩放 / 重置）", () => {
   });
 });
 
+/**
+ * 子端 emit 有断言（`ParamPanel.test.ts`）**不等于**父端接线在——`CropCanvas` 的两条接线在
+ * 上面那条里显式 `$emit` 过，而 `@update:long-side` 此前**没有任何断言读过它的落点**：
+ * 参数面板的摘要读的是面板**本地**的 `parsed`（用户当场就能看到新数字），产物尺寸是生成后从
+ * `doc` 读的，两头都不需要 `draft.longSide` 真的被写。于是删掉
+ * `@update:long-side="draft.setLongSide($event)"` 预计 0 红，而后果正是「摘要说 116×87、
+ * 产物 58×44」——本项目的头号缺陷形态。
+ *
+ * 档位那条接线（`@update:max-colors`）**不在**此列：`generate()` 直接读 `draft.maxColors`，
+ * 「档位三档落盘分别是 16 / 32 / null」把落盘值逐个读回来了，接线断掉会红；长边没有这条回读
+ * （端到端用例走的是 `draft.setLongSide(116)` 直写，绕过了面板）。
+ */
+describe("参数面板的父级接线（子端 emit → store）", () => {
+  it("面板里把长边改成 116 之后，store 里的 longSide 也是 116", async () => {
+    stubPlatform();
+    const draft = seedDraft();
+    expect(draft.longSide).toBe(58);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    await wrapper.get("[data-testid='long-side']").setValue("116");
+
+    // 判别力：删掉 `SetupPage.vue` 的 `@update:long-side` 监听器，这条立刻红（实测 1 failed，
+    // 见报告 §C 的守卫变异）。摘要与产物尺寸都拦不住这个变异——它们不读 `draft.longSide`。
+    expect(draft.longSide).toBe(116);
+  });
+});
+
 describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("用户选的选框就是交给解码器的源矩形，参数按落盘字段搬位，摘要豆数与成品一致", async () => {
     const { createBitmap } = stubPlatform();
     const draft = seedDraft({ x: 200, y: 100, width: 400, height: 300 });
@@ -459,6 +488,73 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     }
     // 三次生成落在同一条记录上（重跑的语义），不是三条。
     expect(await store.list()).toHaveLength(1);
+  });
+
+  /**
+   * **可达主流程的数据损坏路径**（本条是它的判死位）：身份若只活在**页面级** ref 里，
+   * 「生成成功 → 改任意参数（`generated` 落回 false）→ 离开页面（规格 §9 明列硬件返回键）→
+   * 从 `/new` 的「继续上次的选区」回来 → 再生成」这条路上页面级身份随组件销毁，
+   * 于是 `target` 为 null → 新建第二条**同名**记录，而界面还写着「已更新这张图纸」。
+   *
+   * 判别力：把 `generate()` 里 `draft.setRerunOf(...)` 那一步退掉（或搬回页面级 ref），
+   * 本用例的 `toHaveLength(1)` 立刻红（实测整文件 4 failed：本用例 + 端到端 2 + 档位三档 +
+   * 覆盖文案那条；见报告 §A 的守卫变异）。
+   *
+   * `unmount()` 之后草稿**没被清空**正是这条路径成立的前提：改过参数 → `generated` 为 false →
+   * `onLeaveSetup()` 只释放预览，`source` / 几何 / 参数都留着，`/new` 才显示「继续上次的选区」。
+   */
+  it("离开页面再回来：身份随草稿存活，第二次生成仍覆盖同一条（不新建重复工程）", async () => {
+    stubPlatform();
+    const draft = seedDraft();
+    // 只伪造 `Date`（同端到端 2 的处置）：两次生成的时刻人为拉开，`updatedAt` 的「刷新」才可判。
+    const t1 = new Date("2026-10-03T12:00:00.000Z");
+    const t2 = new Date("2026-10-03T12:05:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(t1);
+      const first = mount(SetupPage);
+      await flushPromises();
+      await first.get("[data-testid='generate']").trigger("click");
+      await flushPromises();
+
+      const store = (await import("@/services/projectStore")).getProjectStore();
+      const before = (await store.list())[0]!;
+      expect(before.updatedAt).toBe(t1.toISOString());
+
+      // ① 改任意参数：`generated` 落回 false（此后离开页面不会整份作废草稿）
+      draft.setLongSide(116);
+      expect(draft.generated).toBe(false);
+
+      // ② 离开页面（浏览器 / 平板 / 手机的返回都走 `onBeforeUnmount`）
+      first.unmount();
+      expect(draft.source).not.toBeNull();
+      expect(draft.crop).not.toBeNull();
+      expect(draft.preview).toBeNull();
+
+      // ③ 从「继续上次的选区」回来：重挂载会重新解码补预览（与重跑路径同一条 `onMounted`）
+      vi.setSystemTime(t2);
+      const second = mount(SetupPage);
+      await flushPromises();
+      await second.get("[data-testid='generate']").trigger("click");
+      await flushPromises();
+
+      const metas = await store.list();
+      // ① 库里**仍只有一条**（身份写回那一步没了，这里就是 2 条同名记录）
+      expect(metas).toHaveLength(1);
+      // ② id / 名称 / createdAt 不变
+      expect(metas[0]!.id).toBe(before.id);
+      expect(metas[0]!.name).toBe(before.name);
+      expect(metas[0]!.createdAt).toBe(before.createdAt);
+      // ③ updatedAt 变了（严格大于，`>=` 分不出「没刷新」）
+      expect(metas[0]!.updatedAt > before.updatedAt).toBe(true);
+      expect(metas[0]!.updatedAt).toBe(t2.toISOString());
+      // ④ 参数是新的
+      expect((await store.get(before.id))?.doc.params.longSide).toBe(116);
+      // ⑤ 文案也跟着身份走：第二次是覆盖
+      expect(second.get("[data-testid='result-save-state']").text()).toBe("已更新这张图纸");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -586,6 +682,33 @@ describe("生成前的门槛与失败路径", () => {
     await flushPromises();
 
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("超出原图范围");
+  });
+
+  /**
+   * **B1 `GeneratePage.test.ts` 那条「平台不支持 `createImageBitmap`」断言的新家**
+   * （删页时它被记为 B2-54 的口径收窄，理由是「新家只断言图片解码失败这一层」——**那个理由不对**：
+   * 那条文案来自 `services/decoders.ts` 的 `createDomBitmapPlatform`，与选图页的 `<img>` 解码
+   * 路径无关，所以在 `PickPage.test.ts` 里根本无从断言）。它真正的新家在本页：**生成**这条路径
+   * 就是 `createDomBitmapPlatform()` 的消费者。
+   *
+   * 判别力：`createImageBitmap` 置 `undefined` → `requireApi` 抛中文原因 → 页面 `catch` 写进
+   * `draft.error`；把 `generate()` 里 `createDomBitmapPlatform()` 那一步删掉（或吞掉异常），
+   * 这条立刻红。
+   */
+  it("平台缺少 createImageBitmap 时把中文原因显示出来，且不落盘", async () => {
+    stubPlatform();
+    seedDraft();
+    // happy-dom 本来就没有它；显式置 undefined，免得依赖环境细节（照 B1 那条的写法）。
+    vi.stubGlobal("createImageBitmap", undefined);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='setup-error']").text()).toContain("当前环境不支持 createImageBitmap");
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    expect(await store.list()).toHaveLength(0);
   });
 
   /**
@@ -728,6 +851,47 @@ describe("保存失败与重试", () => {
     expect(draft.preview).toBeNull();
   });
 
+  it("保存失败 → 重试成功 → 改参数再生成：仍覆盖同一条（补存成功也要补上身份）", async () => {
+    stubPlatform();
+    const real = await createMemoryProjectStore();
+    let failNext = true;
+    setProjectStore({
+      ...real,
+      async put(record): Promise<void> {
+        if (failNext) {
+          failNext = false;
+          throw new Error("磁盘已满");
+        }
+        await real.put(record);
+      },
+    });
+    seedDraft();
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    // ① 第一次生成没进库（`put` 抛错 → 库里 0 条）
+    expect(await real.list()).toHaveLength(0);
+
+    // ② 重试保存成功 → 图纸进库。`generate()` 的身份写回只在保存成功那一支发生，所以这一步
+    //    必须由 `retrySave()` 补写；否则下一步会新建出第二条同名记录。
+    await wrapper.get("[data-testid='retry-save']").trigger("click");
+    await flushPromises();
+    const before = (await real.list())[0]!;
+
+    // ③ 改参数再生成：身份既然在 store 里，这一次就是就地重跑
+    await wrapper.get("[data-testid='long-side']").setValue("116");
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    // 判别力：删掉 `retrySave()` 里的 `draft.setRerunOf(...)`，这里就是 2 条同名记录。
+    const metas = await real.list();
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(before.id);
+    expect((await real.get(before.id))?.doc.params.longSide).toBe(116);
+  });
+
   it("保存失败后重试成功再离开：图纸已进库，草稿按 §9 作废", async () => {
     stubPlatform();
     const real = await createMemoryProjectStore();
@@ -762,7 +926,7 @@ describe("保存失败与重试", () => {
 });
 
 describe("结果阶段", () => {
-  it("生成后显示豆图预览、用色数与「已更新这张图纸」", async () => {
+  it("首次生成显示豆图预览、用色数与「已保存到图纸库」（新建，不是覆盖）", async () => {
     stubPlatform();
     seedDraft();
 
@@ -771,9 +935,32 @@ describe("结果阶段", () => {
     await wrapper.get("[data-testid='generate']").trigger("click");
     await flushPromises();
 
-    expect(wrapper.get("[data-testid='result-pane']").text()).toContain("已更新这张图纸");
+    // **语义变更（B1 的「已更新这张图纸」→ B2 的两分支）**：首次生成是**新建**一条记录，
+    // 说「已更新」是假陈述（规格 §6.2 的意图正是让用户分清新建还是覆盖）。覆盖那一支见下一条。
+    expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已保存到图纸库");
     expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
     expect(wrapper.get("[data-testid='result-stats']").text()).toContain("实际用了");
+  });
+
+  it("第二次生成（就地重跑）显示「已更新这张图纸」——文案按本次是新建还是覆盖分支", async () => {
+    stubPlatform();
+    seedDraft();
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已保存到图纸库");
+
+    // 改长边再生成 = 就地重跑（身份由 store 里的 `rerunOf` 提供，与页面级 ref 无关）。
+    await wrapper.get("[data-testid='long-side']").setValue("116");
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已更新这张图纸");
+    // 判据是**身份**而不是「点了第几次」：两次生成落在同一条记录上（与端到端 2 同源）。
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    expect(await store.list()).toHaveLength(1);
   });
 
   it("结果面板的尺寸三行走**产物自身**，不是参数面板的重算预测值（§6.3）", async () => {

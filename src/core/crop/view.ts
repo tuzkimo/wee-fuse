@@ -283,8 +283,10 @@ export function sourceRectToScreen(rect: Rect, view: ViewTransform, rotation: Ro
  * `crop.width/height` 可以是小数（拖动角手柄不取整），拿小数选区调它会在渲染期抛
  * 「源图宽必须是 ≥1 的整数」。理由与推导写在 `SetupPage.vue` 的 `grid` 注释里。
  *
- * **为何不单独写用例**：它是 `rotatedSize` 的一行转发，换轴规则与边界（0/1/2/3 × 非正方形）
- * 已由 `core/image/__tests__/rotate.test.ts` 逐条钉死；在这里重抄一份只会多一处会漂的副本。
+ * **用例**：`view.test.ts` 的「orientedSizeOf 转发 rotatedSize（0 不换轴、1 换轴）」就是它。
+ * 它值得一条自己的断言，是因为入参全是 `number`——实参顺序写反（`(600, 800)`）TS 查不出来，
+ * 只有断言能拦。换轴规则的其余组合（0/1/2/3 × 非正方形）由
+ * `core/image/__tests__/rotate.test.ts` 逐条钉死，这里不重抄第二份。
  */
 export function orientedSizeOf(source: Size, rotation: Rotation): Size {
   requireImageSize(source, "源图");

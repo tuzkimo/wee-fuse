@@ -330,6 +330,32 @@ describe("其他入口校验（规格 §12）", () => {
     expect(draft.stage).toBe("params");
   });
 
+  it("setRerunOf：存一份副本、null 清空、非法字段抛中文错误且不改状态", () => {
+    const draft = seedImage();
+    expect(draft.rerunOf).toBeNull();
+
+    // 合法输入：身份是「本草稿指向的那条落盘记录」，**存副本**——调用方（`SetupPage` 的 `meta`）
+    // 原地改它不该悄悄改掉 store 里的身份。
+    const meta = { id: "p1", name: "小猫", createdAt: "2026-10-03T00:00:00.000Z" };
+    draft.setRerunOf(meta);
+    expect(draft.rerunOf).toEqual(meta);
+    expect(draft.rerunOf).not.toBe(meta);
+
+    // `null` = 清空（`adoptImage` / `reset` 的清理路径）。
+    draft.setRerunOf(null);
+    expect(draft.rerunOf).toBeNull();
+
+    // 非法输入：`id` 空串会造出一条谁也打不开的记录（`put` 的键），必须响亮拒绝。
+    draft.setRerunOf({ id: "keep", name: "旧", createdAt: "2026-10-03T00:00:00.000Z" });
+    expect(() => draft.setRerunOf({ id: "", name: "x", createdAt: "t" })).toThrow(/id/);
+    expect(() => draft.setRerunOf({ id: "x", name: 1 as unknown as string, createdAt: "t" })).toThrow(/名称/);
+    expect(() =>
+      draft.setRerunOf({ id: "x", name: "n", createdAt: undefined as unknown as string }),
+    ).toThrow(/createdAt/);
+    // 校验写在任何写操作之前：三次抛错之后身份仍是上一条。
+    expect(draft.rerunOf).toEqual({ id: "keep", name: "旧", createdAt: "2026-10-03T00:00:00.000Z" });
+  });
+
   it("setCrop 把越界矩形夹回来（守住 crop 的合法不变量）", () => {
     const draft = seedImage();
     draft.setCrop({ x: 700, y: 500, width: 400, height: 400 });

@@ -24,7 +24,7 @@ import { getBuiltinPalette } from "@/services/palette";
 import { RESULT_PREVIEW_MAX_EDGE, renderPatternThumbnail } from "@/services/patternThumbnail";
 import { generatePattern } from "@/services/pipeline";
 import { defaultProjectName, getProjectStore, type ProjectMeta } from "@/services/projectStore";
-import { useDraft, type RerunTarget } from "@/stores/draft";
+import { useDraft } from "@/stores/draft";
 import { useProjectSession } from "@/stores/project";
 
 const router = useRouter();
@@ -48,21 +48,17 @@ const ZOOM_OPTIONS: readonly ZoomLevel[] = ["fit", 2, 4];
 const palette = getBuiltinPalette();
 
 /**
- * **本页已经落盘的那条记录的身份**（`id` / 名称 / `createdAt`）。
+ * **本次生成是新建还是覆盖**（结果阶段的文案依据，规格 §6.2 的意图）。
  *
- * 第二次点「生成」就是就地重跑：覆盖同一条记录，而不是在图纸库里再堆一条几乎一样的。
- * 身份的来源有两处，优先级见 `generate()` 里的 `draft.rerunOf ?? savedTarget.value`：
+ * 取值就是「生成**之前**store 里有没有身份」：`true` = 这一次会新建一条（首次生成，或换图 /
+ * 重置后的第一次），`false` = 这一次覆盖 `draft.rerunOf` 那条。必须在 `setRerunOf` 写回
+ * **之前**取下来——写回之后身份恒为非 null，这个判断就再也分不出新建与覆盖。
  *
- * 1. `draft.rerunOf`——用户是从**编辑器**那条记录进来重跑的（任务 12 的入口），它更权威；
- * 2. 本页自己生成过的那条（本 ref）。
- *
- * **为什么不直接读 `session.record`**：会话是全局的，`/edit/:id` 会把**上一个工程**留在里面。
- * 用户「进过编辑器 → 回图纸库 → 新建 → 选图」这条路径上 `draft.rerunOf` 是 null，而
- * `session.record` 仍是那个旧工程——按它取 id 会把新图纸**写进旧工程的 id**（名字沿用旧的、
- * 内容换成新的），是静默的数据损坏。本 ref 只可能装着「与当前草稿同源的这一次生成」，没有这个
- * 风险；离开本页时随组件一起消失，也不需要 store 提供额外的清空入口。
+ * 身份本身**不在这里**：它是 `stores/draft.ts` 的 `rerunOf`（单一来源）。此前本页另有一个
+ * 页面级 `savedTarget`，组件一销毁就丢，于是「生成 → 改参数 → 硬件返回键离开 → 从
+ * 继续上次的选区回来 → 再生成」会新建出第二条同名记录（见 `setRerunOf` 的 JSDoc）。
  */
-const savedTarget = ref<RerunTarget | null>(null);
+const resultIsNew = ref(true);
 
 /**
  * 最近一次生成**是否没能落盘**（`session.save()` 返回 false）。
@@ -254,8 +250,13 @@ async function generate(): Promise<void> {
 
     const thumbnail = renderPatternThumbnail(pattern, palette);
     const now = new Date().toISOString();
-    // 编辑器进来的重跑目标优先（用户是冲着那条记录来的），其次才是本页已经生成过的那条。
-    const target = draft.rerunOf ?? savedTarget.value;
+    // 身份**只有一个来源**：`draft.rerunOf`（编辑器重跑入口种下的，或上一次生成成功后写回的）。
+    // **不**读 `session.record`：会话是全局的，`/edit/:id` 会把上一个工程留在里面；「进过编辑器 →
+    // 回图纸库 → 新建 → 选图」这条路径上 `rerunOf` 是 null，而 `session.record` 仍是那个旧工程——
+    // 按它取 id 会把新图纸写进旧工程的 id（名字沿用旧的、内容换成新的），是静默的数据损坏。
+    const target = draft.rerunOf;
+    // 新建 / 覆盖必须在写回之前判定（见 `resultIsNew`）。
+    const isNew = target === null;
     const meta: ProjectMeta = {
       id: target?.id ?? createId(),
       name: target?.name ?? defaultProjectName(source.name),
@@ -284,13 +285,16 @@ async function generate(): Promise<void> {
         crop: { x: crop.x, y: crop.y, w: crop.width, h: crop.height, rotate: draft.rotation },
       }),
     );
-    // 采纳即记住身份（**早于** `save()`）：保存失败后的下一次生成仍然落在同一条记录上，
-    // 不会因为一次失败就分叉出第二条。
-    savedTarget.value = { id: meta.id, name: meta.name, createdAt: meta.createdAt };
 
     const saved = await session.save();
+    resultIsNew.value = isNew;
     draft.markGenerated();
     if (saved) {
+      // 生成**并保存成功**之后，把这条记录的身份写回 store——身份从此随草稿存活，不随组件销毁。
+      // 这是「离开页面再回来仍然覆盖同一条」的承重一步（原先的页面级 `savedTarget` 就是在这里
+      // 丢的）。保存失败这一支**不写回**：那条记录此刻并不在库里，写回会让结果文案与实际落盘
+      // 不一致；失败后的续存由 `retrySave()` 成功时补写。
+      draft.setRerunOf({ id: meta.id, name: meta.name, createdAt: meta.createdAt });
       lastSaveFailed.value = false;
     } else {
       // 保存失败不丢态：图纸还在内存里，结果照常显示，给用户一条重试的路（主规格 §8）。
@@ -307,7 +311,14 @@ async function generate(): Promise<void> {
 
 async function retrySave(): Promise<void> {
   if (await session.save()) {
-    // 图纸这一步才真的进库：把离开页面的出口交回 §9 的作废分支（见 `lastSaveFailed`）。
+    // 图纸这一步才真的进库：
+    // ① 补上身份写回（`generate()` 的写回只在保存成功那一支发生）——否则「保存失败 → 重试成功 →
+    //    改参数再生成」会分叉出第二条记录；
+    // ② 把离开页面的出口交回 §9 的作废分支（见 `lastSaveFailed`）。
+    const meta = session.record?.meta;
+    if (meta !== undefined) {
+      draft.setRerunOf({ id: meta.id, name: meta.name, createdAt: meta.createdAt });
+    }
     lastSaveFailed.value = false;
     draft.setError("");
   }
@@ -392,7 +403,9 @@ function resetCrop(): void {
 
       <section v-if="showResult" data-testid="result-pane" class="rounded bg-white p-4 shadow">
         <img v-if="resultImage" data-testid="result-preview" :src="resultImage" alt="" class="w-full rounded bg-slate-100" />
-        <p class="mt-3 text-lg font-semibold text-slate-900">已更新这张图纸</p>
+        <p data-testid="result-save-state" class="mt-3 text-lg font-semibold text-slate-900">
+          {{ resultIsNew ? "已保存到图纸库" : "已更新这张图纸" }}
+        </p>
         <p v-if="resultStats" data-testid="result-stats" class="mt-1 text-base text-slate-600">
           实际用了 {{ resultStats.colorCount }} 种颜色，共 {{ resultStats.total }} 颗豆
         </p>

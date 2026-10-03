@@ -73,7 +73,8 @@ export async function decodeImageElement(source: Blob): Promise<DecodedImage> {
 }
 
 /**
- * 读出图片的原始像素尺寸。失败时抛出中文原因（不静默返回 0×0）。
+ * 读出图片的原始像素尺寸。失败时抛出**带中文前缀**的原因（前缀之下原样附上底层
+ * `cause.message`，后者通常是英文；不静默返回 0×0）。
  *
  * 只是 `decodeImageElement` 的薄包装：读完两个整数立刻回收 object URL，不把元素交出去。
  * 签名、返回形态与全部失败文案与重构前逐字相同。

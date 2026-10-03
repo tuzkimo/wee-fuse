@@ -25,14 +25,14 @@ export function fileFromInput(input: HTMLInputElement | null): FileInputResult {
 }
 
 /**
- * 读出图片的原始像素尺寸。失败时抛出中文原因（不静默返回 0×0）。
+ * 读出图片的原始像素尺寸。失败时抛出**带中文前缀**的原因（前缀之下原样附上底层
+ * `cause.message`，后者通常是英文；不静默返回 0×0）。
  *
  * **为何公开**（规格 §13 第 10 条）：它是 `loadImageSource` 的「只读尺寸」姊妹 API——只要两个
- * 整数、不要预览位图的调用方用它（`/lab/decode` 与将来的真机分支都可能再用到）。选区页的主路径
- * 已由 `loadImageSource` 承担：后者一次解码就同时给出尺寸与预览位图，本函数因此被取代。
- * **生产消费者已归零**：B1 的临时生成入口 `views/GeneratePage.vue` 曾是最后一个调用方，该页已在
- * B2 任务 14 连同它的用例一起删除，此后只有测试消费本函数；按规格保留不删，删它会连带改
- * `imageSource.test.ts` 的既有用例。
+ * 整数、不要预览位图的调用方用它。**如实记录：B2 交付之后它没有任何生产消费者**——`/lab/decode`
+ * 走的是 `services/probe.ts` 的 `probeImageSize`（`DecodeLabPage.vue` 直接 import，不经这层
+ * 包装），B1 的临时生成入口 `views/GeneratePage.vue` 曾是最后一个调用方，该页已随任务 14 删除。
+ * 按规格保留不删（删它会连带改 `imageSource.test.ts` 的既有用例），因此它目前只被用例消费。
  */
 export function probeSourceSize(source: Blob): Promise<{ width: number; height: number }> {
   return probeImageSize(source);
@@ -63,13 +63,12 @@ export interface LoadedImageSource {
  * 恰好就是「尺寸 + 一张能画的位图」，而全程没有把原图像素读进 JS 堆——生成阶段的解码在
  * `services/decoders.ts`，它只裁选区（主规格 §5①）。
  *
- * **为何公开**（规格 §12 末句）：本计划内它的消费者是任务 10 的 `views/PickPage.vue`（选图后
- * 拿预览位图去选选区）与任务 11 的 `views/SetupPage.vue` 的重跑路径（重新装载已有工程的图片）。
- * **截至本提交，除测试外暂无生产消费者**——两个页面都还没接上；按 `AGENTS.md`「导出即承诺」
- * 在此写明它为何公开，而不是收窄成内部函数。
+ * **为何公开**（规格 §12 末句）：两处生产消费者——`views/PickPage.vue`（选图后拿预览位图去选
+ * 选区）与 `views/SetupPage.vue`（重跑路径上重新装载已有工程的图片：草稿里有 `source` 但预览
+ * 已释放时现解码一次）。
  *
- * 失败时统一抛**带中文前缀**的原因（细节保留原始原因，与 `decodeImageElement` 同口径）：选不出
- * 选区时用户必须知道为什么，而不是面对一块空白。
+ * 失败时统一抛**带中文前缀**的原因（细节保留原始原因，与 `decodeImageElement` 同口径，后者通常
+ * 是英文的 `cause.message`）：选不出选区时用户必须知道为什么，而不是面对一块空白。
  */
 export async function loadImageSource(file: File): Promise<LoadedImageSource> {
   if (typeof file?.size !== "number") throw new Error("需要一个图片文件");
