@@ -63,6 +63,24 @@ const palette = getBuiltinPalette();
  */
 const savedTarget = ref<RerunTarget | null>(null);
 
+/**
+ * 最近一次生成**是否没能落盘**（`session.save()` 返回 false）。
+ *
+ * 离开页面时的草稿处置由它决定，因为规格 §9 的「已生成 → 整份草稿作废」有一条**前提**：
+ * 图纸已经在库里（重跑走编辑器的入口，草稿留着没有意义）。保存失败时图纸**不在**库里——
+ * 此刻若照样作废草稿，用户看到的是「保存失败 + 重试保存」，一离开页面却**图纸与草稿双双消失**，
+ * 没有任何出路。所以失败这一支只释放预览（`releasePreview()`），保留 `source` / 几何 / 参数，
+ * 让 `/new` 的「继续上次的选区」还能用、用户可以重新生成并重试保存。
+ *
+ * **由页面判断、不改 `stores/draft.ts` 的 `onLeaveSetup()` 语义**：「这一次生成落盘了没有」
+ * 只有发起保存的页面知道，store 里没有任何字段能表达它；给 `onLeaveSetup` 加一条入口就等于
+ * 改规格 §9 那一行（那是跨页面的规则，改它要同步规格）。页面分两支则完全落在本页的职责内。
+ *
+ * 成功即回落 `false`（含 `retrySave()` 补上的那一次）：重试成功后图纸确实进库了，§9 的作废
+ * 分支重新生效——否则「失败过又补存成功」的草稿会永远赖在 store 里。
+ */
+const lastSaveFailed = ref(false);
+
 /** 三个阶段各自的可见性：平板两栏常驻（结果阶段左栏换成结果、**右栏参数仍在**，可直接重跑），
  *  手机一次只显示一屏。 */
 const showCanvas = computed(() => draft.stage === "crop" && draft.preview !== null);
@@ -149,7 +167,12 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   media?.removeEventListener("change", onMediaChange);
   media = null;
-  // 规格 §9：已生成且此后无改动 → 整份草稿作废；中途退出 → 只释放预览，选区与参数留着。
+  // 规格 §9 的两条出口（见 `lastSaveFailed` 的 JSDoc）：已生成**且图纸确实进了库** → 整份草稿
+  // 作废；中途退出，或这一次生成没能落盘 → 只释放预览，选区与参数留着。
+  if (lastSaveFailed.value) {
+    draft.releasePreview();
+    return;
+  }
   draft.onLeaveSetup();
 });
 
@@ -238,8 +261,12 @@ async function generate(): Promise<void> {
 
     const saved = await session.save();
     draft.markGenerated();
-    if (!saved) {
+    if (saved) {
+      lastSaveFailed.value = false;
+    } else {
       // 保存失败不丢态：图纸还在内存里，结果照常显示，给用户一条重试的路（主规格 §8）。
+      // 同时记住「这次没进库」，离开页面时才不会按 §9 把草稿一起作废。
+      lastSaveFailed.value = true;
       draft.setError(`图纸已生成，但保存失败：${session.error}`);
     }
   } catch (e) {
@@ -250,7 +277,11 @@ async function generate(): Promise<void> {
 }
 
 async function retrySave(): Promise<void> {
-  if (await session.save()) draft.setError("");
+  if (await session.save()) {
+    // 图纸这一步才真的进库：把离开页面的出口交回 §9 的作废分支（见 `lastSaveFailed`）。
+    lastSaveFailed.value = false;
+    draft.setError("");
+  }
 }
 
 function rotate(): void {

@@ -66,10 +66,15 @@ function makeCtx(pixels: Uint8ClampedArray) {
  * 这个桩按浏览器的契约实现两件事：`matches` 读 `window.innerWidth`（测试能控的那个值），
  * 跨过断点时派发 `change`。用例测的因此仍是**组件的行为**（读 `matches`、听 `change`），
  * 而不是 happy-dom 那个解析器。
+ *
+ * 桩还**记录收到的查询串**（返回值里的 `queries`）。桩的 `matches` 只认 768 这一个阈值，
+ * 于是组件把 `"(min-width: 768px)"` 写成别的串（例如 `"(min-width: 700px)"`）时，所有布局
+ * 用例照样全绿——而写错这个串就等于平板布局静默失效。`queries` 是唯一能判死这类变异的输出。
  */
-function stubBreakpoint(): { resizeTo(width: number): void } {
+function stubBreakpoint(): { resizeTo(width: number): void; queries: string[] } {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
   const query = "(min-width: 768px)";
+  const queries: string[] = [];
   const mql = {
     media: query,
     onchange: null,
@@ -86,8 +91,15 @@ function stubBreakpoint(): { resizeTo(width: number): void } {
     removeListener: (): void => undefined,
     dispatchEvent: (): boolean => true,
   };
-  vi.stubGlobal("matchMedia", vi.fn(() => mql) as unknown as typeof window.matchMedia);
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((asked: string) => {
+      queries.push(asked);
+      return mql;
+    }) as unknown as typeof window.matchMedia,
+  );
   return {
+    queries,
     /** 模拟视口跨过断点：改宽度并按真实 `matchMedia` 的契约通知监听者。 */
     resizeTo(width: number): void {
       window.innerWidth = width;
@@ -271,6 +283,19 @@ describe("断点布局", () => {
 
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
+  });
+
+  it("断点查询串就是 768px（写错这个串 = 平板布局静默失效）", async () => {
+    const { breakpoint } = stubPlatform();
+    seedDraft();
+
+    mount(SetupPage);
+    await flushPromises();
+
+    // 桩的 `matches` 只认 768 这一个阈值：组件把串写成别的（例如 `"(min-width: 700px)"`）时，
+    // 上面那三条布局用例照样全绿——只有这里读得到真正问出去的串。而串写错就等于平板两栏
+    // 布局在真机上静默失效（组件在 `onMounted` 只问一次，问错就永远拿不到正确布局）。
+    expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
   });
 });
 
@@ -533,6 +558,79 @@ describe("保存失败与重试", () => {
     expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(false);
     expect(await real.list()).toHaveLength(1);
   });
+
+  /**
+   * 数据丢失路径（规格 §9 与 §8 的交叉口）：§9 的「已生成 → 整份草稿作废」有一条**前提**
+   * ——图纸已经在库里。保存失败时它不在库里，作废草稿就是「图纸与草稿双双消失」：用户看到的是
+   * 「保存失败 + 重试保存」，一离开页面却连重试的原料都没了。下面第一条钉住出口必须分叉，
+   * 第二条钉住补存成功后要**交回**原规则。
+   */
+  it("保存失败后离开页面：草稿留着（source / 几何 / 参数在，只释放预览）", async () => {
+    stubPlatform();
+    const real = await createMemoryProjectStore();
+    setProjectStore({
+      ...real,
+      async put(): Promise<void> {
+        throw new Error("磁盘已满");
+      },
+    });
+    const draft = seedDraft();
+    draft.setRotation(1);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    // 前提：结果确实生成了（照常进结果阶段）、只是没能落盘（库里条数 0）。
+    expect(wrapper.get("[data-testid='setup-error']").text()).toContain("保存失败");
+    expect(draft.generated).toBe(true);
+    expect(await real.list()).toHaveLength(0);
+
+    wrapper.unmount();
+
+    // 图纸不在库里，草稿就不许作废：`source` / 几何 / 参数逐项留着，只有预览被释放
+    // （`/new` 的「继续上次的选区」还能用，用户可以重新生成并重试保存）。
+    expect(draft.source).not.toBeNull();
+    expect(draft.sourceSize).toEqual({ width: 800, height: 600 });
+    expect(draft.crop).toEqual({ x: 200, y: 100, width: 400, height: 300 });
+    expect(draft.rotation).toBe(1);
+    expect(draft.longSide).toBe(58);
+    expect(draft.maxColors).toBe(32);
+    expect(draft.preview).toBeNull();
+  });
+
+  it("保存失败后重试成功再离开：图纸已进库，草稿按 §9 作废", async () => {
+    stubPlatform();
+    const real = await createMemoryProjectStore();
+    let failNext = true;
+    setProjectStore({
+      ...real,
+      async put(record): Promise<void> {
+        if (failNext) {
+          failNext = false;
+          throw new Error("磁盘已满");
+        }
+        await real.put(record);
+      },
+    });
+    const draft = seedDraft();
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    await wrapper.get("[data-testid='retry-save']").trigger("click");
+    await flushPromises();
+    expect(await real.list()).toHaveLength(1);
+
+    wrapper.unmount();
+
+    // `retrySave()` 成功后出口必须交回原规则；少了这一步，草稿会永远赖在 store 里。
+    expect(draft.source).toBeNull();
+    expect(draft.crop).toBeNull();
+    expect(draft.preview).toBeNull();
+  });
 });
 
 describe("结果阶段", () => {
@@ -550,7 +648,7 @@ describe("结果阶段", () => {
     expect(wrapper.get("[data-testid='result-stats']").text()).toContain("实际用了");
   });
 
-  it("离开页面时草稿按 §9 的规则处理（已生成 → 清空）", async () => {
+  it("离开页面时草稿按 §9 的规则处理（已生成且保存成功 → 清空）", async () => {
     stubPlatform();
     const draft = seedDraft();
 
@@ -560,7 +658,11 @@ describe("结果阶段", () => {
     await flushPromises();
     wrapper.unmount();
 
+    // 这是**对照组**：同样「已生成 + 离开页面」，但保存成功（图纸在库里）→ 整份作废。
+    // 另一半（保存失败 → 草稿留着）在「保存失败与重试」里。`crop` 从有到 null 才是「整份作废」
+    // 的判据——`preview` 在两条出口上都会是 null，只断言它区分不了这两支。
     expect(draft.source).toBeNull();
+    expect(draft.crop).toBeNull();
     expect(draft.preview).toBeNull();
   });
 });

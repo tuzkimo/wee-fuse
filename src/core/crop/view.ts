@@ -273,9 +273,15 @@ export function sourceRectToScreen(rect: Rect, view: ViewTransform, rotation: Ro
 /**
  * 显示空间的图像尺寸（`rotatedSize` 的转发，避免调用方各写一份换轴规则）。
  *
- * **为何公开**：`CropCanvas`（任务 8）与 `SetupPage`（任务 11）要拿「旋转后的图像有多大」
- * 去算 fit 适配、平移夹取与豆数摘要——这几处必须与 `crop` 的换轴口径完全一致，
- * 所以只保留这一个入口（导出即承诺，生产路径消费它）。
+ * **为何公开**：`CropCanvas`（任务 8）要拿「旋转后的图像有多大」去算 fit 适配与平移夹取——
+ * 这两处必须与 `crop` 的换轴口径完全一致，所以只保留这一个入口（导出即承诺，生产路径消费它）。
+ *
+ * `SetupPage`（任务 11）**不消费它**。它的豆数网格走 `rotatedSize(crop.width, crop.height,
+ * rotation)`（与 `services/pipeline.ts` 的入参同源），有两个理由：
+ * ① 口径必须是**选区**而不是整图——按整图算会把 100×20 这类真能拼的宽扁选区误判成拼不出来
+ * （产物按选区比例是 58×12）；② 本函数经 `requireImageSize` 只接受**整数**尺寸，而
+ * `crop.width/height` 可以是小数（拖动角手柄不取整），拿小数选区调它会在渲染期抛
+ * 「源图宽必须是 ≥1 的整数」。理由与推导写在 `SetupPage.vue` 的 `grid` 注释里。
  *
  * **为何不单独写用例**：它是 `rotatedSize` 的一行转发，换轴规则与边界（0/1/2/3 × 非正方形）
  * 已由 `core/image/__tests__/rotate.test.ts` 逐条钉死；在这里重抄一份只会多一处会漂的副本。
