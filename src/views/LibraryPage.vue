@@ -89,7 +89,7 @@ function open(id: string): void {
         data-testid="new-project"
         class="min-h-12 rounded bg-slate-900 px-6 text-lg text-white disabled:opacity-50"
         :disabled="storeUnavailable"
-        @click="router.push({ name: 'generate' })"
+        @click="router.push({ name: 'pick' })"
       >
         新建图纸
       </button>

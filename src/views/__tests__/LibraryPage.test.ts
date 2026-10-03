@@ -50,11 +50,12 @@ describe("LibraryPage", () => {
     expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(true);
   });
 
-  it("点「新建」跳到生成页", async () => {
+  it("点「新建」跳到选图页", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
     await wrapper.find("[data-testid='new-project']").trigger("click");
-    expect(push).toHaveBeenCalledWith({ name: "generate" });
+    // B2：向导第一步由 B1 的临时生成页 `generate` 换成选图页 `pick`（断言语义不变，只换目标路由名）。
+    expect(push).toHaveBeenCalledWith({ name: "pick" });
   });
 
   it("点卡片打开编辑器", async () => {
