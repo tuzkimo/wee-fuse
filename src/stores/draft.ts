@@ -17,11 +17,19 @@ import { MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/typ
  *
  * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：本文件的一切导出都是任务 10
  * （`PickPage`：`adoptImage` / `source` / `sourceSize` / `preview` / `rerunOf`）、任务 11
- * （`SetupPage`：`setSourceSize` / `setPreview` / `setCrop` / `setRotation` / `setAspect` /
- * `setLongSide` / `setMaxColors` / `setZoom` / `setPan` / `setStage` / `setBusy` / `setError` /
- * `markGenerated` / `onLeaveSetup`）与任务 12（`EditorPage` 重跑入口：`adoptProject` /
- * `DraftParams` / `RerunTarget`）的接口面。**如实记录**：截至本任务，除 `draft.test.ts`
- * 之外**暂无生产消费者**——上面那些 setter 目前只被用例消费。
+ * （`SetupPage`）与任务 12（`EditorPage` 重跑入口：`adoptProject` / `DraftParams` /
+ * `RerunTarget`）的接口面。
+ *
+ * 任务 11 的接口面**不只是 setter**，它同时**读** `source` / `sourceSize` / `preview` / `crop` /
+ * `rotation` / `aspect` / `zoom` / `pan` / `longSide` / `maxColors` / `stage` / `busy` / `error` /
+ * `rerunOf`（`task-11-brief.md` 逐项出现），并**写** `setSourceSize` / `setPreview` / `setCrop` /
+ * `setRotation` / `setAspect` / `setLongSide` / `setMaxColors` / `setZoom` / `setPan` / `setStage` /
+ * `setBusy` / `setError` / `markGenerated` / `onLeaveSetup`。`releasePreview` 与 `reset` 没有独立的
+ * 调用点，它们是 `onLeaveSetup` 的两个出口（规格 §9 的「总是释放预览」与「已生成且无改动 → 清空
+ * 草稿」），因此同样归任务 11 的离开路径。
+ *
+ * **如实记录**：截至本任务，除 `draft.test.ts` 之外**暂无生产消费者**——上面那些 setter 目前只被
+ * 用例消费。
  */
 
 /** 向导的三个阶段：选区 → 参数 → 结果。 */
@@ -56,10 +64,19 @@ const DEFAULT_MAX_COLORS: MaxColors = 32;
 // 入口校验（规格 §12）
 //
 // 本文件是这份校验的**第三处副本**（第一处 `core/crop/view.ts`、第二处 `core/crop/rect.ts`），
-// 照规格 §13 第 8 条「共享校验模块不修，保持内联就地校验」执行，不抽模块。
+// 但**不是最后一处**：`core/project/types.ts` 里还有**第四处**内联的长边 / 档位 / 旋转守卫
+// （它守的是从磁盘 / 本地存储读回来的 JSON，是另一条外部输入路径）。照规格 §13 第 8 条
+// 「共享校验模块不修，保持内联就地校验」执行，现在不抽模块。
 //
-// 与那两处的**实质差异**：这里的守卫要挂在「任何写操作之前」（`AGENTS.md` 入口校验硬约束），
-// 而 core 的守卫是「夹取 / 映射之前的最后一道」。两者的触发时机不同，抽成一个模块会把
+// **如实记录**：这份决定要付的代价——「错误信息口径漂移」——**已经实际发生**：
+// `core/project/types.ts` 的档位措辞（`用色档位非法：…（只允许 16 / 32 / null）`）与旋转措辞
+// （`旋转角度非法：…（必须是 0–3 的整数）`）与本文件**逐字相同**（`core/pattern/build.ts` 的档位
+// 也是同一句），而长边措辞已经分叉：`core/project/types.ts` 与 `core/pattern/build.ts` 写
+// 「长边豆数必须在 1–500 之间」，本文件写「长边豆数必须是 1–500 的整数」。统一口径留到第五处
+// 消费者出现时再评估，本轮不动代码。
+//
+// 与那两处 core 副本的**实质差异**：这里的守卫要挂在「任何写操作之前」（`AGENTS.md` 入口校验
+// 硬约束），而 core 的守卫是「夹取 / 映射之前的最后一道」。两者的触发时机不同，抽成一个模块会把
 // 「校验发生在状态被改之前」这层语义变成隐式的。
 // ---------------------------------------------------------------------------
 
@@ -144,6 +161,16 @@ export const useDraft = defineStore("draft", () => {
   const preview = ref<HTMLCanvasElement | null>(null);
   const rerunOf = ref<RerunTarget | null>(null);
 
+  /**
+   * 当前选区（**原图未旋转坐标**；`crop: Rect | null`，规格 §9）。
+   *
+   * **何时为 null**：`adoptProject` 之后、`setSourceSize` 之前——原图尺寸还没解码出来，算不出
+   * 边界，所以此刻**没有**选区，而不是一个用 `NaN` 算出来的选区。`adoptImage` 与
+   * `setSourceSize` 都会把它落定，`reset()` 会把它清回 null。
+   *
+   * **消费方必须 null 检查**（任务 8 的 `CropCanvas`、任务 11 的 `SetupPage`、任务 12 的重跑入口
+   * 都按名读它）：拿 `null` 去算几何正是本项目要消灭的「不报错、只产出错误结果」。
+   */
   const crop = ref<Rect | null>(null);
   /** `adoptProject` 带来的裁剪框：原图尺寸还没解码出来，先存着，`setSourceSize` 到时再夹取。 */
   const pendingCrop = ref<Rect | null>(null);
@@ -260,8 +287,23 @@ export const useDraft = defineStore("draft", () => {
     pendingCrop.value = null;
   }
 
-  /** 挂上预览画布（重跑路径由 `SetupPage` 解码后调用，规格 §7）。 */
+  /**
+   * 挂上预览画布（重跑路径由 `SetupPage` 解码后调用，规格 §7）。
+   *
+   * 运行期拒绝 `null` / `undefined` 与非对象。两类坏输入各有各的坏法（实测 Vue 3.5.43 的
+   * `markRaw`，见 `task-7-report.md`「修复轮 1」）：`null` / `undefined` 会在 `markRaw` 里抛英文
+   * `TypeError`（`Cannot convert undefined or null to object`）——响亮，但不是领域错误、也说不清
+   * 是哪个字段；而 `7` / `true` 这类**其他原始值**会被 `markRaw` 原样返回并**静默**写进
+   * `preview`，让下游把非画布当画布用，正是本项目点名的「不报错、只产出错误结果」。清预览的
+   * 唯一入口是 `releasePreview()`，所以这里不需要接受 `null`。
+   *
+   * 判据刻意**不是** `instanceof HTMLCanvasElement`：用例里的桩画布是普通对象（那样写会让既有
+   * 用例全红），而真实的 `OffscreenCanvas` 也不是 `HTMLCanvasElement`。
+   */
   function setPreview(next: HTMLCanvasElement): void {
+    if (next === null || typeof next !== "object") {
+      throw new Error(`预览画布必须是非 null 的对象（当前 ${String(next)}）`);
+    }
     preview.value = markRaw(next);
   }
 

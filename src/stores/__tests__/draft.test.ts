@@ -18,6 +18,10 @@ import { useDraft, type Stage } from "@/stores/draft";
  * （1 条）、退化 / 非有限选区在 `adoptProject` 入口就被拒（1 条）、没有原图尺寸时 `setCrop`
  * 响亮拒绝（1 条）、`releasePreview` 只释放预览（1 条）、`reset` 清干净每一段（1 条）、
  * `setBusy` / `setError` / `setStage` 是纯 setter（1 条）。
+ *
+ * 修复轮 1（审查驱动）再补 6 条：五个 setter 的**写入值**各一条（此前只断言了 `generated`，
+ * 「赋值被删掉」26 条全绿——见下面 `describe("setter 的写入值…")`），以及 `setPreview` 的
+ * `null` / 非对象守卫（1 条）。
  */
 
 const SOURCE = { blob: new Blob([new Uint8Array([1, 2, 3])]), type: "image/png", name: "小猫.png" };
@@ -128,6 +132,45 @@ describe("generated 的失效规则", () => {
     const draft = seedImage();
     draft.markGenerated();
     expect(draft.stage).toBe("result");
+  });
+});
+
+describe("setter 的写入值（把赋值整行删掉、只留守卫，这些用例必须转红）", () => {
+  // 审查驱动的修复轮 1：下面五个 setter 此前**只**被断言了 `generated` 的失效与否，
+  // 「值到底有没有写进去」从未被读过。控制者实测：把 `setZoom` / `setPan` / `setRotation` /
+  // `setAspect` + `setMaxColors` 的赋值整行删掉（只留 `requireXxx(next);` 那半句守卫），
+  // 26 条全绿。所以每条都**必须传入与默认值不同的值**——zoom 默认 "fit"、pan 默认 {0,0}、
+  // rotation 默认 0、aspect 默认 "free"、maxColors 默认 32。传默认值进去，赋值被删掉时
+  // 断言仍然是绿的，那是「读的是默认值」的假覆盖。
+
+  it('setZoom 把传入的 "fit" 之外的档位写进 zoom', () => {
+    const draft = seedImage();
+    draft.setZoom(4);
+    expect(draft.zoom).toBe(4);
+  });
+
+  it("setPan 把传入的非零平移写进 pan", () => {
+    const draft = seedImage();
+    draft.setPan({ x: -3, y: -7 });
+    expect(draft.pan).toEqual({ x: -3, y: -7 });
+  });
+
+  it("setRotation 把传入的非 0 角度写进 rotation", () => {
+    const draft = seedImage();
+    draft.setRotation(2);
+    expect(draft.rotation).toBe(2);
+  });
+
+  it('setAspect 把传入的 "free" 之外的比例锁写进 aspect', () => {
+    const draft = seedImage();
+    draft.setAspect("9:16");
+    expect(draft.aspect).toBe("9:16");
+  });
+
+  it("setMaxColors 把传入的 32 之外的档位写进 maxColors", () => {
+    const draft = seedImage();
+    draft.setMaxColors(16);
+    expect(draft.maxColors).toBe(16);
   });
 });
 
@@ -303,6 +346,23 @@ describe("其他入口校验（规格 §12）", () => {
     const draft = useDraft();
     const canvas = fakePreview();
     draft.setPreview(canvas);
+    expect(draft.preview).toBe(canvas);
+  });
+
+  it("setPreview 拒绝 null / undefined / 非对象，且不顶掉已挂上的画布", () => {
+    const draft = seedImage();
+    const canvas = draft.preview;
+    expect(canvas).not.toBeNull();
+
+    // 修复轮 1 实测（Vue 3.5.43）：没有这条守卫时，`null` / `undefined` 会在 `markRaw` 里抛英文
+    // `TypeError`（`Cannot convert undefined or null to object`），而 `7` 这类原始值会被
+    // `markRaw` 原样返回、**静默**写进 `preview`——下游就把非画布当画布用。守卫把三类都变成
+    // 响亮的中文领域错误。`null` 也**不是**「清预览」的入口，清预览只有 `releasePreview()`。
+    expect(() => draft.setPreview(null as unknown as HTMLCanvasElement)).toThrow(/预览/);
+    expect(() => draft.setPreview(7 as unknown as HTMLCanvasElement)).toThrow(/预览/);
+    expect(() => draft.setPreview(undefined as unknown as HTMLCanvasElement)).toThrow(/预览/);
+
+    // 抛错发生在写操作之前：原来挂着的那张画布必须还在（`markRaw` 让它保持同一性）。
     expect(draft.preview).toBe(canvas);
   });
 });
