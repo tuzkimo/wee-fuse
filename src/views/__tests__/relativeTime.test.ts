@@ -113,19 +113,10 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(result).toBe(localDateString(moment));
 
-    // **自证断言已删除（合并前复审的阻断项）**：它曾写成「断言本地日 ≠ UTC 日」，用来证明这个
-    // 夹具能区分「本地日实现」与 `toISOString()` 实现。但那不是在证明实现正确，而是在断言**运行
-    // 环境的时区偏移**：夹具时刻固定 `22:00Z`，本地日 ≠ UTC 日**当且仅当偏移 ≥ +2h**。所以它在
-    // UTC+8 绿、在 UTC 与 UTC−5 红——一条对被测实现**零判别力**、却会在真实开发机与 CI 上假红的
-    // 断言（正违「断言存在 ≠ 断言有效」）。
-    // 曾用 `getTimezoneOffset() !== 0` 守卫它，那是**必要但不充分**：只排除了偏移 0，其余不跨日的
-    // 偏移照旧假红（实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed）。
-    //
-    // 真正的判别力在**上面 `expect(result).toBe(localDateString(moment))` 那一行**：把实现从
-    // 「本地日」改成 `toISOString().slice(0, 10)`，在**偏移 ≥ +2h 的时区**（如 UTC+8）会被它抓到；
-    // 在偏移 0 的时区则**任何同进程断言都不可能抓到**——两种实现在那里输出逐字节相同，信息不存在，
-    // 不是写法问题。本仓库 CI 是 `ubuntu-latest`（UTC），故 CI 对这条实现选择**没有**判别力，
-    // 该缺口记为延后项（要补只能给 CI 一个非零 TZ，属 `.github/` 变更）。
+    // **注意这条用例对「本地日 vs UTC 日」没有判别力**：它的期望值是用同一套本地 getter 现算的
+    // （不硬编码是刻意的——输出按定义就是**运行机器的本地日**，硬编码等于拿某一台机器的时区当契约），
+    // 所以在偏移 0 的机器（本仓库 CI 的 `ubuntu-latest`）上它无法区分两种实现。真正的判别力由下面
+    // 两条**钉住时区**的用例承担，见它们的注释。
     const utcDay = utcDateString(moment);
     // 与偏移无关的夹具性质：这个时刻的 **UTC 日**恒为 2026-09-24（所有时区都成立），
     // 保证夹具确实落在日期边界附近，而不是随便取了一个时刻。
@@ -137,6 +128,80 @@ describe("formatRelativeTime（固定 now，不依赖机器时钟）", () => {
     // 本地日与 UTC 日恰好相同，所以它从来不是本地 / UTC 的判别式。）
     const sevenDays = ago(7 * DAY);
     expect(formatRelativeTime(sevenDays, NOW)).toBe(localDateString(new Date(sevenDays)));
+  });
+
+  /**
+   * 日期分支用的是**本地日**还是 **UTC 日**？（正偏移：UTC 22:00Z 在 UTC+8 已是次日）
+   *
+   * **为什么必须钉时区**：这条实现选择只在「本地日 ≠ UTC 日」的时区才能被观察到，而在偏移 0 的
+   * 机器（本仓库 CI 是 `ubuntu-latest`）上两种实现输出**逐字节相同**——信息不存在，任何同进程断言
+   * 都抓不到。曾经的做法是写一条「断言本地日 ≠ UTC 日」的自证断言来充当守门，但它的判别力为零、
+   * 却只在偏移 ≥ +2h 成立，于是 UTC、西半球、UTC+1 下**必红**（先用 `getTimezoneOffset() !== 0`
+   * 守卫是「必要但不充分」，实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed）。
+   *
+   * 正确做法照**同组织 WeeCount 的仓内先例**（`src/utils/__tests__/datetime.test.ts` 的
+   * `should roll to next local day for early-morning UTC times in positive offset zones`）：
+   * 在用例内 `process.env.TZ = …` 钉住时区、`try/finally` 逐字还原。这样断言**与运行机器的时区
+   * 无关**（在 UTC runner 上也成立），同时**恢复了判别力**——不需要改 `.github/`。
+   *
+   * 实测运行期切换确实生效：`22:00Z` 在 `Asia/Shanghai` 下是 `2026-09-25`、在 `America/New_York`
+   * 下是 `2026-09-24`，且 `finally` 还原后本地 getter 回到原值。
+   *
+   * **为什么经 `globalThis` 取 `process.env` 而不是直接写 `process.env`**：本仓库 `tsconfig.json`
+   * 的 `types` 只有 `["vitest/globals"]`，直接写 `process` 会以 `TS2591` 卡住 `npm run build`；
+   * 而补一个文件级 `/// <reference types="node" />` 是 `AGENTS.md` **明令禁止**的——它会把
+   * `@types/node` 拉进整个 `vue-tsc` 程序，从而**削弱 `src/core/**` 那道 Node 全局闸门**
+   * （`src/__tests__/coreBoundary.test.ts` 头部记载了实测）。经 `globalThis` 取用两者都避开。
+   */
+  const withPinnedTimezone = (tz: string, body: () => void): void => {
+    const globals = globalThis as { process?: { env: Record<string, string | undefined> } };
+    const env = globals.process?.env;
+    const prevTZ = env?.TZ;
+    if (env !== undefined) env.TZ = tz;
+    try {
+      body();
+    } finally {
+      if (env !== undefined) {
+        if (prevTZ === undefined) delete env.TZ;
+        else env.TZ = prevTZ;
+      }
+    }
+  };
+
+  it("固定 Asia/Shanghai（UTC+8）时日期分支给当地次日，不是 UTC 日（抓 toISOString() 实现）", () => {
+    withPinnedTimezone("Asia/Shanghai", () => {
+      // 夹具：NOW 之前 14 天 14 小时 → 本地日必然是当地日期，与 UTC 日相差一天
+      const timestamp = ago(14 * DAY + 14 * HOUR);
+      const moment = new Date(timestamp);
+      const localDay = localDateString(moment);
+      const utcDay = utcDateString(moment);
+      // 先确认这条夹具在钉住的时区下**真的**能区分两种实现（否则下面的断言是空的）
+      expect(localDay).not.toBe(utcDay);
+
+      const result = formatRelativeTime(timestamp, NOW);
+      expect(result).toBe(localDay);
+      // 再明确排除 UTC 日：改成 `toISOString().slice(0, 10)` 会让上面这行拿到 utcDay 而转红
+      expect(result).not.toBe(utcDay);
+    });
+  });
+
+  it("固定 America/New_York（UTC−4）时同样给当地日期（负偏移方向也钉住）", () => {
+    withPinnedTimezone("America/New_York", () => {
+      // 夹具设计：NY 在 9 月是 UTC−4，所以取一个**当地是前一天**的时刻 ——
+      // `ago(15 * DAY + 12 * HOUR)` 落在当地 20:00 左右（其 UTC 日已翻到次日）。
+      // 下面那条 `not.toBe` 是**前置自证**：它确认该时刻在当地与 UTC 下确实跨日，
+      // 从而保证紧随其后的断言真的在区分两种实现（第一次写的 15 天整夹具两侧同日，
+      // 正是被这条前置断言抓出来的）。
+      const timestamp = ago(15 * DAY + 12 * HOUR);
+      const moment = new Date(timestamp);
+      const localDay = localDateString(moment);
+      const utcDay = utcDateString(moment);
+      expect(localDay).not.toBe(utcDay);
+
+      const result = formatRelativeTime(timestamp, NOW);
+      expect(result).toBe(localDay);
+      expect(result).not.toBe(utcDay);
+    });
   });
 
   it("未来时间戳 → 刚刚，不渲染负的时长（本机时钟早于夹具时常踩的一支）", () => {
