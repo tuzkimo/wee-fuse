@@ -120,7 +120,14 @@ const splitHint = computed(() =>
     : "",
 );
 
-/** 自己的输入错误优先（更贴近用户刚做的动作），其次是父级的原因。 */
+/**
+ * 自己的输入错误优先，其次是父级的原因。
+ *
+ * 本地原因是从输入框**当下**的文本同步算出来的，永远不过期；父级原因用的是上一次提交上去的
+ * props，用户这一拍刚打的字还没回流上去。两者同时成立时报「选区太小」之类的父级文案，会把用户
+ * 支去改一个他刚改对的东西，而真正要他改的是输入框——所以先报本地那条。
+ * （用例「本地非法输入与父级原因同时存在时，显示本地那条」钉住这个顺序，含操作数对调的变异。）
+ */
 const blockedReason = computed(() => longSideError.value || props.generateBlockedReason);
 const disabled = computed(() => props.busy || blockedReason.value !== "");
 
