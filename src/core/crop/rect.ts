@@ -1,14 +1,18 @@
 import { rotatedSize } from "../image/rotate";
 import type { Rect, Rotation } from "../image/types";
+import { orientedToSource, sourceRectToOriented, sourceToOriented } from "./view";
 import type { Point, Size } from "./view";
 
 /**
- * 选区几何：全部作用在**原图未旋转坐标**上（`crop` 的唯一存在形式，规格 §4.1）。
+ * 选区几何：入参与返回值都是**原图未旋转坐标**上的 `crop`（它唯一的存在形式，规格 §4.1）。
  *
- * 显示空间的形状与源坐标的形状在 `rotation` 为 1 / 3 时**换轴**——比例锁与可解析性判定
- * 都必须走 `rotatedSize`，不能直接比源坐标的两个数（R25 记的正是这一类错误）。
+ * 显示空间的形状与源坐标的形状在 `rotation` 为 1 / 3 时**换轴**——`applyAspect` 的比例锁与
+ * `isCropResolvable` 的可解析性判定都必须走 `rotatedSize`，不能直接比源坐标的两个数
+ * （R25 记的正是这一类错误）。`resizeByHandle` 走得更远：规格 §4.3 的「对角固定」是
+ * **用户视角**的陈述，所以它把手柄名、锚点与指针都放到显示空间里解释（见该函数的 JSDoc）。
  *
- * 这里**不做**坐标映射（那是 `view.ts` 的职责），也不碰解码与重采样（那是 `services/`）。
+ * 这里**不自己写坐标映射**——那是 `view.ts` 的职责，本文件只调用它的三个既有函数；也不碰
+ * 解码与重采样（那是 `services/`）。
  */
 
 /**
@@ -175,15 +179,17 @@ export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, 
 /**
  * 按角手柄缩放：**对角固定**。
  *
- * 手柄名按**源坐标**的角解释：本函数全程在源坐标里工作，`rotation` 只参与「显示空间的比例锁」这一步。
+ * 手柄名按**显示空间（用户看到的屏幕）**的角解释，不按源坐标解释——规格 §4.3 的
+ * 「拖左上角，右下角不动」是用户视角的陈述，而 `rotation` 为 1 / 3 时同一个名字在两种口径下
+ * **不是同一个角**（源坐标左上 ↦ 显示空间右上）。`CropCanvas`（任务 8）在 `sourceRectToScreen`
+ * 的屏幕矩形上做命中判定并按同名透传，换算全部在本函数内部完成——两侧不各写一份口径。
  *
- * **已知口径**（如实记录，不掩盖）：`CropCanvas`（任务 8）的命中判定在**显示空间**的角上做，
- * 而 `rotation` 为 1 / 3 时同一个名字指的是**不同的角**（源空间左上 ↔ 显示空间右上）——
- * 此时「对角固定」在用户视角下不成立（用户拖屏幕上右下角，固定住的会是屏幕右上角那一侧）。
- * 本任务按简报保持源坐标口径；修它需要在此处按 `rotation` 重映射锚点，并同步改任务 8 的期望值。
+ * 顺序：把指针与当前选区都先映射到显示空间 → 把指针夹进**显示空间**边界（越界的拖动是
+ * 「停在边上」而不是「长出去再被夹回」）→ 在显示空间里取对角锚点、算宽高、按比例内接收缩、
+ * 朝指针一侧展开 → 把得到的显示空间矩形映射回源坐标（映射两个对角再归一化）→ 夹取。
  *
- * 顺序：先把指针夹进源图（越界的拖动应该是「停在边上」而不是「长出去再被夹回」）→
- * 从锚点算原始宽高 → 有比例锁时按显示空间比例内接收缩 → 从锚点朝指针一侧展开 → 夹取。
+ * 比例锁因此是显示空间里的**直接** `width / height` 比较，不需要 `rotatedSize` 换轴
+ * （它仍被 `applyAspect` 与 `isCropResolvable` 使用）。
  */
 export function resizeByHandle(
   rect: Rect,
@@ -198,39 +204,57 @@ export function resizeByHandle(
   requireAspect(aspect);
   requireRotation(rotation);
   const base = clampRectToSource(rect, source);
-  const p = {
-    x: Math.min(Math.max(pointer.x, 0), source.width),
-    y: Math.min(Math.max(pointer.y, 0), source.height),
+
+  // 显示空间：手柄名与锚点表都在这里解释，源坐标只在出入口出现。
+  const orientedSource = rotatedSize(source.width, source.height, rotation);
+  const mapped = sourceToOriented(pointer, rotation, source);
+  const p: Point = {
+    x: Math.min(Math.max(mapped.x, 0), orientedSource.width),
+    y: Math.min(Math.max(mapped.y, 0), orientedSource.height),
   };
+  const orientedBase = sourceRectToOriented(base, rotation, source);
   const anchor: Point = {
-    nw: { x: base.x + base.width, y: base.y + base.height },
-    ne: { x: base.x, y: base.y + base.height },
-    sw: { x: base.x + base.width, y: base.y },
-    se: { x: base.x, y: base.y },
+    nw: { x: orientedBase.x + orientedBase.width, y: orientedBase.y + orientedBase.height },
+    ne: { x: orientedBase.x, y: orientedBase.y + orientedBase.height },
+    sw: { x: orientedBase.x + orientedBase.width, y: orientedBase.y },
+    se: { x: orientedBase.x, y: orientedBase.y },
   }[handle];
 
   let width = Math.abs(p.x - anchor.x);
   let height = Math.abs(p.y - anchor.y);
   if (aspect !== "free") {
     const ratio = ASPECT_RATIOS[aspect];
-    // 先抬到最小边长再算比例：否则「按下没动」会得到 0 / 0 = NaN 的朝向尺寸。
-    const oriented = rotatedSize(Math.max(width, MIN_CROP_SIDE), Math.max(height, MIN_CROP_SIDE), rotation);
-    const tooWide = oriented.width / oriented.height > ratio;
-    const scaled = rotatedSize(
-      tooWide ? oriented.height * ratio : oriented.width,
-      tooWide ? oriented.height : oriented.width / ratio,
-      rotation,
-    );
-    width = scaled.width;
-    height = scaled.height;
+    // 先抬到最小边长再算比例：否则「按下没动」会得到 0 / 0 = NaN。
+    const rawWidth = Math.max(width, MIN_CROP_SIDE);
+    const rawHeight = Math.max(height, MIN_CROP_SIDE);
+    if (rawWidth / rawHeight > ratio) {
+      width = rawHeight * ratio;
+      height = rawHeight;
+    } else {
+      width = rawWidth;
+      height = rawWidth / ratio;
+    }
   }
 
+  const orientedRect: Rect = {
+    x: p.x < anchor.x ? anchor.x - width : anchor.x,
+    y: p.y < anchor.y ? anchor.y - height : anchor.y,
+    width,
+    height,
+  };
+  // 显示空间的轴对齐矩形 → 源坐标：映射两个对角再归一化（换轴规则只在 `view.ts` 一处）。
+  const a = orientedToSource({ x: orientedRect.x, y: orientedRect.y }, rotation, source);
+  const b = orientedToSource(
+    { x: orientedRect.x + orientedRect.width, y: orientedRect.y + orientedRect.height },
+    rotation,
+    source,
+  );
   return clampRectToSource(
     {
-      x: p.x < anchor.x ? anchor.x - width : anchor.x,
-      y: p.y < anchor.y ? anchor.y - height : anchor.y,
-      width,
-      height,
+      x: Math.min(a.x, b.x),
+      y: Math.min(a.y, b.y),
+      width: Math.abs(b.x - a.x),
+      height: Math.abs(b.y - a.y),
     },
     source,
   );

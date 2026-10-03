@@ -8,6 +8,7 @@ import {
   moveRect,
   resizeByHandle,
 } from "../rect";
+import { orientedToSource, sourceRectToOriented } from "../view";
 
 const SOURCE = { width: 800, height: 600 };
 
@@ -220,20 +221,96 @@ describe("resizeByHandle", () => {
     });
   });
 
-  // 同一条拖动在 rotation 1 与 0 下必须给出**换轴**的两个结果。
-  it("锁 4:3 时在 rotation 1 下换轴（与 rotation 0 的结果宽高互换）", () => {
-    expect(resizeByHandle({ x: 0, y: 0, width: 200, height: 100 }, "se", { x: 400, y: 400 }, "4:3", 1, SOURCE)).toEqual({
-      x: 0,
-      y: 0,
-      width: 300,
-      height: 400,
-    });
-    expect(resizeByHandle({ x: 0, y: 0, width: 200, height: 100 }, "se", { x: 400, y: 400 }, "4:3", 0, SOURCE)).toEqual({
+  // 修复轮 1（裁决）：手柄名按**显示空间**解释，所以 rotation 1 下的 `se` 是**屏幕上**的右下角，
+  // 固定住的是它的对角——屏幕左上角，映射回源坐标是 (0, 100)，而不是源坐标左上 (0, 0)。
+  // 旧口径（本条原期望 {0, 0, 300, 400}）把源坐标的角名钉死了，正是被裁决掉的读法。
+  //
+  // 推导（SOURCE 800×600、rotation 1 → 显示空间 600×800）：
+  //   选区 {0,0,200,100} → 显示空间 {500,0,100,200}（源 (0,0) ↦ (600,0)、(200,100) ↦ (500,200)）
+  //   指针 (400,400) → 显示空间 (200,400)；锚点 = 屏幕左上 (500,0)
+  //   原始宽高 (300, 400) → 内接 4:3 → 显示空间 (300, 225)
+  //   指针在锚点**左侧**（200 < 500）→ 矩形翻到锚点左边：显示空间 {200, 0, 300, 225}
+  //   映射回源坐标（两对角 (200,0) ↦ (0,400)、(500,225) ↦ (225,100)）→ {0, 100, 225, 300}
+  // 数值逐位干净（无夹取），硬编码有意义；同时断言两条性质，不依赖硬编码。
+  it("锁 4:3 时在 rotation 1 下按显示空间的比例约束（锚点是屏幕左上角）", () => {
+    const base = { x: 0, y: 0, width: 200, height: 100 };
+    const result = resizeByHandle(base, "se", { x: 400, y: 400 }, "4:3", 1, SOURCE);
+    expect(result).toEqual({ x: 0, y: 100, width: 225, height: 300 });
+
+    // 性质 (a)：发出的选区在显示空间里就是 4:3——比例锁定义在用户看到的形状上。
+    const after = sourceRectToOriented(result, 1, SOURCE);
+    expect(after.width / after.height).toBeCloseTo(4 / 3, 10);
+
+    // 性质 (b)：被固定住的锚点（屏幕左上角）在拖动前后**逐位不变**。指针越过了锚点那一侧，
+    // 所以锚点在结果里落在显示空间的右上 (x + width, y)——「固定」说的是这个点不动。
+    const before = sourceRectToOriented(base, 1, SOURCE);
+    expect(after.x + after.width).toBe(before.x);
+    expect(after.y).toBe(before.y);
+
+    // 对照：同一个输入在 rotation 0 下两种口径恒等，结果不变。
+    expect(resizeByHandle(base, "se", { x: 400, y: 400 }, "4:3", 0, SOURCE)).toEqual({
       x: 0,
       y: 0,
       width: 400,
       height: 300,
     });
+  });
+
+  // 修复轮 1（裁决②）：在**显示空间**里检查「另一角不动」。此前所有「锚点不动」的断言都写在
+  // 源坐标里，rotation 0 下两种口径恒等，看不出问题；1 / 3 下才区分得开。
+  it("显示空间：rotation 0 拖左上角，屏幕右下角逐位不动", () => {
+    const base = { x: 100, y: 100, width: 200, height: 200 };
+    const result = resizeByHandle(base, "nw", { x: 50, y: 50 }, "free", 0, SOURCE);
+    expect(result).toEqual({ x: 50, y: 50, width: 250, height: 250 });
+    const before = sourceRectToOriented(base, 0, SOURCE);
+    const after = sourceRectToOriented(result, 0, SOURCE);
+    expect(after.x + after.width).toBe(before.x + before.width);
+    expect(after.y + after.height).toBe(before.y + before.height);
+  });
+
+  it("显示空间：rotation 1 拖屏幕右下角，屏幕左上角逐位不动", () => {
+    const base = { x: 100, y: 100, width: 200, height: 100 };
+    // 源 (100,100) 在显示空间是 (500,100)、源 (350,50) 是 (550,350)。
+    const result = resizeByHandle(base, "se", { x: 350, y: 50 }, "free", 1, SOURCE);
+    expect(result).toEqual({ x: 100, y: 50, width: 250, height: 150 });
+    const before = sourceRectToOriented(base, 1, SOURCE);
+    const after = sourceRectToOriented(result, 1, SOURCE);
+    // 拖屏幕右下角固定的是**屏幕**左上 (400,100)——不是源坐标左上 (100,100)。
+    expect(before.x).toBe(400);
+    expect(before.y).toBe(100);
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
+  it("显示空间：rotation 1 下指针越界时夹在显示空间边界上，锚点仍逐位不动", () => {
+    const base = { x: 0, y: 0, width: 200, height: 100 };
+    const result = resizeByHandle(base, "se", { x: 900, y: -100 }, "free", 1, SOURCE);
+    // 指针 → 显示空间 (700, 900) → 夹到显示空间边界 (600, 800)；锚点 = 屏幕左上 (500, 0)
+    // → 显示空间 {500, 0, 100, 800} → 映射回源坐标 {0, 0, 800, 100}。
+    expect(result).toEqual({ x: 0, y: 0, width: 800, height: 100 });
+    const before = sourceRectToOriented(base, 1, SOURCE);
+    const after = sourceRectToOriented(result, 1, SOURCE);
+    expect(after).toEqual({ x: 500, y: 0, width: 100, height: 800 });
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
+  // 本次修复同样改了 rotation 2 / 3 的口径（180° / 270° 下显示空间的角与源坐标的角也不是同一个），
+  // 但上面只覆盖了 0 / 1——补一条四角度轮转的性质断言，免得那两条分支又变成「从未被任何断言读过」。
+  it("四个 rotation 下都满足：拖屏幕右下角，屏幕左上角逐位不动，且两轴都变大", () => {
+    const base = { x: 100, y: 100, width: 200, height: 100 };
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const before = sourceRectToOriented(base, rotation, SOURCE);
+      // 指针取在显示空间里比「屏幕右下角手柄」再往外 (+60, +40) 的位置，再换回源坐标喂给函数
+      // ——手势层（任务 8）交给 `resizeByHandle` 的本来就是源坐标。
+      const target = { x: before.x + before.width + 60, y: before.y + before.height + 40 };
+      const result = resizeByHandle(base, "se", orientedToSource(target, rotation, SOURCE), "free", rotation, SOURCE);
+      const after = sourceRectToOriented(result, rotation, SOURCE);
+      expect(after.x, `rotation ${rotation} 的锚点 x`).toBe(before.x);
+      expect(after.y, `rotation ${rotation} 的锚点 y`).toBe(before.y);
+      expect(after.width, `rotation ${rotation} 的宽度`).toBeGreaterThan(before.width);
+      expect(after.height, `rotation ${rotation} 的高度`).toBeGreaterThan(before.height);
+    }
   });
 });
 
