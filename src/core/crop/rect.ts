@@ -185,8 +185,9 @@ export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, 
  * 的屏幕矩形上做命中判定并按同名透传，换算全部在本函数内部完成——两侧不各写一份口径。
  *
  * 顺序：把指针与当前选区都先映射到显示空间 → 把指针夹进**显示空间**边界（越界的拖动是
- * 「停在边上」而不是「长出去再被夹回」）→ 在显示空间里取对角锚点、算宽高、按比例内接收缩、
- * 朝指针一侧展开 → 把得到的显示空间矩形映射回源坐标（映射两个对角再归一化）→ 夹取。
+ * 「停在边上」而不是「长出去再被夹回」）→ 在显示空间里取对角锚点、算宽高、把两轴抬到
+ * `MIN_CROP_SIDE`（有比例锁时再按比例内接收缩）、朝指针一侧展开 → 把得到的显示空间矩形映射回
+ * 源坐标（映射两个对角再归一化）→ 夹取。
  *
  * 比例锁因此是显示空间里的**直接** `width / height` 比较，不需要 `rotatedSize` 换轴
  * （它仍被 `applyAspect` 与 `isCropResolvable` 使用）。
@@ -222,7 +223,14 @@ export function resizeByHandle(
 
   let width = Math.abs(p.x - anchor.x);
   let height = Math.abs(p.y - anchor.y);
-  if (aspect !== "free") {
+  // 最小边长抬底对**两种比例锁都适用**：自由比例下把指针拖到与锚点同一列（或同一行）是用户
+  // 可达的正常操作（把角手柄拖到与对角对齐），此时原始宽高为 0；不抬底就会把退化矩形交给
+  // `clampRectToSource`，被那里的 `requireRect` 当成非法输入抛错，而不是「停在最小边长」。
+  // 比例锁分支里的抬底还兼有第二个作用：不抬的话下面 `rawWidth / rawHeight` 是 0 / 0 = NaN。
+  if (aspect === "free") {
+    width = Math.max(width, MIN_CROP_SIDE);
+    height = Math.max(height, MIN_CROP_SIDE);
+  } else {
     const ratio = ASPECT_RATIOS[aspect];
     // 先抬到最小边长再算比例：否则「按下没动」会得到 0 / 0 = NaN。
     const rawWidth = Math.max(width, MIN_CROP_SIDE);

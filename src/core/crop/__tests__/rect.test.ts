@@ -212,6 +212,54 @@ describe("resizeByHandle", () => {
     });
   });
 
+  // 修复轮 2：`MIN_CROP_SIDE` 的抬底此前只写在比例锁分支里。自由比例下把指针拖到与锚点**同一列**
+  // （或**同一行**）是用户可达的正常操作——把角手柄拖到与对角对齐——原始宽高会是 0，于是末尾的
+  // `clampRectToSource` 里 `requireRect` 抛「选区宽度必须 ≥1（当前 0）」。正确行为是停在最小边长。
+  //
+  // rotation ≠ 0 时源坐标的宽高换轴（显示空间的「宽」落在源坐标的「高」上），所以两个角度各一条
+  // 独立的用例——**刻意不写成循环**：循环里 rotation 0 的断言先抛，会把 rotation 1 那条断言整个
+  // 遮蔽掉，「在源坐标的轴上抬底」这类只在 1 下错的实现就测不出来。
+  //
+  // 指针一律先在**显示空间**里按「与 `se` 的锚点（屏幕左上角）同列 / 同行」构造，再按手势层的
+  // 真实口径（屏幕 → 源坐标）换算回源坐标喂进来——断言则读回显示空间。
+  const pointerOnAnchorAxis = (rotation: 0 | 1, dx: number, dy: number) => {
+    const before = sourceRectToOriented(BASE, rotation, SOURCE);
+    return orientedToSource({ x: before.x + dx, y: before.y + dy }, rotation, SOURCE);
+  };
+
+  it("自由比例下拖到与锚点同一列：不抛错，停在显示空间最小宽度（rotation 0）", () => {
+    const pointer = pointerOnAnchorAxis(0, 0, 300);
+    expect(() => resizeByHandle(BASE, "se", pointer, "free", 0, SOURCE)).not.toThrow();
+    const after = sourceRectToOriented(resizeByHandle(BASE, "se", pointer, "free", 0, SOURCE), 0, SOURCE);
+    // 宽度停在最小边长；另一轴仍是真实的拖动距离 300（证明抬底只作用于塌掉的那一轴）。
+    expect(after.width).toBe(MIN_CROP_SIDE);
+    expect(after.height).toBe(300);
+  });
+
+  it("自由比例下拖到与锚点同一列：不抛错，停在显示空间最小宽度（rotation 1）", () => {
+    const pointer = pointerOnAnchorAxis(1, 0, 300);
+    expect(() => resizeByHandle(BASE, "se", pointer, "free", 1, SOURCE)).not.toThrow();
+    const after = sourceRectToOriented(resizeByHandle(BASE, "se", pointer, "free", 1, SOURCE), 1, SOURCE);
+    expect(after.width).toBe(MIN_CROP_SIDE);
+    expect(after.height).toBe(300);
+  });
+
+  it("自由比例下拖到与锚点同一行：不抛错，停在显示空间最小高度（rotation 0）", () => {
+    const pointer = pointerOnAnchorAxis(0, 120, 0);
+    expect(() => resizeByHandle(BASE, "se", pointer, "free", 0, SOURCE)).not.toThrow();
+    const after = sourceRectToOriented(resizeByHandle(BASE, "se", pointer, "free", 0, SOURCE), 0, SOURCE);
+    expect(after.height).toBe(MIN_CROP_SIDE);
+    expect(after.width).toBe(120);
+  });
+
+  it("自由比例下拖到与锚点同一行：不抛错，停在显示空间最小高度（rotation 1）", () => {
+    const pointer = pointerOnAnchorAxis(1, 120, 0);
+    expect(() => resizeByHandle(BASE, "se", pointer, "free", 1, SOURCE)).not.toThrow();
+    const after = sourceRectToOriented(resizeByHandle(BASE, "se", pointer, "free", 1, SOURCE), 1, SOURCE);
+    expect(after.height).toBe(MIN_CROP_SIDE);
+    expect(after.width).toBe(120);
+  });
+
   it("锁 1:1 时拖出的矩形是正方形（锚点不动）", () => {
     expect(resizeByHandle({ x: 0, y: 0, width: 100, height: 100 }, "se", { x: 300, y: 150 }, "1:1", 0, SOURCE)).toEqual({
       x: 0,
