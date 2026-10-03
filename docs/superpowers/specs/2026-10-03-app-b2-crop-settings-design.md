@@ -321,9 +321,13 @@ export interface GenerateRequest {
 
 ### 6.3 结果阶段
 
-显示：豆图预览（复用 `renderPatternThumbnail(pattern, palette, RESULT_PREVIEW_MAX_EDGE)`，
-`RESULT_PREVIEW_MAX_EDGE = 1024`——一次 1024² 画布 + PNG 编码的成本见 B2-R4）、
-`成品 W × H 颗`、`实际用了 N 种颜色`、厘米 / 板数、色卡 `accuracy` 声明、「已更新这张图纸」提示。
+显示：豆图预览（复用 `renderPatternThumbnail(pattern, palette, RESULT_PREVIEW_MAX_EDGE)`）、
+`成品 W × H 颗`、厘米 / 板数（三行都走**产物自身**的 `width`/`height`）、`实际用了 N 种颜色`、
+「已更新这张图纸」提示。
+
+> **色卡 `accuracy` 声明（主规格 §11）由参数面板的色卡卡片承载，不在结果面板重复**：
+> 主规格要求的是「显示在**色卡 UI** 上」，而色卡卡片就是那个 UI（平板结果阶段右栏常驻；
+> 手机点「改参数」可见）。结果面板只放结果本身——重复一遍声明只是噪声。
 
 > **2026-10-03 修正（任务 11 审查发现）**：上面那句「列表封面 512 在 500×500 图纸上每格只有 1px、
 > 1024 给它 2px」的**理由不成立**——`renderPatternThumbnail` 是「**只缩不放**」
