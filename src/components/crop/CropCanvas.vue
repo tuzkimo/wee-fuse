@@ -27,6 +27,8 @@ import type { Rect, Rotation } from "@/core/image/types";
 
 /** 手柄命中区的 CSS 尺寸（触控目标 ≥44px，主规格 §6.4）。 */
 const HANDLE_HIT_SIZE = 48;
+/** 手柄命中半径：命中区是边长 `HANDLE_HIT_SIZE` 的**方块**，半径即其一半。 */
+const HANDLE_HIT_RADIUS = HANDLE_HIT_SIZE / 2;
 /** 手柄视觉方块的 CSS 尺寸。 */
 const HANDLE_DRAW_SIZE = 20;
 
@@ -85,6 +87,32 @@ function inside(rect: Rect, point: { x: number; y: number }): boolean {
   return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
+/**
+ * 命中半径内**离指针最近**的手柄；一个都没命中时返回 `null`。
+ *
+ * 不能用「命中即返回」的 `find`：选框在屏幕上的边长小于命中区（48px）时，四个命中区互相重叠，
+ * `find` 永远返回顺序里最靠前的 `nw`，用户再也抓不到 `se`——而小选区在平板上是常态
+ * （源图选区 < 96px 就会出现）。命中区仍是各手柄中心 ±`HANDLE_HIT_RADIUS` 的方块。
+ *
+ * 距离用欧氏距离；**严格小于**比较，于是平局保留顺序里更靠前的那个 →
+ * 决胜顺序固定为 `nw → ne → sw → se`（与 `handleCenters` 的顺序一致），结果确定。
+ */
+function hitHandle(screenCrop: Rect, point: { x: number; y: number }): CropHandle | null {
+  let best: CropHandle | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const item of handleCenters(screenCrop)) {
+    const dx = item.x - point.x;
+    const dy = item.y - point.y;
+    if (Math.abs(dx) > HANDLE_HIT_RADIUS || Math.abs(dy) > HANDLE_HIT_RADIUS) continue;
+    const distance = Math.hypot(dx, dy);
+    if (distance < bestDistance) {
+      best = item.handle;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------------------
 // 手势
 // ---------------------------------------------------------------------------
@@ -92,20 +120,30 @@ function inside(rect: Rect, point: { x: number; y: number }): boolean {
 type Gesture = { mode: "resize"; handle: CropHandle } | { mode: "move" } | { mode: "pan" };
 
 const gesture = ref<Gesture | null>(null);
+/**
+ * 当前手势所属的指针 id（没有手势时为 `null`）。**多指过滤的唯一依据**：
+ * 平板上第二根手指按下时 `pointerdown` / `pointermove` / `pointerup` 都会照常派发到同一个元素，
+ * 不按 id 过滤的话第二根手指的移动会用第一根手指的起点快照驱动同一个手势 → 选框跳变。
+ */
+let activePointerId: number | null = null;
 /** 手势开始时的快照：每次 move 都从它重算，避免误差累积。 */
 let startCrop: Rect = { x: 0, y: 0, width: 1, height: 1 };
 let startPoint = { x: 0, y: 0 };
 let startPan = { x: 0, y: 0 };
 
 function onPointerDown(event: PointerEvent): void {
+  // 非主指针（平板上第二根及以后的手指、副笔）直接忽略：不开始手势、也不 preventDefault——
+  // 后面那半条同样重要，别处的默认行为不该被这个组件顺手吞掉。
+  if (event.isPrimary === false) return;
+  // 已有手势在进行时忽略新的按下：覆盖起点快照会把正在拖的选框拽到新指针的位置。
+  if (gesture.value !== null) return;
+
   const point = localPoint(event);
   const screenCrop = sourceRectToScreen(props.crop, view.value, props.rotation, props.sourceSize);
-  const hit = handleCenters(screenCrop).find(
-    (item) => Math.abs(item.x - point.x) <= HANDLE_HIT_SIZE / 2 && Math.abs(item.y - point.y) <= HANDLE_HIT_SIZE / 2,
-  );
+  const handle = hitHandle(screenCrop, point);
 
-  if (hit !== undefined) {
-    gesture.value = { mode: "resize", handle: hit.handle };
+  if (handle !== null) {
+    gesture.value = { mode: "resize", handle };
   } else if (inside(screenCrop, point)) {
     gesture.value = { mode: "move" };
   } else {
@@ -113,6 +151,7 @@ function onPointerDown(event: PointerEvent): void {
     gesture.value = props.zoom === "fit" ? { mode: "move" } : { mode: "pan" };
   }
 
+  activePointerId = event.pointerId;
   startCrop = props.crop;
   startPoint = point;
   startPan = props.pan;
@@ -121,6 +160,8 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
+  // 只处理发起手势的那根指针；其它指针的移动一律忽略（手势仍然有效）。
+  if (event.pointerId !== activePointerId) return;
   const current = gesture.value;
   if (current === null) return;
   const point = localPoint(event);
@@ -152,8 +193,11 @@ function onPointerMove(event: PointerEvent): void {
 }
 
 function onPointerUp(event: PointerEvent): void {
+  // 只有发起手势的那根指针能把手势结束掉（第二根手指抬起不该中断第一根手指的拖动）。
+  if (event.pointerId !== activePointerId) return;
   if (gesture.value === null) return;
   gesture.value = null;
+  activePointerId = null;
   (event.target as Element | null)?.releasePointerCapture?.(event.pointerId);
 }
 

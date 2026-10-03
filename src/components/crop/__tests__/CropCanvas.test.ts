@@ -138,13 +138,32 @@ function stubContext(): { argsOf: (op: string) => unknown[] | undefined } {
   };
 }
 
-/** 派发一次指针事件；happy-dom 有真实的 `PointerEvent`。 */
-async function pointer(wrapper: ReturnType<typeof mount>, type: string, x: number, y: number): Promise<void> {
+/**
+ * 派发一次指针事件；happy-dom 有真实的 `PointerEvent`（`pointerId` / `isPrimary` 都能在构造参数里给）。
+ *
+ * 默认 `pointerId: 1` / `isPrimary: true`（= 单指平板操作）。多指用例显式传 `pointerId`，
+ * 非主指针用例显式传 `isPrimary: false`。返回派发出去的那个事件本身：`defaultPrevented`
+ * 是「组件有没有把这次按下当成手势」的外部可观察量之一。
+ */
+async function pointer(
+  wrapper: ReturnType<typeof mount>,
+  type: string,
+  x: number,
+  y: number,
+  options: { pointerId?: number; isPrimary?: boolean } = {},
+): Promise<PointerEvent> {
   const canvas = wrapper.get("canvas");
-  canvas.element.dispatchEvent(
-    new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, bubbles: true, cancelable: true }),
-  );
+  const event = new PointerEvent(type, {
+    clientX: x,
+    clientY: y,
+    pointerId: options.pointerId ?? 1,
+    isPrimary: options.isPrimary ?? true,
+    bubbles: true,
+    cancelable: true,
+  });
+  canvas.element.dispatchEvent(event);
   await wrapper.vm.$nextTick();
+  return event;
 }
 
 function mountCanvas(
@@ -325,6 +344,9 @@ describe("手势 → 选区", () => {
     expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: -10, y: -20 }]);
 
     // 一路拖到远超左边界：夹到图像的左边缘（offsetX 只能到 -400），所以 pan 停在 -200。
+    // 这里显式抬起再按下：新守卫「已有手势在进行则忽略 pointerdown」会把**没有抬起**的第二次按下
+    // 吞掉，那样这一步就不是「新的一次拖动」（数值恰好同值，会留下一条名不副实的断言）。
+    await pointer(wrapper, "pointerup", 340, 330);
     await pointer(wrapper, "pointerdown", 350, 350);
     await pointer(wrapper, "pointermove", -150, 350);
     expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: -200, y: 0 }]);
@@ -406,6 +428,103 @@ describe("手势 → 选区", () => {
     const fixed = sourceRectToOriented(emitted, 1, SOURCE);
     expect(fixed.x).toBe(200);
     expect(fixed.y).toBe(100);
+  });
+});
+
+describe("手柄命中：命中半径内取离指针最近的手柄", () => {
+  /**
+   * 小选区场景（本组两条共用）：源图 800×600、容器 400×400 → 适配比例 0.5、偏移 (0,50)。
+   * 选区 `{100,100,40,40}` → 屏幕 `{x:50, y:100, w:20, h:20}`，**屏幕边长 20px < 命中区 48px**，
+   * 于是四个命中区（各以手柄中心 ±24）互相重叠，四个手柄中心两两距离只有 20px。
+   *
+   * 这正是「用 `find` 按固定顺序取第一个」会翻车的地方：`nw` 永远先命中，用户再也抓不到 `se`。
+   */
+  const SMALL_CROP: Rect = { x: 100, y: 100, width: 40, height: 40 };
+
+  it("小选区下指针落在 se 角上抓到的是 se，不是顺序里更靠前的 nw", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas({ crop: SMALL_CROP });
+
+    // 指针**恰好落在 se 手柄中心** (70,120)。此时 nw(50,100) 也在命中区内（|dx|=|dy|=20 ≤ 24）。
+    await pointer(wrapper, "pointerdown", 70, 120);
+    await pointer(wrapper, "pointermove", 90, 140);
+
+    // 拖 se：锚点是**显示空间左上角** (100,100)。屏幕 (90,140) → 原图 ((90-0)/0.5, (140-50)/0.5) = (180,180)
+    // → 显示空间矩形 {100,100,80,80} → 源坐标同值。
+    // 若退化回 `find`（顺序 nw → ne → sw → se），这里得到的是**拖 nw** 的结果 {140,140,40,40}
+    // （锚点是显示空间右下角 (140,140)）——正是「小选区下 se 永远抓不到」那条 bug。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 80, height: 80 }]);
+  });
+
+  it("距离相同时按 nw → ne → sw → se 的固定顺序决胜（确定性，不随实现细节漂移）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas({ crop: SMALL_CROP });
+
+    // 指针落在小选区屏幕矩形 {50,100,20,20} 的**正中心** (60,110)：到四角的欧氏距离全部等于
+    // hypot(10,10)，是唯一的严格平局点。
+    await pointer(wrapper, "pointerdown", 60, 110);
+    await pointer(wrapper, "pointermove", 90, 140);
+
+    // 平局 → 顺序里最靠前的 nw：锚点是显示空间右下角 (140,140)，指针在原图 (180,180)
+    // → {140,140,40,40}。若用 `<=` 比较（后到者赢）会得到拖 se 的 {100,100,80,80}。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 140, y: 140, width: 40, height: 40 }]);
+  });
+});
+
+describe("多指与指针过滤", () => {
+  it("手势进行中，另一个 pointerId 的按下 / 移动 / 抬起都不产生事件，原指针仍正常拖动", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas();
+
+    // 第一根手指抓住 se 手柄：屏幕 (200,250) 是选区 {x:50–200, y:100–250} 的右下角。
+    await pointer(wrapper, "pointerdown", 200, 250);
+    await pointer(wrapper, "pointermove", 250, 250);
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 400, height: 300 }]);
+
+    // 第二根手指落在**选区内**（旧实现会在这里重启手势、把模式改成 move 并覆盖起点快照）。
+    // 按下（应被「已有手势」守卫拦下）+ 移动（应被 pointerId 过滤拦下）+ 抬起（不得结束别的手势）。
+    await pointer(wrapper, "pointerdown", 100, 150, { pointerId: 2 });
+    await pointer(wrapper, "pointermove", 300, 300, { pointerId: 2 });
+    await pointer(wrapper, "pointerup", 300, 300, { pointerId: 2 });
+
+    expect(wrapper.emitted("update:crop")).toHaveLength(1);
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 400, height: 300 }]);
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+
+    // 原指针继续拖：仍从**手势起点** {100,100,300,300} 与起点屏幕 (200,250) 重算。
+    // 屏幕 (260,260) → 原图 (520,420) → se 锚点 (100,100) → {100,100,420,320}。
+    await pointer(wrapper, "pointermove", 260, 260);
+    expect(wrapper.emitted("update:crop")).toHaveLength(2);
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 420, height: 320 }]);
+  });
+
+  it("isPrimary 为 false 的按下不开始手势（后续同 id 的移动不产生事件，也不 preventDefault）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas();
+
+    // 位置就是 se 手柄中心：若这次按下被当成手势，它立刻进入 resize，下一条 move 就会发事件。
+    const down = await pointer(wrapper, "pointerdown", 200, 250, { pointerId: 7, isPrimary: false });
+    await pointer(wrapper, "pointermove", 250, 250, { pointerId: 7, isPrimary: false });
+
+    expect(wrapper.emitted("update:crop")).toBeUndefined();
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+    // 「直接忽略」也包括**不 preventDefault**（非主指针的默认行为不该被这个组件吞掉）。
+    expect(down.defaultPrevented).toBe(false);
+
+    // 对照（同一位置、同一 pointerId，只把 isPrimary 翻成 true）：这次必须被当成手势——
+    // 既证明上面两条不是因为「组件在这个位置上本来就不响应」，也给 defaultPrevented 一个反面。
+    const primary = await pointer(wrapper, "pointerdown", 200, 250, { pointerId: 7 });
+    await pointer(wrapper, "pointermove", 250, 250, { pointerId: 7 });
+    expect(primary.defaultPrevented).toBe(true);
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 400, height: 300 }]);
   });
 });
 
