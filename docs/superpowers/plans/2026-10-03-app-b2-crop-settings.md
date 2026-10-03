@@ -1831,6 +1831,16 @@ const sourceSize = { width: 8192, height: 8192 };
 
 然后给每个 `generatePattern({ … })` 的请求字面量补上 `sourceSize,`（对象字面量的任意位置都可以，建议紧跟 `source`）。**只加字段，不改任何断言。**
 
+**还有一处必须同步，否则任务 6 一落地 `npm run build` 就红**：`src/views/GeneratePage.vue` 也调用 `generatePattern`，
+而它要到任务 14 才删。给它补上 `sourceSize: size`（该页已经 `await probeSourceSize(picked.file)` 拿到了尺寸，
+就在同一个 `run()` 里）。**这是临时的兼容改动，文件删除时一并消失**——不这么做，任务 6 到任务 13 之间
+`vue-tsc` 一直报「缺少属性 sourceSize」，等于把 CI 的红灯藏起来八个任务。
+
+- [ ] **步骤 3b：确认构建仍然通过**
+
+运行：`npm run build`
+预期：exit 0（含 `vue-tsc --noEmit`）。
+
 - [ ] **步骤 4：运行测试验证失败**
 
 运行：`npm run test -- src/services/__tests__/pipeline.test.ts`
@@ -3387,9 +3397,25 @@ function stubPlatform(options: { width?: number; height?: number; decodeError?: 
   const ctx = { drawImage: vi.fn(), imageSmoothingEnabled: false, imageSmoothingQuality: "low" };
   vi.stubGlobal("Image", FakeImage);
   vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:fake"), revokeObjectURL: vi.fn() });
-  vi.stubGlobal("document", {
-    createElement: () => ({ width: 0, height: 0, getContext: () => ctx }),
-  });
+  stubCanvasFactory(() => ctx);
+}
+
+/**
+ * 只把 `"canvas"` 换成假画布，其余 tag 走 happy-dom 的原实现。
+ *
+ * **不能整替 `document`**：`@vue/test-utils` 挂载组件本身就要用 `document.createElement`，
+ * 整替之后用例会在挂载那一步就崩，而崩的原因与被测行为毫无关系。
+ * `createElement` 的重载签名很严，实现体需要 `as typeof document.createElement` 转一次。
+ */
+function stubCanvasFactory(makeCtx: () => unknown): void {
+  const original = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation(((
+    tag: string,
+    options?: ElementCreationOptions,
+  ) =>
+    tag === "canvas"
+      ? ({ width: 0, height: 0, getContext: makeCtx } as unknown as HTMLElement)
+      : original(tag, options)) as typeof document.createElement);
 }
 
 /** 造一个真 `<input type="file">` 并塞进选中的文件（照 imageSource.test.ts 的写法）。 */
@@ -3711,7 +3737,22 @@ function stubPlatform(options: { alpha?: number } = {}) {
   vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
   vi.stubGlobal("Image", FakeImage);
   vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:fake"), revokeObjectURL: vi.fn() });
+  // 「重跑路径」那条用例会走真的 `loadImageSource`，它需要一个能拿到 2D 上下文的画布。
+  // 只换 `"canvas"`，其余 tag 放行——`@vue/test-utils` 挂载组件还要用真 `document.createElement`。
+  stubCanvasFactory(() => makeCtx(new Uint8ClampedArray(0)));
   return { createBitmap };
+}
+
+/** 见任务 10 的同名助手注释：只换 canvas，不整替 document。 */
+function stubCanvasFactory(makeCtx: () => unknown): void {
+  const original = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation(((
+    tag: string,
+    options?: ElementCreationOptions,
+  ) =>
+    tag === "canvas"
+      ? ({ width: 0, height: 0, getContext: makeCtx } as unknown as HTMLElement)
+      : original(tag, options)) as typeof document.createElement);
 }
 
 function fakePreview(): HTMLCanvasElement {
