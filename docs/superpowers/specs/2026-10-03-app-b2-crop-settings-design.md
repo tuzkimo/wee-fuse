@@ -190,7 +190,10 @@ canvas 尺寸 = CSS 尺寸 × `devicePixelRatio`（happy-dom 的该属性有 set
 
 ```ts
 // core/crop/rect.ts
-export function isCropResolvable(crop: CropRect, grid: Size, rotation: Rotation): boolean;
+// 注意类型：`crop` 是**运行期**的 `Rect`（`core/image/types.ts` 的 `{x, y, width, height}`），
+// 不是落盘类型的 `CropRect`（`core/project/types.ts` 的 `{x, y, w, h, rotate}`）——两者字段名不同，
+// 映射只在 `core/project/file.ts` 一处做（B1 规格 §5.3）。
+export function isCropResolvable(crop: Rect, grid: Size, rotation: Rotation): boolean;
 ```
 
 **必须带 `rotation`**：网格尺寸与 `crop` 分属不同朝向（`computeGridSize` 的入参是**旋转后**的尺寸），
