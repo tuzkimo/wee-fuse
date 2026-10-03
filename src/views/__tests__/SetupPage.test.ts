@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { setProjectStore } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
+import CropCanvas from "@/components/crop/CropCanvas.vue";
 import SetupPage from "@/views/SetupPage.vue";
 
 /**
@@ -299,6 +300,16 @@ describe("选区工具条（比例 / 旋转 / 缩放 / 重置）", () => {
     await wrapper.get("[data-testid='reset-crop']").trigger("click");
     expect(draft.aspect).toBe("free");
     expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
+
+    // 页面 ↔ `CropCanvas` 的两条接线（`@update:crop` / `@update:pan`）。`CropCanvas` 自己的
+    // 用例只钉它**emit 了什么**，接线断掉那边照样全绿——而「框出来的选区进不了 store」
+    // 与「拖动视图不进 store」都是本项目的头号缺陷形态（两端各自正确、错在接线）。
+    const canvas = wrapper.findComponent(CropCanvas);
+    canvas.vm.$emit("update:pan", { x: 5, y: 5 });
+    expect(draft.pan).toEqual({ x: 5, y: 5 });
+
+    canvas.vm.$emit("update:crop", { x: 10, y: 20, width: 100, height: 120 });
+    expect(draft.crop).toEqual({ x: 10, y: 20, width: 100, height: 120 });
   });
 });
 
