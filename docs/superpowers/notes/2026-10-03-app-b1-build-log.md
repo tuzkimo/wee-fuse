@@ -143,9 +143,9 @@ R9 问的是「`crop.x/y` 为负（越界裁剪）会怎样」。任务 2 的实
 | B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error` | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）。**裁决：维持现状**，记此以免被当成遗漏 |
 | B1-18 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走） | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文（规格 §14 的 B1-R3）；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。**本条在收尾轮修 README 编号漂移时被误删过，修复轮 1 由复审者指出并恢复** |
 | B1-19 | `LibraryPage` 的相对时间在**每次渲染时取 `new Date()`**，列表停留期间**不自动刷新**（不会自己从「3 分钟前」跳到「4 分钟前」） | 图纸库不是实时面板；要跳秒就得加定时器，会带来 happy-dom 下的定时器测试复杂度。**裁决：维持现状**（修复轮 1 复审同判） |
-| B1-20 | **CI 对「日期用本地日还是 UTC 日」这条实现选择没有判别力**：`relativeTime.ts` 用本地 getter，而 runner 是 `ubuntu-latest`（偏移 0）——偏移 0 时两种实现输出**逐字节相同**，任何同进程断言都无法区分（**信息层面不存在，非写法问题**）。现有用例能在**偏移 ≥ +2h 的时区**抓到该变异（实测：把 `toLocalDateString` 改成 `toISOString().slice(0, 10)`，`Asia/Shanghai` 下 1 failed、UTC 下绿） | **这条不是「为了绿而放水」，而是删掉了一条判别力为零、且在多数时区必红的假守卫。** 合并前复审的阻断项：曾有一条「断言本地日 ≠ UTC 日」的自证断言充当守门，但它的判别力为零，且夹具（`22:00Z`）只在偏移 **≥ +2h** 才跨日 → 在 UTC、西半球、UTC+1 下**必红**（实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed；先用 `getTimezoneOffset() !== 0` 守卫属**必要但不充分**，只排除了偏移 0）。已删除该断言，把「真正的判别力在 `toBe(localDateString(moment))` 一行」与「UTC 下不可能区分」写进注释。**要补 CI 侧的证伪能力只能给测试步骤一个非零 `TZ`**（或时区矩阵）——属 `.github/` 变更，需人工授权。 |
+| ~~B1-20~~ | ~~**CI 对「日期用本地日还是 UTC 日」这条实现选择没有判别力**~~ —— **已闭环（合并后修复，提交 `779bdc6`）**。修法**不是**给 CI 设非零 `TZ`（那属 `.github/` 变更），而是**在用例内钉住时区**：照**同组织 WeeCount 的仓内先例**（`src/utils/__tests__/datetime.test.ts` 的 `should roll to next local day for early-morning UTC times in positive offset zones`，`process.env.TZ` + `try/finally` 逐字还原）。加了 `Asia/Shanghai`（正向跨日）与 `America/New_York`（反向跨日）两条，各带一条「夹具确实跨日」的前置自证断言。**实测：变异 `toLocalDateString → toISOString().slice(0, 10)` 在 `TZ=UTC`（= CI）下 2 failed** → 判别力已回到 CI；7 个时区各 14/14 绿。 | 留档是因为**过程可复用**：最初那条「断言本地日 ≠ UTC 日」的自证断言判别力为零、且只在偏移 ≥ +2h 成立 → 在 UTC / 西半球 / UTC+1 下**必红**；用 `getTimezoneOffset() !== 0` 守卫它是「必要但不充分」（只排除偏移 0）。**教训：断言需要「本地时区」参与时，就把它钉住，而不要假设运行环境是什么时区**——这也是 WeeCount 早就走通的路。另注：经 `globalThis` 取 `process.env` 而非文件级 `/// <reference types="node" />`——后者会把 `@types/node` 拉进整个 `vue-tsc` 程序、**削弱 `src/core/**` 的 Node 全局闸门**（`AGENTS.md` 明令禁止），实测边界闸门仍 29/29 绿。 |
 
-> **B1-15 / B1-16 / B1-17 是收尾轮（任务 9）补记的三条，B1-18 / B1-19 / B1-20 是修复轮补记的三条。**
+> **B1-15 / B1-16 / B1-17 是收尾轮（任务 9）补记的三条，B1-18 / B1-19 / B1-20 是修复轮补记的三条，其中 B1-20 已在合并后闭环（见该行）。**
 > 就原表而言：**B1-6 的第三栏按收尾轮的改判回写了**（原先写「B2 会整体替换这一页」，改判为
 > 「这是死路，必须修」），**其余 B1-1…B1-14 一字未改**，编号因此保持稳定。README 的
 > 「计划 B1 的延后项」表与 B1-1…B1-20 逐条对齐。
@@ -174,15 +174,50 @@ R9 问的是「`crop.x/y` 为负（越界裁剪）会怎样」。任务 2 的实
 
 ---
 
-## 11. 最终验证（干净环境，2026-10-03）
+## 11. 跨项目教训：需要「本地时区」参与断言时，**钉住它**
+
+B1 收尾时踩到、并靠参考同组织的 **WeeCount** 走出来的一个坑，值得单列，因为它的形态很容易重犯：
+
+**症状**：`relativeTime.ts` 的日期分支按定义输出**运行机器的本地日**。要证明它没走 `toISOString()`，就得在「本地日 ≠ UTC 日」的环境下断言——偏移 0（CI 的 `ubuntu-latest`）时两种实现输出**逐字节相同**，信息层面不存在，任何同进程断言都抓不到。
+
+**我犯的两次错**（都是「把环境假设写进断言」）：
+1. 写了一条「断言本地日 ≠ UTC 日」的**自证**断言充当守门。它判别力为零，并只在偏移 ≥ +2h 成立 → 在 UTC、西半球、UTC+1 下**必红**（实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed）。**夹具 `22:00Z` 只在偏移 ≥ +2h 才跨日**，而我把它当成了「只要不是 UTC 就行」。
+2. 用 `if (moment.getTimezoneOffset() !== 0)` 守卫它——**必要但不充分**：只排除了偏移 0，其余不跨日的偏移照旧假红。
+
+**正确的做法**（WeeCount 早就在用）：**在用例内钉住时区**。
+
+```ts
+// 照 WeeCount src/utils/__tests__/datetime.test.ts 的仓内先例
+const prevTZ = process.env.TZ;
+process.env.TZ = "Asia/Shanghai";
+try {
+  expect(utcToLocalDateKey("2026-07-27T22:00:00Z")).toBe("2026-07-28");
+} finally {
+  if (prevTZ === undefined) delete process.env.TZ;
+  else process.env.TZ = prevTZ;
+}
+```
+
+这样断言**与运行机器时区无关**（在 UTC runner 上也成立），同时**恢复了判别力**——**不需要动 `.github/`**。我在 B1 里补了正向（`Asia/Shanghai`）与反向（`America/New_York`）两条，各带一条「夹具确实跨日」的**前置自证断言**（第一次写的 New York 夹具两侧同日，正是被它抓出来的），实测变异在 `TZ=UTC` 下 2 failed。
+
+**两条附带结论**：
+- **`process.env` 要经 `globalThis` 取**。本仓库 `tsconfig` 的 `types` 只有 `["vitest/globals"]`，直接写 `process` 会以 `TS2591` 卡住 `npm run build`；而补文件级 `/// <reference types="node" />` 是 `AGENTS.md` **明令禁止**的——它会把 `@types/node` 拉进整个 `vue-tsc` 程序、**削弱 `src/core/**` 的 Node 全局闸门**（闸门文件头有实测记载）。实测经 `globalThis` 取用后 `tsc` exit 0 且边界闸门仍 29/29 绿。
+- **同组织已有项目是「先例」而不是「记忆」**：我一开始凭记忆以为「WeeCount 的 CI 按 UTC 跑」，实际上它的 CI **没有**设 TZ，真正的约定在**测试文件里**。**回仓里读原文，别凭记忆**——这条与本项目「要对外报的数字一律回原始清单重数」是同一纪律。
+
+---
+
+## 12. 最终验证（干净环境 + 合并后，2026-10-03）
 
 ```bash
 npm ci            # 207 packages, 6s, exit 0
-npm run test      # 35 files / 476 tests, exit 0
-npm run build     # vue-tsc --noEmit && vite build → 69 modules, built in 826ms, exit 0
+npm run test      # 无 TZ：36 files / 493 tests, exit 0
+TZ=UTC npm run test   # = CI 环境：36 files / 493 tests, exit 0
+npm run build     # vue-tsc --noEmit && vite build → 70 modules, built in 1.10s, exit 0
 ```
 
-基线对比：进入 B1 前是 22 文件 / 312 用例；B1 交付后 **35 文件 / 476 用例**（净增 +13 文件 / +164 用例）。
+另跑过的时区：`Asia/Shanghai` / `America/New_York` / `Europe/London` / `Etc/GMT-1` / `Pacific/Midway` / `Pacific/Kiritimati` —— 相对时间的 14 条用例在**每一个**下都全绿。
+
+基线对比：进入 B1 前是 22 文件 / 312 用例；交付并合并后 **36 文件 / 493 用例**（净增 +14 文件 / +181 用例）。「本地时区」相关的断言在每个测试过的时区下结果一致。
 
 真机/浏览器侧：任务 7 用 **headless Chrome 154 + CDP**（临时 profile）在 `http://localhost:1420` 走完了规格 §11 的 8 条人工清单——生成 → 首页看到（封面是图纸，解码后 58×58）→ 改名 → 打开 → 删除 → 刷新后保持 → 占用显示 → IDB 三个 store 齐全且 `projects` 每条约 7.5 KB。**Android 真机 / Tauri 壳仍未验**（属引入壳的那一轮）。
 
