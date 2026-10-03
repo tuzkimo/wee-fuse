@@ -472,8 +472,12 @@ export const useDraft = defineStore("draft", () => {
   `document.createElement("canvas")` 与 `getBoundingClientRect`（happy-dom 里它返回全 0），
   几何、流水线、两个 store、`toProjectDocument` **全是真的**（照 B1 任务 7 的做法，那一轮已证明
   它能在 CI 里跑完整条成功路径，且变异打在 `services/imageSource.ts` 上仍能红）。
-- **断点**：设 `window.innerWidth`（happy-dom 的 `matchMedia` 真实按它求值，实测
-  `MediaQueryItem.matchesRange` 读 `innerWidth`）后 mount，断言两种布局与按钮语义。
+- **断点**：**必须打桩 `matchMedia`**。实测（2026-10-03，任务 11）：在 vitest 的 happy-dom 环境里
+  `window.innerWidth` 可读写（读得回 500 / 2000），但 `matchMedia("(min-width: 768px)").matches` **恒为 true**、
+  `(min-width: 2000px)` 恒为 false——即它对着 happy-dom 的默认视口 1024 求值，**不随 `window.innerWidth` 变**；
+  而在 bare `new Window()` 里 `matches` 是实时求值的，两者的 `window` 不是同一个对象。
+  因此桩要按浏览器契约提供 `matches`（读 `window.innerWidth`）与 `change` 通知，**并记录/断言查询串**
+  （否则 `"(min-width: 768px)"` 写错也全绿）；跨断点用「改宽度 + 手动派发 `change`」模拟。
 - **手势**：`dispatchEvent(new PointerEvent(...))` 驱动，断言**最终 `crop` / 视图状态**——
   **不断言 canvas 的绘制调用**（那测的是我自己的画法，不是行为）。
 - **canvas 相关只留一条**：「按 DPR 设了 `width/height` 并调用了 `drawImage`」；不声称测了画面。

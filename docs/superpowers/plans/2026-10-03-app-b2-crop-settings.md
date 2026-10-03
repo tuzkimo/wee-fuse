@@ -27,7 +27,7 @@
 - 变异验证必须报告「**改了哪一行、改成什么**」与**原始输出**。只报「红了几条」无法被复核，本项目已因此两次得出错误结论。
 - 控制者纪律：不在子代理运行期间跑全量测试；不清理 `%TEMP%` 下本会话的目录；报告工作树状态前连读两次 `git status`。
 - 实现者**不许自己派审查者**；任务级审查由控制者另派全新子代理。
-- 测试环境的实测事实（决定了哪些断言可写、哪些只能是桩）：happy-dom 无 `indexedDB`（用 `fake-indexeddb/auto`）；全局 `Blob` 过不了结构化克隆；`fetch` 拒绝 `blob:` scheme（`<img>` 挂 blob URL 永不 load、`naturalWidth` 恒 0）；canvas 是桩（`getContext("2d")` 返回 `null`、`toDataURL` 返回空字节）；`ResizeObserver.observe()` 是空实现；`getBoundingClientRect()` 返回全 0；`matchMedia` **真实**按 `window.innerWidth` 求值 `min-width`；`window.devicePixelRatio` 可赋值；`PointerEvent` 与 `Element.setPointerCapture` 都有真实实现。
+- 测试环境的实测事实（决定了哪些断言可写、哪些只能是桩）：happy-dom 无 `indexedDB`（用 `fake-indexeddb/auto`）；全局 `Blob` 过不了结构化克隆；`fetch` 拒绝 `blob:` scheme（`<img>` 挂 blob URL 永不 load、`naturalWidth` 恒 0）；canvas 是桩（`getContext("2d")` 返回 `null`、`toDataURL` 返回空字节）；`ResizeObserver.observe()` 是空实现；`getBoundingClientRect()` 返回全 0；**`matchMedia` 在 vitest 的 happy-dom 环境里不随 `window.innerWidth` 变**（实测：`window.innerWidth` 可读回 500/2000，但 `matchMedia("(min-width: 768px)").matches` 恒 true、`(min-width: 2000px)` 恒 false——happy-dom 默认视口 1024；**bare `new Window()` 里 `matches` 却是实时求值的**，两者不是同一个对象），所以组件的断点测试**必须打桩 `matchMedia`**，且桩要记录并断言查询串；`window.devicePixelRatio` 可赋值；`PointerEvent` 与 `Element.setPointerCapture` 都有真实实现。
 
 ## 既有测试的处置（动手删 `GeneratePage` 之前必须先做完）
 
