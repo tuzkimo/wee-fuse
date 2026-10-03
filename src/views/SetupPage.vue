@@ -11,6 +11,7 @@ import { useRouter } from "vue-router";
 import { centerSquare, isCropResolvable, type AspectLock } from "@/core/crop/rect";
 import type { ZoomLevel } from "@/core/crop/view";
 import { rotatedSize } from "@/core/image/rotate";
+import { boardCount, beadsToCm, formatCm } from "@/core/pattern/board";
 import { computeGridSize } from "@/core/pattern/build";
 import { patternStats } from "@/core/pattern/stats";
 import { EMPTY } from "@/core/pattern/types";
@@ -126,6 +127,28 @@ const resultStats = computed(() =>
   session.pattern === null ? null : patternStats(session.pattern, palette),
 );
 
+/**
+ * 结果阶段的尺寸三行（规格 §6.3）。
+ *
+ * **口径是产物自身**（`session.pattern.width/height`），不是「裁剪 + 长边 → 预测网格」那套重算
+ * ——后者是 `ParamPanel` 的来源，两者互为校验（规格 §6.3 的 2026-10-03 修正）：生成之后用户还能
+ * 在右栏改长边（平板两栏常驻），此刻预测值会变，而**已经落盘的产物**没有变，结果面板必须报产物
+ * 那一份，否则用户看到的尺寸与库里的图纸对不上。
+ *
+ * 厘米与板数复用 `core/pattern/board.ts` 的 `beadsToCm` / `formatCm` / `boardCount`，与参数面板
+ * 同一组换算、不写第二份。
+ */
+const resultSize = computed(() => {
+  if (session.pattern === null) return null;
+  const { width, height } = session.pattern;
+  const boards = boardCount(width, height);
+  return {
+    size: `成品 ${width} × ${height} 颗`,
+    cm: `约 ${formatCm(beadsToCm(width))} × ${formatCm(beadsToCm(height))} 厘米`,
+    boards: `需要 ${boards.cols} × ${boards.rows} = ${boards.total} 块板`,
+  };
+});
+
 function onMediaChange(event: MediaQueryListEvent): void {
   isWide.value = event.matches;
 }
@@ -187,6 +210,12 @@ async function generate(): Promise<void> {
   // 重入闸门：`disabled` 要等 Vue patch 完 DOM（微任务）才生效，同一 tick 内的第二次派发看到的
   // 按钮仍是可用的，没有这道闸门就会跑两遍流水线、`put` 两条记录（任务 10 的 `PickPage` 同一处置）。
   if (draft.busy) return;
+
+  // **纵深防御**：`blockedReason`（选区太小 / 存储不可用）目前只挂在 `ParamPanel` 的 `disabled`
+  // 上——那是 UI 层的一道闸门，将来出现第二个入口（快捷键、另一个按钮、从编辑器直接触发）就会
+  // 绕过它，跑出一张「每格分不到一个源像素」的图纸。与「流水线自己拒绝越界 crop，即使 UI 已夹取」
+  // 是同一模式：门槛必须有第二处承重。UI 已经说明了原因，这里**静默返回**即可，不再写一条错误。
+  if (blockedReason.value !== "") return;
 
   const source = draft.source;
   const sourceSize = draft.sourceSize;
@@ -367,6 +396,7 @@ function resetCrop(): void {
         <p v-if="resultStats" data-testid="result-stats" class="mt-1 text-base text-slate-600">
           实际用了 {{ resultStats.colorCount }} 种颜色，共 {{ resultStats.total }} 颗豆
         </p>
+        <p v-if="resultSize" data-testid="result-size" class="mt-1 text-base text-slate-600">{{ resultSize.size }}，{{ resultSize.cm }}，{{ resultSize.boards }}</p>
         <div class="mt-4 flex flex-wrap gap-3">
           <button
             v-if="!isWide"
@@ -375,6 +405,14 @@ function resetCrop(): void {
             @click="draft.setStage('params')"
           >
             改参数
+          </button>
+          <button
+            v-if="isWide"
+            data-testid="back-to-crop"
+            class="min-h-12 rounded border border-slate-300 px-4 text-base"
+            @click="draft.setStage('crop')"
+          >
+            改选区
           </button>
           <button
             data-testid="open-editor"

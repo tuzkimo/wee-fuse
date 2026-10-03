@@ -2,9 +2,10 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
-import { setProjectStore } from "@/services/projectStore";
+import { defaultProjectName, setProjectStore } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
+import ParamPanel from "@/components/param/ParamPanel.vue";
 import SetupPage from "@/views/SetupPage.vue";
 
 /**
@@ -20,6 +21,12 @@ const push = vi.fn();
 vi.mock("vue-router", () => ({ useRouter: () => ({ push }) }));
 
 const FILE = new File([new Uint8Array([1, 2, 3, 4])], "小猫照片.png", { type: "image/png" });
+
+/**
+ * 第二张夹具：**文件名与 `FILE` 不同**，用来证明落盘的工程名是从**用户选的那个文件名**派生的，
+ * 而不是任何常量或第一张图的名字（期望值由 `defaultProjectName(photo.name)` 现算，不写字符串）。
+ */
+const PHOTO = new File([new Uint8Array([5, 6, 7, 8])], "海边日落.jpeg", { type: "image/jpeg" });
 
 /**
  * 假 2D 上下文：`drawImage` 记参数，`getImageData` 交回调用方指定的像素。
@@ -185,11 +192,11 @@ function fakePreview(): HTMLCanvasElement {
   return { width: 800, height: 600, getContext: () => makeCtx(new Uint8ClampedArray(0)) } as unknown as HTMLCanvasElement;
 }
 
-/** 选好图并落一份已知选区：端到端用例的固定起点。 */
-function seedDraft(crop = { x: 200, y: 100, width: 400, height: 300 }) {
+/** 选好图并落一份已知选区：端到端用例的固定起点。`file` 可换成别的夹具（名字派生那条用它）。 */
+function seedDraft(crop = { x: 200, y: 100, width: 400, height: 300 }, file: File = FILE) {
   const draft = useDraft();
   draft.adoptImage({
-    source: { blob: FILE, type: "image/png", name: "小猫照片.png" },
+    source: { blob: file, type: file.type, name: file.name },
     sourceSize: { width: 800, height: 600 },
     preview: fakePreview(),
   });
@@ -204,6 +211,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   push.mockClear();
@@ -368,32 +376,71 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     expect(record?.doc.height).toBe(58);
     expect(wrapper.get("[data-testid='summary']").text()).toContain("44 × 58 颗");
   });
-});
 
-describe("端到端 2：就地重跑覆盖同一条记录", () => {
-  it("id / 名称 / createdAt 不变，updatedAt 变，参数是新的", async () => {
+  it("首次生成的工程名按**所选文件名**派生（常量或写死字符串在这里是红的）", async () => {
     stubPlatform();
-    const draft = seedDraft();
+    // 换一张文件名不同的夹具：期望值**现算**（`defaultProjectName(PHOTO.name)`），
+    // 不写 "海边日落" 这样的字符串——写死就变成自证，也证明不了名字来自用户选的那个文件。
+    seedDraft(undefined, PHOTO);
+
     const wrapper = mount(SetupPage);
     await flushPromises();
     await wrapper.get("[data-testid='generate']").trigger("click");
     await flushPromises();
 
     const store = (await import("@/services/projectStore")).getProjectStore();
-    const first = (await store.list())[0]!;
-
-    draft.setLongSide(116);
-    await wrapper.get("[data-testid='generate']").trigger("click");
-    await flushPromises();
-
     const metas = await store.list();
     expect(metas).toHaveLength(1);
-    const second = metas[0]!;
-    expect(second.id).toBe(first.id);
-    expect(second.name).toBe(first.name);
-    expect(second.createdAt).toBe(first.createdAt);
-    expect(second.updatedAt >= first.updatedAt).toBe(true);
-    expect((await store.get(second.id))?.doc.params.longSide).toBe(116);
+    // 期望值现算：`defaultProjectName("海边日落.jpeg")` = "海边日落"（去扩展名）——它不是回落名
+    // 「新图纸」，也不是 `FILE` 的名字，所以「把 `defaultProjectName(source.name)` 换成常量」
+    // 这类改动在这里必红。
+    expect(metas[0]!.name).toBe(defaultProjectName(PHOTO.name));
+  });
+});
+
+describe("端到端 2：就地重跑覆盖同一条记录", () => {
+  it("id / 名称 / createdAt 不变，updatedAt 严格变大，参数是新的", async () => {
+    stubPlatform();
+    const draft = seedDraft();
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    // 假时钟：两次生成的时刻**人为拉开**，于是「刷新」与「原样保留」在 `updatedAt` 上可分辨——
+    // `>=` 两者都绿，只有严格 `>` 能把「重跑后 updatedAt 没动」判红。
+    //
+    // 只伪造 `Date`（`toFake: ["Date"]`）、**不**伪造计时器：`@vue/test-utils` 的
+    // `flushPromises` 走 `setImmediate`，把计时器一起冻住会让每一次 `await flushPromises()`
+    // 永远挂住——那是测试基础设施的坑，不是被测行为。
+    const t1 = new Date("2026-10-03T10:00:00.000Z");
+    const t2 = new Date("2026-10-03T10:05:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(t1);
+      await wrapper.get("[data-testid='generate']").trigger("click");
+      await flushPromises();
+
+      const store = (await import("@/services/projectStore")).getProjectStore();
+      const first = (await store.list())[0]!;
+      expect(first.updatedAt).toBe(t1.toISOString());
+
+      vi.setSystemTime(t2);
+      draft.setLongSide(116);
+      await wrapper.get("[data-testid='generate']").trigger("click");
+      await flushPromises();
+
+      const metas = await store.list();
+      expect(metas).toHaveLength(1);
+      const second = metas[0]!;
+      expect(second.id).toBe(first.id);
+      expect(second.name).toBe(first.name);
+      expect(second.createdAt).toBe(first.createdAt);
+      // 严格大于：`updatedAt === first.updatedAt`（原样保留）在这里是红的。
+      expect(second.updatedAt > first.updatedAt).toBe(true);
+      expect(second.updatedAt).toBe(t2.toISOString());
+      expect((await store.get(second.id))?.doc.params.longSide).toBe(116);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("档位三档落盘分别是 16 / 32 / null（B1 的三条断言在这里的新家）", async () => {
@@ -424,14 +471,65 @@ describe("生成前的门槛与失败路径", () => {
     await flushPromises();
 
     expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("选区 50 × 50 像素");
-    // 阻拦的**机制**是禁用按钮（简报只断言了「没生成」，那条在本环境里取决于 happy-dom
-    // 是否把 click 派发给 disabled 按钮——见报告 §测试侧更正 T3）。
+    // 阻拦的第一道是禁用按钮（`ParamPanel` 的 `disabled`）
     expect((wrapper.get("[data-testid='generate']").element as HTMLButtonElement).disabled).toBe(true);
-    await wrapper.get("[data-testid='generate']").trigger("click");
+
+    // 第二道是 `generate()` 自己的 `blockedReason` 复检：**直接触发处理函数**（`ParamPanel` 的
+    // `generate` 事件），而不是去点那个 disabled 按钮——本环境不给 disabled 按钮派发 click，
+    // 点它「什么都没发生」既可能是守卫拦下了，也可能只是 DOM 没派发，两者分不开。走事件则只经过
+    // 被复检的那一条路径（将来出现第二个入口——快捷键、别的按钮——正是这一条要挡的）。
+    wrapper.findComponent(ParamPanel).vm.$emit("generate");
     await flushPromises();
 
     expect(createBitmap).not.toHaveBeenCalled();
     expect(await (await import("@/services/projectStore")).getProjectStore().list()).toHaveLength(0);
+    // 守卫是**静默返回**：UI 已经在按钮上说明了原因，不再叠一条 `setup-error`
+    expect(wrapper.find("[data-testid='setup-error']").exists()).toBe(false);
+  });
+
+  it("换轴的选区按显示空间判定：20 × 100 + rotation 1 不被源坐标比误拦", async () => {
+    const { createBitmap } = stubPlatform();
+    const draft = seedDraft({ x: 0, y: 0, width: 20, height: 100 });
+    draft.setRotation(1);
+    draft.setLongSide(58);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    // 推导（每一步都用上面的取值）：
+    //   ① 显示空间尺寸 = rotatedSize(20, 100, 1) = 100 × 20（1/3 换轴）
+    //   ② 网格 = computeGridSize(100, 20, 58) = 58 × round(58×20/100) = 58 × 12
+    //   ③ 可解析 = 100 >= 58 且 20 >= 12 → true
+    // 忽略 rotation（只看源坐标 20 × 100 与网格 58 × 12）则 20 >= 58 为假 → 误拦一条真能拼的选区。
+    expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
+    expect((wrapper.get("[data-testid='generate']").element as HTMLButtonElement).disabled).toBe(false);
+
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    // 产物尺寸与显示空间口径一致：旋转后的图纸就是 58 × 12（`rotateGrid` 的最终尺寸 = ② 的网格）
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    const metas = await store.list();
+    expect(metas).toHaveLength(1);
+    const record = await store.get(metas[0]!.id);
+    expect([record?.doc.width, record?.doc.height]).toEqual([58, 12]);
+    expect(record?.doc.params.crop.rotate).toBe(1);
+    expect(createBitmap.mock.calls[0]?.slice(1, 5)).toEqual([0, 0, 20, 100]);
+  });
+
+  it("阻拦文案的数字也走显示空间：rotation 1 下报 100 × 20 而不是 20 × 100", async () => {
+    stubPlatform();
+    const draft = seedDraft({ x: 0, y: 0, width: 20, height: 100 });
+    draft.setRotation(1);
+    // 长边 110：显示空间 100 × 20 要拼 110 × 22 颗豆 → 100 >= 110 为假，确实该拦
+    draft.setLongSide(110);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    // 判据与提示必须同源：源坐标口径会打印「选区 20 × 100 像素」，把用户支去放大错的那条边。
+    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("选区 100 × 20 像素");
+    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("要拼 110 × 22 颗豆");
   });
 
   it("网格按选区算而不是按整图算（宽扁选区不被整图比例误拦）", async () => {
@@ -646,6 +744,87 @@ describe("结果阶段", () => {
     expect(wrapper.get("[data-testid='result-pane']").text()).toContain("已更新这张图纸");
     expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
     expect(wrapper.get("[data-testid='result-stats']").text()).toContain("实际用了");
+  });
+
+  it("结果面板的尺寸三行走**产物自身**，不是参数面板的重算预测值（§6.3）", async () => {
+    stubPlatform();
+    seedDraft(); // 选区 400×300、rotation 0、长边 58
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    // 产物：400×300 的选区 + 长边 58 → 58 × 44 颗（`computeGridSize(400,300,58)`，真流水线算的）
+    // 厘米 / 板数走 core 的同一组换算：58 颗 = 29.0 厘米、44 颗 = 22.0 厘米，
+    // 板数 ceil(58/29)=2 × ceil(44/29)=2 = 4 块。
+    const text = wrapper.get("[data-testid='result-size']").text();
+    expect(text).toContain("成品 58 × 44 颗");
+    expect(text).toContain("约 29.0 × 22.0 厘米");
+    expect(text).toContain("需要 2 × 2 = 4 块板");
+
+    // 生成之后在右栏改长边（平板两栏常驻）：**预测值变了，产物没有**。结果面板必须还报产物那一份，
+    // 否则用户看到的尺寸与库里的那张图纸对不上——这一条正是「重算预测值」写法的判死位。
+    await wrapper.get("[data-testid='long-side']").setValue("116");
+    expect(wrapper.get("[data-testid='summary']").text()).toContain("成品 116 × 87 颗");
+    expect(wrapper.get("[data-testid='result-size']").text()).toContain("成品 58 × 44 颗");
+  });
+
+  it("「去编辑」跳转的载荷是刚落盘那条记录的 id", async () => {
+    stubPlatform();
+    seedDraft();
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    const id = (await store.list())[0]!.id;
+    push.mockClear();
+
+    await wrapper.get("[data-testid='open-editor']").trigger("click");
+
+    // 只断言「点得到按钮」不够：id 传空串 / 传旧工程同样点得动，跳过去才是真出错。
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith({ name: "editor", params: { id } });
+  });
+
+  it("平板结果阶段能页内回选区（左栏当场换回画布）", async () => {
+    stubPlatform();
+    const draft = seedDraft();
+    window.innerWidth = 1024;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    expect(draft.stage).toBe("result");
+    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(false);
+
+    // 平板上「改参数」与「上一步」都是 `v-if="!isWide"`，结果阶段没有别的页内路径回选区
+    // （只能绕图纸库 → 编辑器）。这一条按钮就是那条路径。
+    await wrapper.get("[data-testid='back-to-crop']").trigger("click");
+
+    expect(draft.stage).toBe("crop");
+    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
+  });
+
+  it("手机结果阶段不渲染平板的「改选区」（手机走 改参数 → 上一步）", async () => {
+    stubPlatform();
+    seedDraft();
+    window.innerWidth = 500;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='to-params']").trigger("click");
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    // 同名 testid 的另一条（底部工具条）只在参数阶段出现，这里确认结果阶段两条都不在
+    expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
   });
 
   it("离开页面时草稿按 §9 的规则处理（已生成且保存成功 → 清空）", async () => {
