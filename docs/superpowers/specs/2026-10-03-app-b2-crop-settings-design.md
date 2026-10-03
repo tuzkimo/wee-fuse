@@ -385,7 +385,8 @@ export const useDraft = defineStore("draft", () => {
   rerunOf: { id: string; name: string; createdAt: string } | null
 
   // 选区与视图
-  crop: CropRect                               // 原图未旋转坐标
+  crop: Rect | null                            // 原图未旋转坐标；**null = 选区尚未落定**（adoptProject 之后、
+                                               // setSourceSize 之前），消费方必须 null 检查，否则就是「拿 null 算几何」
   rotation: Rotation
   aspect: AspectLock
   zoom: ZoomLevel
@@ -410,6 +411,9 @@ export const useDraft = defineStore("draft", () => {
 | 离开 `SetupPage`（含硬件返回键） | **总是**释放 `preview`（置 null）；下次进入若 `source` 仍在则重新解码 |
 | 离开时 `generated === true` 且此后没有改动 | **清空草稿**（图纸已在库里，重跑从 §7 的入口走） |
 | 离开时 `generated === false`（中途退出） | 保留 `source` / 几何 / 参数；`/new` 上给「继续上次的选区」入口 |
+
+**「继续上次」回到的是离开时的那一个阶段**（`stage` 不重置）：从参数阶段退出再进来就落在参数页，
+手机上用「上一步」回选区即可。规格在这里只定这一条，不再细化（用户没有迷路的可能，且选区与参数都在）。
 | 任何改动（拖框、改参数、换比例） | `generated = false` |
 
 `preview` 与 B1 的 `pattern` 同样用 `markRaw` 存放：canvas 被 Vue 深度代理既没有收益也有开销。
