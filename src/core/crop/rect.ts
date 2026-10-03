@@ -124,9 +124,13 @@ function requireHandle(handle: CropHandle): CropHandle {
  * 与 B1 临时入口的行为**逐位等价**（`Math.round((长 − 短) / 2)` 的居中口径），
  * 这样「换掉临时入口」不会顺带改变用户看到的初始选区。
  *
- * **为何公开**：本计划内由两处生产代码接上——任务 7 的 `stores/draft.ts` 在进入裁剪阶段时用它
- * 初始化草稿里的 `crop`，任务 8 的 `CropCanvas` 在「复位」时重算初始选区。**如实记录**：
- * 除本文件与用例之外，**目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ * **为何公开**：本计划内**真正会接上它的只有任务 7 的 `stores/draft.ts`**——它在进入裁剪阶段时用它
+ * 初始化草稿里的 `crop`，并在源图更换时重算（计划 2166 / 2274 / 2334 行）。**如实记录**：
+ * ① 任务 8 的 `CropCanvas` **没有**导入它（导入清单只有 `applyAspect` / `clampRectToSource` /
+ * `moveRect` / `resizeByHandle` 与两个类型）；② 任务 11 `SetupPage` 的「重置选区」按钮目前把
+ * 这段居中口径**又内联写了一遍**（计划 4257-4263 行），并没有调用本函数——那正是这段注释要防的漂移，
+ * 是否改调本函数由控制者裁决；③ 除本文件与用例之外，**目前暂无生产消费者**
+ * （`AGENTS.md`「公开 API ≠ 被使用的 API」）。
  */
 export function centerSquare(source: Size): Rect {
   requireSize(source, "源图");
