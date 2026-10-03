@@ -587,6 +587,36 @@ describe("生成前的门槛与失败路径", () => {
 
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("超出原图范围");
   });
+
+  /**
+   * B1 `GeneratePage.test.ts` 那条「存储未初始化时给出明确错误、不允许开工」的**新家**
+   * （计划 §「既有测试的处置」九条断言里的第 3 条）。删页前逐条核对时发现它在本文件里**没有**新家
+   * ——`setProjectStore(null)` 此前只出现在本文件的 `afterEach`（清理用，不是断言），
+   * 于是「把这条守卫整条拆掉」在全量 759 条里 0 条转红（原始输出见 `task-14-report.md`）。
+   *
+   * 判别力：把 `blockedReason` 里的 `if (storeError.value !== "") return storeError.value;` 改成
+   * `if (false)`、并把 `onMounted` 的 catch 里 `storeError.value = …` 改成 `storeError.value = ""`，
+   * 本用例的三条断言都会红（前两条红在 `blocked-reason` / `disabled`，第三条红在红框那行）。
+   *
+   * 为什么值得钉住：缺了这道守卫，用户会**先白跑一整条流水线**（解码 → 重采样 → 量化 → 构建 →
+   * 渲染封面），再由 `session.save()` 失败显示「图纸已生成，但保存失败：工程存储尚未初始化…」
+   * ——失败仍响亮，但把「没装存储」说成「保存失败」，且白跑一遍。
+   */
+  it("存储未注入时给出明确错误并禁用生成（B1 GeneratePage 那条断言的新家）", async () => {
+    stubPlatform();
+    seedDraft();
+    // 覆盖 `beforeEach` 的注入：本页唯一的状态来源是 `onMounted` 的 `getProjectStore()`。
+    setProjectStore(null);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    // ① 页面自己的红框（`SetupPage.vue` 的 `storeError` 分支；那段模板没有 testid，只能读文本）
+    expect(wrapper.text()).toContain("工程存储不可用");
+    // ② 不允许开工：原因经 `blockedReason` 进参数面板，按钮禁用（与上面「选区太小」那条对称）
+    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("工程存储尚未初始化");
+    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
+  });
 });
 
 describe("生成按钮的重入闸门", () => {

@@ -30,8 +30,9 @@ export function fileFromInput(input: HTMLInputElement | null): FileInputResult {
  * **为何公开**（规格 §13 第 10 条）：它是 `loadImageSource` 的「只读尺寸」姊妹 API——只要两个
  * 整数、不要预览位图的调用方用它（`/lab/decode` 与将来的真机分支都可能再用到）。选区页的主路径
  * 已由 `loadImageSource` 承担：后者一次解码就同时给出尺寸与预览位图，本函数因此被取代。
- * **截至本提交，生产消费者只剩 `views/GeneratePage.vue`**（计划任务 14 删除该页后归零，此后仅
- * 测试消费）；按规格保留不删，删它会连带改 `imageSource.test.ts` 的既有用例。
+ * **生产消费者已归零**：B1 的临时生成入口 `views/GeneratePage.vue` 曾是最后一个调用方，该页已在
+ * B2 任务 14 连同它的用例一起删除，此后只有测试消费本函数；按规格保留不删，删它会连带改
+ * `imageSource.test.ts` 的既有用例。
  */
 export function probeSourceSize(source: Blob): Promise<{ width: number; height: number }> {
   return probeImageSize(source);

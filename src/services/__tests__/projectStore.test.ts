@@ -10,8 +10,9 @@ import {
 /**
  * 这份用例覆盖 `services/projectStore.ts` **自己**的两个契约面：
  * ① 模块级单例适配器（B1-4 明确推后到 B2 —— 现在生成流程会真实消费它们）；
- * ② `defaultProjectName`（B1 时叫 `GeneratePage.defaultName`，随该页删除而迁到这里，
- *    原用例在 `GeneratePage.test.ts` 里，见计划开头的「既有测试的处置」）。
+ * ② `defaultProjectName`（B1 时叫 `GeneratePage.defaultName`；B2 期间把这份逻辑迁到本模块以消除
+ *    两份会漂的副本，原用例在 `GeneratePage.test.ts` 里——那一页与它的用例已在 B2 任务 14 删除，
+ *    见计划开头的「既有测试的处置」）。
  */
 
 afterEach(() => {
@@ -68,8 +69,8 @@ describe("defaultProjectName", () => {
     expect(name).toHaveLength(100);
     // 只断言长度是不够的：`"あ".repeat(150)` 是**全同字符**，`slice(-100)`、`slice(1, 101)`
     // 的长度同样是 100（实测：把 `slice(0, MAX)` 改成 `slice(-MAX)`，简报那几条全绿）。
-    // 所以这里用一个首字不同的串，把「留的是前 100 字」也钉住——与 `GeneratePage.defaultName`
-    // 逐字迁移的行为一致。
+    // 所以这里用一个首字不同的串，把「留的是前 100 字」也钉住——与 B1 的 `GeneratePage.defaultName`
+    // （那一页已在 B2 任务 14 删除，本函数是它唯一的后继）逐字迁移过来的行为一致。
     expect(defaultProjectName(`首${"あ".repeat(149)}.png`)).toBe(`首${"あ".repeat(99)}`);
   });
 

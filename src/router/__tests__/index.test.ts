@@ -21,7 +21,7 @@ describe("router", () => {
     expect(route.name).toBe("pick");
     expect(route.path).toBe("/new");
 
-    // 只断言 name / path 的话，把 `component` 换回 GeneratePage 照样绿（懒加载器不会因为
+    // 只断言 name / path 的话，把 `component` 换成任何一个别的页面照样绿（懒加载器不会因为
     // `resolve` 就被调用）。这里直接把那个 loader 跑一次，做**恒等**比较。
     const loader = route.matched[0]?.components?.default;
     expect(typeof loader).toBe("function");

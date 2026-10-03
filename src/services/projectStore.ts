@@ -75,7 +75,7 @@ export function normalizeProjectName(name: unknown): string {
  * 的死路，必须在源头截断。
  *
  * **为何公开**：它是「新建工程」这一动作的默认名来源，由 B2 的选区 / 参数页（`SetupPage`，
- * 接替 B1 的 `GeneratePage`）在生产代码里消费——导出即承诺，故连同其输入校验一起固化在
+ * 接替 B1 已删除的 `GeneratePage`）在生产代码里消费——导出即承诺，故连同其输入校验一起固化在
  * 本文件的契约面上。
  *
  * **入参取 `unknown` 并在运行期校验**：文件名来自 `File.name`，在 TS 里是 `string`，但
