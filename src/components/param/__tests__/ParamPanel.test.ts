@@ -152,13 +152,18 @@ describe("档位与色卡", () => {
 describe("生成按钮", () => {
   it("点按 emit generate", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    const button = wrapper.get("[data-testid='generate']");
+    expect(button.text()).toContain("生成图纸");
+    await button.trigger("click");
     expect(wrapper.emitted("generate")).toHaveLength(1);
   });
 
   it("busy 期间禁用（禁止并发生成）", () => {
     const wrapper = mountPanel({ busy: true });
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
+    const button = wrapper.get("[data-testid='generate']");
+    expect(button.attributes("disabled")).toBeDefined();
+    // 长任务期间唯一的进度反馈（点按后的即时回应就是这行字）。
+    expect(button.text()).toContain("正在生成");
   });
 
   it("父级给出的阻拦原因会显示出来并禁用生成（选区太小等）", () => {
