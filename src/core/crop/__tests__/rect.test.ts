@@ -8,7 +8,7 @@ import {
   moveRect,
   resizeByHandle,
 } from "../rect";
-import { orientedToSource, sourceRectToOriented } from "../view";
+import { orientedSizeOf, orientedToSource, sourceRectToOriented } from "../view";
 
 const SOURCE = { width: 800, height: 600 };
 
@@ -145,10 +145,94 @@ describe("applyAspect", () => {
   });
 
   // 如实记录的取舍：贴边 / 极小源图上，最小边长与「不越界」优先于比例锁。
+  //
+  // ⚠️ 修复轮 3（审查驱动）：这一条**擦着边界过**，是一条假覆盖——3 × 9/16 = 1.6875 ≥ 1，
+  // 所以它从未走到「内接结果 < 1」那条路径上；真正的边界在**短边 < 2** 时才出现（下面四条）。
   it("源图小到装不下比例时，最小边长优先（比例允许失真）", () => {
     const locked = applyAspect({ x: 0, y: 0, width: 3, height: 3 }, "9:16", 0, { width: 3, height: 3 });
     expect(locked.width).toBe(MIN_CROP_SIDE);
     expect(locked.height).toBe(3);
+  });
+
+  // 边界修正（修复轮 3，审查驱动）：短边 × 0.5625 < 1 时，内接结果若原样交给 `clampRectToSource`，
+  // 会被其中的 `requireRect` 当成**非法输入抛错**——而这些都是**合法输入**，规格 §4.3 对它们的要求是
+  // 「源图本身小于 2 像素时取整张图」。抬底必须发生在 `clampRectToSource` **之前**。
+  //
+  // 抬底后的下界是 `min(MIN_CROP_SIDE, 源图对应边)`，不是 `MIN_CROP_SIDE` 本身：1 像素的源图不可能
+  // 给出 2 像素的选区（`clampRectToSource` 会按源图边长封顶）——「两轴都 ≥ MIN_CROP_SIDE」这个说法在
+  // 源图本身就小于 2 时不成立，此处按规格的真实下界断言，免得写出一条永远无法为真的期望。
+  const liftedLowerBound = (source: { width: number; height: number }) => ({
+    width: Math.min(MIN_CROP_SIDE, source.width),
+    height: Math.min(MIN_CROP_SIDE, source.height),
+  });
+
+  it("1×1 源图 + 9:16（rotation 0）：不抛错，退化成整张图", () => {
+    const source = { width: 1, height: 1 };
+    const rect = { x: 0, y: 0, width: 1, height: 1 };
+    expect(() => applyAspect(rect, "9:16", 0, source)).not.toThrow();
+    const locked = applyAspect(rect, "9:16", 0, source);
+    expect(locked).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    const bound = liftedLowerBound(source);
+    expect(locked.width).toBeGreaterThanOrEqual(bound.width);
+    expect(locked.height).toBeGreaterThanOrEqual(bound.height);
+  });
+
+  it("800×1 源图 + 9:16（rotation 0）：不抛错，被压扁的宽抬到最小边长", () => {
+    const source = { width: 800, height: 1 };
+    const rect = { x: 0, y: 0, width: 800, height: 1 };
+    expect(() => applyAspect(rect, "9:16", 0, source)).not.toThrow();
+    const locked = applyAspect(rect, "9:16", 0, source);
+    // 短边是源图的**高**（1）⇒ 内接宽 = 1 × 0.5625 = 0.5625 < 1；抬底后宽恰好 = MIN_CROP_SIDE，
+    // 高仍由源图那 1 像素封顶（`clampRectToSource` 的 `min(…, source.height)`）。
+    expect(locked).toEqual({ x: 399, y: 0, width: MIN_CROP_SIDE, height: 1 });
+    expect(locked.height).toBeGreaterThanOrEqual(liftedLowerBound(source).height);
+  });
+
+  it("1×800 源图 + 9:16（rotation 1）：抬底落在源坐标的 height 上（显式核对换轴方向）", () => {
+    const source = { width: 1, height: 800 };
+    const rect = { x: 0, y: 0, width: 1, height: 800 };
+    expect(() => applyAspect(rect, "9:16", 1, source)).not.toThrow();
+    const locked = applyAspect(rect, "9:16", 1, source);
+    // rotation 1 下显示空间的「宽」落在**源坐标的 height** 上，而 9:16 约束的正是显示空间的宽，
+    // 所以被抬到 MIN_CROP_SIDE 的是**源 height**；源 width 被源图那 1 像素封顶、不参与抬底。
+    // 这条不只断言数值，还显式钉住「哪一根轴被抬」——把抬底写到另一根轴上会立刻红。
+    expect(locked).toEqual({ x: 0, y: 399, width: 1, height: MIN_CROP_SIDE });
+    expect(locked.width).toBe(Math.min(MIN_CROP_SIDE, source.width));
+    expect(locked.height).toBe(MIN_CROP_SIDE);
+    // 显示空间复核：宽 = 2（抬底后）、高 = 1（源 width 封顶）——换轴方向在显示空间里同样成立。
+    expect(sourceRectToOriented(locked, 1, source)).toEqual({ x: 399, y: 0, width: MIN_CROP_SIDE, height: 1 });
+  });
+
+  // 规格 §4.2 明文：「所以 `applyAspect` 的用例必须含 `rotation: 1` 与 `3`」。此前只有 1。
+  // 不硬编码一组数字交差，断言的是**性质**：
+  //   (a) 发出的选区在显示空间里的宽高比 ≈ 目标比例（忽略 rotation 的实现会给出 0.75）；
+  //   (b) 同一输入下 rotation 3 与 rotation 1 在显示空间里**同形**，位置相差显示空间的 180° 翻转
+  //       （由 `sourceToOriented` 的定义直接导出，不是巧合）；
+  //   (c) 竖版锁 9:16 下，rotation 3 与 rotation 0 的结果在源坐标里恰好是宽高互换。
+  it("rotation 3：显示空间比例对上目标锁，且与 rotation 1 在显示空间同形", () => {
+    const base = { x: 0, y: 0, width: 400, height: 200 };
+    const atOne = applyAspect(base, "4:3", 1, SOURCE);
+    const atThree = applyAspect(base, "4:3", 3, SOURCE);
+
+    // (a) 显示空间比例 ≈ 4:3。
+    const displayOne = sourceRectToOriented(atOne, 1, SOURCE);
+    const displayThree = sourceRectToOriented(atThree, 3, SOURCE);
+    expect(displayThree.width / displayThree.height).toBeCloseTo(4 / 3, 10);
+
+    // (b) 同形 + 位置相差 180° 翻转（显示空间的尺寸 = 源图旋转后的尺寸）。
+    const oriented = orientedSizeOf(SOURCE, 3);
+    expect(displayThree.width).toBeCloseTo(displayOne.width, 10);
+    expect(displayThree.height).toBeCloseTo(displayOne.height, 10);
+    expect(displayThree.x).toBeCloseTo(oriented.width - (displayOne.x + displayOne.width), 10);
+    expect(displayThree.y).toBeCloseTo(oriented.height - (displayOne.y + displayOne.height), 10);
+
+    // (c) 9:16（竖版）下换回源坐标时的宽高互换。
+    const portraitZero = applyAspect({ x: 0, y: 0, width: 400, height: 400 }, "9:16", 0, SOURCE);
+    const portraitThree = applyAspect({ x: 0, y: 0, width: 400, height: 400 }, "9:16", 3, SOURCE);
+    expect(portraitThree.width).toBeCloseTo(portraitZero.height, 10);
+    expect(portraitThree.height).toBeCloseTo(portraitZero.width, 10);
+    const portraitDisplay = sourceRectToOriented(portraitThree, 3, SOURCE);
+    expect(portraitDisplay.width / portraitDisplay.height).toBeCloseTo(9 / 16, 10);
   });
 });
 

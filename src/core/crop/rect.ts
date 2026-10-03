@@ -27,10 +27,22 @@ import type { Point, Size } from "./view";
  */
 export const MIN_CROP_SIDE = 2;
 
-/** 比例锁。比例定义在**显示空间**（用户看到的形状）。 */
+/**
+ * 比例锁。比例定义在**显示空间**（用户看到的形状），所以 1 / 3 下它约束的是源坐标的另一根轴。
+ *
+ * **为何公开**：本计划内由两处生产代码接上——任务 7 的 `stores/draft.ts` 用它声明草稿里的
+ * `params.aspect` 类型，任务 8 的 `CropCanvas` 用它声明 props。**如实记录**：除本文件与用例之外，
+ * **目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ */
 export type AspectLock = "free" | "1:1" | "4:3" | "9:16";
 
-/** 四个角手柄。 */
+/**
+ * 四个角手柄。手柄名按**显示空间**（用户看到的屏幕）的角解释，不按源坐标解释——
+ * 见 `resizeByHandle` 的 JSDoc（1 / 3 下源坐标左上 ↦ 显示空间右上）。
+ *
+ * **为何公开**：任务 8 的 `CropCanvas` 用它声明手势状态的 `resize` 分支、手柄命中表与
+ * `update:crop` 事件链上的透传类型。**如实记录**：除本文件与用例之外，**目前暂无生产消费者**。
+ */
 export type CropHandle = "nw" | "ne" | "sw" | "se";
 
 const ASPECT_RATIOS: Readonly<Record<Exclude<AspectLock, "free">, number>> = {
@@ -111,6 +123,10 @@ function requireHandle(handle: CropHandle): CropHandle {
  *
  * 与 B1 临时入口的行为**逐位等价**（`Math.round((长 − 短) / 2)` 的居中口径），
  * 这样「换掉临时入口」不会顺带改变用户看到的初始选区。
+ *
+ * **为何公开**：本计划内由两处生产代码接上——任务 7 的 `stores/draft.ts` 在进入裁剪阶段时用它
+ * 初始化草稿里的 `crop`，任务 8 的 `CropCanvas` 在「复位」时重算初始选区。**如实记录**：
+ * 除本文件与用例之外，**目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
  */
 export function centerSquare(source: Size): Rect {
   requireSize(source, "源图");
@@ -128,6 +144,14 @@ export function centerSquare(source: Size): Rect {
  *
  * 尺寸被夹到 `[MIN_CROP_SIDE, 源图对应边]`（源图本身比最小边长还小时取源图边长），
  * 位置被夹到 `[0, 源图对应边 − 尺寸]`。顺序不能反：先定位再定尺寸会算出负的可用空间。
+ *
+ * 它是本模块所有出口的最后一站，所以入口校验（`requireRect` / `requireSize`）也落在这里：
+ * 宽高 < 1 的退化矩形是**非法输入**，抛错而不是静默夹取——但调用方必须在把结果交给它之前
+ * 自己抬底（`applyAspect` / `resizeByHandle` 都这么做），否则合法输入会撞上这道守卫。
+ *
+ * **为何公开**：本计划内由两处生产代码接上——任务 7 的 `stores/draft.ts` 在 `setCrop` 里把
+ * 越界矩形夹回来并在源图更换时重建草稿，任务 8 的 `CropCanvas` 在比例锁切换后收尾夹取。
+ * **如实记录**：除本文件与用例之外，**目前暂无生产消费者**。
  */
 export function clampRectToSource(rect: Rect, source: Size): Rect {
   requireRect(rect, "选区");
@@ -142,7 +166,13 @@ export function clampRectToSource(rect: Rect, source: Size): Rect {
   };
 }
 
-/** 平移选区（`dx` / `dy` 是源图像素增量），越界被夹取。 */
+/**
+ * 平移选区（`dx` / `dy` 是源图像素增量），越界被夹取。
+ *
+ * **为何公开**：本计划内由任务 8 的 `CropCanvas` 接上——拖动选区时它把「本次指针位置与手势起点
+ * 的差」换算成源图像素增量，再交给本函数夹取。**如实记录**：除本文件与用例之外，
+ * **目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
+ */
 export function moveRect(rect: Rect, dx: number, dy: number, source: Size): Rect {
   requireFinite(dx, "水平位移");
   requireFinite(dy, "垂直位移");
@@ -155,8 +185,20 @@ export function moveRect(rect: Rect, dx: number, dy: number, source: Size): Rect
  * 比例定义在显示空间，所以先在 `rotation` 下算出朝向后的尺寸、按比例收缩、再换回源坐标
  * （`rotatedSize` 对 1 / 3 是自逆，所以同一个函数正好做两次换算）。
  *
- * **取舍**：输入先被夹取一次（否则末尾的夹取会破坏比例）；而在贴边或极小源图上，
- * 最小边长与「不越界」优先于比例锁——宁可比例略有偏差，也不产出越界的 `crop`。
+ * **取舍（与 `resizeByHandle` 写的是同一口径）**：最小边长与「不越界」优先于比例锁——宁可比例
+ * 略有偏差，也绝不产出越界或**非法**的 `crop`。它落在两件事上：
+ *
+ * 1. 输入先夹取一次，否则末尾那次夹取会破坏比例；
+ * 2. 内接结果的两轴在交给 `clampRectToSource` **之前**先抬到 `MIN_CROP_SIDE`。这一步不是可选的：
+ *    短边 × 0.5625（`9:16`）在短边 < 2 时必然 < 1，而 `clampRectToSource` 的第一个动作是
+ *    `requireRect`——它会把 < 1 的尺寸当成**非法输入抛错**。1×1 / 800×1 / 1×800 这类源图都是
+ *    合法输入，规格 §4.3 对它们的要求是「源图本身小于 2 像素时取整张图」，而不是异常。
+ *    抬底后由 `clampRectToSource` 再按源图边长封顶：1×1 源图得到 1×1（整张图），
+ *    800×1 源图得到 2×1（宽被抬起、高仍由源图那 1 像素封顶）。中点用**抬底后**的边长重算，
+ *    否则矩形会偏离「以当前选区中心为锚」这一定义。
+ *
+ * **为何公开**：本计划内由任务 8 的 `CropCanvas` 接上——比例锁改 props 后由它的 `watch`
+ * 调用本函数把当前选区收进新比例。**如实记录**：除本文件与用例之外，**目前暂无生产消费者**。
  */
 export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, source: Size): Rect {
   requireAspect(aspect);
@@ -168,10 +210,13 @@ export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, 
   const width = oriented.width / oriented.height > ratio ? oriented.height * ratio : oriented.width;
   const height = oriented.width / oriented.height > ratio ? oriented.height : oriented.width / ratio;
   const back = rotatedSize(width, height, rotation);
+  // 两轴抬底必须在 `clampRectToSource` 之前（理由见 JSDoc 第 2 条）。
+  const liftedWidth = Math.max(back.width, MIN_CROP_SIDE);
+  const liftedHeight = Math.max(back.height, MIN_CROP_SIDE);
   const centerX = base.x + base.width / 2;
   const centerY = base.y + base.height / 2;
   return clampRectToSource(
-    { x: centerX - back.width / 2, y: centerY - back.height / 2, width: back.width, height: back.height },
+    { x: centerX - liftedWidth / 2, y: centerY - liftedHeight / 2, width: liftedWidth, height: liftedHeight },
     source,
   );
 }
@@ -191,6 +236,16 @@ export function applyAspect(rect: Rect, aspect: AspectLock, rotation: Rotation, 
  *
  * 比例锁因此是显示空间里的**直接** `width / height` 比较，不需要 `rotatedSize` 换轴
  * （它仍被 `applyAspect` 与 `isCropResolvable` 使用）。
+ *
+ * **取舍（与 `applyAspect` 写的是同一口径）**：最小边长与「不越界」优先于比例锁——宁可比例略有
+ * 偏差，也绝不产出越界或**非法**的 `crop`。`free` 比例下这条同样成立：指针被拖到与锚点同一列 /
+ * 同一行（把角手柄拖到与对角对齐）是用户可达的正常操作，不抬底就会把 0 宽 / 0 高交给
+ * `clampRectToSource` 的 `requireRect` 而被当成非法输入抛错，而不是「停在最小边长」。
+ * 比例锁分支里的抬底还兼有第二个作用：不抬的话原始宽高是 0 / 0，比例算式会得到 `NaN`。
+ *
+ * **为何公开**：本计划内由任务 8 的 `CropCanvas` 接上——缩放拖动时它在 `sourceRectToScreen`
+ * 的屏幕矩形上做手柄命中判定，再把同名手柄与源坐标指针透传进本函数。**如实记录**：
+ * 除本文件与用例之外，**目前暂无生产消费者**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
  */
 export function resizeByHandle(
   rect: Rect,
