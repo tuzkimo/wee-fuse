@@ -79,7 +79,17 @@ async function run(): Promise<void> {
 
     const platform = createDomBitmapPlatform();
     const pattern = await generatePattern(
-      { source: picked.file, crop, rotation: 0, longSide: targetLongSide, maxColors: targetMaxColors },
+      {
+        source: picked.file,
+        // 临时兼容（任务 6 → 任务 14）：`sourceSize` 现在是必填，本页在任务 14 被删除，
+        // 这里直接把上面 `probeSourceSize` 拿到的尺寸传下去。本页的裁剪是居中内接正方形，
+        // 由构造方式保证不越界（B1 记录 §5 的推理），所以不会触发新校验。
+        sourceSize: size,
+        crop,
+        rotation: 0,
+        longSide: targetLongSide,
+        maxColors: targetMaxColors,
+      },
       {
         exactDecoder: createExactDecoder(platform),
         fastDecoder: createFastDecoder(platform),
