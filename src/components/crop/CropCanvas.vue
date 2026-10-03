@@ -135,6 +135,10 @@ function onPointerDown(event: PointerEvent): void {
   // 非主指针（平板上第二根及以后的手指、副笔）直接忽略：不开始手势、也不 preventDefault——
   // 后面那半条同样重要，别处的默认行为不该被这个组件顺手吞掉。
   if (event.isPrimary === false) return;
+  // 只有主键（左键 / 触摸 / 笔尖）能开始手势：`isPrimary` 对鼠标**恒为 true**，右键 / 中键
+  // 照样派发 pointerdown，不拦就会开始一次 resize / move / pan。同样**不 preventDefault**——
+  // 右键菜单这类别处的默认行为不该被这个组件吞掉。
+  if (event.button !== 0) return;
   // 已有手势在进行时忽略新的按下：覆盖起点快照会把正在拖的选框拽到新指针的位置。
   if (gesture.value !== null) return;
 
@@ -192,6 +196,14 @@ function onPointerMove(event: PointerEvent): void {
   emit("update:crop", moveRect(startCrop, source.x - from.x, source.y - from.y, props.sourceSize));
 }
 
+/**
+ * 结束手势。三个事件都接它：`pointerup` / `pointercancel` / `lostpointercapture`。
+ *
+ * 最后一个不是多余的：`setPointerCapture` 抛 `NotFoundError`、或捕获被浏览器无声丢失时，
+ * 前两个可能永远不来，而「手势进行中忽略新的 pointerdown」那条守卫会让画布**永久卡死**
+ * （`gesture` 一直非 null，此后任何按下都被吞掉）。`lostpointercapture` 是浏览器在捕获丢失时
+ * 保证派发的那个事件。指针 id 过滤在这里天然安全：非本手势的指针不会动到 `gesture`。
+ */
 function onPointerUp(event: PointerEvent): void {
   // 只有发起手势的那根指针能把手势结束掉（第二根手指抬起不该中断第一根手指的拖动）。
   if (event.pointerId !== activePointerId) return;
@@ -297,9 +309,11 @@ onBeforeUnmount(() => {
   observer = null;
 });
 
-watch([() => props.preview, () => props.crop, () => props.rotation, () => props.zoom, () => props.pan], () => draw(), {
-  deep: true,
-});
+// 五个 watch 源都是**浅引用 / 标量**：`crop` 与 `pan` 每次变化在 store 里都是新对象
+// （`setCrop` 走 `clampRectToSource`、`setPan` 直接构造），浅比较足够。
+// 不加 `deep: true`：它对 `preview`（一个 canvas 元素）每次重跑都要 `traverse` 整棵 DOM 子树，
+// 而 canvas 的内容变化无法被 traverse 看见——深度遍历在这里既昂贵又不会多发现任何变化。
+watch([() => props.preview, () => props.crop, () => props.rotation, () => props.zoom, () => props.pan], () => draw());
 </script>
 
 <template>
@@ -312,6 +326,7 @@ watch([() => props.preview, () => props.crop, () => props.rotation, () => props.
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
+      @lostpointercapture="onPointerUp"
     />
   </div>
 </template>

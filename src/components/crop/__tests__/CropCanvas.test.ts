@@ -33,12 +33,27 @@ function fakePreview(): HTMLCanvasElement {
   } as unknown as HTMLCanvasElement;
 }
 
-/** 假 ResizeObserver：happy-dom 的实现在 `observe()` 里什么都不做（实测），这里换成可断言的桩。 */
-function stubResizeObserver(): { observed: unknown[]; disconnected: number } {
+/**
+ * 假 ResizeObserver：happy-dom 的实现在 `observe()` 里什么都不做，这里换成可断言的桩。
+ *
+ * **回调必须被存下来**：上一版把它丢进 `_callback` 就再也不管，于是全文件没有任何一处驱动过
+ * 组件注册的那个回调——「容器尺寸变化 → 重算画布」这条用户可见行为**零守卫**（把组件里的
+ * `new ResizeObserver(() => resizeCanvas())` 换成 `new ResizeObserver(() => {})`，21 条照样全绿）。
+ * `fire()` 就是手动触发那次回调，与浏览器在容器尺寸变化时的调用同形。
+ */
+function stubResizeObserver(): { observed: unknown[]; disconnected: number; fire: () => void } {
   const observed: unknown[] = [];
-  const state = { observed, disconnected: 0 };
+  const state = {
+    observed,
+    disconnected: 0,
+    fire: (): void => {
+      throw new Error("组件没有构造 ResizeObserver，回调无从触发");
+    },
+  };
   class FakeResizeObserver {
-    constructor(_callback: unknown) {}
+    constructor(callback: (entries: unknown[], observer: unknown) => void) {
+      state.fire = () => callback([], null);
+    }
     observe(target: unknown): void {
       observed.push(target);
     }
@@ -72,6 +87,9 @@ function stubContainer(width = 400, height = 400): void {
  * 「量容器」与「量画布」两种实现得到完全一样的数——那条用例**分辨不出**这个差异，而它正是
  * 「按画布自己的盒子设 `width` 属性 → 撑大盒子 → 每帧放大」这个经典 bug 的入口。
  * 这里按 `data-testid` 分派，才真正钉住 `resizeCanvas` 读的是哪一个元素的盒子。
+ *
+ * 传进来的两个对象是**按调用时读值**的（`rectOf` 每次重新构造 DOMRect），所以原地改它就能模拟
+ * 容器的尺寸变化——`ResizeObserver` 回调那条用例正是这么做的。
  */
 function stubBoxes(box: { width: number; height: number }, canvasBox: { width: number; height: number }): void {
   const rectOf = (size: { width: number; height: number }): DOMRect =>
@@ -100,7 +118,7 @@ function stubBoxes(box: { width: number; height: number }, canvasBox: { width: n
  * 输出可断言，绘制没有——`ctx` 的调用序列是它唯一的外部可观察量。它**不是恒真断言**：
  * 把 `ctx.rotate` 的参数写死成 0，下面 rotation 1 那条立刻红。
  */
-function stubContext(): { argsOf: (op: string) => unknown[] | undefined } {
+function stubContext(): { argsOf: (op: string) => unknown[] | undefined; ops: () => string[] } {
   const calls: { op: string; args: unknown[] }[] = [];
   const record =
     (op: string) =>
@@ -135,6 +153,9 @@ function stubContext(): { argsOf: (op: string) => unknown[] | undefined } {
       }
       return undefined;
     },
+    // 全部调用的**发生顺序**（同名调用按次数重复出现）。顺序本身是被断言的行为：
+    // `save` / `restore` 之间夹着的 `translate` / `rotate` / `drawImage` 决定了位图画在哪个坐标系里。
+    ops: () => calls.map((call) => call.op),
   };
 }
 
@@ -142,15 +163,15 @@ function stubContext(): { argsOf: (op: string) => unknown[] | undefined } {
  * 派发一次指针事件；happy-dom 有真实的 `PointerEvent`（`pointerId` / `isPrimary` 都能在构造参数里给）。
  *
  * 默认 `pointerId: 1` / `isPrimary: true`（= 单指平板操作）。多指用例显式传 `pointerId`，
- * 非主指针用例显式传 `isPrimary: false`。返回派发出去的那个事件本身：`defaultPrevented`
- * 是「组件有没有把这次按下当成手势」的外部可观察量之一。
+ * 非主指针用例显式传 `isPrimary: false`，非主键用例显式传 `button`。返回派发出去的那个事件本身：
+ * `defaultPrevented` 是「组件有没有把这次按下当成手势」的外部可观察量之一。
  */
 async function pointer(
   wrapper: ReturnType<typeof mount>,
   type: string,
   x: number,
   y: number,
-  options: { pointerId?: number; isPrimary?: boolean } = {},
+  options: { pointerId?: number; isPrimary?: boolean; button?: number } = {},
 ): Promise<PointerEvent> {
   const canvas = wrapper.get("canvas");
   const event = new PointerEvent(type, {
@@ -158,6 +179,7 @@ async function pointer(
     clientY: y,
     pointerId: options.pointerId ?? 1,
     isPrimary: options.isPrimary ?? true,
+    button: options.button ?? 0,
     bubbles: true,
     cancelable: true,
   });
@@ -221,10 +243,41 @@ describe("画布尺寸与 DPR", () => {
     const wrapper = mountCanvas();
     await wrapper.vm.$nextTick();
 
-    // 只断言「注册了 observe」：happy-dom 的 ResizeObserver 是空实现，声称测到重算行为是假的。
-    // 观察对象必须是**容器**（画布是 h-full w-full，按自己的盒子设属性会循环放大）。
+    // 这条只钉「注册对象是容器」这一点（画布是 h-full w-full，按自己的盒子设属性会循环放大）。
+    // 「回调真的被接上、尺寸真的重算」由下一条用例证明——本文件 stub 了全局 ResizeObserver，
+    // 驱动的就是这个假对象的回调，测的是**组件的接线**，happy-dom 的空实现在这里不再是天花板。
     expect(observer.observed).toHaveLength(1);
     expect(observer.observed[0]).toBe(wrapper.get("[data-testid='crop-surface']").element);
+  });
+
+  it("ResizeObserver 回调触发后按容器的新盒子重算画布尺寸与命中几何（横竖屏 / 断点变化）", async () => {
+    // 桩盒子按调用时读值：原地改这个对象就等于容器被旋转 / 断点切换。
+    const box = { width: 400, height: 400 };
+    stubBoxes(box, { width: 111, height: 222 });
+    const observer = stubResizeObserver();
+    window.devicePixelRatio = 1;
+
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+    const canvas = wrapper.get("canvas").element as HTMLCanvasElement;
+    expect([canvas.width, canvas.height, canvas.style.width, canvas.style.height]).toEqual([400, 400, "400px", "400px"]);
+
+    // 容器变成 800×800。容器自身尺寸变化**不会**带来任何 props 变化，
+    // 重算的唯一入口就是组件注册给 ResizeObserver 的那个回调。
+    box.width = 800;
+    box.height = 800;
+    observer.fire();
+    await wrapper.vm.$nextTick();
+
+    expect([canvas.width, canvas.height, canvas.style.width, canvas.style.height]).toEqual([800, 800, "800px", "800px"]);
+
+    // 尺寸只是外观；会错位的是用它算出来的视图。800×800 下适配比例升到 1、垂直偏移 100，
+    // 选区 {100,100,300,300} 的屏幕矩形是 {100,200,300,300}，se 手柄中心在 (400,500)。
+    // 若回调没接上（视图停在 400×400 的 0.5 倍 / 偏移 50）：(400,500) 在选框外（x 只到 200），
+    // 会退化成「平移选区」→ 尺寸不变的 {200,100,300,300}（尺寸断言抓不到这个差别，这条才抓得到）。
+    await pointer(wrapper, "pointerdown", 400, 500);
+    await pointer(wrapper, "pointermove", 450, 500);
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 350, height: 300 }]);
   });
 
   it("画布尺寸来自容器的盒子，不是画布自己的盒子（防每帧放大的循环）", async () => {
@@ -399,6 +452,9 @@ describe("手势 → 选区", () => {
     await pointer(wrapper, "pointerdown", 200, 250);
     await pointer(wrapper, "pointermove", 250, 250);
     const afterDrag = wrapper.emitted("update:crop")?.length;
+    // 先钉住「拖动本身发出过事件」：否则 `afterDrag` 是 `undefined`，末尾那句
+    // `expect(undefined).toBe(undefined)` 会**空洞通过**（组件根本不发事件也照样绿）。
+    expect(afterDrag).toBeGreaterThanOrEqual(1);
     await pointer(wrapper, "pointerup", 250, 250);
     await pointer(wrapper, "pointermove", 300, 300);
 
@@ -473,6 +529,45 @@ describe("手柄命中：命中半径内取离指针最近的手柄", () => {
     // → {140,140,40,40}。若用 `<=` 比较（后到者赢）会得到拖 se 的 {100,100,80,80}。
     expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 140, y: 140, width: 40, height: 40 }]);
   });
+
+  it("默认选区下距 nw 角 41px 的按下是平移而不是 resize（命中区半径 24，不是 48）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas();
+
+    // 默认选区 {100,100,300,300} 的屏幕矩形是 {x:50, y:100, w:150, h:150}，nw 中心 (50,100)。
+    // 按下点 (90,110)：横向距 nw 中心 40px、纵向 10px → 欧氏距离 41.2px。
+    //   · 命中区半径 24（现状）：40 > 24 且 41.2 > 24 → 不命中任何手柄，而该点在选框**内部**
+    //     → 平移选区，尺寸仍是 300×300；
+    //   · 命中区半径 48：40 ≤ 48 且 10 ≤ 48 → 命中 nw → resize，锚点是 se (400,400)，
+    //     指针在原图 (220,160) → {220,160,180,240}（两个方向都变，尺寸仍是 300 的那条断言必红）。
+    // 这条是**命中区尺寸**唯一的判别力来源：既有手势用例全按在手柄中心 0–14px 内，
+    // 把 HANDLE_HIT_SIZE 48 → 96 它们一条都不会红。
+    await pointer(wrapper, "pointerdown", 90, 110);
+    await pointer(wrapper, "pointermove", 110, 130);
+
+    // 屏幕位移 (20,20) → 原图位移 (40,40)，从手势起点 {100,100} 起算 → {140,140}，尺寸不变。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 140, y: 140, width: 300, height: 300 }]);
+  });
+
+  it("命中区是 48×48 的方块（两轴各 ±24），不是半径 24 的圆", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas();
+
+    // 按下点 (70,120)：距 nw 中心 (50,100) 两轴各 20px —— 在 ±24 的**方块**内，但在半径 24 的
+    // **圆**外（欧氏 28.3 > 24）；该点又落在选框内部，所以两种形状的结果完全不同：
+    //   · 方块（现状）：命中 nw → resize，锚点 se (400,400)，指针原图 (140,140) → 拖到 (160,160)
+    //     → {160,160,240,240}（尺寸变）；
+    //   · 圆：不命中 → 平移选区 → {120,120,300,300}（尺寸不变）。
+    // HANDLE_HIT_SIZE 的文档口径就是「手柄命中区的 CSS 尺寸 48×48」（触控目标 ≥44px），钉住它。
+    await pointer(wrapper, "pointerdown", 70, 120);
+    await pointer(wrapper, "pointermove", 80, 130);
+
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 160, y: 160, width: 240, height: 240 }]);
+  });
 });
 
 describe("多指与指针过滤", () => {
@@ -526,6 +621,62 @@ describe("多指与指针过滤", () => {
     expect(primary.defaultPrevented).toBe(true);
     expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 400, height: 300 }]);
   });
+
+  it("button 非 0 的按下不开始手势（右键 / 中键不 resize / move / pan，也不 preventDefault）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas();
+
+    // `isPrimary` 对鼠标恒为 true，所以右键 / 中键能绕过上面那条守卫。位置仍是 se 手柄中心：
+    // 若这次按下被当成手势，它立刻进入 resize，下一条 move 就会发事件。
+    const right = await pointer(wrapper, "pointerdown", 200, 250, { button: 2 });
+    await pointer(wrapper, "pointermove", 250, 250);
+
+    expect(wrapper.emitted("update:crop")).toBeUndefined();
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+    // 「直接忽略」也包括**不 preventDefault**（右键菜单这类别处的默认行为不该被这个组件吞掉）。
+    expect(right.defaultPrevented).toBe(false);
+
+    // 对照（同一位置、同一 pointerId，只把 button 翻成 0）：这次必须被当成手势——
+    // 既证明上面两条不是因为「组件在这个位置上本来就不响应」，也给 defaultPrevented 一个反面。
+    const left = await pointer(wrapper, "pointerdown", 200, 250);
+    await pointer(wrapper, "pointermove", 250, 250);
+    expect(left.defaultPrevented).toBe(true);
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 100, y: 100, width: 400, height: 300 }]);
+  });
+});
+
+describe("手势卡死的自愈（捕获被无声丢失）", () => {
+  it("lostpointercapture 之后手势被释放，新的按下仍能开始新手势", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    // zoom 2：view = {scale 1, offsetX -200, offsetY -100}，选区屏幕矩形 x -100–200、y 0–300，
+    // se 手柄中心在 (200,300)；而 (350,350) 落在选框**外** → 那里按下必然是 pan（不是 move/resize）。
+    const wrapper = mountCanvas({ zoom: 2 });
+
+    // 手势一：抓 se 手柄并拖 → resize，发 update:crop。
+    await pointer(wrapper, "pointerdown", 200, 300);
+    await pointer(wrapper, "pointermove", 220, 300);
+    expect(wrapper.emitted("update:crop")).toHaveLength(1);
+
+    // 「手势进行中忽略新的 pointerdown」这条守卫（上一轮加的）代价是：若 pointerup / pointercancel
+    // 从未送达——例如 `setPointerCapture` 抛 `NotFoundError`，或捕获被浏览器无声丢失——
+    // `gesture` 会永久非 null，画布此后对任何按下都不响应。`lostpointercapture` 是浏览器在
+    // 捕获丢失时保证派发的那一个事件，把它接到 `onPointerUp` 上就是这条自愈路径。
+    await pointer(wrapper, "lostpointercapture", 220, 300);
+
+    // 手势二：在选框外按下并拖 → 必须是**新的 pan 手势**。
+    await pointer(wrapper, "pointerdown", 350, 350);
+    await pointer(wrapper, "pointermove", 340, 330);
+
+    // 判别力：旧的 resize 手势若没被释放，这次按下会被守卫吞掉，于是这条 move 继续用
+    // **手势一**的起点快照算 resize → 不发 pan、且 update:crop 变成 2 条
+    // （实收 {100,100,440,330}）。两条断言各自都能单独抓住它。
+    expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: -10, y: -20 }]);
+    expect(wrapper.emitted("update:crop")).toHaveLength(1);
+  });
 });
 
 describe("绘制（桩 2D 上下文，只钉接线）", () => {
@@ -573,6 +724,49 @@ describe("绘制（桩 2D 上下文，只钉接线）", () => {
     expect(ctx.argsOf("rotate")).toEqual([Math.PI / 2]);
     // 位图仍按源图尺寸 × scale = 800×600 画（**不是**整图盒的 600×800）：转 90° 后外接矩形才是 600×800。
     expect(ctx.argsOf("drawImage")).toEqual([preview, -400, -300, 800, 600]);
+  });
+
+  it("绘制顺序是 save → translate → rotate → drawImage → restore（遮罩与选框画在还原后的坐标系里）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 挂载只画一帧（`resizeCanvas` → `draw`），所以被追踪的这五个调用恰好出现一轮。
+    // 顺序本身是承重的：少了 `restore`，`strokeRect` 与四个手柄方块会画在**已旋转 + 已平移**的
+    // 坐标系里 → 覆盖层与内容错位（上一版删掉 `ctx.restore()` 时 21 条全绿，无人读这个顺序）。
+    const TRACKED = ["save", "translate", "rotate", "drawImage", "restore"];
+    expect(ctx.ops().filter((op) => TRACKED.includes(op))).toEqual(TRACKED);
+  });
+
+  it("crop / rotation / zoom / pan / preview 任一变化都会触发重绘", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+    // 一次重绘 = 一次 `clearRect`（`setTransform` 与 `clearRect` 是 `draw` 的开头两步）。
+    const draws = (): number => ctx.ops().filter((op) => op === "clearRect").length;
+    expect(draws()).toBe(1);
+
+    // 五个 watch 源逐个改一次。`crop` / `pan` 用**新对象**（store 的 `setCrop` → `clampRectToSource`
+    // 与 `setPan` 每次都是新对象，浅引用比较足够，不需要 `deep: true`；`deep` 对 canvas 元素
+    // 每次重跑都会 traverse 整棵 DOM，纯属浪费）。
+    await wrapper.setProps({ crop: { x: 100, y: 100, width: 300, height: 300 } });
+    expect(draws()).toBe(2);
+    await wrapper.setProps({ rotation: 1 });
+    expect(draws()).toBe(3);
+    await wrapper.setProps({ zoom: 2 });
+    expect(draws()).toBe(4);
+    await wrapper.setProps({ pan: { x: -10, y: 0 } });
+    expect(draws()).toBe(5);
+    await wrapper.setProps({ preview: fakePreview() });
+    expect(draws()).toBe(6);
   });
 });
 
