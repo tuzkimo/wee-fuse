@@ -2477,6 +2477,11 @@ props:  preview: HTMLCanvasElement, sourceSize: Size, crop: Rect, rotation: Rota
 emits:  "update:crop"(Rect) / "update:pan"({ x, y })
 ```
 
+**手柄名的口径（任务 4 修复轮 1 的裁决，有约束力）**：`nw` / `ne` / `sw` / `se` 指的是**显示空间（屏幕）**的角，
+不是源坐标的角——规格 §4.3「拖左上角，右下角不动」是用户视角的陈述，而 `rotation` 为 1/3 时两种口径下的同名角
+不是同一个角。`CropCanvas` 因此在 `sourceRectToScreen` 得到的**屏幕矩形**上做命中判定并按同名透传，
+`core/crop/rect.ts` 的 `resizeByHandle` 内部负责换算到显示空间再映射回源坐标。**两侧不要各写一份口径。**
+
 **视图变换的组装方式（三层，全部来自 `core/crop/view.ts`）：**
 
 ```
@@ -2494,6 +2499,7 @@ view   = clampView(zoomed + pan, viewport, oriented)       // pan 是叠加在�
 // src/components/crop/__tests__/CropCanvas.test.ts
 import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sourceRectToOriented } from "@/core/crop/view";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 
 /**
@@ -2704,12 +2710,19 @@ describe("手势 → 选区", () => {
     // 源图选区 {100,100,300,300} → 显示空间 {200,100,300,300}（顺时针 90° 把源图左上 (100,100)
     // 送到 (500,100)）→ 屏幕 x 150–300、y 50–200，右下角手柄中心在 (300,200)。
     await pointer(wrapper, "pointerdown", 300, 200);
-    // 拖到屏幕 (250,250) → 显示空间 (400,500) → 逆旋转回原图 (oy, H − ox) = (500, 200)
+    // 拖到屏幕 (250,250) → 显示空间 (400,500)
     await pointer(wrapper, "pointermove", 250, 250);
 
     const emitted = wrapper.emitted("update:crop")?.at(-1)?.[0] as { x: number; y: number; width: number; height: number };
-    // 锚点是原图左上 (100,100)，指针落在源坐标 (500,200) → 400×100
-    expect(emitted).toEqual({ x: 100, y: 100, width: 400, height: 100 });
+    // **手柄名是显示空间的角**（任务 4 修复轮 1 的裁决：规格 §4.3「拖左上角，右下角不动」是用户视角）：
+    // 拖显示空间右下角 → 锚点是显示空间左上角 (200,100)；指针在显示空间 (400,500) →
+    // 显示空间矩形 {200,100,200,400}；映射回源坐标 → {100,200,400,200}。
+    // （控制者手算，先按它跑；不一致就写出推导再改。）
+    expect(emitted).toEqual({ x: 100, y: 200, width: 400, height: 200 });
+    // 不变量：显示空间里被固定住的那一角必须逐位不动。
+    const fixed = sourceRectToOriented(emitted, 1, SOURCE);
+    expect(fixed.x).toBe(200);
+    expect(fixed.y).toBe(100);
   });
 });
 ```
