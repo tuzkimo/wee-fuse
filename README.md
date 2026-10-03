@@ -22,9 +22,21 @@ npm run build
 第一阶段「图片转图纸」的**引擎**已完成：色彩空间与色差、MARD 221 色卡、面积平均重采样、
 颜色量化、图纸构建与编辑撤销，全部为 `src/core/` 下的纯 TypeScript 模块，由单元测试覆盖。
 
-解码实验台：`npm run dev` 后访问 `/lab/decode`，可对比两条解码路径的画质。
+应用层 **B1（骨架 / 工程文件契约 / 图纸库）** 已完成：浏览器里可以跑通
+「选图 → 生成 → 自动落盘 → 图纸库 → 只读编辑器」。`npm run dev` 后：
 
-下一步：应用层（选区 → 尺寸 → 编辑器 → 导出 → 图纸库）与 Tauri Android 壳。
+- `/` **图纸库**：封面是**图纸缩略图**（不是原图照片）、改名、二次确认删除、占用与配额；
+  数据落在 IndexedDB（库名 `wee-fuse`，`projects` / `metas` / `sources` 三个 store）。
+- `/new` **是临时入口**：固定「居中正方裁剪 + 长边 58 / 116 + 档位 16 / 32 / 不限」，
+  选图后一次点按即生成并自动保存，然后跳回图纸库。
+  规格要求的「拖动缩放选区 → 尺寸 / 色卡 / 档位设置 → 生成」由计划 **B2** 用真正的选区页与
+  设置页**替换本页**；现在这个入口只用于把 B1 的链路跑通。
+- `/edit/:id` **只读编辑器**：B1 只到「载入并显示只读**参数**」（名称、尺寸、用色数，以及是否
+  保存了原图），并区分「原图已保存，可以改参数重新生成」与「这个工程没有原图」。
+  **图纸预览与编辑属计划 B3**（画笔、框选、吸管、撤销、缩放平移），导出是计划 **B4**。
+- `/lab/decode` **解码实验台**：同一张图对比两条解码路径的画质（回答规格 §12.1 的 R1）。
+
+下一步：计划 B2（选区与设置页）→ B3（编辑器）→ B4（导出），以及 Tauri Android 壳。
 
 实测（2026-10-01，Node 24.19.0 / npm 11.5.2，Windows 桌面 CPU，均在 `vitest run` 进程内测量）：
 
@@ -41,7 +53,8 @@ npm run build
   不聚类、直接在全库逐格取最近色，候选从 ≤32 变成 **221**（内置 MARD221）。按 32 档的数字外推会低估它约 **4.6 倍**
   （58×58 只差 1.4 倍——格子少时固定开销占比大）。即使取最坏档位与最慢负载，也仍在 3 s 预算内约一个数量级；
   真机上的**解码**耗时另算，那才是主要瓶颈（见规格 §12.1）。
-- **全量测试**：**22 文件 / 312 用例**全绿；`npm run test` 冷启动约 9.4 s（vitest 内部 5.87 s），
+- **全量测试**：**35 文件 / 476 用例**全绿（2026-10-03 应用层 B1 完成时回原始清单重数；
+  引擎阶段该行记的是 22 文件 / 312 用例）；`npm run test` 冷启动约 9.4 s（vitest 内部 5.87 s），
   热复跑约 2.6 s。
 - **构建**：`npm run build`（`vue-tsc --noEmit` + Vite）约 2.6 s，其中 Vite 构建 578 ms。
 - **干净安装**：`npm ci` 安装 206 个包、约 5 s。
@@ -54,8 +67,14 @@ npm run build
   - `image/`：解码契约与类型、面积平均重采样、90° 旋转
   - `quantize/`：直方图、中位切割聚类、最近色查找
   - `pattern/`：图纸构建、用量统计、增量编辑、撤销栈
-- `src/services/` — 唯一接触平台 API 的层（图片解码、尺寸探测、网格差异、预览渲染、生成流水线）
-- `src/views/` — 页面（`HomePage.vue`、`DecodeLabPage.vue` 解码实验台）
+  - `project/`：工程文件契约（`toProjectDocument` / `fromProjectDocument` 与逐字段校验，落盘与
+    载入的唯一入口）
+- `src/services/` — 唯一接触平台 API 的层（图片解码、尺寸探测、网格差异、预览渲染、生成流水线、
+  工程存储：IndexedDB 与内存两个实现共用一套契约测试）
+- `src/stores/` — Pinia 会话状态（当前工程的载入 / 采纳新图纸 / 保存 / 脏标记）
+- `src/views/` — 页面（`LibraryPage.vue` 图纸库、`GeneratePage.vue` 生成（**B1 临时入口**）、
+  `EditorPage.vue` 编辑器（B1 只读）、`DecodeLabPage.vue` 解码实验台）
+- `src/router/` — 路由表（`/`、`/new`、`/edit/:id`、`/lab/decode`）
 - `docs/superpowers/specs/` — 设计规格
 - `docs/superpowers/plans/` — 实现计划
 
@@ -79,9 +98,43 @@ npm run build
 | L10 | `vite.config.ts` 不在任何类型检查范围内（根 `tsconfig.json` 的 `include` 不含它；`tsconfig.node.json` 的 `composite` 因从无 `tsc -b` 而未生效）（任务 1）。 | 任务 9 实测补了一条更硬的理由：账本里建议的稳妥做法 `vue-tsc --noEmit -p tsconfig.node.json` **本身也会在仓库根写出 `tsconfig.node.tsbuildinfo`**（144 KB，实测，脚本退出码 0），而 `.gitignore` 不含 `*.tsbuildinfo` → 这个「稳妥做法」并没有避开 `tsc -b` 的 emit 副作用，只是把它换了个名字。要让该文件进 CI 必须先解决产物落地问题，属配置变更，不在收尾任务范围内。风险：该文件日后若加入逻辑，类型错误不会在 CI 暴露。 |
 | L11 | 边界闸门（`src/__tests__/coreBoundary.test.ts`）对**形参名** `window`（及清单里其他被禁名）在函数体/表达式中的引用会**误报**（任务 1 / 1b，E/F 探针确认）。 | 已文档化（测试文件头规则 3 与 `CLAUDE.md` / `AGENTS.md`），且给出处置约定：**改命名**（例如参数改叫 `sampleWindow`），不放宽规则、不加绕过标记。触发概率低：`grep` 扫实现计划全文，为 `src/core/**` 规定的字面代码里**零处**使用 `window` 标识符。正确修法需走 TypeScript AST（有把 `@types/node` 拉进程序、削弱 Node 全局闸门的风险），或引入会制造新漏报的启发式，两者都比问题本身贵。 |
 
+## 计划 B1 的延后项
+
+同样是「判定为可接受、明确不修」的项，逐条记此以免后来者当成待办。完整记录（含 9 处计划缺陷、
+控制者的错误清单、被推翻的结论、以及环境事实）见[计划 B1 构建记录](docs/superpowers/notes/2026-10-03-app-b1-build-log.md)。
+
+**编号与构建记录 §8 逐条对齐**（B1-1…B1-19 在两份文档里指的是同一件事；B1-15…B1-17 是收尾轮
+新增的延后项，B1-18…B1-19 是修复轮 1 补记的，均已在构建记录 §8 同步）。**一行一条**，不再把多条
+并成一行。
+
+| # | 是什么 | 为什么接受 / 何时该修 |
+|---|---|---|
+| B1-1 | `GeneratePage` 的成功路径在 happy-dom 下**无法覆盖**（真实解码、真实 canvas、真实 IDB 都不可用），靠**平台边界桩** + 真实浏览器人工验证。 | 桩只替换平台 I/O，断言落在「交给平台的源矩形」与「落盘数据」两个外部可观察量上；真实解码 / canvas / IDB 链路仍只靠浏览器那一次验证。 |
+| B1-2 | `renderPatternThumbnail` 的**像素内容无断言**（happy-dom canvas 是桩，`toDataURL` 返回空字节的 data URL）。 | CI 只守到「创建了两个 canvas + `toDataURL` 被调用」；**任何断言缩略图像素的写法在本环境都是恒真**，所以不写。 |
+| B1-3 | `estimateUsage()` 的「`navigator.storage` 根本不存在」这一支无断言。 | 三条有判别力的分支已用 `vi.stubGlobal` 覆盖。 |
+| B1-4 | `setProjectStore` / `getProjectStore` 的覆盖推后到 B2。 | 它们是两个单例适配器，B2 装配路由与页面时会真实消费。 |
+| B1-5 | `probeSourceSize` 的**成功路径在 CI 中零覆盖**。 | happy-dom 使该路径不可能达成；`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖。 |
+| B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口）。 | 响亮失败但用户无出路；**本轮已修**（`GeneratePage.defaultName` 夹到 100，并补断言）。 |
+| B1-7 | `LibraryPage` 在**存储级失败**时不置 `storeUnavailable`（只给琥珀错误条，新建**不禁用**）。 | 真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径。 |
+| B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载**。 | B1 的导航图生不出这个跳转，B3 会遇到。 |
+| B1-9 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`）。 | 它是 B2/B3 的接口面；注释已改为与事实一致。 |
+| B1-10 | `data:image/` 是**前缀**判定，故 `data:image/svg+xml` 会放行。 | 规格 §12 的既有口径。 |
+| B1-11 | 两个实现的 `rename("nope", "   ")` 错误文案优先级不同（IDB 先校验 name、内存先查存在性）。 | 契约未定义优先级，两条都对。 |
+| B1-12 | `crop.x/y` 允许负数 → 越界源矩形**静默产出带透明边的图纸**（构建记录 §5）。 | B1 生产路径可证明永不越界；是否在入口夹取/拒绝交 B2。 |
+| B1-13 | `generatePattern` 未按源图尺寸校验 `crop`。 | 同上，B2 决策。 |
+| B1-14 | `LibraryPage` 的 rename/delete `catch` 分支、改名预填值、「算了」取消按钮、`maxColors: null` 的 `save→load` 往返未断言。 | 已自曝，属覆盖面。 |
+| B1-15 | 「打开」在 B1 只显示只读**参数**（名称 / 尺寸 / 用色数 / 是否存了原图），**不渲染 `session.pattern` 预览**（`fromProjectDocument` 的 `pattern` / `params` 在应用层无 UI 消费者）。 | 渲染 `pattern` 是 B3 的核心交付（Canvas 分层渲染），B1 的临时预览会被整体替换；本轮**如实收窄规格口径**而不补预览（构建记录 §8）。 |
+| B1-16 | `src/components/ui/*.vue` 不存在：B1 的 UI 组件以内联 Tailwind class 写在各 view 内。 | 抽公共组件推迟到出现第二个消费者时（构建记录 §8）。**不为对齐规格新建 `components/` 目录**——那会造出没有消费者的抽象。 |
+| B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error`。 | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）；本轮裁决维持现状（构建记录 §8）。 |
+| B1-18 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走）。 | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文（规格 §14 的 B1-R3）；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。 |
+| B1-19 | `LibraryPage` 的相对时间在**每次渲染时取 `new Date()`**，列表停留期间**不自动刷新**（不会自己从「3 分钟前」跳到「4 分钟前」）。 | 图纸库不是实时面板；要跳秒就得加定时器，会带来 happy-dom 下的定时器测试复杂度。**维持现状**（修复轮 1 复审同判）。 |
+| B1-20 | **CI 对「日期用本地日还是 UTC 日」这条实现选择没有判别力**：`relativeTime.ts` 用本地 getter，而 runner 是 `ubuntu-latest`（偏移 0）——偏移 0 时两种实现输出**逐字节相同**，任何同进程断言都无法区分（信息层面不存在）。现有用例能在**偏移 ≥ +2h 的时区**抓到该变异（实测：改成 `toISOString().slice(0,10)`，`Asia/Shanghai` 下红、UTC 下绿）。 | **不是放水**：曾有一条「断言本地日 ≠ UTC 日」的自证断言充当守门，但它判别力为零、且夹具只在偏移 ≥ +2h 跨日 → 在 UTC 与西半球/UTC+1 下**必红**（实测 `America/New_York` / `Europe/London` / `Etc/GMT-1` 均 1 failed；先用 `getTimezoneOffset() !== 0` 守卫属**必要但不充分**）。已删除它并把真实判别力所在写进注释。**要补 CI 侧的证伪能力只能给测试步骤一个非零 `TZ`**（属 `.github/` 变更，需授权）。 |
+
 ## 文档
 
 - [第一阶段设计规格](docs/superpowers/specs/2026-09-30-image-to-pattern-design.md)
+- [计划 B1 设计规格](docs/superpowers/specs/2026-10-03-app-skeleton-design.md)
+- [计划 B1 构建记录](docs/superpowers/notes/2026-10-03-app-b1-build-log.md)
 
 ## License
 

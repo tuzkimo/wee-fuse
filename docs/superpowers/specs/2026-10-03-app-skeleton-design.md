@@ -1,7 +1,7 @@
 # 一起拼豆（WeeFuse）计划 B1：应用骨架、工程文件契约与图纸库 设计规格
 
 - 日期：2026-10-03
-- 状态：待实现
+- 状态：**已实现**（`feat/app-b1`，9 个任务；实现与审查的完整记录见[计划 B1 构建记录](../notes/2026-10-03-app-b1-build-log.md)）
 - 上游规格：[第一阶段：图片转图纸](2026-09-30-image-to-pattern-design.md)（下称「主规格」）
 - 范围：主规格 §14 第 5–9 步中的**应用骨架、`Pattern` ↔ 工程文件契约、工程存储、图纸库 UI**。
   选区页、设置页、编辑器、导出各自是后续独立计划（B2 / B3 / B4），不在本规格内。
@@ -55,10 +55,12 @@ DOM 全局；`src/services/**` 是唯一接触平台 API 的层。本规格新�
 | `src/stores/project.ts` | stores | Pinia：当前工程、参数、脏标记。**不直接碰 `indexedDB`**，只依赖 `projectStore` 接口 |
 | `src/views/LibraryPage.vue` | views | 首页：图纸库列表 |
 | `src/views/GeneratePage.vue` | views | B1 的**临时**生成入口（无选区 UI，按原图居中正方裁剪生成） |
-| `src/components/ui/*.vue` | components | 大触控目标按钮、卡片、确认对话框 |
+| ~~`src/components/ui/*.vue`~~ | ~~components~~ | **本规格不建此目录**：B1 的 UI 组件（大触控目标按钮、卡片、确认对话框）以内联 Tailwind class 写在各 view 内，`src/components/` 不存在。抽公共组件推迟到出现**第二个消费者**时——为对齐一张表而先建一个没有消费者的目录，只会造出无人使用的抽象 |
 
 > **`GeneratePage.vue` 是临时占位，必须在 B1 内明确标注。** 主规格要求的完整流程是
-> `选图 → 选区 → 设置 → 生成`；B1 只做「选图 → 生成（居中正方裁剪、长边 58、档位 32）」，用它把
+> `选图 → 选区 → 设置 → 生成`；B1 只做「选图 → 生成（居中正方裁剪；**实现**给出的长边是 58 / 116、
+> 档位是 16 / 32 / 不限——本句原先写的「长边 58、档位 32」只是默认值，见 §8 开头的「实现口径」注）」，
+> 用它把
 > 「存储 → 列表 → 打开」这条链路跑通。B2 会用真的选区 / 设置页**替换**它。文件头注释与 README
 > 都要写明这一点，否则后来者会把它当成正式入口。
 
@@ -233,8 +235,10 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
 
 ### 6.2 数据模型按「工程 = 一个目录」设计，不按 IndexedDB 的形状设计
 
-真机（Tauri）上工程应当落在 App 私有目录的一个文件夹里，而不是 IndexedDB。浏览器端把
-`project.json` 与 `source` 放进 IndexedDB 的**同一条记录**里，作为该模型的一种实现。
+真机（Tauri）上工程应当落在 App 私有目录的一个文件夹里，而不是 IndexedDB。浏览器端把同一个模型
+放进 IndexedDB 的**两个 object store**——`projects`（`meta` + `doc`）与 `sources`（原图字节 + `type`）——
+作为该模型的一种实现。**分成两个 store 是有意的**：`list()` 只读 `projects`，于是天然碰不到 MB 级
+原图（见 §6.1）。
 
 理由（按重要性排序）：
 
@@ -242,9 +246,35 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
    落私有目录（卸载即清）是可接受的，塞进浏览器存储配额里则不是。
 2. 数据模型若照 IndexedDB 的形状写死，引入壳时 `list()` 要重写；按目录模型写，只需换实现。
 
-**已知未验证点（B1 第 0 步）**：IndexedDB 与 fake-indexeddb 能否原样存取 `Blob`，以及二者行为
-是否一致，**本规格不做假定**。退路是改存 `ArrayBuffer` + 手动包 `Blob`，该差异对上层不可见
-（`idbProjectStore.ts` 是唯一接触它的文件）。验证结论回写本节。
+**已验证（B1 第 0 步，探针 `src/services/__tests__/idbBlobProbe.test.ts`）：走退路**——`source` 在
+IndexedDB 里的**落盘形态是 `ArrayBuffer` + `type` 字符串**（两部分都存在 `sources` 那条记录里），
+`Blob ↔ ArrayBuffer` 的转换在 `idbProjectStore.ts` **内部**完成；`ProjectStore` 接口仍然收发 `Blob`，
+调用方无感（该文件是唯一接触平台存储的文件）。
+
+实测环境是 **fake-indexeddb 6.2.5 + happy-dom 20.14.5**（Node 24.19.0），**不是真实浏览器**。
+**真机浏览器侧能否直接存 `Blob` 本次仍未实测**——按结构化克隆的规范它应当可以，但这一点没有量过，
+仍需任务 3 之后用 `npm run dev` 人工确认一次。
+
+两条实测事实必须合起来读，只看任一条都会得出错误判断：
+
+1. **合规 `Blob` 在 fake-indexeddb 下原样往返通过。** 用 `node:buffer` 的 `Blob` 存入再取回，
+   取回值是 `[object Blob]`、`size` 6、`type` `image/jpeg`、逐字节等于 `[0,1,2,253,254,255]`。
+   所以「IndexedDB 存不住 Blob」这个说法**不成立**。
+2. **happy-dom 自带的 `Blob` 过不了结构化克隆**，这才是探针里 `new Blob(…)` 往返失败的原因：
+   它没有 `Symbol.toStringTag`、字节存在 symbol 键的字段上，`Object.prototype.toString.call` 为
+   `[object Object]`；Node 的 `structuredClone` 因此按普通对象处理、只复制可枚举自有属性，取回值
+   恰好是 `{ type: "image/jpeg" }`，`arrayBuffer()` 抛 `TypeError`。裸 `structuredClone(该 Blob)`
+   就能复现，与 IndexedDB 无关。
+
+**决策理由**：退路的价值不在于「IDB 存不了 Blob」，而在于**让测试路径与生产路径是同一条**。
+生产代码对 `ArrayBuffer` 落盘、读回再包 `Blob`，测试里跑的就是这条路径本身，不依赖任何平台
+「结构化克隆保留 Blob」的行为；否则测试里唯一能通过的写法是拿 `node:buffer` 的 `Blob` 冒充浏览器
+`Blob`，那是一条只在测试里成立的路径。代价是保存时把 2–6 MB 原图完整读进 JS 内存一次；
+§6.1 的列表路径不受影响（`list()` 本来就不碰 `source`）。
+
+探针里守这条事实的承重断言是「克隆结果**没有 `arrayBuffer`、只剩 `type`**」。同用例里
+`expect(cloned).not.toBeInstanceOf(Blob)` 那条**不作数**（恒真）：`structuredClone` 是 Node 的，而
+`Blob` 是 happy-dom 另一个 realm 的类，它无论如何都不会返回该类的实例——换成合规 `Blob` 它照样通过。
 
 ### 6.3 与 Pinia store 的关系
 
@@ -266,7 +296,7 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
 | 操作 | 行为 |
 |---|---|
 | 新建 | 进 `GeneratePage`（B1 临时入口） |
-| 打开 | 进 `/edit/:id`。B1 只到「载入并显示只读预览 + 参数」，编辑器是 B3 |
+| 打开 | 进 `/edit/:id`。**B1 的范围是「载入并显示只读参数」**——名称、尺寸、用色数、是否保存了原图（`§4.4` 的 `source === null` 提示）。**图纸预览与编辑属计划 B3**：`fromProjectDocument` 读回来的 `pattern` 在 B1 没有任何 UI 消费者，这是如实标注的范围，不是遗漏 |
 | 重命名 | 只改 `meta.name` 与 `updatedAt`，**不碰 `id`、不碰 `doc`** |
 | 删除 | 二次确认（主规格 §6.4：破坏性操作靠可撤销兜底，但删除不可撤销，仍需确认）。确认文案给出名称，防误删 |
 | 损坏条目 | 该条显示为「无法打开」+ 原因，**列表其余部分正常可用**（主规格 §8） |
@@ -288,8 +318,13 @@ Blob——一次性把全部工程的原图读进内存，在图纸库有几十�
 ## 8. 临时生成入口（`GeneratePage.vue`）
 
 B1 用它把链路跑通：选图 → 居中**正方**裁剪（边长 = 短边，与 `DecodeLabPage` 的
-`CROP_FRACTION = 0.5` 不同，这里取满短边）→ `longSide = 58`、`maxColors = 32` → 生成 → 自动落盘
-（`name` 默认取原文件名去掉扩展名）→ 跳回首页。
+`CROP_FRACTION = 0.5` 不同，这里取满短边）→ `longSide` / `maxColors` → 生成 → 自动落盘
+（`name` 默认取原文件名去掉扩展名，并夹到 `PROJECT_NAME_MAX` = 100 字）→ 跳回首页。
+
+> **实现口径（2026-10-03 回写，收尾轮）**：页面给出的是**长边两选一（58 / 116）、档位三选一
+> （16 / 32 / 不限）**，默认 58 / 32。本句原先写的「`longSide = 58`、`maxColors = 32`」只是默认值，
+> 被 §3 与本节的旧措辞误当成了唯一取值——已按实现改正。档位的三个取值与「关键常量」一节
+> （`16 | 32 | null`）一致。
 
 **它必须在文件头注释、页面标题、README 三处标注为临时占位**，并说明 B2 会替换它。
 失败路径（解码失败、结果全为空格）按主规格 §8 给出明确原因，不静默失败。
@@ -318,7 +353,7 @@ B1 用它把链路跑通：选图 → 居中**正方**裁剪（边长 = 短边�
 | 载入方向对 code 的依赖（判别力） | 取**同一批色号**、同一张 `grid`，但把 `codes` 换成**另一种顺序**，断言载入结果**完全相同**。这条专打「按下标直接搬、不按 code 查表」这一种实现——它是 §5.2 唯一会静默错的做法（图纸看起来正常，色号全错）。若按 code 查表则两种顺序结果必然一致；若按下标搬则必然不同，故这条断言有判别力。**注意方向**：这里要的是「不同输入顺序 → 相同结果」，而不是「结果不同」 |
 | 字段搬位 | `crop.w/h` → `Rect.width/height`、`crop.rotate` → 独立 `rotation` 逐项断言 |
 | `validateProjectDocument` | §5.4 每一行各一条用例；重点是「不合法时报错**而不是**产出一个看起来正常的对象」 |
-| `idbProjectStore` | fake-indexeddb + happy-dom：`put` / `get` 往返（含 `Blob`）、`list` 按 `updatedAt` 倒序、`remove`、`rename` 不碰 `doc`、`get` 不存在返回 `null`、冗余字段（`meta.width/height/colorCount`）由 `put` 从 `doc` 覆盖而非采信入参 |
+| `idbProjectStore` | fake-indexeddb + happy-dom：`put` / `get` 往返（**含原图字节逐字节比对**；落盘是 `ArrayBuffer`，见 §6.2）、`list` 按 `updatedAt` 倒序、`remove`、`rename` 不碰 `doc`、`get` 不存在返回 `null`、冗余字段（`meta.width/height/colorCount`）由 `put` 从 `doc` 覆盖而非采信入参、`get` 返回的是副本（改它不写回库） |
 | `memoryProjectStore` | 同上一组（两个实现共用同一套用例，保证可替换） |
 | `LibraryPage.vue` | 空列表提示、列表渲染、重命名、删除确认、损坏条目不影响其他条目 |
 
@@ -373,6 +408,6 @@ npm run dev       # 浏览器人工走一遍：新建 → 生成 → 首页看�
 
 | # | 风险 | 验证方式 | 降级方案 |
 |---|---|---|---|
-| B1-R1 | IndexedDB / fake-indexeddb 对 `Blob` 的存取行为是否一致 | B1 第 0 步：fake-indexeddb 下存取一个 `Blob` 并逐字节比对 | 改存 `ArrayBuffer` + 手动包 `Blob`，差异关在 `idbProjectStore.ts` 内 |
-| B1-R2 | 多工程下的存储配额（单工程 2–6 MB） | 人工：连续存 10 个工程，读 `estimateUsage()` | UI 已显示占用（§7.3）；必要时在新建前提示剩余空间 |
-| B1-R3 | 平板浏览器上 `crypto.randomUUID` 可用性 | 人工 + 代码里带 `Math.random` 兜底 | 兜底路径（注意：仅兜底，不作为默认） |
+| B1-R1 | ~~IndexedDB / fake-indexeddb 对 `Blob` 的存取行为~~ **已定论（2026-10-02，B1 第 0 步）**：合规 `Blob` 能原样往返（Node 原生 `Blob` 实测逐字节一致），**失败的是 happy-dom 的假 `Blob`**（过不了结构化克隆）→ 故生产落盘改用 `ArrayBuffer` + `type`，让测试与生产走同一条路径。详见 §6.2 | 探针 `src/services/__tests__/idbBlobProbe.test.ts`（环境事实 + `ArrayBuffer` 生产路径两条用例） | **已生效**：落盘 `ArrayBuffer`，转换关在 `idbProjectStore.ts` 内。**仍未做的**：真实浏览器 / WebView 上的直接确认（属任务 3 之后的人工验证） |
+| B1-R2 | 多工程下的存储配额 | **已实测（2026-10-03）**：单工程的**真实构成**（回原始数据量得，不是估）：`project.json` 58×58/24 色 = **9.7 KB**、200×200/32 色 = **115 KB**、500×500/32 色 = **719 KB**；512px 图纸缩略图 ≈ **240 KB**（180 KB PNG 经 base64 后膨胀 4/3，且它**内嵌在 JSON 里**）；**原图副本是绝对大头，2–6 MB**（直接存原字节，不转 base64）。故 §4.3 修正 1 里「单工程 2–6 MB」的估计**成立但高了一个量级**——真实驱动因素是原图本身。占用由 §7.3 显示：浏览器端 `estimateUsage()`（headless Chrome 上取到 10240 MB，**那是 headless 的配额，不代表真机**）；真机配额与「存几十个工程后是否触顶」**仍未测**，需宿主 App（属引入壳的那一轮） | **仍未做的**：真机（Tauri/Android）上的配额实测；触顶时的用户可见行为（当前契约测试只覆盖「读取失败 → 琥珀错误条」，而**新建按钮不禁用**，见 B1-7） |
+| B1-R3 | `crypto.randomUUID` 的可用性与回退 | **部分已实测（2026-10-03，headless Chrome 154 + CDP，`http://localhost:1420`）**：`crypto.randomUUID` 在**安全上下文**（localhost）可用，生成流程走的是它；`GeneratePage.createId` 里的 `Math.random` 回退分支**只在非安全上下文走**，浏览器验证未覆盖、**CI 零断言**（该缺口在延后项清单里编号为 **B1-18**，两份延后项表都记录了）。**仍未做的**：① 非安全上下文（Tauri 的 asset 协议 / `tauri://localhost` 是否算安全上下文）**未实测**；② 回退分支的自动用例（可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 再断言仍产出非空且唯一的 id）——本轮没做 | 回退路径存在且不抛错（代码如此，但无断言）；若真机 `crypto` 完全缺失，`createId` 会走 `Math.random` 分支——**不会崩** |
