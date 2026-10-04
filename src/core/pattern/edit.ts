@@ -31,6 +31,11 @@ export function revertChanges(cells: Uint16Array, changes: readonly CellChange[]
  *
  * 下标必须是 `0–cells.length-1` 的整数，越界与非整数一律忽略；`to` 必须是 `0–EMPTY`
  * 的整数，否则抛错（越界值会被 `Uint16Array` 静默截断，见函数体内的说明）。
+ *
+ * **为何公开**：B3 起有了**生产消费者**——`stores/editor.ts` 的 `paint()`（画笔一次手势一条命令）
+ * 直接以它为唯一实现，`buildRectPaintCommand`（框选）也以它为实现的一部分。在此之前本仓库内只有
+ * 测试在调用它；导出即承诺，故在这里写明消费者是谁，而不是收窄成内部函数
+ * （`AGENTS.md`「公开 API ≠ 被使用的 API」）。
  */
 export function buildPaintCommand(
   cells: Uint16Array,
@@ -65,7 +70,12 @@ export function buildPaintCommand(
   return { label, changes };
 }
 
-/** 构造「把某个矩形区域设成某个色号」的命令，坐标超界部分自动裁剪。 */
+/** 构造「把某个矩形区域设成某个色号」的命令，坐标超界部分自动裁剪。
+ *
+ * **为何公开**：`stores/editor.ts` 的 `applyRect()`（框选批量换色）是生产消费者；调用链是
+ * `PatternCanvas`（框选抬手 emit `select`）→ `EditorPage.onSelect` → `editor.applyRect`。
+ * 自己算一份「矩形 → 下标集合」会把越界裁剪的规则拆成两份（那正是本项目最贵的缺陷形态）。
+ */
 export function buildRectPaintCommand(
   pattern: Pattern,
   rect: { x: number; y: number; width: number; height: number },
@@ -85,7 +95,15 @@ export function buildRectPaintCommand(
   return buildPaintCommand(pattern.cells, indices, to, label);
 }
 
-/** 构造「把某种色号整体替换成另一种」的命令。 */
+/**
+ * 构造「把某种色号整体替换成另一种」的命令。
+ *
+ * **为何公开（如实写明：零生产消费者）**：B3 的**整色替换 UI 属明确不做项**（B3 规格 §9.3：
+ * 「不做整色替换」，其「不做项」清单里逐条记着），所以本仓库内**没有任何生产消费者**，
+ * 只有 `edit.test.ts` 在调用它。收窄成内部函数会动到那批既有测试，故不在 B3 顺手做；
+ * 按 `AGENTS.md`「公开 API ≠ 被使用的 API」，这里如实写明现状——它保留是因为「导出即承诺」，
+ * 而不是因为有人在用（B1 规格 §13 第 3 条与 B3 规格 §12 末段的同一笔账）。
+ */
 export function buildReplaceCommand(
   pattern: Pattern,
   from: number,
@@ -100,7 +118,13 @@ export function buildReplaceCommand(
   return buildPaintCommand(pattern.cells, indices, to, label);
 }
 
-/** 取某格的色号；坐标越界或非整数时返回 EMPTY。 */
+/**
+ * 取某格的色号；坐标越界或非整数时返回 EMPTY。
+ *
+ * **为何公开**：`stores/editor.ts` 的 `pickFromCell()`（吸管）是生产消费者——它要读的正是
+ * 「这一格是什么色号」。返回 `EMPTY` 而不是 `undefined` 是这个 API 的契约，而**边界判空仍由
+ * 调用方自己做**（照搬 `EMPTY` 会把「点空处」静默变成「选了橡皮」，见 `pickFromCell` 的 JSDoc）。
+ */
 export function cellAt(pattern: Pattern, x: number, y: number): number {
   // `Number.isInteger` 与「非负」两条都要：只比较上下界时 `NaN` 会让四个比较同时为假
   // 而被放行，`cells[y * width + x]` 于是读到 `undefined`（表现为一个不存在的色号）。
@@ -122,6 +146,11 @@ export function cellAt(pattern: Pattern, x: number, y: number): number {
  *
  * `cellSize`、`point`、视图偏移里出现非有限值（`NaN`、`±Infinity`）时**抛错**，而不是返回
  * 一个 `{ x: NaN, y: NaN }` 的假坐标——那类值会让下面的越界判定整体失效。
+ *
+ * **为何公开**：`components/editor/PatternCanvas.vue` 的 `cellFromScreen()` 是唯一生产消费者
+ * （手势的入口：屏幕坐标 → 格子坐标）。那里的显示空间**就是**格子空间（无旋转、1 单位 = 1 格），
+ * 所以屏幕 → 显示空间的换算交给 `screenToOriented` 之后，调本函数时 `cellSize` 传 1、偏移传 0；
+ * 组件里不写第三份 floor 除法。
  */
 export function pointToCell(
   pattern: Pattern,

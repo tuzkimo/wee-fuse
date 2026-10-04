@@ -3,7 +3,10 @@
 //
 // 选区画布：只负责「画」与「收手势」。几何一律来自 core/crop/*，本文件不自己算坐标
 // （屏幕 → 原图的整条链错了不会报错，只会产出一张位置不对的图纸）。
-// DPR 尺寸与 ResizeObserver 的接线已抽到 `composables/useCanvasSurface.ts`（行为不变）。
+//
+// DPR 尺寸与 `ResizeObserver` 那段接线已抽到 `composables/useCanvasSurface.ts`（B3 任务 2）：
+// 编辑器画布 `components/editor/PatternCanvas.vue` 是第二个消费者，两边**量容器、不量画布**的
+// 口径必须只有一份。**绘制与手势没有被这次抽取改动**（既有 42 条用例一条未改）。
 import { computed, ref, watch } from "vue";
 import {
   applyAspect,

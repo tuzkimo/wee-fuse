@@ -85,6 +85,11 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
   **已落地**：`addToHistogram`、`rgbToLab`、`nearestIndexOf`。**尚未落地**（生产路径暂无暴露，
   但要补）：`labToRgb(NaN, …)` 仍静默返回 `[NaN, NaN, NaN]`；`bucketLevel` / `bucketIndex`
   对 `NaN` 仍静默落桶 0（只被已守门的 `addToHistogram` 调用）。
+  **已落地（B3）**：`edit.ts` 的 `buildPaintCommand` / `buildRectPaintCommand` / `cellAt` /
+  `pointToCell` 四个导出**已有生产消费者**（`stores/editor.ts` 与
+  `components/editor/PatternCanvas.vue`），JSDoc 已逐条写明消费者是谁；**`buildReplaceCommand`
+  仍是零消费者**，其 JSDoc 已如实写明（B3 规格 §9.3：整色替换的 UI 属不做项，收窄会动既有测试，
+  故不在 B3 顺手做）。
 - **用色档位**必须是 `16 | 32 | null`，运行期也校验——它是规格 §4.4 里要落盘并回读的
   `params.maxColors`，TS 类型挡不住 `JSON.parse` + 强转；`NaN` 会静默产出单色图纸，
   `Infinity` 会让每桶各自成簇（CIEDE2000 调用量 7k → 7.2M）。
@@ -95,8 +100,9 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 
 **公开 API ≠ 被使用的 API**：导出即承诺。只被测试消费的导出要么收窄到内部，要么在 JSDoc 里
 写明它为何公开。**已写明**：`Decoder.outputSize`（自我描述的文档字段、生产路径不读它）、
-`nearestCellColor`（sRGB 入参的姊妹 API、流水线不用它）。**尚未写明**（当前仍无生产消费者）：
-`buildPatternFromImage`、`patternStats`、`edit.ts` 的全部导出——下次动到它们时补上。
+`nearestCellColor`（sRGB 入参的姊妹 API、流水线不用它）；`patternStats` 自 B2 起有了生产消费者
+（`SetupPage.vue` 的结果阶段）并写明了为何公开；`edit.ts` 的四个导出在 **B3** 写明（见上）。
+**尚未写明**（当前仍无生产消费者）：`buildPatternFromImage`——下次动到它时补上。
 
 ## 关键常量（改动需同步规格文档）
 
@@ -107,3 +113,5 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 - 预览解码位图长边 ≤ 1600
 - 空格判定：alpha 加权覆盖率 ≥ 0.25
 - 撤销栈上限 50
+- 编辑器单格像素范围 `MIN_CELL_PX = 24` / `MAX_CELL_PX = 64`（初始缩放下限 / 缩放上界基准，`core/pattern/view.ts`）
+- 编辑器显示阈值 `GRID_LINE_MIN_CELL_PX = 6`（低于它不画网格线）/ `CELL_LABEL_MIN_CELL_PX = 28`（低于它不画格内色号）

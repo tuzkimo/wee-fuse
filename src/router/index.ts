@@ -9,7 +9,8 @@ export const router = createRouter({
     // 该页与它的用例已在 B2 任务 14 删除。
     { path: "/new", name: "pick", component: () => import("@/views/PickPage.vue") },
     { path: "/new/setup", name: "setup", component: () => import("@/views/SetupPage.vue") },
-    // B1 只到「载入并显示只读参数（名称 / 尺寸 / 用色数 / 是否保存了原图）」；图纸预览与编辑是计划 B3。
+    // /edit/:id 是 B3 的编辑器宿主：载入图纸 → 缩放平移 / 画笔 / 框选 / 吸管 / 撤销 → 显式保存。
+    // 有未保存改动时离开会被页面内的确认条拦下（同页重载由 `watch(route.params.id)` 处理，B1-8）。
     { path: "/edit/:id", name: "editor", component: () => import("@/views/EditorPage.vue") },
     { path: "/lab/decode", name: "decode-lab", component: () => import("@/views/DecodeLabPage.vue") },
   ],

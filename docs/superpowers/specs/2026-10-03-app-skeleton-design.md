@@ -400,6 +400,12 @@ npm run dev       # 浏览器人工走一遍：新建 → 生成 → 首页看�
 2. 错误信息口径统一（既有 `L4`）。
 3. `buildPatternFromImage`、`patternStats`、`edit.ts` 的全部导出仍未在 JSDoc 里写明公开理由
    （既有延后项，下次动到它们时补）。
+
+   > **已在 B3 落地（2026-10-04）**：`edit.ts` 的 `buildPaintCommand` / `buildRectPaintCommand` /
+   > `cellAt` / `pointToCell` 的「为何公开」JSDoc 已逐条写明消费者（`stores/editor.ts` 与
+   > `components/editor/PatternCanvas.vue`）；`buildReplaceCommand` 仍零消费者，按其 JSDoc 如实保留
+   > （B3 规格 §9.3）。另：`patternStats` 自 B2 起有了生产消费者（`SetupPage.vue` 的结果阶段）并已在
+   > 其 JSDoc 写明；**`buildPatternFromImage` 仍未写明**。上面那句是 B1 当时的实况，**不删**。
 4. `lab/decode` 去留（构建记录 §10 第 4 条）——B1 不动路由表中的这一条，留待引入壳的那一轮决定。
 
 ---

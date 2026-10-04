@@ -5,6 +5,7 @@ import { nextTick, reactive } from "vue";
 import { fitTransform, type ViewTransform } from "@/core/crop/view";
 import { defaultCellView } from "@/core/pattern/view";
 import { EMPTY } from "@/core/pattern/types";
+import { patternStats } from "@/core/pattern/stats";
 import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
@@ -1186,5 +1187,206 @@ describe("页面接线（终）：类型兼容的 props 错接（画布 / 工具
     // 页面层**可见的回显**：当前画笔槽渲染的就是它（`PalettePanel.vue` 的 `palette-current`）。
     // 读的是页面挂载出来的 DOM，不是 `props(...)`——错接在屏幕上是「面板显示的颜色与笔刷不一致」。
     expect(wrapper.get("[data-testid='palette-current']").text()).toContain(code2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 端到端承重断言（规格 §11.3）
+//
+// 这三条**故意跨层**：画布手势 → 页面 → store → core → 存储。分开测「画布 emit 了什么」与
+// 「store 收到后改了哪个下标」各自都能绿，而接错线时两条都绿、图纸却是错的——本项目最贵的
+// 缺陷形态（D1）就是它。所以这里的断言对象一律是**最终外部可观察量**：
+// `pattern.cells` 的具体下标、存储里那条记录的 `doc.grid` / `meta.colorCount` / `meta.thumbnail`。
+// ---------------------------------------------------------------------------
+
+describe("端到端 ①：载入 → 拖动涂抹 → 撤销", () => {
+  it("两次相隔数格的采样点之间补出的每一格都变了，撤销后逐格回到原值", async () => {
+    // 夹具：**3×1**，色卡下标 0 在 (0,0)、(1,0)，(2,0) 是空格。用小网格才能逐个下标点名断言。
+    const doc = toProjectDocument(
+      { width: 3, height: 1, paletteId: palette.id, cells: Uint16Array.from([0, 0, EMPTY]) },
+      palette,
+      { longSide: 3, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
+    );
+    const store = await createMemoryProjectStore();
+    await store.put({
+      meta: {
+        id: "a",
+        name: "小猫",
+        createdAt: "2026-10-03T00:00:00.000Z",
+        updatedAt: "2026-10-03T01:00:00.000Z",
+        thumbnail: "",
+        width: 0,
+        height: 0,
+        colorCount: 0,
+      },
+      doc,
+      source: null,
+    });
+    setProjectStore(store);
+
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const session = useProjectSession();
+    const pattern = editor.pattern;
+    if (pattern === null) throw new Error("载入失败：编辑器还没有图纸");
+
+    // 起点：空格（= 不拼豆），后两格是 0 号色
+    expect(Array.from(pattern.cells)).toEqual([0, 0, EMPTY]);
+    expect(session.dirty).toBe(false);
+    expect(editor.history.canUndo).toBe(false);
+
+    // 从 (2,0)（**起点就是那格空格**）拖到 (0,0)：两个采样点相隔两格，中间那格只能由补格补出来。
+    // 简报草稿写的是「从 (1,0) 拖到 (3,0)：终点落在图纸外」——**那是错的**：`PatternCanvas` 的
+    // `onPointerMove` 对图纸外的采样点**刻意跳过**（注释原文：「拖出图纸：跳过这次采样，`last` 不动
+    // → 回到图内从上一格补起」），于是 (2,0) 那格根本不会被补出来，草稿期望的 `[0, 2, 2]` 实测是
+    // `[0, 2, EMPTY]`（见报告 §从简报代码块里改掉的缺陷 D4）。改成两个**都在图纸内**、中间隔一格的
+    // 采样点之后，「补格」这一步才真的可观测。
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [2, 0], [0, 0]);
+
+    // 逐格点名：三格**全部**变成 2 号色。中间那格 (1,0) 是**补出来的**——没有补格时它是 0 号色，
+    // 这条 `toEqual` 会红（`A1` 变异实测转红 1 条）。
+    expect(Array.from(pattern.cells)).toEqual([2, 2, 2]);
+    // 同一个对象身份也是契约：保存从 `session.pattern` 派生 doc，两份拷贝会静默丢改动
+    expect(editor.pattern).toBe(session.pattern);
+    expect(session.dirty).toBe(true);
+    expect(editor.history.canUndo).toBe(true);
+
+    // 撤销一次 → 逐格回到原值（含那格空格：`revertChanges` 记的是每格的 `from`）
+    editor.undo();
+    expect(Array.from(pattern.cells)).toEqual([0, 0, EMPTY]);
+    // 撤销**不改**「内存与存储是否一致」：磁盘上仍是旧图纸，改动没有落盘
+    expect(session.dirty).toBe(true);
+  });
+});
+
+describe("端到端 ②：编辑 → 保存 → 存储里那条记录真的变了", () => {
+  it("doc.grid 与 pattern 一致、meta.colorCount 与 patternStats 一致、封面是新算的", async () => {
+    const doc = toProjectDocument(
+      { width: 3, height: 1, paletteId: palette.id, cells: Uint16Array.from([0, EMPTY, 1]) },
+      palette,
+      { longSide: 3, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
+    );
+    const store = await createMemoryProjectStore();
+    await store.put({
+      meta: {
+        id: "a",
+        name: "小猫",
+        createdAt: "2026-10-03T00:00:00.000Z",
+        updatedAt: "2026-10-03T01:00:00.000Z",
+        // **保存前的封面**：下面要断言它变了
+        thumbnail: "data:image/png;base64,OLD",
+        width: 0,
+        height: 0,
+        colorCount: 0,
+      },
+      doc,
+      source: null,
+    });
+    setProjectStore(store);
+
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const pattern = editor.pattern;
+    if (pattern === null) throw new Error("载入失败：编辑器还没有图纸");
+
+    // 涂两格（2 号色）：改完之后 `pattern` 必然与保存前那份 doc 不同
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [2, 0]);
+
+    await wrapper.get("[data-testid='editor-save']").trigger("click");
+    await flushPromises();
+
+    const stored = await store.get("a");
+    if (stored === null) throw new Error("保存之后存储里没有这条记录");
+
+    // ① doc 真的从 pattern 派生：用**独立解码器**解回来逐格比对，不手写子集映射
+    //    （手写一遍等于用被测逻辑去证明被测逻辑）
+    const parsed = fromProjectDocument(stored.doc, palette);
+    expect(Array.from(parsed.pattern.cells)).toEqual(Array.from(pattern.cells));
+    expect(parsed.pattern.width).toBe(pattern.width);
+    expect(parsed.pattern.height).toBe(pattern.height);
+
+    // ② 列表用的冗余字段来自存储层从 doc 派生（规格 §8.3 / B1 §4.4），并与实时统计一致
+    const stats = patternStats(pattern, palette);
+    expect(stats.colorCount).toBe(2);
+    expect(stored.meta.colorCount).toBe(stats.colorCount);
+    expect(stored.meta.width).toBe(pattern.width);
+    expect(stored.meta.height).toBe(pattern.height);
+
+    // ③ **封面重算**：这一条同时覆盖规格 §11.2 的变异「保存时不传 thumbnail」
+    expect(stored.meta.thumbnail).not.toBe("data:image/png;base64,OLD");
+    expect(stored.meta.thumbnail.startsWith("data:image/")).toBe(true);
+  });
+});
+
+describe("端到端 ③：/edit/a → /edit/b", () => {
+  it("画布拿到 b 的图纸、历史清空、视图按 b 重算", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const session = useProjectSession();
+    // 起点是 A（`beforeEach` 注入的 2×1）
+    expect(editor.pattern?.width).toBe(2);
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    expect(editor.history.canUndo).toBe(true);
+
+    // **先把 A 存掉再换 id**：`watch` 的交接缝与路由守卫共用 `session.dirty`——带着未保存改动改
+    // `route.params.id` 时它**按设计不载入**，而是拉起确认条（B1-8 的第二条用例钉的正是那一支）。
+    // 简报草稿在这里直接改 id，实测红在 `expected 2 to be 4`（见报告 §缺陷 D6）；要观察「重载」这条缝
+    // 就必须先把 dirty 落回 false。保存**不清历史**，所以下面的「历史清空」判据仍有判别力——
+    // 这里先把它钉住，否则「切换后 canUndo 为假」与「本来就不可撤销」不可区分。
+    await wrapper.get("[data-testid='editor-save']").trigger("click");
+    await flushPromises();
+    expect(session.dirty).toBe(false);
+    expect(editor.history.canUndo).toBe(true); // ← 切 id 之前的**前置条件**：历史非空
+    const savedView = editor.view;
+
+    // b：**4×4**（格数与 A 完全不同，视图重算才可断言）
+    const cells = new Uint16Array(16);
+    cells.fill(1);
+    cells[15] = EMPTY;
+    const doc = toProjectDocument(
+      { width: 4, height: 4, paletteId: palette.id, cells },
+      palette,
+      { longSide: 4, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
+    );
+    await getProjectStore().put({
+      meta: {
+        id: "b",
+        name: "海边的猫",
+        createdAt: "2026-10-03T02:00:00.000Z",
+        updatedAt: "2026-10-03T03:00:00.000Z",
+        thumbnail: "",
+        width: 0,
+        height: 0,
+        colorCount: 0,
+      },
+      doc,
+      source: null,
+    });
+
+    // **必须走 `router`（`reactive` 代理），不能走 `routeState`（原始对象）**：原始对象上的写不触发
+    // 响应式，`watch(() => route.params.id, …)` 永远不醒——简报草稿写的正是 raw 写法，实测同样红在
+    // `expected 2 to be 4`（见报告 §缺陷 D5；探针数据见本文件头注释 ①）。
+    router.params.id = "b";
+    await nextTick();
+    await flushPromises();
+
+    // ① 画布拿到的是 **b** 的图纸（不是 A 的 2×1，也不是 A 的 cells）
+    expect(editor.pattern?.width).toBe(4);
+    expect(editor.pattern?.height).toBe(4);
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual(Array.from(cells));
+    expect(wrapper.text()).toContain("海边的猫");
+
+    // ② 历史清空：跨图纸撤销会改错数据
+    expect(editor.history.canUndo).toBe(false);
+    expect(editor.history.canRedo).toBe(false);
+
+    // ③ 视图按 b 重算，而且**确实与 A 的视图不同**（`savedView` 是切 id 之前 A 的视图）。
+    // 期望值由纯函数现算，不写死数字（简报草稿那句「沿用 A 的 2×1 会算出 128×64」是错的：
+    // 2×1 在 800×600 里是比例 400、偏移 (0, 100)，`defaultCellView` 对小图纸不设上界——同 D2）。
+    expect(editor.view).toEqual(defaultCellView({ width: 800, height: 600 }, { width: 4, height: 4 }));
+    expect(editor.view).not.toEqual(savedView);
   });
 });
