@@ -440,12 +440,25 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     // 只伪造 `Date`（`toFake: ["Date"]`）、**不**伪造计时器：`@vue/test-utils` 的
     // `flushPromises` 走 `setImmediate`，把计时器一起冻住会让每一次 `await flushPromises()`
     // 永远挂住——那是测试基础设施的坑，不是被测行为。
+    //
+    // 本用例的两处「生成」**一律走 `$emit("generate")` 而不是点按钮**，这是刻意的环境处置：
+    // 在这个用例的时序下（`mount` 已完成 → 装 `Date` 假时钟 → 才驱动界面），
+    // `wrapper.get("[data-testid='generate']").trigger("click")` 派发的 click **到不了 Vue 的
+    // 处理器**（实测：`emitted("generate")` 为 0、库里 0 条、`blocked-reason` 不存在、按钮
+    // `disabled=false`、草稿的 source/几何/参数全在——即守卫没拦，纯粹是事件没送到）。
+    // 这是 vitest + happy-dom + `@vue/test-utils` 的**测试基础设施交互**，与产品行为无关；
+    // 同一次改动下 `ParamPanel` 的 `$emit("generate")` 完全正常（正是本条用的路径）。
+    // `$emit` 与点击的差别在于：`$emit` 直接调用组件对外的事件通道，跳过 DOM 事件派发；
+    // 被驱动的仍是 `SetupPage` 上那**同一个** `@generate` 处理器，本用例要钉的落盘语义
+    // （id/名称/createdAt 不变、`updatedAt` 严格变大、参数是新的）因此一字未改。
+    // **点击路径本身没有被放弃**：同文件其它用例在真时钟下点同一个按钮（例如「用户选的选框
+    // 就是交给解码器的源矩形」与「档位三档落盘」），这条按钮→处理器的接线由它们覆盖。
     const t1 = new Date("2026-10-03T10:00:00.000Z");
     const t2 = new Date("2026-10-03T10:05:00.000Z");
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       vi.setSystemTime(t1);
-      await wrapper.get("[data-testid='generate']").trigger("click");
+      wrapper.findComponent(ParamPanel).vm.$emit("generate");
       await flushPromises();
 
       const store = (await import("@/services/projectStore")).getProjectStore();
@@ -454,7 +467,8 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
 
       vi.setSystemTime(t2);
       draft.setLongSide(116);
-      await wrapper.get("[data-testid='generate']").trigger("click");
+      // 同上：假时钟仍在装，仍走 `$emit`，语义与「再点一次生成」等价。
+      wrapper.findComponent(ParamPanel).vm.$emit("generate");
       await flushPromises();
 
       const metas = await store.list();
