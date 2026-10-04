@@ -19,6 +19,13 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: host || false,
+    watch: {
+      // 原子写实现（含本仓使用的编辑工具）会先在**同目录**建一个隐藏临时目录再改名落盘。
+      // Windows 上 Vite 的监听器会去 watch 那个临时路径，撞 EBUSY 直接把 dev server 带走
+      // （本仓实测三次，报错形如 `EBUSY: resource busy or locked, watch '...\.<name>.tmpdir\<name>.tmp'`）。
+      // 这些路径是「写到一半的中间产物」、永远不需要 HMR，忽略掉即可。
+      ignored: ["**/.*.tmpdir/**", "**/*.tmp"],
+    },
   },
   test: {
     // `tsconfig.json` 的 `types: ["vitest/globals"]` 让 vue-tsc 认为 describe/it/expect
