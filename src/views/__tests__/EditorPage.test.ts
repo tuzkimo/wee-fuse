@@ -2,10 +2,12 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick, reactive } from "vue";
+import { fitTransform, type ViewTransform } from "@/core/crop/view";
 import { defaultCellView } from "@/core/pattern/view";
 import { EMPTY } from "@/core/pattern/types";
 import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
+import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -283,6 +285,40 @@ async function dragPaint(
   await pointerAtCell(wrapper, "pointerdown", from[0], from[1]);
   await pointerAtCell(wrapper, "pointermove", to[0], to[1]);
   await pointerAtCell(wrapper, "pointerup", to[0], to[1]);
+}
+
+/**
+ * 派发一次**裸**指针事件（屏幕坐标 + 指针 id）。
+ *
+ * `pointerAtCell` 只够单指：双指视图手势（捏合 → `update:view`）要自己控制两根手指落在哪、
+ * 拉到哪里。坐标一律由用例按桩矩形（left 16 / top 24）与 `editor.view` 现算，不硬编码屏幕常量。
+ */
+async function pointerAt(
+  wrapper: ReturnType<typeof mount>,
+  type: "pointerdown" | "pointermove" | "pointerup",
+  clientX: number,
+  clientY: number,
+  pointerId = 1,
+): Promise<void> {
+  const canvas = wrapper.get("[data-testid='editor-canvas']");
+  canvas.element.dispatchEvent(
+    new PointerEvent(type, { clientX, clientY, pointerId, bubbles: true, cancelable: true }),
+  );
+  await nextTick();
+  await flushPromises();
+}
+
+/**
+ * 图纸**中心**在屏幕上的 client 坐标（= 连续格坐标 `(width/2, height/2)` 映射到屏幕，
+ * 再补上桩矩形的 left / top）。捏合手势的锚点取它，因此用例不依赖具体比例。
+ */
+function patternCenter(): { x: number; y: number } {
+  const editor = useEditor();
+  const view = editor.view;
+  return {
+    x: 16 + view.offsetX + ((editor.pattern?.width ?? 0) / 2) * view.scale,
+    y: 24 + view.offsetY + ((editor.pattern?.height ?? 0) / 2) * view.scale,
+  };
 }
 
 beforeEach(async () => {
@@ -860,5 +896,105 @@ describe("键盘与 beforeunload", () => {
     await nextTick();
     // 卸载后 `undo()` 不该再被调用：cells 保持在被涂抹后的值
     expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
+  });
+});
+
+/**
+ * 页面这一层的**接线**：组件 emit → store 动作 / core 函数。
+ *
+ * 为什么单独一组：这五条接线（工具、吸管、框选、视图回写、缩放与适配）在本文件里原本
+ * **零判别力**——把它们改成空实现或改成错的 store 动作，先前那 26 条用例**全绿**
+ * （报告 §6 的 R12 / R19 / R20 / R21，以及补充的 `@update:tool`）。而「两端各自正确、
+ * 错在接线」正是本项目最贵的缺陷形态（任务 5 / 6 只覆盖了「组件 emit 了什么」，
+ * 任务 8 的三条端到端也不覆盖这几条），所以页面这一层必须自己钉住。
+ *
+ * **断言对象一律是接线接通后的可观察结果**（store 里的值 / 图纸的格），不是「事件被 emit 过」。
+ */
+describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适配", () => {
+  it("工具与吸管：点「吸管」再点一格 → 当前色变成那格的色号、切回画笔，图纸没被涂改", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+
+    // 先造出「格子里躺着一个既不是 0、也不等于当前色」的局面：把 (1,0) 涂成 2 号色。
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
+
+    // 当前色换成一个**与待吸色号不同**的值：否则「吸到了 2」与「什么都没做」不可区分。
+    editor.setCurrentColor(5);
+    await wrapper.get("[data-testid='tool-pick']").trigger("click");
+    // `@update:tool` 这条接线也在这里被真的走到（工具真的切成了 pick）。
+    expect(editor.tool).toBe("pick");
+
+    await pointerAtCell(wrapper, "pointerdown", 1, 0);
+    await pointerAtCell(wrapper, "pointerup", 1, 0);
+
+    // 接线接通后的结果：色号来自**那一格**（2），不是 0、不是 5、也不是橡皮。
+    expect(editor.currentColor).toBe(2);
+    // 吸完自动切回画笔（切换在 store 里做，页面不重复一遍）。
+    expect(editor.tool).toBe("brush");
+    // 吸管**不是画笔**：图纸一个字节都没变（把 onPick 接成 paint 的写法在这里红）。
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
+  });
+
+  it("框选：拖框 → 目标格真的被涂成当前色，而且是一条可撤销的命令", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+
+    editor.setCurrentColor(2);
+    await wrapper.get("[data-testid='tool-select']").trigger("click");
+    expect(editor.tool).toBe("select");
+
+    await dragPaint(wrapper, [0, 0], [1, 0]);
+
+    // `applyRect` 的结果：整块 2×1 都被涂成 2 号色。
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([2, 2]);
+    // **一次框选 = 一条命令**：一次撤销就整块回退
+    // （把 onSelect 接成逐格 `paint` 的写法在这里红——格子值一样，但撤销只退一格）。
+    expect(editor.canUndo).toBe(true);
+    editor.undo();
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
+  });
+
+  it("视图回写：双指捏合后 editor.view 等于画布发上来的那个视图", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const before = editor.view;
+    const center = patternCenter();
+
+    // 两指落在图纸中心两侧各 100px（间距 200），再把第二指拉到 +300（间距 400 ⇒ 2× 放大）。
+    await pointerAt(wrapper, "pointerdown", center.x - 100, center.y, 1);
+    await pointerAt(wrapper, "pointerdown", center.x + 100, center.y, 2);
+    await pointerAt(wrapper, "pointermove", center.x + 300, center.y, 2);
+
+    // 判据取**画布发上来的那个视图**：不在这里按 `zoomCellView` 重算一遍——重算会把组件与页面
+    // 两处的口径混成一份，「页面写回去了没有」这件事就再也测不到了。
+    const emitted = wrapper.findComponent(PatternCanvas).emitted("update:view");
+    const last = emitted?.at(-1)?.[0] as ViewTransform | undefined;
+    expect(last).toBeDefined();
+    expect(editor.view).toEqual(last);
+    // 视图真的变了（比例被捏大）：否则「回写成功」与「什么都没发生」不可区分。
+    expect(editor.view.scale).toBeGreaterThan(before.scale);
+  });
+
+  it("缩放与适配：+ 让比例 ×1.25、− 原路退回，适配落回 fitTransform", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const before = editor.view;
+
+    await wrapper.get("[data-testid='zoom-in']").trigger("click");
+    // 1.25 是控制者批准的常量（裁决 6）：写成别的档位这里就红。
+    expect(editor.view.scale).toBeCloseTo(before.scale * 1.25, 6);
+
+    await wrapper.get("[data-testid='zoom-out']").trigger("click");
+    // ÷1.25 原路退回（`1/1.25` 在二进制里不是精确值，所以逐项用 toBeCloseTo）。
+    expect(editor.view.scale).toBeCloseTo(before.scale, 6);
+    expect(editor.view.offsetX).toBeCloseTo(before.offsetX, 6);
+    expect(editor.view.offsetY).toBeCloseTo(before.offsetY, 6);
+
+    await wrapper.get("[data-testid='zoom-in']").trigger("click");
+    await wrapper.get("[data-testid='zoom-fit']").trigger("click");
+    // 适配 = `fitTransform` 的既有导出（期望值由那个纯函数现算，不写死数字）。
+    expect(editor.view).toEqual(fitTransform({ width: 800, height: 600 }, { width: 2, height: 1 }));
   });
 });
