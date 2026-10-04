@@ -146,10 +146,13 @@ export const useEditor = defineStore("editor", () => {
   /**
    * 编辑历史（上限 `HISTORY_LIMIT = 50`）。
    *
-   * `markRaw` 是必须的：它是类实例，被 Vue 深度代理既没有收益也有开销（栈是私有数组，本来就
-   * 追踪不到）。**因此读 `history.canUndo` / `history.canRedo` 不建立任何响应式依赖**：页面与
-   * 组件必须读本 store 的 `canUndo` / `canRedo` 两个 computed（见 return 之前那两段），
-   * 直接读这个类实例的 getter 会让撤销按钮永久停在初始状态。
+   * `markRaw` 让这个类实例**不进 Vue 的响应式系统**：它是纯数据结构，没有任何模板直接读它的
+   * 字段，深代理只会带来开销。**代价必须记住**：是 `markRaw` 掐掉了响应式这条路——**不是**
+   * 「私有字段本来就追踪不到」。不 markRaw 时 `ref()` 会深代理这个实例，`this.undoStack` 经
+   * getter 变成响应式数组、`.length` 反而**会**被追踪。所以这里只写 `markRaw` 一句，而
+   * `canUndo` / `canRedo` 的响应式来源只能由 `revision` 提供：读 `history.canUndo` /
+   * `history.canRedo` **不建立任何响应式依赖**，页面与组件必须读本 store 的这两个 computed
+   * （见 return 之前那两段），直接读这个类实例的 getter 会让撤销按钮永久停在初始状态。
    */
   const history = ref<EditHistory>(markRaw(new EditHistory()));
   // 视图与显示。
@@ -205,7 +208,13 @@ export const useEditor = defineStore("editor", () => {
     revision.value = 0;
     lastDirty.value = null;
     tool.value = DEFAULT_TOOL;
-    currentColor.value = firstUsedColor(nextPattern);
+    // 播种也**必须收口值域**：`requirePattern` 按控制者裁决不扫每格的值域（O(n) 扫描挡不住任何
+    // 已知路径），所以色卡外的坏值可能就躺在第一格里。照搬进 `currentColor` 会让画笔握着一个
+    // 非色卡色号，而 `buildPaintCommand` 只守 `0..EMPTY`（`core/pattern/edit.ts:44`）——于是它被
+    // **静默涂开**（不报错、只产出错误结果）。落在色卡外时回落到 0，「一进来就有个能画的颜色」
+    // 这条目的不变。`firstUsedColor` 只会返回 `Uint16Array` 里的值，下界天然成立。
+    const seedColor = firstUsedColor(nextPattern);
+    currentColor.value = seedColor < nextColorCount ? seedColor : 0;
     history.value.clear();
     view.value = placeholderView();
     viewInitialized.value = false;
@@ -312,7 +321,11 @@ export const useEditor = defineStore("editor", () => {
     if (!Array.isArray(indices)) {
       throw new Error(`画笔下标必须是数组（当前 ${typeof indices}）`);
     }
-    const command = buildPaintCommand(current.cells, indices, currentColor.value, "画笔");
+    // `Array.isArray` 的签名是 `arg is any[]`：**它会把这个参数的元素类型静默放宽成 `any`**
+    // （于是 `buildPaintCommand` 的入参检查名存实亡——在元素上调用什么都能过）。显式类型的局部量
+    // 把元素类型收回来：运行期的形态守卫一个不少，类型面的检查也一件不少。
+    const safeIndices: readonly number[] = indices;
+    const command = buildPaintCommand(current.cells, safeIndices, currentColor.value, "画笔");
     if (command === null) return;
     publishChange(history.value.commit(current.cells, command));
   }

@@ -182,6 +182,22 @@ describe("beginSession：会话播种", () => {
     expect(() => editor.beginSession(pattern, EMPTY)).not.toThrow();
     expect(editor.colorCount).toBe(EMPTY);
   });
+
+  it("首格是色卡外的坏值时，播种的 currentColor 收口到 0（不许把非法色号带进画笔）", () => {
+    // `requirePattern` 按控制者裁决**不扫**每格的值域（O(n) 扫描挡不住任何已知路径），所以
+    // 「第一格就是坏值」是可达输入（旧版本文件、被改坏的备份、将来的导入路径）。
+    // 照搬 `firstUsedColor` 的返回会让画笔握着一个非色卡色号，而 `buildPaintCommand` 只守
+    // `0..EMPTY`——它会**静默涂开**：不报错，图纸上多出一个谁也不认识的色号。
+    const { editor, pattern } = seedEditor([EMPTY - 1, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
+
+    expect(editor.currentColor).toBe(0);
+    expect(editor.currentColor).toBeGreaterThanOrEqual(0);
+    expect(editor.currentColor).toBeLessThan(COLOR_COUNT);
+
+    // 端到端的后果：这一笔涂下去的是**色卡内**的色号（0），不是 65534
+    editor.paint([5]);
+    expect(pattern.cells[5]).toBe(0);
+  });
 });
 
 describe("reset：把会话清回初始态", () => {
@@ -340,7 +356,7 @@ describe("工具 / 当前色 / 视图 / 显示开关", () => {
     expect(editor.currentColor).toBe(3);
   });
 
-  it("还没载入图纸时 setCurrentColor / paint / applyRect / pickFromCell 响亮拒绝", () => {
+  it("还没载入图纸时 setCurrentColor / paint / applyRect / pickFromCell 响亮拒绝，undo / redo 不抛", () => {
     // 静默返回会把「页面忘了 beginSession」变成「点了没反应」——本项目点名要消灭的静默失败形态。
     const editor = useEditor();
 
@@ -349,9 +365,19 @@ describe("工具 / 当前色 / 视图 / 显示开关", () => {
     expect(() => editor.applyRect({ x: 0, y: 0, width: 1, height: 1 })).toThrow(/还没有载入图纸/);
     expect(() => editor.pickFromCell(0, 0)).toThrow(/还没有载入图纸/);
 
+    // 撤销 / 重做走的是**另一条**路径：工具栏按钮由 `canUndo` / `canRedo` 驱动（未载入时必然是
+    // false ⇒ 禁用），但键盘快捷键（Ctrl+Z / Ctrl+Shift+Z）不经过按钮的 disabled。它们在这里
+    // **必须安静返回而不是抛**——`pattern` 为 null 时去读 `pattern.value.cells` 会变成一次
+    // 未捕获的 TypeError（「按了快捷键整个页面报错」）。这两条断言钉的就是那两行守卫。
+    expect(() => editor.undo()).not.toThrow();
+    expect(() => editor.redo()).not.toThrow();
+
     expect(editor.pattern).toBeNull();
     expect(editor.colorCount).toBe(0);
     expect(editor.history.undoDepth).toBe(0);
+    expect(editor.history.redoDepth).toBe(0);
+    expect(editor.revision).toBe(0);
+    expect(editor.lastDirty).toBeNull();
   });
 
   it("setView 只校验形状、不夹取（夹取需要视口，而状态面里没有视口字段）", () => {
@@ -763,7 +789,11 @@ describe("端到端：载入一份真记录 → 涂抹 → 撤销", () => {
     // 同一份对象、同一份 cells：两边各持一份拷贝就是「编辑器改了、保存写的是旧的」（规格 §7 要点 2）
     expect(editor.pattern).toBe(pattern);
     expect(editor.pattern?.cells).toBe(pattern.cells);
-    // markRaw：TypedArray 的原地写 Vue 追不到，所以刷新只能走 revision（这里把「不代理」钉住）
+    // **如实标注**：本夹具的 `pattern` 来自 `session.pattern`，而 `stores/project.ts:62` 已经
+    // `markRaw` 过它——带 SKIP 标记的对象过 `reactive()` 会原样返回，所以这一条**在这里恒真**，
+    // 删掉 store 的 `markRaw` 也不会红（变异 M10 实测：转红的是本文件里 beginSession 那两条
+    // **裸对象** `toBe`——「revision / lastDirty 归零…」与「非法图纸 / 非法色数…」）。它留在这里
+    // 只作为「不代理」这个不变量的文档，不承担判别力。
     expect(isReactive(editor.pattern)).toBe(false);
     expect(editor.currentColor).toBe(7); // 行优先第一个非空格，夹具里是 7 号色
     expect(session.dirty).toBe(false); // 载入不是改动
