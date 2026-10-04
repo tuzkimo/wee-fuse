@@ -1143,6 +1143,15 @@ export function cellsAlongLine(from: CellPoint, to: CellPoint): CellPoint[];
    ② 任务 5 的 `PatternCanvas` 拿到 `null` 时**照画棋盘底与色块层、跳过一切与格子有关的绘制**
    （网格线 / 色号 / 预览 / 高亮），这一句写进任务 5 的绘制流程，不加用例。
 
+   > **2026-10-04 更正：①② 的结论作废（任务 1 审查发现，控制者复核后反转了自己当初的裁定）。**
+   > 「两轴各自饱和夹取 ⟹ `x1 < x0` 不可达 ⟹ `null` 不可达」这条推理把**无交集**与**区间反向**
+   > 当成了同一件事。按规格 §4.5 / §11.1，图纸整块落在视口之外时必须返回 `null`（并有对应用例），
+   > 而饱和实现会返回一个与视口毫无交集的区间。**正确实现是「交集判定放在饱和夹取之前」**：
+   > 逐轴 `if (hi <= 0 || lo >= count) return null;` 之后再夹进 `[0, count-1]`；右端仍取 `ceil`
+   > （`ceil(hi)-1` 会丢掉「起始边恰好压在视口边缘」的那一格，而规格 §4.5 要求含它）。
+   > 任务 5 据此**判空 → 跳过一切与格子有关的绘制**照旧成立，只是 `null` 现在是真实可达的分支。
+   > 过程见账本 `.superpowers/sdd/2026-10-04-app-b3-editor/progress.md` 的 `Task 1` 各行。
+
 ---
 
 ## 任务 2：`useCanvasSurface`（DPR 尺寸 + 量容器 + `ResizeObserver`）与 `CropCanvas` 改用
