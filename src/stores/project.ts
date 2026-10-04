@@ -100,7 +100,10 @@ export const useProjectSession = defineStore("projectSession", () => {
    * 却都不走 `adopt`。**不新增第二个 dirty 标志**（规格 §8.1）：两个标志迟早会出现「一个真一个假」
    * 的状态，而路由守卫只看其中一个——那正是「用户以为保存过了、其实没保存」的来源。
    *
-   * 只有 `save()` 成功、`load()` 成功、`reset()` 会把它复位成 `false`。
+   * `dirty` 被复位成 `false` 的路径有**四条**：`save()` 成功、`load()` 成功、`reset()`，以及
+   * **`load()` 失败**——`get()` 返回 `null`、或 `fromProjectDocument` 抛错，两种失败都走
+   * `clearSession()`（见该函数）、把会话整个清空并顺带把 `dirty` 置假。第四条与前三者同源：
+   * 载入失败之后当前**没有工程**，也就没有「内存与存储是否一致」可言。
    */
   function markDirty(): void {
     dirty.value = true;

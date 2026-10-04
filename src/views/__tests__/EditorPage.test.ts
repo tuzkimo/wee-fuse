@@ -809,6 +809,7 @@ describe("B1-8：/edit/a → /edit/b 重载", () => {
   it("有未保存改动时先拦下，确认后才切到新 id", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
+    const session = useProjectSession();
     useEditor().setCurrentColor(2);
     await dragPaint(wrapper, [1, 0], [1, 0]);
 
@@ -822,22 +823,40 @@ describe("B1-8：/edit/a → /edit/b 重载", () => {
     expect(wrapper.find("[data-testid='leave-bar']").exists()).toBe(true);
     expect(pushMock).not.toHaveBeenCalled();
 
+    // 从这一刻起数 `session.load` 的调用：规格 §8.4 要的是「保存旧 id 的改动，**再载入新 id**」，
+    // 而「再载入」只能发生**一次**（载入两次会让画布重播种、历史清两遍，观感上是白闪一下）。
+    const loadSpy = vi.spyOn(session, "load");
+
     await wrapper.get("[data-testid='leave-save']").trigger("click");
     await flushPromises();
 
-    // 重放「切到 b」那次导航：真实路由器会把 `route.params.id` 变成 "b"，watcher 据此载入。
-    // 用例里手动模拟这一步——**先退回一个空值再设 "b"**，因为 watcher 只在**值真的变了**时重跑
-    // （id 一直是 "b" 的话它不会醒；空值那一跳被 `next === ""` 的守卫安全地忽略）。
-    router.params.id = "";
-    await nextTick();
-    router.params.id = "b";
-    await nextTick();
-    await flushPromises();
+    // **真实顺序：不替生产代码补任何一步。** 同一条路由记录只变参数时 `onBeforeRouteLeave` 不触发，
+    // 所以上面那次 `router.params.id = "b"` **已经提交**——`route.params.id` 此刻就是 "b"，而 `watch`
+    // 已经醒来过一次（拉起确认条后 `return`）。确认之后重放的目标与当前地址逐字相同：vue-router 视为
+    // 重复导航直接 resolve，`route.params.id` 不再变化，于是**「载入新图纸」只能由 `replayPending()`
+    // 自己做**。修复前它把这一步留给 `watch`，下面的断言因此必红——实测第一条就红在标题上
+    // （`expected '小猫2 × 1 · 2 种颜色…' to contain '海边的猫'`），画布仍是 a 的 2×1、历史里还留着
+    // a 的那一笔，而 URL 已经是 b：这正是本缺陷的用户可见形态。
+    //
+    // 旧版本在这里手动 `router.params.id = ""` 再设回 "b"，好让 `watch` 再跑一次；**那一步是在替
+    // 生产代码干活**，它把「确认后不载入」整个遮住了（详见修复报告 A-1；生产代码修好之后，这个
+    // 补的步骤本身就不该存在——真实路由器不会把参数退回空值再设一遍）。
+    expect(wrapper.text()).toContain("海边的猫");
+    expect(editor.pattern?.width).toBe(4);
+    expect(editor.pattern?.height).toBe(4);
+    // b 的图纸本体（15 格色号 0 + 末格空格），不是 a 的 [0, EMPTY] 那两格
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([...new Array<number>(15).fill(0), EMPTY]);
+    // 载入新图纸必须清历史：跨图纸撤销会改错数据（规格 §6.6 / §11.3）
+    expect(editor.history.canUndo).toBe(false);
 
     // 旧 id 的改动落盘了，然后才切到 b
     expect(storedCells(await getProjectStore().get("a"))).toEqual([0, 2]);
-    expect(editor.pattern?.width).toBe(4);
     expect(pushMock).toHaveBeenCalledWith({ name: "editor", params: { id: "b" } });
+    // **恰好一次**：`activate` 在入口就写 `loadedId`，所以哪怕重放的那次 `push` 真的又唤醒了
+    // `watch`，它也只会看到 `next === loadedId` 而跳过。**如实标注判别力**：在本用例的替身路由器下
+    // 第二次载入不可达（`push` 是空实现、参数不再变化），所以这一句是**契约定性**的守卫，不是
+    // 变异证明过的判别力——真实路由器上的「只载入一次」由上面那条 `loadedId` 写入时序保证。
+    expect(loadSpy.mock.calls.map((call) => call[0])).toEqual(["b"]);
   });
 });
 

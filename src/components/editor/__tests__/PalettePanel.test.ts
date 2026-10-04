@@ -256,5 +256,11 @@ describe("非法输入", () => {
   it("currentColor 越界（色卡外且不是 EMPTY）时响亮失败，消息带实际值", () => {
     expect(() => mountPanel({ currentColor: 999 })).toThrow("999");
     expect(() => mountPanel({ currentColor: 999 })).toThrow("当前色号越界");
+    // 裁决要求的**另一半**同样要断言：消息里必须有「色卡 … 只有 N 色」。缺了它，用户只看得到
+    // 「越界了」而看不到越到哪、合法上界是多少；把 `色卡 … 只有 N 色` 整段删掉时，上面两条照样绿
+    // （999 与「当前色号越界」都还在），所以这一句是那半段消息的唯一守卫。
+    expect(() => mountPanel({ currentColor: 999 })).toThrow(
+      `只有 ${String(palette.colors.length)} 色`,
+    );
   });
 });

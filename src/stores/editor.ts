@@ -322,8 +322,8 @@ export const useEditor = defineStore("editor", () => {
       throw new Error(`画笔下标必须是数组（当前 ${typeof indices}）`);
     }
     // `Array.isArray` 的签名是 `arg is any[]`：**它会把这个参数的元素类型静默放宽成 `any`**
-    // （于是 `buildPaintCommand` 的入参检查名存实亡——在元素上调用什么都能过）。显式类型的局部量
-    // 把元素类型收回来：运行期的形态守卫一个不少，类型面的检查也一件不少。
+    // （于是本函数体**内**对元素的类型检查会被关掉；调用点仍由 `paint` 自己的签名把关）。显式类型的
+    // 局部量把元素类型收回来：运行期的形态守卫一个不少，类型面的检查也一件不少。
     const safeIndices: readonly number[] = indices;
     const command = buildPaintCommand(current.cells, safeIndices, currentColor.value, "画笔");
     if (command === null) return;

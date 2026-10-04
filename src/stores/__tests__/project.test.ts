@@ -268,8 +268,6 @@ describe("工程会话 store", () => {
   });
 });
 
-// ↓↓↓ 以下追加在 src/stores/__tests__/project.test.ts 的**末尾**，既有内容一行不动 ↓↓↓
-
 /**
  * B3 追加：`markDirty()` 与 `save(options?: { thumbnail?: string })`。
  *

@@ -234,13 +234,24 @@ async function save(): Promise<void> {
   }
 }
 
-/** 重放被拦下的那次导航；`allowLeave` 先置真，守卫才不会再拦一次。 */
+/**
+ * 重放被拦下的那次导航；`allowLeave` 先置真，守卫才不会再拦一次。
+ *
+ * **被拦下的那次「换 id」导航可能已经提交**（见 `watch` 的 JSDoc）：同一条路由记录只变参数时
+ * `onBeforeRouteLeave` 根本不会触发（它不是 `beforeRouteUpdate`），`route.params.id` 在 `watch`
+ * 醒来时**已经是新 id** 了。所以重放一个与当前地址逐字相同的目标会被 vue-router 当成重复导航
+ * 直接 resolve，`route.params.id` 不再变化、`watch` 也不再醒——**新图纸永远不会被载入**
+ * （URL 是 b、画布还是 a，且没有任何迹象）。因此这里必须**自己**比对并载入新 id，不把责任留给
+ * `watch`；`activate` 会先写 `loadedId`，所以哪怕 `watch` 真的又醒了也只会有这一次载入。
+ */
 async function replayPending(): Promise<void> {
   const target = pending.value;
   // 「改参数重新生成」被拦下的那一次：确认离开之后才播种草稿（见 `pendingRerun`）。
   if (pendingRerun.value) seedRerunDraft();
   allowLeave.value = true;
   if (target !== null) await router.push(target);
+  const nextId = typeof route.params.id === "string" ? route.params.id : "";
+  if (nextId !== "" && nextId !== loadedId.value) await activate(nextId);
   // `await router.push(...)` 会走一次微任务，确认条此刻仍在 DOM 里是正常的——用例在 `flushPromises`
   // 之后才断言它消失。这里**不**为了「让 DOM 早点更新」而把这三行前移：`allowLeave` 必须在
   // `push` **之前**置真，否则重复放行的那一次导航会被守卫再拦回来（成环）。
@@ -280,8 +291,13 @@ onMounted(async () => {
  * B1-8：`/edit/a → /edit/b` 只变参数、不重挂组件，所以必须在这里重载。
  *
  * 有未保存改动时**不直接载入**：把这次「切到另一个 id」当成一次普通的离开，交给同一条确认条
- * （规格 §8.4 的表：id 变化与路由离开共用一条确认条）。`pending` 里存的是**编辑器自己的目标**，
- * 真实路由器随后把 `route.params.id` 变成它，`watch` 于是再跑一次并真正载入。
+ * （规格 §8.4 的表：id 变化与路由离开共用一条确认条）。`pending` 里存的是**编辑器自己的目标**。
+ *
+ * **这条 `watch` 不是「确认之后的载入者」**（早期注释在此写反了，正是切换工程不载入的源头）：
+ * 同一条路由记录只变参数时 `onBeforeRouteLeave` **不会触发**，所以 `watch` 醒来时那次导航**已经提交**、
+ * `route.params.id` 已经是新 id；它只负责拉起确认条并 `return`。用户确认之后由 `replayPending()`
+ * **自己**载入新 id（那一次 `router.push` 的目标与当前地址逐字相同，vue-router 视为重复导航直接
+ * resolve，`route.params.id` 不会再变——等 `watch` 再醒就是永远不载入）。
  */
 watch(
   () => route.params.id,
@@ -433,7 +449,11 @@ function rerun(): void {
         这个工程没有保存原图，只能继续编辑或重新导出，不能改参数重新生成。
       </p>
 
-      <!-- 裁决 2：不拦截、不二次确认，只在入口旁固定如实说明（规格 §8.5） -->
+      <!--
+        裁决 2：**不额外拦截、不做第二次确认**（重跑本身不问「是否编辑过」），只在入口旁固定如实
+        说明；**有未保存改动时仍走同一条确认条**——`rerun()` 把「去 setup」当成一次待确认的离开
+        交给 §8.4 的守卫，后者是「刚刚涂完没保存就被带走」那一支的兜底（规格 §8.5）。
+      -->
       <p data-testid="rerun-warning" class="mt-2 text-base text-slate-500">
         重新生成会按原图重做整张图纸，手工涂改不会保留。
       </p>

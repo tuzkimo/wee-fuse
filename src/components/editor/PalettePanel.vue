@@ -91,8 +91,8 @@ const current = computed<PaletteColor | null>(() => {
   const color = props.palette.colors[value];
   if (color === undefined) {
     const reason = `当前色号越界：${String(value)}（色卡 ${props.palette.id} 只有 ${String(props.palette.colors.length)} 色，合法值是 0–${String(props.palette.colors.length - 1)}，或 ${String(EMPTY)} 表示橡皮）`;
-    // 包成 Error 再抛：这个 computed 也可能被非模板代码读出 `undefined`，
-    // 而 `Error` 会在**渲染期**带原因抛给调用方（@vue/test-utils 的挂载期断言就靠这条）。
+    // 直接抛 `Error`（不是把原因拼成字符串、让这个 computed 返回 `undefined`）：这个 computed 也
+    // 可能被非模板代码读出，而异常会在**渲染期**把原因抛给调用方（@vue/test-utils 的挂载期断言就靠这条）。
     throw new Error(reason);
   }
   return color;

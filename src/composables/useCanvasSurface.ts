@@ -11,6 +11,15 @@ import type { Size } from "@/core/crop/view";
 export interface CanvasSurface {
   readonly viewport: Ref<Size>;
   readonly dpr: Ref<number>;
+  /**
+   * 立刻重算一次尺寸。
+   *
+   * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：生产路径上的量测由本 composable 的
+   * `onMounted` 与 `ResizeObserver` 回调驱动，**没有生产代码调它**；公开是为了让测试能直接驱动
+   * 一次量测（不给测试驱动 `ResizeObserver` 桩的义务）——`composables/__tests__/useCanvasSurface.test.ts`
+   * 的「容器未挂载」「量到 0」两支正是靠它直接驱动，返回值的 `dpr` 同理。将来若出现「显式重算」
+   * 的需求（例如 DPR 跨屏变化要在 `measure` 之外主动再量一次，见文件头 B2-28 的取舍），入口已在这里。
+   */
   measure(): void;
 }
 
@@ -29,6 +38,9 @@ export interface CanvasSurface {
  *
  * **DPR 跨屏变化不重算**（B2-28 的既有取舍，保持）：`dpr` 只在 `measure()` 时读一次，
  * `devicePixelRatio` 变化不会自己触发重算——真机拖窗到另一块屏时观感由 B3-R3 盯着。
+ *
+ * **`measure()` 的公开理由**写在 `CanvasSurface` 的接口 JSDoc 里：生产路径由本文件的 `onMounted`
+ * 与 `ResizeObserver` 驱动，公开是给测试（与将来的显式重算）一个直接驱动一次量测的入口。
  */
 export function useCanvasSurface(options: {
   container: Ref<HTMLElement | null>;

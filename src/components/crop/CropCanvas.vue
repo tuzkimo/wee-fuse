@@ -275,7 +275,7 @@ watch(
  * `panToCenterSelection` 在 fit 下恒返回 `{0,0}`，而 `props.pan` 也已被夹取归位）。
  *
  * 视口还没量到尺寸（`0×0`）时直接返回：`fitTransform` 会抛错，而真实路径上缩放 / 旋转按钮只在
- * 画布量过尺寸之后才可点（挂载即 `resizeCanvas` 量一次）。
+ * 画布量过尺寸之后才可点（`useCanvasSurface` 在挂载时量一次容器）。
  */
 watch(
   [() => props.zoom, () => props.rotation],
@@ -304,6 +304,8 @@ function draw(): void {
   if (element === null) return;
   const ctx = element.getContext("2d");
   if (ctx === null) return;
+  // 这里**刻意不读** `useCanvasSurface` 的 `dpr`：绘制路径沿用既有口径，DPR 口径的唯一定义处
+  // 在 `useCanvasSurface`（画布物理尺寸 = 容器 CSS 尺寸 × DPR）。
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
   const size = viewport.value;
   if (size.width <= 0 || size.height <= 0) return;

@@ -71,7 +71,11 @@ export const GRID_LINE_MIN_CELL_PX = 6;
  */
 export const CELL_LABEL_MIN_CELL_PX = 28;
 
-/** 图纸格坐标（整数下标）。与 `Point` 的区别就是「必须是整数」这条语义。 */
+/**
+ * 图纸格坐标（**安全整数**下标，见 `requireCellPoint`）。与 `Point` 的区别就是「必须是安全整数」
+ * 这条语义：小数与 `≥ 2^53` 的值（例如 `1e21`——`x += 1` 在那时是空操作，`cellsAlongLine` 的
+ * 循环会失去出口）一律抛错，不静默取整。
+ */
 export interface CellPoint {
   readonly x: number;
   readonly y: number;
@@ -349,7 +353,7 @@ export function cellRectFromScreen(a: Point, b: Point, view: ViewTransform, grid
 }
 
 /**
- * 两个格子之间的**Bresenham 8 连通**补格序列，含 `from` 与 `to`、已去重、端点是整数。
+ * 两个格子之间的**Bresenham 8 连通**补格序列，含 `from` 与 `to`、已去重、端点是**安全整数**。
  *
  * **为什么需要它**：指针事件的采样率**必然**低于手指移动速度，快速划过时相邻两次采样命中的
  * 格子可能隔着好几格；不补格就是「拖得越快，笔迹越断」，而它在本环境里肉眼看不出来。

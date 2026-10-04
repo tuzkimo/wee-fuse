@@ -579,6 +579,10 @@ describe("可见格判空：图纸整块移出视口（visibleCellRange 为 null
 
     // ① 合成照常发生：底色 + `drawImage(色块层, 视图映射)`。判空只该跳过**叠加层**，
     //    不该把整个 draw() 变成空操作（那会让图纸滑出视口的瞬间留下一块没擦干净的残影）。
+    //    **这一条的判别力不再「继承」第 1 条画法断言**（最终审查点名：它此前没有专属变异，
+    //    是不是自己就能红无法区分）——实测：把 `drawImage` 的目标矩形改成 `0, 0`（丢掉
+    //    `view.offset`）、**只跑本 describe**（`-t "可见格判空"` → 1 failed | 19 skipped）时，
+    //    本用例以 `expected [0, 0, 256, 256] to deeply equal [2000, 2000, 256, 256]` 单独转红。
     expect(draws.length).toBeGreaterThan(0);
     expect(draws.at(-1)?.args.slice(1)).toEqual([2000, 2000, 256, 256]);
 
@@ -601,7 +605,7 @@ describe("可见格判空：图纸整块移出视口（visibleCellRange 为 null
   });
 });
 
-describe("指针表清理：抬手 / 取消后不残留（残留会让画布永久卡死）", () => {
+describe("指针表清理：抬手 / 取消 / 捕获丢失后不残留（残留会让画布永久卡死）", () => {
   it("抬手把指针从活跃表里移除：下一次按下仍是单指工具手势（不是双指平移）", async () => {
     const wrapper = mountCanvas(); // 32×32 + VIEW_32：格坐标 = floor((屏幕 + 200) / 24)
     await wrapper.vm.$nextTick();
@@ -640,6 +644,31 @@ describe("指针表清理：抬手 / 取消后不残留（残留会让画布永�
 
     expect(wrapper.emitted("update:view")).toBeUndefined();
     expect(wrapper.emitted("paint")).toHaveLength(1);
+    expect(wrapper.emitted("paint")?.at(-1)).toEqual([[268, 300, 332, 364]]);
+  });
+
+  // 第三个入口，与上面两条**同形但独立的机制**：模板上的 `@lostpointercapture="onPointerUp"`。
+  // 真机上 `setPointerCapture` 抛错、或捕获被浏览器**无声**丢掉时，`pointerup` / `pointercancel`
+  // 都不会到来（规范只保证在捕获丢失时派发 `lostpointercapture`），这条绑定是编辑器侧唯一的兜底。
+  // 它此前零守卫：在**本用例出现之前**删掉那一行没有任何用例转红（最终审查实测），而漏掉它的
+  // 后果就是上面注释写的「画布永久卡死」。
+  it("捕获被无声丢失（只有 lostpointercapture、没有 pointerup）也清指针：下一次按下仍是单指", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 12, 12); // 格 (8,8) → 264
+    // **只**派发 lostpointercapture：模拟「捕获已经丢了、pointerup 永不到来」。
+    await pointer(wrapper, "lostpointercapture", 12, 12);
+    // 兜底走的就是 `onPointerUp`：这一笔照常提交（同一出口、一次手势一条命令）
+    expect(wrapper.emitted("paint")?.at(-1)).toEqual([[264]]);
+
+    // 残留会让活跃表变成 2 根 → 工具手势被丢弃、转入双指视图分支，此后**永远起不了工具手势**。
+    await pointer(wrapper, "pointerdown", 108, 12, { pointerId: 2 }); // 格 (12,8) → 268
+    await pointer(wrapper, "pointermove", 108, 84, { pointerId: 2 }); // 格 (12,11)
+    await pointer(wrapper, "pointerup", 108, 84, { pointerId: 2 });
+
+    expect(wrapper.emitted("update:view")).toBeUndefined();
+    expect(wrapper.emitted("paint")).toHaveLength(2);
     expect(wrapper.emitted("paint")?.at(-1)).toEqual([[268, 300, 332, 364]]);
   });
 });
