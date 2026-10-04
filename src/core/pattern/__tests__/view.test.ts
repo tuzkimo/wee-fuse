@@ -41,12 +41,14 @@ const GRID_800 = { width: 800, height: 600 };
 const GRID_480 = { width: 480, height: 360 };
 const GRID_10 = { width: 10, height: 10 };
 const GRID_8 = { width: 8, height: 8 };
+/** 8×6：适配比例 12.5 会被 `MIN_CELL_PX` 抬到 24，而缩放上界是 `MAX_CELL_PX = 64`——留给「先放大、再捏合」三个不同比例。 */
+const GRID_8x6 = { width: 8, height: 6 };
 const V1000 = { width: 1000, height: 800 };
 
 /** 一条合法视图（注意：`clampView` 不是每个 `ViewTransform` 都能满足的关系，它只是个数据结构）。 */
 const V = (scale: number, offsetX: number, offsetY: number): ViewTransform => ({ scale, offsetX, offsetY });
 
-/** 8 连通：相邻两格的切比雪夫距离必须恰好为 1（同一点重复出现则是 0，也放行）。 */
+/** 8 连通：相邻两格的切比雪夫距离必须**恰好为 1**（重复格的距离是 0，会红；重复由另一条去重断言负责）。 */
 function expectEightConnected(path: readonly CellPoint[]): void {
   for (let i = 1; i < path.length; i++) {
     const dx = Math.abs(path[i].x - path[i - 1].x);
@@ -299,13 +301,17 @@ describe("visibleCellRange（§4.5）", () => {
     expect(visibleCellRange(V(10, -2, -2), V100, { width: 30, height: 30 })).toEqual({ x0: 0, y0: 0, x1: 11, y1: 11 });
   });
 
-  it("图纸整个在视口外时两端饱和到同一列 / 行（当前实现不会返回 null）", () => {
-    // 图纸整个在视口左边：连续格坐标 x ∈ [50, 60]，被夹进 [0, 9] ⇒ 两端都饱和到 9。
-    // `x1 < x0` 在当前实现下不可达（两轴都夹进 [0, count−1]），见 `view.ts` 的 JSDoc。
-    expect(visibleCellRange(V(10, -500, -50), V100, GRID_10)).toEqual({ x0: 9, y0: 5, x1: 9, y1: 9 });
-    // 图纸整个在视口上方：y 同上饱和，x 仍是真实可见区间。
-    expect(visibleCellRange(V(10, -50, -500), V100, GRID_10)).toEqual({ x0: 5, y0: 9, x1: 9, y1: 9 });
-    // 480×480 的图纸缩到视口左上之外：可见的是图纸内部的 [48, 96] 一段，同样不是 null。
+  it("没有任何格子可见时返回 null（调用方必须判空，不许拿去循环）", () => {
+    // 图纸整个在视口左边：连续格坐标 x ∈ [50, 60]，与图纸下标 [0, 9] **没有交集**。
+    expect(visibleCellRange(V(10, -500, -50), V100, GRID_10)).toBeNull();
+    // 图纸整个在视口上方：y ∈ [50, 60] 与 [0, 9] 没有交集。
+    expect(visibleCellRange(V(10, -50, -500), V100, GRID_10)).toBeNull();
+    // 32×32 的图纸整个缩到视口左上之外：可见格坐标 [48, 96] 已越过图纸下标 [0, 31]。
+    expect(visibleCellRange(V(1, -48, -48), { width: 48, height: 48 }, { width: 32, height: 32 })).toBeNull();
+    // 反方向：图纸整个在视口右下之外（可见格坐标 [−48, 0]）——与图纸只在零宽处相切，同样没有可见格。
+    expect(visibleCellRange(V(1, 48, 48), { width: 48, height: 48 }, { width: 32, height: 32 })).toBeNull();
+    // 对照（判空不许过度）：同一视图放在 480×480 的大图纸上时，视口看的是图纸**内部**
+    // （[48, 96] ⊂ [0, 479]）⇒ 不是 null，而是那一段真实的闭区间。
     expect(visibleCellRange(V(1, -48, -48), { width: 48, height: 48 }, GRID_480)).toEqual({
       x0: 48,
       y0: 48,
@@ -470,6 +476,8 @@ describe("cellsAlongLine（§4.6）", () => {
       expect(path[0]).toEqual(from);
       expect(path[path.length - 1]).toEqual(to);
       expectEightConnected(path);
+      // 如实记录：当前 8 连通步进下不可能产出重复格，所以这条断言与 `view.ts` 的 `Set` 一样
+      // **没有判别力**（两处都删掉也不会红）——它钉的是规格 §4.6 的输出契约（去重），不是步进的副产品。
       expect(new Set(path.map((cell) => `${cell.x},${cell.y}`)).size).toBe(path.length);
     }
   });
@@ -477,7 +485,23 @@ describe("cellsAlongLine（§4.6）", () => {
   it("反向拖动与正向拖动是同一串格子（只是顺序相反）", () => {
     const forward = cellsAlongLine({ x: 2, y: 7 }, { x: 15, y: 3 });
     const backward = cellsAlongLine({ x: 15, y: 3 }, { x: 2, y: 7 });
+    // 如实记录：这一对端点在**朴素 Bresenham** 下本来也互反，所以它钉不住规范化——判别力在下面那条用例。
     expect(backward).toEqual([...forward].reverse());
+  });
+
+  it("反向输入的中间格与正向输入完全一致（朴素 Bresenham 会在这里分叉）", () => {
+    // (0,0)→(2,1) 与 (2,1)→(0,0)：并列举整规则依赖方向，朴素实现的中间格分别是 (1,0) 与 (1,1)。
+    // 端点规范化保证两次拖动补出的是同一个中间格——来回蹭同一段时不会多涂 / 少涂一格。
+    expect(cellsAlongLine({ x: 0, y: 0 }, { x: 2, y: 1 })).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 1 },
+    ]);
+    expect(cellsAlongLine({ x: 2, y: 1 }, { x: 0, y: 0 })).toEqual([
+      { x: 2, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 0 },
+    ]);
   });
 
   it("跨整张图纸的长线：格数正确、端点正确、没有重复", () => {
@@ -491,11 +515,20 @@ describe("cellsAlongLine（§4.6）", () => {
     expect(path[100]).toEqual({ x: 100, y: 100 });
   });
 
-  it("端点必须是整数，非整数 / NaN / 非数字一律抛中文错误", () => {
-    expect(() => cellsAlongLine({ x: 0.5, y: 0 }, { x: 2, y: 2 })).toThrow("起点 x 必须是整数");
-    expect(() => cellsAlongLine({ x: 0, y: 0 }, { x: 2, y: 1.0000001 })).toThrow("终点 y 必须是整数");
-    expect(() => cellsAlongLine({ x: Number.NaN, y: 0 }, { x: 2, y: 2 })).toThrow("起点 x 必须是整数");
-    expect(() => cellsAlongLine({ x: 0, y: 0 }, { x: Number.POSITIVE_INFINITY, y: 2 })).toThrow("终点 x 必须是整数");
+  it("端点必须是安全整数：小数 / NaN / 非有限值 / 超出安全范围一律抛中文错误", () => {
+    expect(() => cellsAlongLine({ x: 0.5, y: 0 }, { x: 2, y: 2 })).toThrow("起点 x 必须是安全整数");
+    expect(() => cellsAlongLine({ x: 0, y: 0 }, { x: 2, y: 1.0000001 })).toThrow("终点 y 必须是安全整数");
+    expect(() => cellsAlongLine({ x: Number.NaN, y: 0 }, { x: 2, y: 2 })).toThrow("起点 x 必须是安全整数");
+    expect(() => cellsAlongLine({ x: 0, y: 0 }, { x: Number.POSITIVE_INFINITY, y: 2 })).toThrow("终点 x 必须是安全整数");
+  });
+
+  it("超出安全整数范围的端点必须响亮失败，而不是让循环失去出口", () => {
+    // `x += 1` 在 `x ≥ 2^53` 时是空操作 ⇒ 非安全整数会让 `for (;;)` 永远到不了终点（同步死循环，
+    // vitest 的 `testTimeout` 拦不住），所以入口必须拒绝，而不是「跑不动就静默产出错误结果」。
+    expect(() => cellsAlongLine({ x: 1e21, y: 0 }, { x: 0, y: 0 })).toThrow("起点 x 必须是安全整数");
+    expect(() => cellsAlongLine({ x: 0, y: 0 }, { x: Number.MAX_SAFE_INTEGER + 1, y: 0 })).toThrow(
+      "终点 x 必须是安全整数",
+    );
   });
 });
 
@@ -547,14 +580,23 @@ describe("端到端：默认视图 → 平移 → 缩放 → 可见范围 → �
     }
   });
 
-  it("载入后先落默认视图，再按「先平移、后缩放」组合放大：锚点处的格子坐标不变", () => {
-    const view = defaultCellView(V1000, GRID_10); // V(80, 100, 0)
-    const mid: Point = { x: 320, y: 260 }; // 两指中点
-    const before = screenToOriented(mid, view);
-    // 组合口径（规格 §4.4）：先平移、后缩放，两步都走本模块的函数——不许出现第二份坐标数学。
-    const panned = panCellView(view, V1000, GRID_10, 0, 0);
-    const zoomed = zoomCellView(panned, V1000, GRID_10, 128, mid);
-    expect(zoomed).toEqual(V(128, -32, -156));
-    expect(screenToOriented(mid, zoomed)).toEqual(before);
+  it("载入后先落默认视图、再放大一次，然后做一次真正的捏合（非零平移 + 缩放）：两指中点处的格子坐标不变", () => {
+    const view = defaultCellView(V100, GRID_8x6); // 适配 12.5 被抬到 24，图像 192×144
+    expect(view).toEqual(V(24, -46, -22));
+    // 捏合的起始态：先放大到 32。**必须在放大之后平移**——默认视图下两个方向都被 clampView 居中
+    // 锁定，任何 dx / dy 都会被丢弃（这正是上一版这条用例空转的原因）。
+    const base = zoomCellView(view, V100, GRID_8x6, 32, { x: 50, y: 50 });
+    expect(base).toEqual(V(32, -78, -46)); // 图像 256×192，两轴都比视口大 ⇒ 平移可生效
+    // 两指中点从 m0 移到 m1（位移 (−20, −24)），按规格 §4.4 的口径组合：先平移、后缩放。
+    const m0: Point = { x: 30, y: 40 };
+    const m1: Point = { x: 10, y: 16 };
+    const started = screenToOriented(m0, base); // 起手时中指下的格子坐标
+    const panned = panCellView(base, V100, GRID_8x6, m1.x - m0.x, m1.y - m0.y);
+    expect(panned).toEqual(V(32, -98, -70)); // 位移逐轴落到偏移上，没有被夹取吃掉
+    expect(screenToOriented(m1, panned)).toEqual(started); // 平移把 m0 下的格子带到了 m1
+    const zoomed = zoomCellView(panned, V100, GRID_8x6, 64, m1); // 比例真的从 32 变到上界 64
+    expect(zoomed.scale).toBe(maxCellScale(V100, GRID_8x6));
+    expect(zoomed).toEqual(V(64, -206, -156));
+    expect(screenToOriented(m1, zoomed)).toEqual(started); // 组合两步之后仍然钉在同一个格子上
   });
 });

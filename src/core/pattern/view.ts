@@ -105,13 +105,18 @@ function requirePoint(point: Point, what: string): Point {
   return point;
 }
 
-/** 格坐标：**非整数必须抛错**，不许静默取整（静默取整会让「两指之间少补一格」变成不可复现的手感问题）。 */
+/**
+ * 格坐标必须是**安全整数**：小数必须抛错（静默取整会让「两指之间少补一格」变成不可复现的手感问题），
+ * 超出 `Number.MAX_SAFE_INTEGER` 的整数同样必须抛错——`x += 1` 在 `x ≥ 2^53` 时是**空操作**，
+ * `cellsAlongLine` 的 `for (;;)` 会因此永远到不了终点（同步死循环，比错误结果更糟，
+ * 也违反 `AGENTS.md` 的入口校验纪律）。`Number.isSafeInteger` 同时覆盖这两条。
+ */
 function requireCellPoint(point: CellPoint, what: string): CellPoint {
-  if (typeof point.x !== "number" || !Number.isInteger(point.x)) {
-    throw new Error(`${what} x 必须是整数（当前 ${String(point.x)}）`);
+  if (typeof point.x !== "number" || !Number.isSafeInteger(point.x)) {
+    throw new Error(`${what} x 必须是安全整数（当前 ${String(point.x)}）`);
   }
-  if (typeof point.y !== "number" || !Number.isInteger(point.y)) {
-    throw new Error(`${what} y 必须是整数（当前 ${String(point.y)}）`);
+  if (typeof point.y !== "number" || !Number.isSafeInteger(point.y)) {
+    throw new Error(`${what} y 必须是安全整数（当前 ${String(point.y)}）`);
   }
   return point;
 }
@@ -273,14 +278,16 @@ export function panCellView(
  * 调用方必须判空，避免拿 `NaN` 或反向区间去循环（规格 §4.5）。叠加层每帧只按这个范围绘制，
  * 绘制成本因此与**可见格数**成正比、与图纸总格数无关（500×500 的图纸也不例外）。
  *
- * **右 / 下端用 `ceil`（保守取法）**：边界格**恰好压在视口边缘**时仍然算可见（半格露出也要画）。
- * 如实记录代价：右端坐标落在格子内部（非整数）时会**多含一格**——那一格可能整格都在视口之外，
- * 多画的一格由 canvas 自己裁掉（宁多画一格，也不敢漏掉边缘的一丝可见格）。
+ * **判空必须发生在饱和夹取之前**：夹取会把两端各自压进 `[0, count-1]`，于是「图纸整个在视口之外」
+ * 与「图纸覆盖整个视口」会塌成同一个退化区间，`x1 < x0` 永远不会成立（这正是「无可视格返回 `null`」
+ * 一度缺席的原因）。所以逐轴先判**交集**：`hi <= 0 || lo >= count` ⇒ 该轴无可见格 ⇒ 整体 `null`。
+ * 零宽相切（`hi === 0` / `lo === count`：图纸边界与视口边界只在一个点上接触）按「没有格子可见」处理。
  *
- * **`null` 是防御性分支**：两轴都被夹进 `[0, count-1]`，而 `floor(lo) ≤ ceil(hi)`（`lo ≤ hi`
- * 且夹取是单调的），所以 `x1 < x0` 在当前实现下**不可达**。保留它是**契约上的判空要求**：
- * 签名与 JSDoc 都要求调用方判空（同 `pointToCell`），这样将来若夹取口径改成「不可见就返回空区间」，
- * 调用方不需要跟着改。
+ * **右 / 下端用 `ceil`（保守取法，计划口径）**：边界格**恰好压在视口边缘**时仍然算可见。
+ * 真正紧致的写法是 `ceil(hi) - 1`，但 `hi` 恰为整数时会**丢掉**那一格——它起始边压在视口边缘、
+ * 与视口零宽相切，而规格 §4.5 明确要求这种边界格算可见。两害相权：多含 ≤1 列 / 行（多画格线与色号，
+ * canvas 自己裁掉，代价可忽略）比丢掉相切格安全，所以保留 `ceil`。如实记录代价：右端坐标落在格子
+ * 内部（非整数）时会多含一格，那一格可能整格都在视口之外。
  *
  * **为何公开**：`PatternCanvas.vue`（任务 5）是它唯一的生产消费者（叠加层格子循环的上界）。
  */
@@ -294,16 +301,17 @@ export function visibleCellRange(
   // 屏幕视口的四角 → 连续格子坐标；`screenToOriented` 内部已复检视图与点分量。
   const topLeft = screenToOriented({ x: 0, y: 0 }, view);
   const bottomRight = screenToOriented({ x: viewport.width, y: viewport.height }, view);
-  // 与 `clampView` 同口径的夹取：某方向图像比视口小的时候，该方向的可视格子范围就是整张图纸。
-  const clampAxis = (start: number, end: number, count: number): [number, number] => {
+  /** 单轴：**先判交集、再夹取**（顺序不能反，理由见 JSDoc）；两端都是闭的。 */
+  const axisRange = (start: number, end: number, count: number): [number, number] | null => {
     const lo = Math.min(start, end);
     const hi = Math.max(start, end);
+    if (hi <= 0 || lo >= count) return null;
     return [Math.min(Math.max(Math.floor(lo), 0), count - 1), Math.min(Math.max(Math.ceil(hi), 0), count - 1)];
   };
-  const [x0, x1] = clampAxis(topLeft.x, bottomRight.x, grid.width);
-  const [y0, y1] = clampAxis(topLeft.y, bottomRight.y, grid.height);
-  if (x1 < x0 || y1 < y0) return null; // 上述推导下不可达（见 JSDoc），保留为契约上的判空要求。
-  return { x0, y0, x1, y1 };
+  const xRange = axisRange(topLeft.x, bottomRight.x, grid.width);
+  const yRange = axisRange(topLeft.y, bottomRight.y, grid.height);
+  if (xRange === null || yRange === null) return null;
+  return { x0: xRange[0], y0: yRange[0], x1: xRange[1], y1: yRange[1] };
 }
 
 /**
@@ -347,9 +355,14 @@ export function cellRectFromScreen(a: Point, b: Point, view: ViewTransform, grid
  * 格子可能隔着好几格；不补格就是「拖得越快，笔迹越断」，而它在本环境里肉眼看不出来。
  *
  * **关键取舍（8 连通而不是 4 连通）**：对角线相邻的两格在视觉上是连着的（角接触），
- * 4 连通会凭空在斜线里留下空隙。**去重**保证调用方累积的「待涂集合」是一次手势一条命令的粒度
- * （`buildPaintCommand` 自己也会按 `seen` 去重，这里是第二道）。
- * **端点非整数时抛错、不静默取整**：静默取整会把「少补一格」变成不可复现的手感问题。
+ * 4 连通会凭空在斜线里留下空隙。
+ * **端点必须是安全整数、不静默取整**：静默取整会把「少补一格」变成不可复现的手感问题；
+ * 非安全整数（`≥ 2^53`）会让 `x += 1` 变成空操作、循环失去出口，所以一并拒绝（见 `requireCellPoint`）。
+ *
+ * **去重集钉的是输出契约，不是当前步进的副产品（如实记录）**：当前 8 连通步进每步至少在一根轴上
+ * 单调前进，**不可能**产出重复格——删掉 `seen` 集与那两条去重断言都不会有任何用例转红，它们没有
+ * 判别力。保留它的理由是规格 §4.6 要求「返回**去重**后的序列」：将来若步进改成 4 连通或加跳格，
+ * 这里不能静默吐出重复格。
  *
  * **关键取舍（先规范化端点，保证正 / 反向拖出同一串格子）**：Bresenham 的并列取整规则是
  * **有方向**的——(0,0)→(2,1) 与 (2,1)→(0,0) 在朴素实现下会得到不同的中间格（前者 (1,0)，
@@ -382,7 +395,8 @@ export function cellsAlongLine(from: CellPoint, to: CellPoint): CellPoint[] {
     }
     if (x === end.x && y === end.y) break;
     const error2 = error * 2;
-    // 每步至少动一根轴（8 连通），所以除了首格之外不会有重复——去重是防御性的第二道。
+    // 每步至少动一根轴（8 连通）且两根轴都单调前进 ⇒ 除首格外不会有重复；`seen` 是**输出契约**
+    // 的保险（规格 §4.6），不是当前步进的副产品——删掉它不会有任何用例转红（见 JSDoc）。
     if (error2 > -dy) {
       error -= dy;
       x += stepX;
