@@ -998,3 +998,121 @@ describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适�
     expect(editor.view).toEqual(fitTransform({ width: 800, height: 600 }, { width: 2, height: 1 }));
   });
 });
+
+/**
+ * 页面接线（续）：色板、显示开关、工具栏命令与状态。
+ *
+ * 与上一组同一条纪律：**页面这一层的每一条接线都要有「接通之后」的可观察断言**，
+ * 否则把它删掉 / 绑成固定值不会有任何用例变红（本项目最贵的缺陷形态：两端各自正确、错在接线）。
+ * 这一组补的是上一组封口时剩下的四条：`@update:current-color`、`@update:show-grid` /
+ * `@update:show-labels`、工具栏的 `@undo` / `@redo` 与 `:can-undo` / `:can-redo` / `:dirty`、
+ * 以及 `:saving`（键盘那条走的是窗口监听，与工具栏按钮是**两条不同的路**，都要钉）。
+ */
+describe("页面接线（续）：色板 / 显示开关 / 工具栏命令与状态", () => {
+  it("色板：在选择器里选一个色号 → editor.currentColor 等于它的**全色卡下标**", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    // 挑**全色卡下标与它在选择器里的位置不同**的那个：色卡的最后一个色（在它自己的色系组里
+    // 位置很小、全色卡下标很大）。这样「面板给的是全色卡下标」这个约定才被真的钉住——
+    // 若某处误传了「面板里的位置」，这里会拿到一个小数字而红。
+    const target = palette.colors[palette.colors.length - 1];
+    if (target === undefined) throw new Error("色卡是空的");
+    // 先钉住起点：否则「变成了 220」与「本来就是 220」不可区分（播种值是 0）。
+    expect(editor.currentColor).toBe(0);
+
+    await wrapper.get("[data-testid='palette-add']").trigger("click");
+    await wrapper.get(`[data-testid='picker-color'][data-code='${target.code}']`).trigger("click");
+
+    expect(editor.currentColor).toBe(palette.colors.length - 1);
+    // 选中即关闭（面板自己的行为）：顺带证明这一下真的走的是面板的 `pick` 路径。
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+  });
+
+  it("显示开关：两个开关各自翻转后真的写回 store，并按 store 的值回显", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    expect(editor.showGrid).toBe(true);
+    expect(editor.showLabels).toBe(true);
+
+    // `@update:show-grid`：工具栏 emit 的是**翻转后的值**，store 要跟着它走。
+    await wrapper.get("[data-testid='toggle-grid']").trigger("click");
+    expect(editor.showGrid).toBe(false);
+    // 回显：store → props → `aria-pressed`（`@update:show-grid` 与 `:show-grid` 两条都在这里被走到）
+    expect(wrapper.get("[data-testid='toggle-grid']").attributes("aria-pressed")).toBe("false");
+    await wrapper.get("[data-testid='toggle-grid']").trigger("click");
+    expect(editor.showGrid).toBe(true);
+    expect(wrapper.get("[data-testid='toggle-grid']").attributes("aria-pressed")).toBe("true");
+
+    // `@update:show-labels`：同形，各走一遍（只点一次不足以区分「跟着走」与「绑成固定值」）。
+    await wrapper.get("[data-testid='toggle-labels']").trigger("click");
+    expect(editor.showLabels).toBe(false);
+    expect(wrapper.get("[data-testid='toggle-labels']").attributes("aria-pressed")).toBe("false");
+    await wrapper.get("[data-testid='toggle-labels']").trigger("click");
+    expect(editor.showLabels).toBe(true);
+    expect(wrapper.get("[data-testid='toggle-labels']").attributes("aria-pressed")).toBe("true");
+  });
+
+  it("工具栏命令与状态：撤销/重做按钮真的作用在图纸上，`:can-undo`/`:can-redo`/`:dirty` 由 store 驱动", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+
+    // 干净时：两个按钮都不可点、没有「未保存」指示（`:dirty` 的干净一侧）
+    expect(wrapper.get("[data-testid='undo']").attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-testid='redo']").attributes("disabled")).toBeDefined();
+    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
+
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
+
+    // 涂过之后：`:can-undo` 与 `:dirty` 都跟着 store 变成「可点 / 未保存」，`:can-redo` 仍不可点
+    expect(wrapper.get("[data-testid='undo']").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get("[data-testid='redo']").attributes("disabled")).toBeDefined();
+    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(true);
+
+    // `@undo` 走通：点**工具栏按钮**（窗口键盘那条是另一条路），格子真的回退
+    await wrapper.get("[data-testid='undo']").trigger("click");
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
+    expect(wrapper.get("[data-testid='redo']").attributes("disabled")).toBeUndefined();
+
+    // `@redo` 走通：回到涂过的状态
+    await wrapper.get("[data-testid='redo']").trigger("click");
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
+  });
+
+  it("保存中：`:saving` 期间保存按钮禁用并显示「正在保存…」", async () => {
+    const real = getProjectStore();
+    // 把这一次 `put` 卡住，让「保存中」这个状态成为可观察量（否则它只在两个微任务之间存在）。
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = () => {
+        resolve();
+      };
+    });
+    setProjectStore({
+      ...real,
+      async put(record): Promise<void> {
+        await gate;
+        await real.put(record);
+      },
+    });
+
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    await wrapper.get("[data-testid='editor-save']").trigger("click");
+    await nextTick();
+    expect(editor.saving).toBe(true);
+    expect(wrapper.get("[data-testid='editor-save']").attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-testid='editor-save']").text()).toContain("正在保存…");
+
+    release();
+    await flushPromises();
+    // 保存结束后按钮恢复可点（`:saving` 是**跟随 store** 的，不是一次性禁用）
+    expect(editor.saving).toBe(false);
+    expect(wrapper.get("[data-testid='editor-save']").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get("[data-testid='editor-save']").text()).toContain("保存");
+  });
+});
