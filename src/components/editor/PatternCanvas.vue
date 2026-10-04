@@ -161,6 +161,9 @@ function syncLayer(): void {
     appliedRevision = props.revision;
     return;
   }
+  // 不可观察，**无判别力用例**（有意不写）：这是纯**性能**短路——每次 `draw()` 都会按 revision
+  // 重刷 `lastDirty`，值一律回 `cells` 现取、幂等；而用例里每次 props 变化只触发一次 `draw()`。
+  // 删掉它（探针 P6）没有任何用例会红，补一条只会得到恒真断言。
   if (props.revision === appliedRevision) return;
   const dirty = props.lastDirty;
   if (dirty === null) {
@@ -347,6 +350,9 @@ function onPointerMove(event: PointerEvent): void {
 function finishToolGesture(gesture: ToolGesture, point: Point): void {
   if (gesture.kind === "brush") {
     const indices = [...gesture.preview];
+    // 不可达，**无判别力用例**（有意不写）：`startToolGesture` 建的画笔手势 `preview` 必然 ≥1 格，
+    // 而手势被丢弃时是**整体置 `null`**、不是清空集合——所以生产路径上 `indices` 不可能为空。
+    // 删掉它（探针 P2）没有任何用例会红，补一条只会得到恒真断言。
     if (indices.length > 0) emit("paint", indices);
     return;
   }
@@ -495,6 +501,8 @@ function drawPending(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: nu
     const x = index % width;
     const y = Math.floor(index / width);
     // 待涂集合可能是几千格：只画可见格（叠加层只画 `visibleCellRange` 的闭区间）。
+    // **有意不写用例**（探针 P7）：越出视口的部分 canvas 自己会裁掉，删掉这条过滤拿不出能证明
+    // 它承重的变异，补一条只会得到恒真断言。
     if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
     ctx.fillRect(props.view.offsetX + x * cellPx, props.view.offsetY + y * cellPx, cellPx, cellPx);
   }
@@ -514,7 +522,8 @@ function drawSelection(ctx: CanvasRenderingContext2D, cellPx: number): void {
   );
 }
 
-/** 吸管命中格的描边（§5.4）。 */
+/** 吸管命中格的描边（§5.4）。**有意不写用例**（探针 P8）：`strokeRect` 在本文件里没有被任何断言
+ * 读过（框选高亮与它是同一族的纯观感绘制），删掉它拿不出能证明它承重的变异。 */
 function drawPick(ctx: CanvasRenderingContext2D, cellPx: number): void {
   const gesture = toolGesture;
   if (gesture === null || gesture.kind !== "pick") return;

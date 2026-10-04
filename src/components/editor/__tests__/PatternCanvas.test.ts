@@ -13,12 +13,15 @@ import PatternCanvas from "@/components/editor/PatternCanvas.vue";
  * （画布尺寸、层的尺寸、`putImageData` 的实参），不是画面：happy-dom 的 canvas 是桩，
  * 像素断言在这里一律恒真，绝不写（B1-2 的教训）。
  *
- * **画法断言只保留三条**（规格 §11.1，判据是「CI 无法用像素验证、且被变异证明承重」）：
+ * **画法断言的判据是「CI 无法用像素验证 **且** 被变异证明承重」，不是条数**（规格 §11.1 列出的三条是
+ * 当时的枚举）。当前四条，每条都附一条能杀死它的变异：
  *   ① 色块层 `drawImage` 的**目标矩形**（= 视图映射的外部可观察量）；
  *   ② 单格刷新时 `putImageData` 的**脏矩形实参**（1×1）——「单格改动只重绘该格」唯一的可观察形式；
- *   ③ `cellPx < GRID_LINE_MIN_CELL_PX` 时**不画网格线**（及其闭区间边界线的条数）。
- * 其余一律走事件与状态断言。**不许**再新增第四条画法断言（`imageSmoothingEnabled` / 色号 `fillText` /
- * 棋盘底纹的 `createPattern` 退化分支都因此没有 CI 守卫，见步骤 1 之后的「CI 覆盖不到的地方」）。
+ *   ③ `cellPx < GRID_LINE_MIN_CELL_PX` 时**不画网格线**（及其闭区间边界线的条数）；
+ *   ④ `visibleCellRange === null`（图纸整块移出视口）时**不画**网格线与色号——删掉那条判空守卫，
+ *      `drawGrid` 会在 `range.x0` 上抛 TypeError，该用例恰好 1 红（见用例所在的 describe）。
+ * 其余一律走事件与状态断言；**拿不出能证明承重的变异**的画法（`imageSmoothingEnabled`、
+ * 色号 `fillText` 的字号 / 亮度取反、棋盘底纹的 `createPattern` 退化分支）仍然**有意不写**。
  *
  * 场景（全文件共用）：色卡 3 色；两份图纸——
  *   · 32×32 + 视图 `{24, -200, -200}`：图纸（768px）比 400×400 的视口大，平移 / 缩放都可观察；
@@ -559,5 +562,116 @@ describe("叠加层：网格线的显示阈值（画法断言 3/3）", () => {
     // 关掉开关：即使格子够大也不画。
     await wrapper.setProps({ view: { scale: 24, offsetX: 0, offsetY: 0 }, showGrid: false });
     expect(moveToCount()).toBe(18);
+  });
+});
+
+describe("可见格判空：图纸整块移出视口（visibleCellRange 为 null）", () => {
+  it("不抛错、照常合成色块层，且不画网格线 / 色号等一切与格子有关的东西（画法断言 4/4）", async () => {
+    // 8×8、32px/格、偏移 +2000：图纸占 [2000, 2256]²，与 400×400 的视口**没有任何交集**，
+    // `visibleCellRange` 因此返回 null（零宽相切也按「没有格子可见」处理）。
+    // props 可以喂任何 `view`——组件是纯展示组件、**不夹取** `props.view`（夹取归 store / 页面），
+    // 所以「null 分支不可达」这个推论不成立，它是真实可达的渲染路径。
+    // 32px/格 同时**高于**色号阈值（28）与网格线阈值（6）：这样「一个格子也没画」不是因为阈值挡住的，
+    // 而是判空挡住的——否则那两条断言在两种实现下都会通过，成了恒真断言。
+    const OFFSCREEN: ViewTransform = { scale: 32, offsetX: 2000, offsetY: 2000 };
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: OFFSCREEN, showLabels: true });
+    await wrapper.vm.$nextTick();
+
+    // ① 合成照常发生：底色 + `drawImage(色块层, 视图映射)`。判空只该跳过**叠加层**，
+    //    不该把整个 draw() 变成空操作（那会让图纸滑出视口的瞬间留下一块没擦干净的残影）。
+    expect(draws.length).toBeGreaterThan(0);
+    expect(draws.at(-1)?.args.slice(1)).toEqual([2000, 2000, 256, 256]);
+
+    // ② 一个格子也不画。这一条有两种独立的死法（都真跑过，原始输出见修复报告 §R5）：
+    //    · 删掉判空守卫 → `drawGrid` 在 `range.x0` 上抛 TypeError，1 红；栈是
+    //      `drawGrid:441 ← draw:576 ← onMeasure:72 ← measure`（挂在挂载那一次渲染上）；
+    //    · 把 null **退化成整张图纸的 range**（`?? { x0: 0, y0: 0, x1: 7, y1: 7 }`）→ 不抛错，但会画出
+    //      9 + 9 条网格线（`moveToCount()` 实收 **18**）与 64 次 `fillText`（实收 **64**）。
+    //      一个 it 里只有**跑在前面的那条**断言会报红，所以下面两条各留一条、各自单独测过：
+    //      把这两行临时换序后，`fillText` 那条同样以实收 64 转红（未换序时先红的是 `moveToCount`）。
+    expect(moveToCount()).toBe(0);
+    expect(ops.filter((op) => op === "fillText")).toHaveLength(0);
+
+    // ③ 「不抛错」的可判别形式：再各驱动一次渲染路径——props 变化（watch → draw）与一次按下
+    //    （事件回调里**同步**调 draw）。守卫缺席时这两个入口都会抛，本用例照样转红。
+    await wrapper.setProps({ view: { scale: 32, offsetX: 2100, offsetY: 2000 } });
+    await pointer(wrapper, "pointerdown", 100, 100);
+    expect(draws.at(-1)?.args.slice(1)).toEqual([2100, 2000, 256, 256]);
+    expect(moveToCount()).toBe(0);
+  });
+});
+
+describe("指针表清理：抬手 / 取消后不残留（残留会让画布永久卡死）", () => {
+  it("抬手把指针从活跃表里移除：下一次按下仍是单指工具手势（不是双指平移）", async () => {
+    const wrapper = mountCanvas(); // 32×32 + VIEW_32：格坐标 = floor((屏幕 + 200) / 24)
+    await wrapper.vm.$nextTick();
+
+    // 第一笔：单指涂一格后抬手（画笔的唯一出口是抬手）。
+    await pointer(wrapper, "pointerdown", 12, 12); // 格 (8,8) → 264
+    await pointer(wrapper, "pointerup", 12, 12);
+    expect(wrapper.emitted("paint")?.at(-1)).toEqual([[264]]);
+
+    // 第二次触摸是**另一个 pointerId**（真机上第二次按下就是新 id）：抬手若没把 pointerId 1
+    // 从活跃表里删掉，这一次按下会让活跃表变成 2 根 → 工具手势被丢弃、转入双指视图分支，
+    // 此后**永远起不了工具手势**（画布卡死）——这正是实现注释写明的那条失效模式。
+    await pointer(wrapper, "pointerdown", 108, 12, { pointerId: 2 }); // 格 (12,8) → 268
+    await pointer(wrapper, "pointermove", 108, 84, { pointerId: 2 }); // 格 (12,11)
+    await pointer(wrapper, "pointerup", 108, 84, { pointerId: 2 });
+
+    // 单指语义：走的是画笔分支（补格 (12,9) / (12,10)），全程没有任何视图手势。
+    expect(wrapper.emitted("update:view")).toBeUndefined();
+    expect(wrapper.emitted("paint")).toHaveLength(2);
+    expect(wrapper.emitted("paint")?.at(-1)).toEqual([[268, 300, 332, 364]]);
+  });
+
+  it("pointercancel 也把指针从活跃表里移除：取消后下一次按下仍是单指", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 12, 12); // 起一笔（(8,8) 的预览，**不该被提交**）
+    await pointer(wrapper, "pointercancel", 12, 12);
+    // 取消 = 丢弃这一笔（不 emit）：这一点旧用例也没盖到，顺手钉住。
+    expect(wrapper.emitted("paint")).toBeUndefined();
+
+    // 同一条失效模式：取消若不清指针，下一次按下就变成「双指」，画布卡死。
+    await pointer(wrapper, "pointerdown", 108, 12, { pointerId: 2 }); // 格 (12,8) → 268
+    await pointer(wrapper, "pointermove", 108, 84, { pointerId: 2 }); // 格 (12,11)
+    await pointer(wrapper, "pointerup", 108, 84, { pointerId: 2 });
+
+    expect(wrapper.emitted("update:view")).toBeUndefined();
+    expect(wrapper.emitted("paint")).toHaveLength(1);
+    expect(wrapper.emitted("paint")?.at(-1)).toEqual([[268, 300, 332, 364]]);
+  });
+});
+
+describe("三指：只用前两根，第三根既不产生平移也不取消当前手势", () => {
+  it("第三根落下并移动不改视图，前两根照常平移；第三根自己永远起不了工具手势", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 100, 100, { pointerId: 1 });
+    await pointer(wrapper, "pointerdown", 200, 100, { pointerId: 2, isPrimary: false });
+    // 第三根落在**图纸内**（VIEW_32 下 (300,300) 是格 (20,20)）：这样「第三根若被放行就会自己起
+    // 一次画笔手势」才有判别力——落在图纸外的话两种实现都不会有手势，用例分辨不出。
+    await pointer(wrapper, "pointerdown", 300, 300, { pointerId: 3, isPrimary: false });
+
+    // 第三根单独移动：视图手势记着的仍是前两根，第三根不产生任何平移。
+    await pointer(wrapper, "pointermove", 340, 340, { pointerId: 3, isPrimary: false });
+    expect(wrapper.emitted("update:view")).toBeUndefined();
+
+    // 前两根照常平移：间距 100 不变 → scale 24；中点 (150,100) → (180,100) → offsetX = −170。
+    // 第三根**没有取消**当前视图手势（否则这里一次 emit 也不会有）。
+    await pointer(wrapper, "pointermove", 130, 100, { pointerId: 1 });
+    await pointer(wrapper, "pointermove", 230, 100, { pointerId: 2, isPrimary: false });
+    expect(wrapper.emitted("update:view")?.at(-1)).toEqual([{ scale: 24, offsetX: -170, offsetY: -200 }]);
+
+    // 前两根抬起后，第三根（仍在按下）拖动再抬起：它**从来不是**工具手势的持有者，一次 `paint`
+    // 也不该有。守卫缺席时第三根在按下那一刻就起了画笔手势，这里会 emit（[660, 693, 726] 之类）。
+    await pointer(wrapper, "pointerup", 100, 100, { pointerId: 1 });
+    await pointer(wrapper, "pointerup", 200, 100, { pointerId: 2, isPrimary: false });
+    await pointer(wrapper, "pointermove", 340, 340, { pointerId: 3, isPrimary: false });
+    await pointer(wrapper, "pointerup", 340, 340, { pointerId: 3, isPrimary: false });
+
+    expect(wrapper.emitted("paint")).toBeUndefined();
   });
 });
