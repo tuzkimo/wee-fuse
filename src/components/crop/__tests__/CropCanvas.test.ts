@@ -487,6 +487,95 @@ describe("手势 → 选区", () => {
   });
 });
 
+describe("换档取景：切档那一刻把选区中心映射到视口中心（一次性动作）", () => {
+  /**
+   * 本组是**渲染路径**上的判据（core 侧的 `panToCenterSelection` 由 `view.test.ts` 单独钉）。
+   *
+   * 两条合起来锁住本轮裁决：① 换档时必须取景（否则现场缺陷——选区被推出视口——原样复现）；
+   * ② 取景只能是**换档那一刻的一次性动作**（若改成渲染路径按 crop 重算，屏幕上就是
+   * 「选框钉在视口中心、图像在下面滑」，选框不再跟手）。
+   *
+   * 场景：容器 400×400、源图 800×600、dpr 1、rotation 0 → 适配 scale 0.5、offset (0, 50)。
+   */
+  it("fit → 4×：发出取景 pan，回灌后不在画面中心的小选区完整落在视口内", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+    // 选区 {600,450,100,80}：显示空间中心 (650,490)，离画面中心很远——不取景时 4× 会把它整块推出视口。
+    const wrapper = mountCanvas({ crop: { x: 600, y: 450, width: 100, height: 80 } });
+    await wrapper.vm.$nextTick();
+
+    // 挂载在 fit：宽 0 的视口才算没量到，这里已经量到，所以换档必须取景。
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+    await wrapper.setProps({ zoom: 4 });
+    // 4× 的 zoomed = {2,−600,−400}；把 (650,490) 送到视口中心 (200,200) 需要视图偏移 (−1100,−780)，
+    // 落在夹取范围（X [−1200,0]、Y [−800,0]）内 → pan = (−500,−380)。
+    expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: -500, y: -380 }]);
+
+    // 父级 `v-model:pan` 把结果回灌（真实形态）→ 视图 = {2,−1100,−780} → 选框屏幕矩形 {100,120,200,160}。
+    await wrapper.setProps({ pan: { x: -500, y: -380 } });
+    const box = ctx.argsOf("strokeRect");
+    expect(box).toEqual([100, 120, 200, 160]);
+
+    // **用户可见判据**：整块选框都在视口内。未取景时是 {600,500,200,160}，右/下都出界；
+    // 而放大后的选框一旦铺满可见区域，用户在哪儿按下都落在框内（规格 §4.3 = 移动选框）
+    // → 没有空白可拖 → 平移不可达 → 选区找不回视野。
+    const [x, y, width, height] = box as [number, number, number, number];
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(x + width).toBeLessThanOrEqual(400);
+    expect(y + height).toBeLessThanOrEqual(400);
+  });
+
+  it("取景是一次性动作：换档后改 crop，只有选框动、图像不动（防止「选框钉在视口中心」回归）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+    const wrapper = mountCanvas(); // 默认选区 {100,100,300,300}
+    await wrapper.vm.$nextTick();
+
+    await wrapper.setProps({ zoom: 2 });
+    // 2× 的 zoomed = {1,−200,−100}；选区显示空间中心 (250,250) → 目标偏移 (−50,−50) → pan (150,50)。
+    expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: 150, y: 50 }]);
+    await wrapper.setProps({ pan: { x: 150, y: 50 } });
+
+    // 图像盒中心是整个视图（含 pan）的函数：视图一动它就动，是「视图有没有被重算」的现成探针。
+    const imageCenter = ctx.argsOf("translate");
+    expect(imageCenter).toEqual([350, 250]);
+    expect(ctx.argsOf("strokeRect")).toEqual([50, 50, 300, 300]);
+
+    // 换一个选区（模拟用户拖完选框后父级回灌 props）：**不得**重新取景。
+    await wrapper.setProps({ crop: { x: 300, y: 200, width: 200, height: 200 } });
+
+    expect(ctx.argsOf("translate")).toEqual(imageCenter); // 图像没动
+    expect(ctx.argsOf("strokeRect")).toEqual([250, 150, 200, 200]); // 只有选框动
+    expect(wrapper.emitted("update:pan")).toHaveLength(1); // 也没有第二次取景
+  });
+
+  // 目标 pan 与当前 `props.pan` 相同时**不发事件**：否则父级 `setPan` 会写一个新对象 → `view`
+  // 重算 → 白多画一帧，而且「一次性取景」退化成「每次换档都无脑写一遍」。
+  // 同一条用例里给出**对照**（目标不同时必须发），否则「没发」也可能是因为 watch 根本没跑。
+  it("取景结果与当前 pan 相同就不发 update:pan（附「不同就发」的对照）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 目标相等：2× 的取景结果就是 (150,50)，而当前 pan 已经是它 → 静默。
+    await wrapper.setProps({ pan: { x: 150, y: 50 } });
+    await wrapper.setProps({ zoom: 2 });
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+
+    // 对照：把 pan 挪开，再换到 4× —— 目标 (300,100) 与当前 pan 不同 → 必须发。
+    await wrapper.setProps({ pan: { x: 0, y: 0 } });
+    await wrapper.setProps({ zoom: 4 });
+    expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: 300, y: 100 }]);
+  });
+});
+
 describe("手柄命中：命中半径内取离指针最近的手柄", () => {
   /**
    * 小选区场景（本组两条共用）：源图 800×600、容器 400×400 → 适配比例 0.5、偏移 (0,50)。

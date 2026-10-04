@@ -236,6 +236,68 @@ export function clampView(view: ViewTransform, viewport: Size, oriented: Size): 
   };
 }
 
+/**
+ * 换档取景：算出「选区中心落在视口中心」所需的**平移量**（返回 pan，不是最终视图）。
+ *
+ * **要解决什么**：`withZoom` 的锚点是视口中心，选区不在画面中心时，放大只会把它推得更远。
+ * 真机人工验证实测：切到 2×/4× 后选区被整块推出视口，而放大后的选框铺满可见区域，用户在任何
+ * 位置按下都落在框内（规格 §4.3 = 移动选框）→ 没有空白可拖 → 平移不可达 → 选区再也找不回视野
+ * （可达的死胡同）。本函数给出「换档那一刻该把 pan 设成多少」，让选区中心落到视口中心。
+ *
+ * **为什么是「换档时的一次性取景」，而不是把选区锚点塞进 `withZoom`**：`withZoom` 在渲染路径上
+ * 逐帧重算，锚点一旦是选区的函数，用户拖选框时视图就跟着重算——屏幕上是「选框钉在视口中心、
+ * 图像在下面滑」，选框不再跟手（这是本轮被否掉的方案）。所以取景只发生在**缩放档位变化的那一刻**
+ * （`CropCanvas` 的 `props.zoom` watch），结果经既有的 `update:pan` 发出去；此后平移就是普通状态。
+ *
+ * **返回值基准**：与 `CropCanvas` 组装视图时用的 `withZoom(...)` 同基准，即调用方按下式使用
+ * （不需要、也不应该再叠一次夹取）：
+ *
+ * ```ts
+ * const zoomed = withZoom(base, viewport, oriented, zoom);
+ * const view = clampView({ ...zoomed, offsetX: zoomed.offsetX + pan.x, offsetY: zoomed.offsetY + pan.y }, viewport, oriented);
+ * ```
+ *
+ * **口径**：先按「选区显示空间中心 → 视口中心」算目标视图偏移，**再走 `clampView`**——
+ * 「图像始终铺满视口、不留白」优先于取景，所以选区靠近图像边缘时可能无法正好居中
+ * （规格 §4.4 只并列了这两条规则、没定优先级；本实现选择夹取优先，不为取景放宽夹取规则）。
+ * 因此返回的 pan **保证落在夹取范围内**，可以安全落盘、也可以与 `props.pan` 直接做相等去重；
+ * 「取未夹取的闭式解」在屏幕上与它完全同形（渲染路径自己还会夹一次），差别只在持久化的值上。
+ * `"fit"` 档下任何平移都会被夹取归位，故恒返回 `{x: 0, y: 0}`——从放大态切回 fit 时它顺带把
+ * pan 复位，不必另写复位逻辑。
+ *
+ * **越界不是错误**（与 `requireRect` 同一口径）：选区越出显示空间不是非法输入，只影响取景结果。
+ * 非法输入（非有限分量、退化矩形、非法档位 / 视口 / 基准视图）抛「中文」错误，校验在任何计算之前。
+ *
+ * **为何公开**（导出即承诺）：生产消费方是 `CropCanvas`（任务 8）的换档 watch——它必须与渲染路径
+ * 共用同一套坐标口径，而不是在组件里手写第三份换算。
+ */
+export function panToCenterSelection(
+  base: ViewTransform,
+  viewport: Size,
+  oriented: Size,
+  zoom: ZoomLevel,
+  selection: Rect,
+): Point {
+  requireViewport(viewport);
+  requireImageSize(oriented, "显示空间图像");
+  requireZoom(zoom);
+  requireView(base);
+  requireRect(selection, "选区显示空间矩形");
+  const zoomed = withZoom(base, viewport, oriented, zoom);
+  const centerX = selection.x + selection.width / 2;
+  const centerY = selection.y + selection.height / 2;
+  const centered = clampView(
+    {
+      scale: zoomed.scale,
+      offsetX: viewport.width / 2 - centerX * zoomed.scale,
+      offsetY: viewport.height / 2 - centerY * zoomed.scale,
+    },
+    viewport,
+    oriented,
+  );
+  return { x: centered.offsetX - zoomed.offsetX, y: centered.offsetY - zoomed.offsetY };
+}
+
 export function orientedToScreen(point: Point, view: ViewTransform): Point {
   requirePoint(point, "显示空间坐标");
   requireView(view);

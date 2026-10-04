@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
+import type { Rect } from "../../image/types";
 import {
   clampView,
   fitTransform,
   orientedSizeOf,
   orientedToScreen,
   orientedToSource,
+  panToCenterSelection,
   screenToOriented,
   screenToSource,
   sourceRectToOriented,
   sourceRectToScreen,
   sourceToOriented,
   withZoom,
+  type ViewTransform,
+  type ZoomLevel,
 } from "../view";
 
 /**
@@ -143,6 +147,13 @@ describe("适配与缩放档位", () => {
   // （`clampView` 会把偏移夹回 [extent − scaled, 0]）——本实现里「图像始终铺满视口」优先于锚点，
   // **但规格 §4.4 只是并列了这两条规则、没有定优先级**，这层优先级是本模块的实现选择，
   // 不是规格的取舍。所以这里刻意不构造夹取生效的档位。
+  //
+  // **澄清（本轮裁决；本条只加注释，断言一个字没改）**：视口中心锚点仍是 `withZoom` 的契约，
+  // 渲染路径逐帧重算的就是它。用户可见的「切到 2×/4× 后选区一定看得见」**不在这里实现**——
+  // 它由 `panToCenterSelection` 在**换档那一刻**算出一个 pan、经 `update:pan` 一次性完成
+  // （见下面那组 describe）。两件事必须分开：若把选区锚点塞进 `withZoom`，渲染路径就成了 crop
+  // 的函数，用户拖选框时视图会跟着重算（屏幕上是「选框钉在视口中心、图像在下面滑」，
+  // 选框不再跟手），直接操作感被破坏。
   it("换档前后视口中心的显示空间坐标不变（锚点不变量）", () => {
     const viewport = { width: 400, height: 400 };
     const oriented = { width: 800, height: 600 };
@@ -153,6 +164,128 @@ describe("适配与缩放档位", () => {
       expect(screenToOriented(center, withZoom(base, viewport, oriented, zoom))).toEqual(before);
     }
   });
+});
+
+/**
+ * 换档取景（本轮裁决）：**切到 2×/4× 的那一刻**，把选区在显示空间的中心映射到视口中心
+ * （受「图像始终铺满视口」的夹取限制）。返回的是**平移量**，不是最终视图——渲染路径一个字没变，
+ * 仍是 `withZoom` 的视口中心锚点叠 `props.pan`，`panToCenterSelection` 只回答「那一刻该把哪个
+ * pan 经 `update:pan` 发出去」。
+ *
+ * 缺陷现场：控制者人工验证实测「切到 2×/4× 后选区被推出视口外」，而放大后的选框铺满可见区域，
+ * 用户在哪儿按下都落在框内（按规格 §4.3 = 移动选框）→ 没有空白可拖 → 平移不可达 → 选区找不回
+ * 视野（可达的死胡同）。
+ */
+describe("换档取景：把选区中心映射到视口中心（一次性动作，不参与渲染路径）", () => {
+  const VIEWPORT = { width: 400, height: 400 };
+  const ORIENTED = { width: 800, height: 600 };
+
+  /**
+   * 按 `CropCanvas` 组装视图的方式（`clampView(zoomed + pan)`）把取景结果变成视图。
+   * 与组件同一条公式：本组用例测的是「用户在屏幕上看到什么」，所以不能只读函数返回值。
+   */
+  const viewAfter = (zoom: ZoomLevel, pan: { x: number; y: number }): ViewTransform => {
+    const zoomed = withZoom(fitTransform(VIEWPORT, ORIENTED), VIEWPORT, ORIENTED, zoom);
+    return clampView({ ...zoomed, offsetX: zoomed.offsetX + pan.x, offsetY: zoomed.offsetY + pan.y }, VIEWPORT, ORIENTED);
+  };
+
+  /** 不在画面中心的小选区（显示空间 = 源坐标，rotation 0）：中心 (650, 490)。 */
+  const FAR_SELECTION: Rect = { x: 600, y: 450, width: 100, height: 80 };
+  const FAR_CENTER = { x: 650, y: 490 };
+
+  // **本条是缺陷的用户可见判据**（控制者指定）：不在画面中心的小选区，从 `"fit"` 切到 `4×` 后
+  // 选框的**屏幕矩形必须完整落在视口内**。
+  //
+  // 判别力（实测）：把取景锚点退回视口中心（`panToCenterSelection` 直接返回 `{x:0,y:0}`，
+  // 也就是本轮之前的「不取景」行为）时，屏幕矩形是 {600, 500, 200, 160}——右边界 800、
+  // 下边界 660，整块在视口外，正是真机上那个死胡同的使能条件。
+  it("不在画面中心的小选区：fit → 4× 后选框屏幕矩形完整落在视口内", () => {
+    const base = fitTransform(VIEWPORT, ORIENTED);
+    const pan = panToCenterSelection(base, VIEWPORT, ORIENTED, 4, FAR_SELECTION);
+    const screen = sourceRectToScreen(FAR_SELECTION, viewAfter(4, pan), 0, ORIENTED);
+
+    // 用户可见判据**先断言**（它是本轮的交付物）：逐条读四个边界——不取景时屏幕矩形是
+    // {600,500,200,160}，右边界 800、下边界 660，后两条立刻红，正是真机上那个死胡同。
+    // 只读右边一条的话，把取景方向写反仍可能蒙对，所以四条都读。
+    expect(screen.x).toBeGreaterThanOrEqual(0);
+    expect(screen.y).toBeGreaterThanOrEqual(0);
+    expect(screen.x + screen.width).toBeLessThanOrEqual(VIEWPORT.width);
+    expect(screen.y + screen.height).toBeLessThanOrEqual(VIEWPORT.height);
+
+    // 再把「为什么在视口内」钉死成确定的数：闭式解 (−1100,−780) 落在夹取范围内 → 严格居中
+    // （(650,490) 送到视口中心 (200,200)），于是屏幕矩形是 {100,120,200,160}。
+    expect(pan).toEqual({ x: -500, y: -380 });
+    expect(screen).toEqual({ x: 100, y: 120, width: 200, height: 160 });
+  });
+
+  // 2× 也走同一条路：**夹取优先于取景**——2× 下闭式解 (−450,−290) 越出 X 的夹取下界 −400，
+  // 于是取夹取后的值，选区因此不在视口正中（可接受，不为它放宽夹取），但**仍然完整可见**。
+  it("2× 同样取景，被夹取时取夹取后的值（选区仍完整落在视口内）", () => {
+    const base = fitTransform(VIEWPORT, ORIENTED);
+    const pan = panToCenterSelection(base, VIEWPORT, ORIENTED, 2, FAR_SELECTION);
+    expect(pan).toEqual({ x: -200, y: -100 });
+    expect(sourceRectToScreen(FAR_SELECTION, viewAfter(2, pan), 0, ORIENTED)).toEqual({
+      x: 200,
+      y: 250,
+      width: 100,
+      height: 80,
+    });
+    expect(orientedToScreen(FAR_CENTER, viewAfter(2, pan))).toEqual({ x: 250, y: 290 });
+  });
+
+  // 4× 那档闭式解不越界 → 选区中心**严格**落在视口中心，两轴都要读（只读 x 的话，
+  // `offsetY` 忘了减 `zoomed.offsetY` 这类错误不会红）。
+  it("不越界时选区中心严格落在视口中心（两轴各自被读到）", () => {
+    const base = fitTransform(VIEWPORT, ORIENTED);
+    const view = viewAfter(4, panToCenterSelection(base, VIEWPORT, ORIENTED, 4, FAR_SELECTION));
+    expect(orientedToScreen(FAR_CENTER, view)).toEqual({ x: 200, y: 200 });
+  });
+
+  // `"fit"` 档：任何平移都会被 `clampView` 收回归位（整图适配 + 非绑定轴居中锁定），所以取景结果
+  // 就是 `{x:0,y:0}` —— 从放大态切回 fit 时它**顺带把 pan 复位**，不必另写复位逻辑，也不改
+  // `clampView` 的规则。判别力：把本函数里的 `clampView` 拿掉，闭式解在 fit 下是 (−125,−95)，
+  // 这条立刻红。
+  it('fit 档取景结果是 {0,0}（clampView 把任何平移收回归位）', () => {
+    const base = fitTransform(VIEWPORT, ORIENTED);
+    expect(panToCenterSelection(base, VIEWPORT, ORIENTED, "fit", FAR_SELECTION)).toEqual({ x: 0, y: 0 });
+  });
+
+  // 单个位置只钉一个点，而「夹取生效」（选区靠近图像边缘、闭式解被夹）与「夹取不生效」
+  // （选区在图像内部）是**两类**形态。这条用覆盖图像各处的 40×40 小选区同时覆盖两类：
+  // 从 fit 切到 2×/4× 后，选框都**完整落在视口内**——「切档后一定看得见自己的选区」这句承诺
+  // 的可证形态。判别力：M1（锚点退回视口中心）下违规清单会列出绝大多数边缘位置。
+  it("覆盖图像各处的 40×40 小选区：fit → 2×/4× 后都完整落在视口内", () => {
+    const base = fitTransform(VIEWPORT, ORIENTED);
+    const violations: string[] = [];
+    for (const x of [0, 200, 400, 600, 760]) {
+      for (const y of [0, 200, 400, 560]) {
+        const selection = { x, y, width: 40, height: 40 };
+        for (const zoom of [2, 4] as const) {
+          const screen = sourceRectToScreen(
+            selection,
+            viewAfter(zoom, panToCenterSelection(base, VIEWPORT, ORIENTED, zoom, selection)),
+            0,
+            ORIENTED,
+          );
+          const inside =
+            screen.x >= 0 &&
+            screen.y >= 0 &&
+            screen.x + screen.width <= VIEWPORT.width &&
+            screen.y + screen.height <= VIEWPORT.height;
+          if (!inside) violations.push(`选区 (${x},${y}) @${zoom}× → 屏幕 ${JSON.stringify(screen)}`);
+        }
+      }
+    }
+    // 断言「违规清单为空」而不是逐个 `expect`：失败时会**列出全部**出界位置，
+    // 40 条逐个断言的话第一条红就把其余位置的信息吞掉了。
+    expect(violations).toEqual([]);
+  });
+
+  // 缺陷的另一半「平移不可达」在本组里**不单独断言**：取景只搬位置、不改变选框的屏幕尺寸
+  // （屏幕尺寸 = 显示空间尺寸 × scale，与 pan 无关，`sourceRectToScreen` 那组已经钉过），
+  // 所以上面各条里「选框完整落在 400×400 内」已经蕴含「选框比视口小、框外必有空白」
+  // → 按规格 §4.3 的手势优先级，「框外 = 放大下平移」重新可达。
+  // 为它再写一条断言只会是上面精确值的重述（改坏取景时两条一起红，不构成独立判别力）。
 });
 
 describe("非方形视口（横屏是生产形态：宽高对调类缺陷在方形视口下完全不可见）", () => {
@@ -292,6 +425,34 @@ describe("入口校验（规格 §12）", () => {
     expect(() =>
       withZoom(base, { width: 400, height: 400 }, { width: 800, height: 600 }, 3 as unknown as 2),
     ).toThrow(/缩放档位/);
+  });
+
+  // 取景入口（`panToCenterSelection`）是新的公开导出，同样要「非法输入响亮失败」：
+  // 退化 / 非有限的选区矩形、非法档位、非法视口各自抛错，且**校验在任何计算之前**。
+  it("取景入口对非法入参响亮失败，且校验在计算之前", () => {
+    const viewport = { width: 400, height: 400 };
+    const oriented = { width: 800, height: 600 };
+    const base = fitTransform(viewport, oriented);
+    const selection = { x: 100, y: 100, width: 200, height: 200 };
+
+    expect(() => panToCenterSelection(base, viewport, oriented, 4, { ...selection, width: 0 })).toThrow(
+      /选区显示空间矩形宽度/,
+    );
+    // 两轴各自被读到：只守宽的话「高度那半条守卫被删掉」不会红。
+    expect(() => panToCenterSelection(base, viewport, oriented, 4, { ...selection, height: Number.NaN })).toThrow(
+      /选区显示空间矩形高度/,
+    );
+    expect(() => panToCenterSelection(base, viewport, oriented, 3 as unknown as 2, selection)).toThrow(/缩放档位/);
+    expect(() => panToCenterSelection(base, { width: 0, height: 400 }, oriented, 4, selection)).toThrow(/视口宽度/);
+    expect(() =>
+      panToCenterSelection({ scale: 1, offsetX: Number.NaN, offsetY: 0 }, viewport, oriented, 4, selection),
+    ).toThrow(/视图偏移 x/);
+
+    // **校验在任何计算之前**：档位与选区**同时**非法时，报的是先校验的那个（档位在选区之前）。
+    // 把守卫挪进计算之后（例如先 `withZoom` 再校验选区）会让这条的报错变成别的，或者干脆不抛。
+    expect(() => panToCenterSelection(base, viewport, oriented, 3 as unknown as 2, { x: 0, y: 0, width: 0, height: 0 })).toThrow(
+      /缩放档位/,
+    );
   });
 
   it("非法旋转角与非有限坐标抛错", () => {

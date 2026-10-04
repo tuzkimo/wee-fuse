@@ -16,7 +16,9 @@ import {
   clampView,
   fitTransform,
   orientedSizeOf,
+  panToCenterSelection,
   screenToSource,
+  sourceRectToOriented,
   sourceRectToScreen,
   withZoom,
   type Size,
@@ -218,6 +220,40 @@ watch(
   () => props.aspect,
   (next) => {
     emit("update:crop", clampRectToSource(applyAspect(props.crop, next, props.rotation, props.sourceSize), props.sourceSize));
+  },
+);
+
+/**
+ * 换档取景：**缩放档位变化的那一刻**，把选区在显示空间的中心映射到视口中心（规格 §4.4 的现场缺陷
+ * 修复——真机上切到 2×/4× 时选区会被推出视口，而放大后的选框铺满可见区域，哪里按下都在框内，
+ * 空白不可达 → 平移不可达 → 选区找不回视野）。
+ *
+ * **只在 `props.zoom` 变化时跑，`crop` 变化时绝不跑**：视图若跟着 crop 重算，屏幕上就是
+ * 「选框钉在视口中心、图像在下面滑」，选框不再跟手。取景是**一次性动作**，做完之后视图只是
+ * `props.pan` 的普通状态。
+ *
+ * 出口与平移手势同一个（`update:pan`），父级把结果回灌进 `props.pan` 后视图即刻生效——组件
+ * 仍是「props 进、事件出」。算出来的目标 pan 与当前 `props.pan` 逐分量相等时**不发事件**：
+ * 否则父级 `setPan` 会写一个新对象 → `view` 重算 → 白多画一帧。
+ *
+ * 视口还没量到尺寸（`0×0`）时直接返回：`fitTransform` 会抛错，而真实路径上缩放按钮只在画布
+ * 量过尺寸之后才可点（挂载即 `resizeCanvas` 量一次）。
+ */
+watch(
+  () => props.zoom,
+  () => {
+    const size = viewport.value;
+    if (size.width <= 0 || size.height <= 0) return;
+    const target = panToCenterSelection(
+      fitTransform(size, oriented.value),
+      size,
+      oriented.value,
+      props.zoom,
+      // 选区在显示空间的矩形：走 `view.ts` 既有的换轴入口，不在组件里手写第三份坐标换算。
+      sourceRectToOriented(props.crop, props.rotation, props.sourceSize),
+    );
+    if (target.x === props.pan.x && target.y === props.pan.y) return;
+    emit("update:pan", target);
   },
 );
 
