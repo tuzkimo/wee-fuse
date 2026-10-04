@@ -1121,15 +1121,15 @@ describe("页面接线（续）：色板 / 显示开关 / 工具栏命令与状�
 /**
  * 页面接线（终）：**类型兼容的 props 错接**。
  *
- * 复审点名的三处：把它们互换 / 绑成常量时 `vue-tsc` **一句话都不说**——`boolean` 换 `boolean`、
- * `number` 换 `number` 在类型上完全合法，页面上却是用户可见（网格线开关去控色号）或**静默**
- * （同色格第二次涂不刷新）的行为错。本项目在任务 1 就吃过一次同形态的亏：
+ * 复审点名的几处：把它们互换 / 绑成常量时 `vue-tsc` **一句话都不说**——`boolean` 换 `boolean`、
+ * `number` 换 `number` 在类型上完全合法，页面上却是用户可见（网格线开关去控色号、面板显示错的
+ * 当前色）或**静默**（同色格第二次涂不刷新）的行为错。本项目在任务 1 就吃过一次同形态的亏：
  * `grid` 与 `viewport` 同为 `Size`，实参对调 TS 不报错。
  *
- * 判据是**读子组件真的收到了什么**（`props(...)`），不是像素级断言；夹具必须让那两个可能被互换的
- * 值**相反 / 不相等**，否则「逐项对应」是恒真的。
+ * 判据是**读子组件真的收到了什么**（`props(...)` / 组件渲染出来的可见回显），不是像素级断言；
+ * 夹具必须让那两个可能被互换的值**相反 / 不相等**，否则「逐项对应」是恒真的。
  */
-describe("页面接线（终）：三条类型兼容的 props 错接", () => {
+describe("页面接线（终）：类型兼容的 props 错接（画布 / 工具栏 / 面板）", () => {
   it("画布收到 `showGrid` / `showLabels`：两个开关取相反值时逐项对应（互换必红）", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
@@ -1171,5 +1171,20 @@ describe("页面接线（终）：三条类型兼容的 props 错接", () => {
 
     // 绑成常量 `'brush'` 的写法在这里红：页面从不读这个 prop，用户只看到按钮高亮永不跟随
     expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("pick");
+  });
+
+  it("面板收到 `currentColor`：`palette-current` 显示的就是笔刷那个色号（绑成 revision 必红）", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    // 锚点取 **2 号色**：它既不是播种值 0，也不等于 `revision`（此刻是 0）——误接成
+    // `editor.revision` 时面板显示的是 0 号色，这条就红。色号由色卡现取，不写死。
+    editor.setCurrentColor(2);
+    await nextTick();
+
+    const code2 = palette.colors[2]?.code ?? "";
+    if (code2 === "") throw new Error("色卡至少要有三色");
+    // 页面层**可见的回显**：当前画笔槽渲染的就是它（`PalettePanel.vue` 的 `palette-current`）。
+    // 读的是页面挂载出来的 DOM，不是 `props(...)`——错接在屏幕上是「面板显示的颜色与笔刷不一致」。
+    expect(wrapper.get("[data-testid='palette-current']").text()).toContain(code2);
   });
 });
