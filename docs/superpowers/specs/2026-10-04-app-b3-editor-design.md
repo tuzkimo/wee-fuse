@@ -134,7 +134,8 @@ export function zoomCellView(
 - 捏合的锚点是**两指中点**，`nextScale = 起始比例 × 当前间距 / 起始间距`；**起始间距 < 1 CSS px 时不下发缩放**
   （两指几乎重合是用户可达状态，`0 / 0` 会得到 `NaN`、间距为 0 会得到 `nextScale = 0`，两者都会撞上 §12 的
   守卫——守卫不该为一种正常的用户动作而放宽，所以退化判定放在手势层，本函数继续拒绝非法输入）。
-- ± 按钮的锚点是视口中心。
+- ± 按钮的锚点是视口中心，步进是**乘法** `ZOOM_STEP = 1.25`（规格未定的实现常量，写在页面/工具栏的注释里；
+  它只影响按几下能到上界，不影响任何不变量）。
 - `CropCanvas` 用的 `withZoom` 锚点固定为视口中心、且只吃 `"fit" | 2 | 4` 离散档位——编辑器要连续缩放与
   任意锚点，所以是**新函数**，不是把 `withZoom` 改宽（改宽会动到 B2 的 `ZoomLevel` 类型与它那批用例）。
 
@@ -490,8 +491,11 @@ B1 规格 §4.4 定过：`meta.width` / `height` / `colorCount` 只是**列表�
    它必须固定，因为「添加颜色」选中的色很可能**不在**已用色列表里（用了 0 颗）。
 2. **已用色列表**：来自 `patternStats(pattern, palette).usages`（用量降序，用量相同按色号升序——
    该函数的既有契约），每行 = 色块 + 色号 + `N 颗`；点选即设为当前色；当前色那行有高亮。
-3. **「添加颜色」**：打开 `PalettePicker`（MARD 221，按 A–M 九个色系分组，色块 + 色号，触控目标 ≥44px，
-   **已用色加标记**）。选中即设为当前色并关闭。
+3. **「添加颜色」**：由**面板自己**渲染 `PalettePicker`（MARD 221，按 A–M 九个色系分组，色块 + 色号，
+   触控目标 ≥44px，**已用色加标记**）；面板内部持有「选择器是否展开」的状态，**页面不放第二个入口**。
+   选中即设为当前色并关闭。**「色号 → 全色卡下标」的换算只在面板内、只走 `core/palette` 的权威实现**
+   （`createPaletteRuntime(palette).indexByCode`），UI 层任何位置都不许出现 `colors.findIndex(...)`
+   这类第二份同源实现（同一个 testid 在页面里出现两次也会让用例的判据依赖 DOM 顺序）。
 4. **「橡皮 / 不拼豆」**：把当前色设为 `EMPTY`。
 
 **实时性口径**：列表在**命令提交后**重算（提交 / 撤销 / 重做各一次），**拖动预览期间不重算**——
@@ -538,7 +542,7 @@ B3 **不消费** `core/pattern/edit.ts` 的 `buildReplaceCommand`（「整色替
 | 对象 | 用例要点 |
 |---|---|
 | `core/pattern/view.ts` | 默认缩放三支（大图抬到 24 / 小图取适配铺满且不被 64 卡住 / 恰好等于阈值）；缩放上界 `max(64, 适配×2)` 的两个分支；**锚点缩放的不变量**（锚点处格子坐标不变）＋**夹取生效时不成立**的那条如实用例；缩放范围两向夹取；`panCellView` 与 `clampView` 口径一致（图像小于视口时居中锁定）；`visibleCellRange`（覆盖整图的视口 / 部分可见 / 边界格恰好压在视口边缘 / 视口为 0 抛错 / 无可视格返回 null）；`cellRectFromScreen`（正拖 / 反拖 / 越界拖到图纸外 / 1×1 / 空矩形 null）；`cellsAlongLine`（水平 / 垂直 / 45° / 陡斜率 / 缓斜率 / 同一点 / 反向 / 跨整图的长线 / 去重） |
-| `stores/editor.ts` | `beginSession` 播种（`currentColor` 落在图纸用到的第一个色或 0、历史清空、`viewInitialized` 为 false）；`onViewport` 的两支（**首次**落 `defaultCellView` 并置位／**其后**只 `clampView` 不重置缩放与位置）；一次手势**一条**命令；同色格不入账（不产生空命令、不消耗撤销额度）；框选一条命令；吸管（含吸空格）设色并切回画笔；撤销 / 重做返回脏下标 + `revision` 自增 + `session.dirty` 为真；载入 / 重载清历史；保存成功 / 失败（失败保持 dirty 与内存态）；`setCurrentColor` 的守卫（越界 / 非整数 / `colorCount` 之外一律抛错） |
+| `stores/editor.ts` | `beginSession` 播种（`currentColor` 落在图纸**行优先第一个非 `EMPTY`** 的色号、若全为空格则 0；历史清空、`viewInitialized` 为 false）；`onViewport` 的两支（**首次**落 `defaultCellView` 并置位／**其后**只 `clampView` 不重置缩放与位置）；一次手势**一条**命令；同色格不入账（不产生空命令、不消耗撤销额度）；框选一条命令；吸管（含吸空格）设色并切回画笔；撤销 / 重做返回脏下标 + `revision` 自增 + `session.dirty` 为真；`canUndo` / `canRedo` 在提交 / 撤销 / 重做 / 重新载入后跟着变（**必须有判别力用例**：只断言初始的 `false` 抓不到 markRaw 的缓存 bug）；载入 / 重载清历史；保存成功 / 失败（失败保持 dirty 与内存态）；`setCurrentColor` 的守卫（越界 / 非整数 / `colorCount` 之外一律抛错） |
 | `components/editor/PatternCanvas.vue` | 单指涂抹 → emit 的下标集合（**含补格**：构造两次相隔数格的采样点）；双指 → 视图平移 / 缩放；**第二指落下取消笔画且不 emit**；框选 emit 的格子矩形；吸管 emit 的色号；DPR 尺寸与「驱动桩 `ResizeObserver` 回调 → 画布尺寸跟着变」（并 emit `measure`）；**画法断言只保留三条**（见下） |
 | `components/editor/PalettePanel.vue` / `PalettePicker.vue` | 列表 = 实时用色与颗数；点选改当前色；涂空某色后该行消失；当前画笔槽在「当前色不在列表里」时仍显示；「添加颜色」打开选择器；选择器渲染 221 色、按九个色系分组、已用色有标记 |
 | `views/EditorPage.vue` | 载入 → `beginSession` 被调用且视图按容器尺寸算出；保存接线（断言 `put` 收到的 `meta.thumbnail` **是新算的**且以 `data:image/` 开头）；未保存拦截三支（保存并离开 / 放弃改动 / 继续编辑）；`/edit/a → /edit/b` 重载（B1-8）；`source === null` 的工程**照常可编辑**（只是不能重跑） |
@@ -609,7 +613,7 @@ B3 **不消费** `core/pattern/edit.ts` 的 `buildReplaceCommand`（「整色替
 | 导出 | 校验 |
 |---|---|
 | `core/pattern/view.ts` 各函数 | 视口：**有限且 > 0**（CSS 像素允许小数）；`grid`：整数且 ≥1；`view`：`scale` 有限 > 0、偏移有限；`nextScale` 有限 > 0；`anchorScreen` / `Point` 分量有限；`CellPoint` 整数（`cellsAlongLine` 的两个端点非整数时抛错，不许静默取整） |
-| `stores/editor.ts` 各 action | `beginSession` 的 `pattern` 必须是合法图纸（宽高整数 ≥1、`cells.length === width × height`）、`colorCount` 是 `1..EMPTY` 的整数；`setCurrentColor` 的值必须是 `0..colorCount-1` 的整数**或** `EMPTY`；`paint` 的下标与 `applyRect` 的矩形分量必须是有限整数（矩形宽高 ≥1，非数组 / 非法形态抛错） |
+| `stores/editor.ts` 各 action | `beginSession` 的 `pattern` 必须是合法图纸（宽高整数 ≥1、`cells.length === width × height`）、`colorCount` 是 `1..EMPTY` 的整数**且语义逐字为 `palette.colors.length`**（**不是** `patternStats().colorCount`，那里是「用到的色数」）；`setCurrentColor` 的值必须是 `0..colorCount-1` 的整数**或** `EMPTY`；`paint(indices)` 只守**形态**——`indices` 不是数组时抛错，**元素级**的非整数与越界沿用 `buildPaintCommand` 的既有契约（忽略，且该契约已被 `edit.test.ts` 钉住；在 store 再抛一次会把「手指划过图纸边缘」这种用户可达动作变成整笔丢弃）；`applyRect` 的矩形分量有限、宽高 ≥1；`canUndo` / `canRedo` 必须是**读 `revision` 的 computed**（`history` 是 `markRaw` 的类实例，直接读它的 getter 不建立响应式依赖） |
 | `session.save(options)` | `options.thumbnail` 若提供，必须是**非空字符串且以 `data:image/` 开头**（空串是「保留原封面」的语义歧义源，明确拒绝）；不提供时行为与 B2 完全一致 |
 | `useCanvasSurface` | 容器或画布 ref 未挂载时**安静返回**（挂载期会调一次、`ResizeObserver` 回调也可能早于 ref 就位），不抛错 |
 
@@ -667,9 +671,16 @@ npm run dev       # 浏览器人工走：图纸库 → 打开 → 缩放平移 �
 **对既有测试的改动面（如实记录，实现计划里要单列）**：`EditorPage.test.ts` 里**一条**用例的语义必须更换——
 那条断言 `[data-testid='editor-todo']` 文本含「后续计划」的用例，钉的是 B1「编辑器还没做」这个临时边界；
 B3 交付后它成为**假陈述**。处置：把它的断言换成「新编辑器的画布与工具栏存在」，
-**不是放宽或删除覆盖**（该行为由工具栏 / 画布的用例接续）。其余用例（含 `CropCanvas.test.ts` 的 21 条）
+**不是放宽或删除覆盖**（该行为由工具栏 / 画布的用例接续）。其余用例（含 `CropCanvas.test.ts` 的 **42 条**）
 **一条都不许改**；`useCanvasSurface` 的抽取正是由 `CropCanvas.test.ts` 那条「驱动桩 `ResizeObserver`
 回调 → 画布尺寸跟着变」的用例守着的（B2 任务 8 修复轮补的那条）。
+
+> **2026-10-04 装配审查的三处数字更正**（写计划时回原始清单重数；本项目已三次因引用汇总行出错）：
+> ① `CropCanvas.test.ts` 现在是 **42 条**，不是 B2 规格与构建记录里的 21 条——main 在 B2 收尾后又落了
+> `coversViewport` 与 fit 档 else 分支那批用例（实测 `Tests 42 passed (42)`），「零改动安全网」说的是这 42 条；
+> ② `EditorPage.test.ts` 现在是 **7 条**，其中 1 条只换语义，B3 净增 19 条（再加任务 8 的 3 条端到端 → 26 条）；
+> ③ `README.md` 的「47 文件 / 755 用例」是 B2 收尾那一刻的数字，控制者实测当前是 **47 文件 / 775 用例**，
+> B3 收尾时预期 **54 文件 / 953 用例**——README 回写一律以 `npm run test` 的真实输出为准，不引用任何历史数字。
 
 ---
 
