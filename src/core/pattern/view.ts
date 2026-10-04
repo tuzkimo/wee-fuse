@@ -1,0 +1,396 @@
+import { clampView, fitTransform, screenToOriented } from "../crop/view";
+import type { Point, Size, ViewTransform } from "../crop/view";
+import type { Rect } from "../image/types";
+
+/**
+ * 编辑器视图数学：默认缩放、缩放范围、锚点缩放、平移、可见格范围、框选矩形、拖动补格。
+ *
+ * **只有一层坐标系**（规格 §4.1）：图纸是无旋转的轴对齐网格，所以
+ * `screen = offset + cell × cellPx`（`cellPx = view.scale`）。本模块**不写第二份坐标数学**——
+ * 屏幕 ↔ 显示空间的映射全部走 `core/crop/view.ts` 的 `screenToOriented`（把显示空间当作图纸格子
+ * 空间，`rotation = 0` 是恒等映射），适配走 `fitTransform`，平移夹取走 `clampView`。
+ * B2 规格 §3 已经定过「B3 编辑器的缩放平移要复用这套数学，不是两套」。
+ *
+ * **为什么整块放在 core**：happy-dom 的 canvas 是桩、`getBoundingClientRect()` 返回全 0，
+ * 这一层在 CI 里唯一能被保护的形式就是纯函数（规格 §3 的表）。它一旦写错，症状是「偶尔断笔」
+ * 「框选少一列」这类只有在真机上才看得出来的手感问题。
+ *
+ * **守卫口径**（规格 §12）：本模块**复用既有守卫**——`fitTransform` / `clampView` 内部已经守着
+ * 视口（有限且 > 0）、图纸（整数且 ≥1）、视图（`scale` 有限 > 0、偏移有限），所以这里**不复制
+ * 第四份全套守卫**；本文件只守**自己新引入的量**：`nextScale`（有限 > 0）、`anchorScreen` 与屏幕点
+ * （分量有限）、`CellPoint`（分量是整数）。
+ *
+ * **两处例外（如实记录）**：`visibleCellRange` 与 `cellRectFromScreen` **不调用** `fitTransform` /
+ * `clampView`（前者只调 `screenToOriented`，后者连视口都不收），所以它们各自把视口 / 图纸这两条
+ * 守卫**内联就地**写了一遍，措辞与 B2 `crop/view.ts` 的 `requireViewport` / `requireImageSize`
+ * **逐字一致**（图纸那条沿用「显示空间图像」的措辞——`grid` 就是显示空间的尺寸，两处口径必须能
+ * 逐字对上，否则读错误消息的用例会漂）。为什么不「借」一次 `clampView` 的守卫：那会把**夹取后的**
+ * 视图当成入参，`visibleCellRange` 就不再回答「按给定视图能看到哪些格子」了。
+ * 按 `AGENTS.md`「入口校验」与规格 §13 第 8 条，守卫**内联在本文件**，不抽共享模块。
+ */
+
+/**
+ * 初始缩放的**下限**：编辑器默认放大到每格 ≥ 24 CSS px。
+ *
+ * **关键取舍**：一颗豆在屏幕上常常只有几个像素，手指点不准，所以初始视图宁可放大、把图纸推到
+ * 视口之外，也不让用户对着 3px 的格子戳。它是**初始缩放**的下限，不是缩放范围的下限——
+ * 缩放范围的下限是适配比例（规格 §4.2 的表）。
+ *
+ * **为何公开**：`PatternCanvas.vue`（任务 5）的格内色号 / 网格线显示判定要读同一组阈值，
+ * store 与用例也直接引用它，不许各自硬编码 24。
+ */
+export const MIN_CELL_PX = 24;
+
+/**
+ * 缩放范围的**上界基准**：一颗豆 64 CSS px 已远大于指尖，再放大拿不到更多信息。
+ *
+ * **关键取舍**：它只是上界的**基准**，真正的上界是 `max(MAX_CELL_PX, 适配比例 × 2)`
+ * ——固定 64 会让 8×8 这类小图纸出现「上界 < 下界」，视图被钉死成一个不可缩放的单一比例
+ * （规格 §4.2）。**为何公开**：工具栏的 ± 缩放与 store 的边界断言共用它。
+ */
+export const MAX_CELL_PX = 64;
+
+/**
+ * 网格线的显示阈值：低于 6px/格时线距已小于线宽，网格线会糊成一片灰。
+ *
+ * **关键取舍**：这是**观感**阈值，不影响任何数据语义；此时隐藏网格线比画出来更清楚。
+ * 判定由 `PatternCanvas.vue` 在叠加层里做（`cellPx >= GRID_LINE_MIN_CELL_PX` 才画）。
+ *
+ * **为何公开**：画布与用例读同一个常量；写死在画布里的话，阈值被改坏时没有任何断言会红
+ * （规格 §11.1 的第三条画法断言）。
+ */
+export const GRID_LINE_MIN_CELL_PX = 6;
+
+/**
+ * 格内色号的显示阈值：字号取 `cellPx × 0.38`（28 → 约 10.6px，可读）。
+ *
+ * **关键取舍**：与主规格 §7.2 给**施工图**定的 32px 是两处独立阈值——那里是给纸面 / 大图看的，
+ * 这里是屏幕上「这格是什么色号」的即时提示，两者不共用。判定在 `PatternCanvas.vue`。
+ *
+ * **为何公开**：同 `GRID_LINE_MIN_CELL_PX`（画布与用例共用，不许硬编码）。
+ */
+export const CELL_LABEL_MIN_CELL_PX = 28;
+
+/** 图纸格坐标（整数下标）。与 `Point` 的区别就是「必须是整数」这条语义。 */
+export interface CellPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+// ---------------------------------------------------------------------------
+// 入口校验（规格 §12）：内联就地，不抽共享模块。
+// 本文件**只守新引入的量**——视口 / 图纸 / 视图三者的守卫由被调用的
+// `fitTransform` / `clampView` / `screenToOriented` 在内部完成（措辞与 `crop/rect.ts` 一致）。
+// 例外只有 `visibleCellRange` / `cellRectFromScreen` 的视口与图纸两条（见文件头 JSDoc）。
+// ---------------------------------------------------------------------------
+
+function requireFinite(value: number, what: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${what}必须是有限数字（当前 ${String(value)}）`);
+  }
+  return value;
+}
+
+/** 视图比例只在本模块的推导里被读一次；其余部分一律交给 `clampView` 复检。 */
+function requireScale(scale: number, what: string): number {
+  requireFinite(scale, what);
+  if (scale <= 0) throw new Error(`${what}必须大于 0（当前 ${scale}）`);
+  return scale;
+}
+
+/** 屏幕点（锚点 / 框选起止点）：分量必须有限。 */
+function requirePoint(point: Point, what: string): Point {
+  requireFinite(point.x, `${what} x`);
+  requireFinite(point.y, `${what} y`);
+  return point;
+}
+
+/** 格坐标：**非整数必须抛错**，不许静默取整（静默取整会让「两指之间少补一格」变成不可复现的手感问题）。 */
+function requireCellPoint(point: CellPoint, what: string): CellPoint {
+  if (typeof point.x !== "number" || !Number.isInteger(point.x)) {
+    throw new Error(`${what} x 必须是整数（当前 ${String(point.x)}）`);
+  }
+  if (typeof point.y !== "number" || !Number.isInteger(point.y)) {
+    throw new Error(`${what} y 必须是整数（当前 ${String(point.y)}）`);
+  }
+  return point;
+}
+
+/**
+ * 视口尺寸是 **CSS 像素**：允许小数（`getBoundingClientRect` 在缩放下就返回小数），只要求有限且 > 0。
+ * 措辞与 `core/crop/view.ts` 的 `requireViewport` 逐字一致。
+ */
+function requireViewport(viewport: Size): Size {
+  const width = requireFinite(viewport.width, "视口宽度");
+  const height = requireFinite(viewport.height, "视口高度");
+  if (width <= 0) throw new Error(`视口宽度必须大于 0（当前 ${width}）`);
+  if (height <= 0) throw new Error(`视口高度必须大于 0（当前 ${height}）`);
+  return viewport;
+}
+
+/**
+ * 图纸 = 显示空间尺寸，必须**整数且 ≥1**（`AGENTS.md`「入口校验」的网格 / 尺寸类口径）。
+ * 措辞与 `core/crop/view.ts` 的 `requireImageSize` 逐字一致（含「显示空间图像」这个叫法）：
+ * 同一个 `Size` 参数在 B2 与本模块的错误消息里必须是同一句话。
+ */
+function requireGridSize(grid: Size): Size {
+  if (!Number.isInteger(grid.width) || grid.width < 1) {
+    throw new Error(`显示空间图像宽必须是 ≥1 的整数（当前 ${String(grid.width)}）`);
+  }
+  if (!Number.isInteger(grid.height) || grid.height < 1) {
+    throw new Error(`显示空间图像高必须是 ≥1 的整数（当前 ${String(grid.height)}）`);
+  }
+  return grid;
+}
+
+// ---------------------------------------------------------------------------
+// 缩放范围与默认视图
+// ---------------------------------------------------------------------------
+
+/**
+ * 缩放范围的**下限** = 适配比例（整图可见）。再缩下去 `clampView` 会把两个方向都居中锁定，
+ * 观感上什么都没变（规格 §4.2）。
+ *
+ * **关键取舍**：不新增「适配比例」这个概念的第二份实现——直接调 `fitTransform` 取 `scale`，
+ * 于是视口与图纸的守卫、以及 contain 口径都与 B2 的选区页逐字一致。
+ *
+ * **为何公开**：`stores/editor.ts`（任务 4）与工具栏的 ± 缩放要读同一个下界；`defaultCellView`
+ * 与 `zoomCellView` 也由它定义，用例据此断言「上下界不退化」。
+ */
+export function minCellScale(viewport: Size, grid: Size): number {
+  return fitTransform(viewport, grid).scale;
+}
+
+/**
+ * 缩放范围的**上界** = `max(MAX_CELL_PX, 适配比例 × 2)`。
+ *
+ * **关键取舍（两个量取大是必须的）**：8×8 的图纸在 800×600 视口里适配比例约 75px/格，
+ * 若上界固定成 64 就会出现 `上界 < 下界`，视图被钉死成一个不可缩放的单一比例；给小图一倍余量即可。
+ * 由定义保证 `下界 ≤ 上界`，所以「先把 `nextScale` 夹进 `[下界, 上界]`」没有次序歧义。
+ *
+ * **为何公开**：同 `minCellScale`——store 的夹取路径与工具栏按钮都要读它。
+ */
+export function maxCellScale(viewport: Size, grid: Size): number {
+  return Math.max(MAX_CELL_PX, fitTransform(viewport, grid).scale * 2);
+}
+
+/**
+ * 默认视图：比例 `max(适配比例, MIN_CELL_PX)`、偏移居中、最后过 `clampView`。
+ *
+ * **关键取舍**：「默认每格 ≥24px」与「小尺寸图自动放大铺满」要同时成立——小图的适配比例本来
+ * 就 > 24，取它即铺满，所以是 `max` 而不是「一律 24」。**只在第一次量到视口尺寸时**调用它；
+ * 之后容器尺寸变化只重新夹取（`clampView`），否则用户刚调好的位置与比例会被横竖屏切换重置
+ * （规格 §4.2 末段，横竖屏不丢状态）。
+ *
+ * **为何公开**：`stores/editor.ts` 的 `onViewport` 是它唯一的生产消费者；也是「工具 → 视图」
+ * 这条链上唯一允许决定初始比例的地方（组件不许自己算）。
+ */
+export function defaultCellView(viewport: Size, grid: Size): ViewTransform {
+  const scale = Math.max(minCellScale(viewport, grid), MIN_CELL_PX);
+  return clampView(
+    {
+      scale,
+      offsetX: (viewport.width - grid.width * scale) / 2,
+      offsetY: (viewport.height - grid.height * scale) / 2,
+    },
+    viewport,
+    grid,
+  );
+}
+
+/**
+ * 以 `view` 为起点，把比例换成 `nextScale` 并**保持锚点屏幕坐标处的格子坐标不变**：
+ * `offset' = anchorScreen − (anchorScreen − offset) × (nextScale' / view.scale)`。
+ * 捏合手势与工具栏 ± 共用它（± 的锚点是视口中心）。
+ *
+ * **关键取舍（必须如实告知调用方）**：夹取生效时锚点不变量**不成立**——图纸被拖到边缘、
+ * `clampView` 把它拉回来，此时锚点处的格子坐标会变（用户看到的就是「拖到边就顶住了」）。
+ * 它是契约的一部分，不是缺陷；只在夹取不生效的方向上，锚点坐标才逐位保持。
+ *
+ * 顺序固定为「先夹比例、再按夹后的比例算偏移、最后夹取」：先算偏移再夹比例会让偏移量与实际
+ * 比例不匹配，放大时锚点会漂。退化输入（两指几乎重合得到的 0 / `NaN`）由**手势层**拦下，
+ * 本函数继续拒绝非法输入——守卫不该为一种正常的用户动作放宽（规格 §4.3）。
+ *
+ * **为何公开**：`PatternCanvas.vue`（任务 5）的双指捏合与工具栏按钮都调它；`CropCanvas` 的
+ * `withZoom` 只吃 `"fit" | 2 | 4` 离散档位且锚点固定在视口中心，编辑器要连续缩放与任意锚点，
+ * 所以是新函数，而不是把 `withZoom` 改宽（改宽会动到 B2 的 `ZoomLevel` 与那批用例）。
+ */
+export function zoomCellView(
+  view: ViewTransform,
+  viewport: Size,
+  grid: Size,
+  nextScale: number,
+  anchorScreen: Point,
+): ViewTransform {
+  requirePoint(anchorScreen, "锚点屏幕坐标");
+  const scale = Math.min(
+    Math.max(requireScale(nextScale, "缩放比例"), minCellScale(viewport, grid)),
+    maxCellScale(viewport, grid),
+  );
+  const ratio = scale / requireScale(view.scale, "视图比例");
+  return clampView(
+    {
+      scale,
+      offsetX: anchorScreen.x - (anchorScreen.x - view.offsetX) * ratio,
+      offsetY: anchorScreen.y - (anchorScreen.y - view.offsetY) * ratio,
+    },
+    viewport,
+    grid,
+  );
+}
+
+/**
+ * 平移：偏移加 `dx` / `dy` 后过一次 `clampView`。
+ *
+ * **关键取舍**：夹取口径沿用 B2（图像始终铺满视口；某方向图像小于视口时该方向居中锁定），
+ * 所以放大后拖不到图像之外的空白——对着一张图纸微调，这是想要的行为；`"fit"` 档下任何平移
+ * 都会被夹取归位，等于不可平移。
+ *
+ * **为何公开**：`PatternCanvas.vue`（任务 5）的双指平移（以及「先平移、后缩放」的组合中的第一步）
+ * 调它；组件里不写第二份夹取。
+ */
+export function panCellView(
+  view: ViewTransform,
+  viewport: Size,
+  grid: Size,
+  dx: number,
+  dy: number,
+): ViewTransform {
+  requireFinite(dx, "水平位移");
+  requireFinite(dy, "垂直位移");
+  return clampView(
+    { scale: requireScale(view.scale, "视图比例"), offsetX: view.offsetX + dx, offsetY: view.offsetY + dy },
+    viewport,
+    grid,
+  );
+}
+
+/**
+ * 当前视口里**可见的格子范围**，四端都是**闭区间**的下标（`x1` / `y1` 含），已夹进
+ * `[0, grid.width-1] × [0, grid.height-1]`；没有任何格子可见时返回 `null`。
+ *
+ * **关键取舍**：返回 `null` 而不是一个空区间，与 `edit.ts` 的 `pointToCell` 同一口径——
+ * 调用方必须判空，避免拿 `NaN` 或反向区间去循环（规格 §4.5）。叠加层每帧只按这个范围绘制，
+ * 绘制成本因此与**可见格数**成正比、与图纸总格数无关（500×500 的图纸也不例外）。
+ *
+ * **右 / 下端用 `ceil`（保守取法）**：边界格**恰好压在视口边缘**时仍然算可见（半格露出也要画）。
+ * 如实记录代价：右端坐标落在格子内部（非整数）时会**多含一格**——那一格可能整格都在视口之外，
+ * 多画的一格由 canvas 自己裁掉（宁多画一格，也不敢漏掉边缘的一丝可见格）。
+ *
+ * **`null` 是防御性分支**：两轴都被夹进 `[0, count-1]`，而 `floor(lo) ≤ ceil(hi)`（`lo ≤ hi`
+ * 且夹取是单调的），所以 `x1 < x0` 在当前实现下**不可达**。保留它是**契约上的判空要求**：
+ * 签名与 JSDoc 都要求调用方判空（同 `pointToCell`），这样将来若夹取口径改成「不可见就返回空区间」，
+ * 调用方不需要跟着改。
+ *
+ * **为何公开**：`PatternCanvas.vue`（任务 5）是它唯一的生产消费者（叠加层格子循环的上界）。
+ */
+export function visibleCellRange(
+  view: ViewTransform,
+  viewport: Size,
+  grid: Size,
+): { x0: number; y0: number; x1: number; y1: number } | null {
+  requireViewport(viewport);
+  requireGridSize(grid);
+  // 屏幕视口的四角 → 连续格子坐标；`screenToOriented` 内部已复检视图与点分量。
+  const topLeft = screenToOriented({ x: 0, y: 0 }, view);
+  const bottomRight = screenToOriented({ x: viewport.width, y: viewport.height }, view);
+  // 与 `clampView` 同口径的夹取：某方向图像比视口小的时候，该方向的可视格子范围就是整张图纸。
+  const clampAxis = (start: number, end: number, count: number): [number, number] => {
+    const lo = Math.min(start, end);
+    const hi = Math.max(start, end);
+    return [Math.min(Math.max(Math.floor(lo), 0), count - 1), Math.min(Math.max(Math.ceil(hi), 0), count - 1)];
+  };
+  const [x0, x1] = clampAxis(topLeft.x, bottomRight.x, grid.width);
+  const [y0, y1] = clampAxis(topLeft.y, bottomRight.y, grid.height);
+  if (x1 < x0 || y1 < y0) return null; // 上述推导下不可达（见 JSDoc），保留为契约上的判空要求。
+  return { x0, y0, x1, y1 };
+}
+
+/**
+ * 两个**屏幕点**围出的框选矩形，单位是**格子**：两点各过 `screenToOriented` 得到连续格子坐标、
+ * 夹进 `[0, grid.width] × [0, grid.height]`，再取 `floor` 的左上与 `ceil` 的右下。
+ * 空矩形（宽或高为 0）返回 `null`。
+ *
+ * **关键取舍（不复用 `pointToCell`）**：`pointToCell` 落在图纸之外时返回 `null`，而框选拖动
+ * **经常**拖出图纸边界（想框到最后一列就会拖过头）；用 `pointToCell` 就得在组件里为「null 时
+ * 取哪条边」再写一份判定——那正是「两端各自正确、错在接线」的温床。连续坐标天然支持越界夹取。
+ *
+ * **关键取舍（空矩形返回 `null`，不夹成 1×1）**：把退化矩形抬成 1×1 会在图纸外凭空产生一次
+ * 「涂一格」的命令（`buildRectPaintCommand` 只看宽高）。1×1 **合法**：起止点落在同一格时
+ * `floor` / `ceil` 自然给出 1×1（`ceil(9.2) − floor(9.2) = 1`），这条路径与空矩形可区分。
+ *
+ * **为何公开**：`PatternCanvas.vue`（任务 5）的框选工具在拖动预览与抬手应用两处都用它，
+ * `select` 事件带的就是它的产物（格子坐标的 `Rect`，契约 §5）；组件里不写第二份取整规则。
+ */
+export function cellRectFromScreen(a: Point, b: Point, view: ViewTransform, grid: Size): Rect | null {
+  requireGridSize(grid);
+  requirePoint(a, "起点");
+  requirePoint(b, "终点");
+  // 连续格子坐标 → 夹进 [0, 边长]（上界写 grid 而不是 grid−1：右 / 下边缘落在 grid 上）。
+  const first = screenToOriented(a, view);
+  const second = screenToOriented(b, view);
+  const clampAxis = (value: number, count: number): number => Math.min(Math.max(value, 0), count);
+  const left = Math.floor(clampAxis(Math.min(first.x, second.x), grid.width));
+  const top = Math.floor(clampAxis(Math.min(first.y, second.y), grid.height));
+  const right = Math.ceil(clampAxis(Math.max(first.x, second.x), grid.width));
+  const bottom = Math.ceil(clampAxis(Math.max(first.y, second.y), grid.height));
+  const width = right - left;
+  const height = bottom - top;
+  if (width <= 0 || height <= 0) return null;
+  return { x: left, y: top, width, height };
+}
+
+/**
+ * 两个格子之间的**Bresenham 8 连通**补格序列，含 `from` 与 `to`、已去重、端点是整数。
+ *
+ * **为什么需要它**：指针事件的采样率**必然**低于手指移动速度，快速划过时相邻两次采样命中的
+ * 格子可能隔着好几格；不补格就是「拖得越快，笔迹越断」，而它在本环境里肉眼看不出来。
+ *
+ * **关键取舍（8 连通而不是 4 连通）**：对角线相邻的两格在视觉上是连着的（角接触），
+ * 4 连通会凭空在斜线里留下空隙。**去重**保证调用方累积的「待涂集合」是一次手势一条命令的粒度
+ * （`buildPaintCommand` 自己也会按 `seen` 去重，这里是第二道）。
+ * **端点非整数时抛错、不静默取整**：静默取整会把「少补一格」变成不可复现的手感问题。
+ *
+ * **关键取舍（先规范化端点，保证正 / 反向拖出同一串格子）**：Bresenham 的并列取整规则是
+ * **有方向**的——(0,0)→(2,1) 与 (2,1)→(0,0) 在朴素实现下会得到不同的中间格（前者 (1,0)，
+ * 后者 (1,1)）。把端点按 `(x, y)` 字典序规范化后再算、最后按需反转，前后两次拖动补出的**是同一批
+ * 格子（顺序相反）**——用户来回蹭同一段时不会因为方向不同而多涂 / 少涂一格。
+ *
+ * **为何公开**：`PatternCanvas.vue`（任务 5）在 `pointermove` 里用它把上一次采样格与当前格之间
+ * 补齐；`stores/editor.ts` 的 `paint` 只吃补好的下标数组。
+ */
+export function cellsAlongLine(from: CellPoint, to: CellPoint): CellPoint[] {
+  requireCellPoint(from, "起点");
+  requireCellPoint(to, "终点");
+  const reversed = from.x > to.x || (from.x === to.x && from.y > to.y);
+  const start = reversed ? to : from;
+  const end = reversed ? from : to;
+  const cells: CellPoint[] = [];
+  const seen = new Set<string>();
+  let x = start.x;
+  let y = start.y;
+  const dx = Math.abs(end.x - start.x);
+  const dy = Math.abs(end.y - start.y);
+  const stepX = start.x < end.x ? 1 : -1;
+  const stepY = start.y < end.y ? 1 : -1;
+  let error = dx - dy;
+  for (;;) {
+    const key = `${x},${y}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      cells.push({ x, y });
+    }
+    if (x === end.x && y === end.y) break;
+    const error2 = error * 2;
+    // 每步至少动一根轴（8 连通），所以除了首格之外不会有重复——去重是防御性的第二道。
+    if (error2 > -dy) {
+      error -= dy;
+      x += stepX;
+    }
+    if (error2 < dx) {
+      error += dx;
+      y += stepY;
+    }
+  }
+  return reversed ? cells.reverse() : cells;
+}
