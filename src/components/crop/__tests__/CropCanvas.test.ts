@@ -1105,3 +1105,97 @@ describe("比例锁", () => {
     expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 150, y: 100, width: 300, height: 300 }]);
   });
 });
+
+/**
+ * 审查者点名的覆盖缺口：`onPointerDown` 里那条 `else` 分支的最后一道守卫
+ * ——`gesture.value = props.zoom === "fit" ? { mode: "move" } : { mode: "pan" }`。
+ *
+ * 这条 `else` 分支有**两个入口**（组件里那段注释自己列了）：① 按在选框**外**；② 按在选框内、但选框
+ * 铺满了整个视口。两个入口下 `"fit"` 档都必须判回「移动选框」：fit 档没有可平移的量（`clampView`
+ * 把两个方向都锁死，视口坐标与指针位移无关），走 `pan` 只会不停发出 `{0, 0}`——选框一动不动，
+ * 用户看到的就是「fit 档拖不动框」（规格 §4.3 第 3 条）。本组两条各钉一个入口：
+ *
+ * - **入口 ①**：选框外、但**仍在图像内**按下（一条用户真会做的手势：fit 档图上留白处起手）。
+ * - **入口 ②**：选框内 + 选框恰好铺满视口。`"fit"` 档下这是 `coversViewport` **唯一**可能为真的形态：
+ *   fit 是 contain，两轴恒有 `图像屏幕尺寸 ≤ 视口`，而选框屏幕尺寸 ≤ 图像屏幕尺寸，于是
+ *   「选框盖住视口」⟺ 两轴同时取等号 ⟺ **视口与图像同比、且选框就是整张图**。此时选框四条边全压在
+ *   视口边上，`coversViewport` 的 `<=` / `>=`（相邻即算覆盖）判真，框内的按下因此不再走
+ *   `inside && !coversViewport` 那条路，只能落到这个 `else`——所以它正是「fit 档下三元仍然承重」
+ *   的另一个入口。组件注释说「fit 档下整图（故选框）都在视口内，同一个表达式已经把它判回 move」，
+ *   本条就是那句推理的**边界形态**（「在内」到这个程度就变成「贴边覆盖」了）。
+ *
+ * 场景（两条共用）：源图 800×600、`rotation` 0、dpr 1、`zoom` `"fit"`、`pan` `{0, 0}`；
+ * 入口 ① 视口 400×400，入口 ② 视口 400×300（与图像同比，这是入口 ② 存在的必要条件）。
+ *
+ * 判别力：把三元里的 `props.zoom === "fit" ? { mode: "move" } : ` 改成 `false ? { mode: "move" } : `
+ * （fit 也走 pan），两条**各自都会红**。两条都把 `update:pan` 的断言放在前面，这样变异跑出来的
+ * 原始输出直接打印被发出的 pan 载荷 `[{x:0,y:0}]`——那正是用户症状本身（选框一动不动），
+ * 而不是只有一句 `update:crop` 变 `undefined`。
+ */
+describe('fit 档下 else 分支的两个入口都判回「移动选框」（三元 props.zoom === "fit" 的守卫）', () => {
+  it("入口 ①：选框外、但仍在图像内按下并拖动 → 发 update:crop（位移后的矩形），不发 update:pan", async () => {
+    stubContainer(); // 视口 400×400
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+
+    // 独立复算：base = fitTransform(400×400, 800×600)
+    //   scale = min(400/800, 400/600) = 0.5
+    //   offsetX = (400 − 800×0.5)/2 = 0，offsetY = (400 − 600×0.5)/2 = (400−300)/2 = 50
+    // `"fit"` 档下 withZoom 的 ratio = 1（锚点项 `centerX − (centerX − base.offsetX)×1` 恒等于
+    // base.offsetX），clampView 对 base 也是恒等 → **view = { scale 0.5, offsetX 0, offsetY 50 }**。
+    // 于是：图像在屏幕上占 x ∈ [0, 400]、y ∈ [50, 350]（上下各 50px 信箱边）；
+    //       选框 {100,100,300,300} 的屏幕矩形 = {0.5×100 + 0, 0.5×100 + 50, 150, 150}
+    //       = {50, 100, 150, 150}，即 x ∈ [50, 200]、y ∈ [100, 250]。
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+    // 场景自检：组件**实际画出**的选框屏幕矩形必须与上面的复算一致。视图换算一旦漂移，下面的按点
+    // 就可能落到手柄上或落进框内，用例会静默失去判别力（本仓惯例，见 coversViewport 那一组）。
+    expect(ctx.argsOf("strokeRect")).toEqual([50, 100, 150, 150]);
+
+    // 按下点 (300, 80)：在图像内（0 ≤ 300 ≤ 400、50 ≤ 80 ≤ 350）；在选框外（300 > 200）。
+    // 四个手柄中心是 (50,100)/(200,100)/(50,250)/(200,250)：最近的是 ne，横向差 100 > 命中半径 24
+    // → 不命中任何手柄 → 只有 else 分支的入口 ① 可达。
+    await pointer(wrapper, "pointerdown", 300, 80);
+    // 拖到 (320, 110)：屏幕位移 (+20, +30) ÷ scale 0.5 = 源图位移 (+40, +60)
+    // → moveRect({100,100,300,300}, 40, 60, 800×600) = {140, 160, 300, 300}；
+    // 夹取复核：140 + 300 = 440 ≤ 800、160 + 300 = 460 ≤ 600 → 未触边、未被夹取。
+    await pointer(wrapper, "pointermove", 320, 110);
+
+    // 承重断言（放在 crop 之前，见本组头注释）：fit 档没有可平移的量——pan 分支算出
+    // clampView({0.5, 0 + 20, 50 + 30}) = {0.5, 0, 50}（X 轴 400 ≤ 400、Y 轴 300 ≤ 400 都被居中锁定），
+    // 减掉 zoomed 后恰好是 {0, 0}，于是「改走 pan」的表现是**不停发 {0,0} 而选框一动不动**。
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 140, y: 160, width: 300, height: 300 }]);
+  });
+
+  it("入口 ②：选框内、且选框恰好铺满视口（fit 档下 coversViewport 唯一可能为真的形态）→ 仍是移动选框", async () => {
+    stubContainer(400, 300); // 视口与图像同比（4:3）
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+
+    // 独立复算：base = fitTransform(400×300, 800×600)
+    //   scale = min(400/800, 300/600) = min(0.5, 0.5) = 0.5
+    //   offsetX = (400 − 800×0.5)/2 = 0，offsetY = (300 − 600×0.5)/2 = 0
+    // → **view = { scale 0.5, offsetX 0, offsetY 0 }**：fit 的 contain 在这里两轴都取等号，
+    //   即「整图恰好等于视口」。选框取整张图 {0,0,800,600} → 屏幕矩形 {0, 0, 400, 300}：
+    //   四条边全部压在视口边上，`coversViewport` 的四处 `<=` / `>=`（相邻即算覆盖）全部为真
+    //   → `inside && !coversViewport` 为假 → 框内的按下也落到 else 分支的入口 ②。
+    const wrapper = mountCanvas({ crop: { x: 0, y: 0, width: 800, height: 600 } });
+    await wrapper.vm.$nextTick();
+    expect(ctx.argsOf("strokeRect")).toEqual([0, 0, 400, 300]);
+
+    // 按下点 (200, 150) 是选框（也是视口）的几何中心：在框内；四个手柄中心 (0,0)/(400,0)/(0,300)/
+    // (400,300) 与它的两轴距离都 ≥ 150 > 命中半径 24 → 不是 resize。
+    await pointer(wrapper, "pointerdown", 200, 150);
+    // 拖到 (220, 180)：屏幕位移 (+20, +30) ÷ scale 0.5 = 源图位移 (+40, +60)。
+    await pointer(wrapper, "pointermove", 220, 180);
+
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+    // 载荷是「位移后的矩形」——整图选区在源图里无处可移，`clampRectToSource` 把 (+40,+60) 夹回原位，
+    // 所以这里期望值与起点相同（本条的判别力**不在**载荷数值上，而在「有 crop、无 pan」这个分流上：
+    // 改走 pan 时 update:crop 变 undefined、update:pan 变成 [{x:0,y:0}]，两条断言各杀一次）。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 0, y: 0, width: 800, height: 600 }]);
+  });
+});
