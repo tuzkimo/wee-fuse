@@ -116,6 +116,29 @@ describe("显示开关", () => {
     expect(off.emitted("update:showLabels")).toEqual([[true]]);
     expect(off.emitted("update:showGrid")).toBeUndefined();
   });
+
+  // 【修复轮 1，控制者裁决补】上面两条各自只读**自己那一颗**按钮的 aria-pressed，于是
+  // 「把 toggle-labels 的 aria-pressed 绑成 showGrid」这种串台写法 13 条全绿：两条用例里
+  // 被点的那颗按钮，其 showGrid 与 showLabels 取值恰好相同。而 aria-pressed 是这一控件对
+  // 辅助技术的**状态陈述**——绑错 prop 意味着读屏用户被告知相反的状态（点开了却听到「未开」）。
+  //
+  // 判别力来自**两个开关取值相反**：只断言一颗按钮时，绑到哪个 prop 都解得通；
+  // 两颗一起断言、且让 showGrid !== showLabels，才能把「跟随哪一个 prop」钉死。
+  // 两种取值各跑一次：只跑 (false, true) 时，绑成 showGrid 的同时把极性和 prop 一起写反也绿。
+  it("两颗开关的 aria-pressed 各自跟随自己的 prop（两个开关取值相反时）", () => {
+    for (const [showGrid, showLabels] of [
+      [false, true],
+      [true, false],
+    ] as const) {
+      const wrapper = mountToolbar({ showGrid, showLabels });
+      expect(wrapper.get("[data-testid='toggle-grid']").attributes("aria-pressed")).toBe(
+        String(showGrid),
+      );
+      expect(wrapper.get("[data-testid='toggle-labels']").attributes("aria-pressed")).toBe(
+        String(showLabels),
+      );
+    }
+  });
 });
 
 describe("视图按钮", () => {

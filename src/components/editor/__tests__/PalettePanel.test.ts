@@ -132,6 +132,22 @@ describe("已用色列表（§9.1 第 2 条）", () => {
     await wrapper.setProps({ currentColor: indexOf(palette, "A1") });
     expect(marked()).toEqual([undefined, "1"]);
   });
+
+  // 【修复轮 1，控制者裁决补】点行只该**换当前色**，不该把选择器也掀开。
+  // 这条反向不变式此前零守卫：在点行处理里顺手加一句 `picking = true`，37 条用例全绿。
+  // 它是用户可见的分支（点一行色块，整块 221 色选择器盖上来），不是实现细节。
+  //
+  // 断言拆成两半、缺一不可：只断言「picker 不存在」时，把点行的 emit 一起删掉也绿；
+  // 只断言 emit 时，「顺手掀开选择器」绿。所以两件事一起断言。
+  it("点行只换当前色，不会顺手展开选择器", async () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+
+    await wrapper.findAll("[data-testid='palette-row']")[0].trigger("click");
+
+    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([206]); // M1 在位置 0 / 下标 206
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+  });
 });
 
 describe("橡皮与「添加颜色」（§9.1 第 3、4 条）", () => {
@@ -225,5 +241,20 @@ describe("非法输入", () => {
   // 注意：必须在**挂载时**就带上这条 props——@vue/test-utils 只把挂载期的渲染错误抛出来。
   it("usages 里有色卡里不存在的色号时响亮失败", () => {
     expect(() => mountPanel({ usages: [usage("#99", 4)] })).toThrow("色卡里找不到色号 #99");
+  });
+
+  // 【修复轮 1，控制者裁决补】上一条的同源守卫，落在当前画笔值上：`currentColor` 越界
+  // （`>= colors.length` 且 `!== EMPTY`）此前被静默显示成「不拼豆（橡皮）」——画面上完全看不出错，
+  // 用户以为自己在涂空格，而画笔实际握着色卡外的下标；一旦落笔，`core/pattern/edit.ts` 只守
+  // `0..EMPTY`、不守色数上界，那个值就被**静默涂开**。谎报状态 + 静默涂错色，两条都踩了
+  // 裁决 3 的口径（`core/project/file.ts`：查不到就响亮失败），故改为渲染期抛错。
+  //
+  // 999 是**色卡外但仍在 `Uint16` 值域内**的值：它同时也是「最容易顺手 `?? 0` 掉」的那种输入，
+  // 且与 `EMPTY`（0xffff）不同——`EMPTY` 是「橡皮」这个合法状态的取值，必须继续放行
+  // （「当前色是 EMPTY 时显示「不拼豆（橡皮）」」那条钉着放行方向）。
+  // 消息里带上**实际值**，否则「越界了、但越到哪去了」在日志里看不出来。
+  it("currentColor 越界（色卡外且不是 EMPTY）时响亮失败，消息带实际值", () => {
+    expect(() => mountPanel({ currentColor: 999 })).toThrow("999");
+    expect(() => mountPanel({ currentColor: 999 })).toThrow("当前色号越界");
   });
 });

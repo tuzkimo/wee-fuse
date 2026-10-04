@@ -70,11 +70,33 @@ const rows = computed<UsageRow[]>(() =>
 
 /**
  * 当前画笔槽的颜色。`currentColor` 是 `EMPTY`（橡皮）时没有颜色可显示。
- * 取值域由 store 守卫（规格 §12），越界不在本层责任范围内；`v-if` 对 `undefined` 同样成立。
+ *
+ * **越界（`>= colors.length` 且 `!== EMPTY`）时渲染期抛错，不回落成「橡皮」。**
+ * 这条与 `rows` 那条守卫同源：把越界值显示成「不拼豆（橡皮）」是在**谎报状态**——
+ * 画面上完全看不出错，用户以为自己在涂空格，而画笔实际握着一个色卡外的下标；
+ * 一旦落笔，`core/pattern/edit.ts` 只守 `0..EMPTY`（不守色数上界），那个值就被**静默涂开**。
+ * 与裁决 3 的口径一致（`core/project/file.ts`：查不到就响亮失败），故不静默回落。
+ *
+ * 这是**防御性分支，生产路径不可达**——三处写入者都收了口：
+ * `editor.setCurrentColor`（`src/stores/editor.ts:283-288`，越界即抛）、
+ * `editor.beginSession` 的播种（`:217`，色卡外回落 0）、
+ * `editor.pickFromCell`（`:356-362`，经 `setCurrentColor` 的同一份守卫）。
+ * 组件是纯展示组件，props 可以被喂任何值，所以这条分支仍然要拦。
+ *
+ * `EMPTY` 是「橡皮」这个**合法状态**的取值，必须放行。
  */
-const current = computed<PaletteColor | null>(() =>
-  props.currentColor === EMPTY ? null : props.palette.colors[props.currentColor],
-);
+const current = computed<PaletteColor | null>(() => {
+  const value = props.currentColor;
+  if (value === EMPTY) return null;
+  const color = props.palette.colors[value];
+  if (color === undefined) {
+    const reason = `当前色号越界：${String(value)}（色卡 ${props.palette.id} 只有 ${String(props.palette.colors.length)} 色，合法值是 0–${String(props.palette.colors.length - 1)}，或 ${String(EMPTY)} 表示橡皮）`;
+    // 包成 Error 再抛：这个 computed 也可能被非模板代码读出 `undefined`，
+    // 而 `Error` 会在**渲染期**带原因抛给调用方（@vue/test-utils 的挂载期断言就靠这条）。
+    throw new Error(reason);
+  }
+  return color;
+});
 
 /** 喂给选择器的已用色下标——它就是 `rows` 的下标，来源仍是那一处权威映射。 */
 const usedIndices = computed(() => rows.value.map((row) => row.index));
