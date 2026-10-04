@@ -65,6 +65,15 @@ export function chooseDecoderPath(
 
 export interface GenerateRequest {
   readonly source: Blob;
+  /**
+   * 原图像素尺寸。**必填**：用来拒绝越界的 `crop`（B1-12 / B1-13 的裁决）。
+   *
+   * 拒绝而不是夹取，理由是两条路都会静默产出错误结果：B1 构建记录 §5 的真实 Chromium 实测
+   * 证明越界源矩形**不抛错**、只是把越界区域填透明（产物是一张「带透明边、看起来正常」的图纸）；
+   * 而静默夹取会产出一张**与用户选区不一致**的图纸。UI 侧由 `clampRectToSource` 保证
+   * 越界不可能发生，这里是第二道防线。
+   */
+  readonly sourceSize: { readonly width: number; readonly height: number };
   /** 裁剪框，位于原图未旋转坐标系。 */
   readonly crop: Rect;
   /** 顺时针 90° 旋转次数。 */
@@ -110,7 +119,18 @@ export async function generatePattern(
   request: GenerateRequest,
   deps: GenerateDeps,
 ): Promise<Pattern> {
-  const { crop, rotation, longSide, maxColors } = request;
+  const { crop, rotation, longSide, maxColors, sourceSize } = request;
+
+  // 源图尺寸：整数且 ≥1（AGENTS.md「入口校验」的网格 / 尺寸类口径）。放在最前面是因为下面的
+  // 越界判定要用它：源图宽高为 `NaN` 时，**涉及它的那一条**越界不等式恒为假、会静默放行。
+  // 注意不是「四条不等式全为假」——`crop.x = -1` 这类与源图尺寸无关的越界仍会被 `crop.x < 0`
+  // 拦下，所以缺了这道守卫漏掉的是「源图尺寸非有限」这一类，不是全部越界。
+  if (!Number.isInteger(sourceSize.width) || sourceSize.width < 1) {
+    throw new Error(`原图宽度必须是 ≥1 的整数（当前 ${String(sourceSize.width)}）`);
+  }
+  if (!Number.isInteger(sourceSize.height) || sourceSize.height < 1) {
+    throw new Error(`原图高度必须是 ≥1 的整数（当前 ${String(sourceSize.height)}）`);
+  }
 
   // rotation 在解码之前 fail-fast：非法值若不先拦下，会白跑一次「原生解码 + 面积平均
   // 重采样」才由 `rotateGrid` 抛错。longSide（computeGridSize）与 crop 都做到了解码前抛错，
@@ -131,6 +151,31 @@ export async function generatePattern(
   const rawGrid = rotatedSize(finalGrid.width, finalGrid.height, rotation);
 
   const { targetWidth, targetHeight } = computeDecodeSize(rawGrid.width, rawGrid.height);
+
+  // 越界校验放在 computeGridSize / computeDecodeSize 之后：那两处对「非有限 / < 1」的裁剪尺寸
+  // 已经有了自己的响亮失败（消息是「裁剪区域尺寸非法」），既有用例断言的就是它——把本段挪到
+  // 它们之前，`width: Infinity` 这类输入会先撞上「超出原图范围」，等于换掉了既有契约的消息。
+  // 这里只负责它们拦不住的那一类：**宽高有限且 ≥1、但不落在原图里**的裁剪框。
+  //
+  // 原点必须单独查有限性：`crop.x` 为 `NaN` 时，下面四条不等式里**涉及它的那两条**
+  // （`crop.x < 0` 与 `crop.x + crop.width > sourceSize.width`）都恒为假（NaN 参与的比较恒假），
+  // 只靠不等式拦不住，会一路解码并静默产出错位图纸。
+  if (!Number.isFinite(crop.x) || !Number.isFinite(crop.y)) {
+    throw new Error(
+      `裁剪框原点必须是有限数字（当前 x=${String(crop.x)} y=${String(crop.y)}）`,
+    );
+  }
+  if (
+    crop.x < 0 ||
+    crop.y < 0 ||
+    crop.x + crop.width > sourceSize.width ||
+    crop.y + crop.height > sourceSize.height
+  ) {
+    throw new Error(
+      `裁剪框超出原图范围：原图 ${sourceSize.width}×${sourceSize.height}，` +
+        `裁剪框 x=${crop.x} y=${crop.y} ${crop.width}×${crop.height}`,
+    );
+  }
 
   // 择路只看裁剪框（解码对象就是裁剪区的原生像素），与旋转、网格尺寸无关。
   // 非法裁剪尺寸（非有限、< 1）由上面的 computeGridSize 抛错——校验的就是 crop 的宽高本身

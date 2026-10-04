@@ -65,6 +65,31 @@ export function normalizeProjectName(name: unknown): string {
   return trimmed;
 }
 
+/**
+ * 从文件名派生默认工程名：去扩展名（`replace(/\.[^.]+$/, "")`）→ `trim` → 空则回落「新图纸」
+ * → **夹到 `PROJECT_NAME_MAX`**。行为逐字迁自 B1「新建图纸」页的 `defaultName`。
+ *
+ * **为什么必须夹**：相册里的长标题 / 长时间戳文件名超过 100 字很常见，不夹就会让 `put`
+ * → `normalizeProjectName` 抛「工程名称不能超过 100 个字符」——而记录根本没进库，图纸库里
+ * 连那一行都不存在，唯一的改名入口对不存在的记录也不存在。这是一条**响亮失败但用户无出路**
+ * 的死路，必须在源头截断。
+ *
+ * **为何公开**：它是「新建工程」这一动作的默认名来源，由 B2 的选区 / 参数页（`SetupPage`，
+ * 接替 B1 已删除的 `GeneratePage`）在生产代码里消费——导出即承诺，故连同其输入校验一起固化在
+ * 本文件的契约面上。
+ *
+ * **入参取 `unknown` 并在运行期校验**：文件名来自 `File.name`，在 TS 里是 `string`，但
+ * 「新建工程」的调用链会经过 store / 路由参数等运行期不受类型保护的地方；非字符串一律响亮
+ * 抛错，静默回落「新图纸」会把「调用方传错了东西」伪装成一个正常结果。
+ */
+export function defaultProjectName(fileName: unknown): string {
+  if (typeof fileName !== "string") {
+    throw new Error(`文件名必须是字符串（当前 ${String(fileName)}）`);
+  }
+  const base = fileName.replace(/\.[^.]+$/, "").trim();
+  return base.length === 0 ? "新图纸" : base.slice(0, PROJECT_NAME_MAX);
+}
+
 /** 按 `updatedAt` 倒序（新的在前）。两个实现共用，保证列表顺序口径一致。 */
 export function sortByUpdatedAtDesc(metas: readonly ProjectMeta[]): ProjectMeta[] {
   return [...metas].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

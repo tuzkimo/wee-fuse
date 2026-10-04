@@ -83,11 +83,13 @@ const deps: GenerateDeps = {
 
 const source = new Blob([new Uint8Array([1])]);
 const crop = { x: 0, y: 0, width: 224, height: 224 };
+/** 既有用例的裁剪框最大到 4096×1024、原点最大到 (3, 5)——取一个足够大的源图覆盖它们。 */
+const sourceSize = { width: 8192, height: 8192 };
 
 describe("generatePattern", () => {
   it("算出正确的网格尺寸", async () => {
     const pattern = await generatePattern(
-      { source, crop, rotation: 0, longSide: 4, maxColors: 16 },
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: 16 },
       deps,
     );
     expect(pattern.width).toBe(4);
@@ -97,7 +99,7 @@ describe("generatePattern", () => {
 
   it("0° 时四个象限的色号位置正确", async () => {
     const pattern = await generatePattern(
-      { source, crop, rotation: 0, longSide: 2, maxColors: 16 },
+      { source, sourceSize, crop, rotation: 0, longSide: 2, maxColors: 16 },
       deps,
     );
     // 左上红(A3=2)、右上绿(A4=3)、左下蓝(A5=4)、右下黑(A2=1)
@@ -109,7 +111,7 @@ describe("generatePattern", () => {
 
   it("旋转 90° 后宽高互换且象限位置随之旋转", async () => {
     const pattern = await generatePattern(
-      { source, crop, rotation: 1, longSide: 4, maxColors: 16 },
+      { source, sourceSize, crop, rotation: 1, longSide: 4, maxColors: 16 },
       deps,
     );
     // 裁剪是正方形，旋转后仍是 4×4；原左下角（蓝）顺时针转 90° 后落在左上角
@@ -121,7 +123,7 @@ describe("generatePattern", () => {
   it("横图转 90° 后成品是竖图，长边落在高度上", async () => {
     const wide = { x: 0, y: 0, width: 400, height: 200 };
     const pattern = await generatePattern(
-      { source, crop: wide, rotation: 1, longSide: 10, maxColors: 16 },
+      { source, sourceSize, crop: wide, rotation: 1, longSide: 10, maxColors: 16 },
       deps,
     );
     // 400×200 转 90° → 200×400，长边 10 落在高度：宽 round(10×200/400)=5、高 10
@@ -143,7 +145,7 @@ describe("generatePattern", () => {
       },
     };
     const pattern = await generatePattern(
-      { source, crop: { x: 0, y: 0, width: 4, height: 4 }, rotation: 0, longSide: 2, maxColors: 16 },
+      { source, sourceSize, crop: { x: 0, y: 0, width: 4, height: 4 }, rotation: 0, longSide: 2, maxColors: 16 },
       { exactDecoder: transparentDecoder, fastDecoder: fastMustNotBeUsed, palette },
     );
     expect([...pattern.cells]).toEqual([EMPTY, EMPTY, EMPTY, EMPTY]);
@@ -159,7 +161,7 @@ describe("generatePattern", () => {
 describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分支）", () => {
   it("旋转 180°：象限整体对调，宽高不变", async () => {
     const pattern = await generatePattern(
-      { source, crop, rotation: 2, longSide: 4, maxColors: 16 },
+      { source, sourceSize, crop, rotation: 2, longSide: 4, maxColors: 16 },
       deps,
     );
     expect(pattern.width).toBe(4);
@@ -170,7 +172,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
 
   it("旋转 270°：源右上（绿）落到左上，源左上（红）落到左下", async () => {
     const pattern = await generatePattern(
-      { source, crop, rotation: 3, longSide: 4, maxColors: 16 },
+      { source, sourceSize, crop, rotation: 3, longSide: 4, maxColors: 16 },
       deps,
     );
     expect(pattern.width).toBe(4);
@@ -184,6 +186,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
     const pattern = await generatePattern(
       {
         source,
+        sourceSize,
         crop: { x: 0, y: 0, width: 400, height: 200 },
         rotation: 3,
         longSide: 10,
@@ -205,6 +208,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
       generatePattern(
         {
           source,
+          sourceSize,
           crop: { x: 0, y: 0, width: 0, height: 10 },
           rotation: 0,
           longSide: 4,
@@ -228,6 +232,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
       generatePattern(
         {
           source,
+          sourceSize,
           crop: { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 10 },
           rotation: 0,
           longSide: 4,
@@ -240,6 +245,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
       generatePattern(
         {
           source,
+          sourceSize,
           crop: { x: 0, y: 0, width: Number.NaN, height: 10 },
           rotation: 0,
           longSide: 4,
@@ -260,6 +266,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
         generatePattern(
           {
             source,
+            sourceSize,
             crop,
             rotation: bad as unknown as Rotation,
             longSide: 4,
@@ -320,6 +327,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
     const pattern = await generatePattern(
       {
         source,
+        sourceSize,
         crop: { x: 0, y: 0, width: 2048, height: 512 },
         rotation: 0,
         longSide: 4,
@@ -341,6 +349,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
     const pattern = await generatePattern(
       {
         source,
+        sourceSize,
         crop: { x: 0, y: 0, width: 2049, height: 512 },
         rotation: 0,
         longSide: 4,
@@ -361,6 +370,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
     const pattern = await generatePattern(
       {
         source,
+        sourceSize,
         crop: { x: 0, y: 0, width: 4096, height: 1024 },
         rotation: 0,
         longSide: 4,
@@ -379,6 +389,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
     await generatePattern(
       {
         source,
+        sourceSize,
         crop: { x: 3, y: 5, width: 400, height: 200 },
         rotation: 1,
         longSide: 10,
@@ -403,7 +414,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
       },
     };
     const pattern = await generatePattern(
-      { source, crop: { x: 0, y: 0, width: 64, height: 32 }, rotation: 0, longSide: 2, maxColors: 16 },
+      { source, sourceSize, crop: { x: 0, y: 0, width: 64, height: 32 }, rotation: 0, longSide: 2, maxColors: 16 },
       { exactDecoder: oddball, fastDecoder: forbidden("fast", "target"), palette },
     );
     // 网格尺寸由裁剪比例与长边决定，与解码返回的像素尺寸无关
@@ -452,5 +463,152 @@ describe("chooseDecoderPath", () => {
     );
     expect(() => chooseDecoderPath({ width: 10, height: 10 }, 0)).toThrow(/阈值非法/);
     expect(() => chooseDecoderPath({ width: 10, height: 10 }, Number.NaN)).toThrow(/阈值非法/);
+  });
+});
+
+/**
+ * —— 任务 6 追加：`sourceSize` 与「越界一律拒绝」 ——
+ *
+ * B1-12 / B1-13 的裁决：`generatePattern` 入口**拒绝**越界 `crop`，不静默夹取（两条理由见
+ * `pipeline.ts` 里 `GenerateRequest.sourceSize` 的 JSDoc）。校验的位置是硬约束：必须在
+ * `computeGridSize` / `computeDecodeSize` 之后、`chooseDecoderPath` 之前——放到最前面会换掉
+ * 既有「裁剪区域尺寸非法」用例的错误消息，等于改坏既有契约。
+ */
+describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不夹取）", () => {
+  const SOURCE_SIZE = { width: 800, height: 600 };
+
+  it("左/上越界时抛错，解码器一次都不被调用", async () => {
+    for (const { crop: badCrop, message } of [
+      {
+        crop: { x: -1, y: 0, width: 100, height: 100 },
+        message: "裁剪框超出原图范围：原图 800×600，裁剪框 x=-1 y=0 100×100",
+      },
+      {
+        crop: { x: 0, y: -1, width: 100, height: 100 },
+        message: "裁剪框超出原图范围：原图 800×600，裁剪框 x=0 y=-1 100×100",
+      },
+    ]) {
+      const exact = makeStub("exact", "native");
+      await expect(
+        generatePattern(
+          {
+            source,
+            sourceSize: SOURCE_SIZE,
+            crop: badCrop,
+            rotation: 0,
+            longSide: 4,
+            maxColors: 16,
+          },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        ),
+      ).rejects.toThrow(message);
+      expect(exact.requests).toHaveLength(0);
+    }
+  });
+
+  it("右/下越界时抛错（x + width 恰好超出 1 像素也要拦）", async () => {
+    for (const { crop: badCrop, message } of [
+      {
+        crop: { x: 701, y: 0, width: 100, height: 100 },
+        message: "裁剪框超出原图范围：原图 800×600，裁剪框 x=701 y=0 100×100",
+      },
+      {
+        crop: { x: 0, y: 501, width: 100, height: 100 },
+        message: "裁剪框超出原图范围：原图 800×600，裁剪框 x=0 y=501 100×100",
+      },
+    ]) {
+      const exact = makeStub("exact", "native");
+      await expect(
+        generatePattern(
+          {
+            source,
+            sourceSize: SOURCE_SIZE,
+            crop: badCrop,
+            rotation: 0,
+            longSide: 4,
+            maxColors: 16,
+          },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        ),
+      ).rejects.toThrow(message);
+      expect(exact.requests).toHaveLength(0);
+    }
+  });
+
+  // 这条是上面两条的对照：不写它的话，「凡是 crop 都拒绝」也能让上面全绿。
+  it("恰好贴边不算越界（x + width == 源图宽、y + height == 源图高）", async () => {
+    const exact = makeStub("exact", "native");
+    const pattern = await generatePattern(
+      {
+        source,
+        sourceSize: SOURCE_SIZE,
+        crop: { x: 600, y: 500, width: 200, height: 100 },
+        rotation: 0,
+        longSide: 4,
+        maxColors: 16,
+      },
+      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+    );
+    // 200×100 的裁剪、长边 4 → 网格 4×2
+    expect(pattern.width).toBe(4);
+    expect(pattern.height).toBe(2);
+    // 贴边不等于拒绝：这一次解码真的发生过（否则「凡贴边都拒绝」也能满足上面两行）
+    expect(exact.requests).toHaveLength(1);
+  });
+
+  // NaN 的越界判定是「比较全为假」——四条不等式一条都拦不住它，所以必须单独查有限性。
+  // x 与 y **各查一次**：只守 x 的话，`y: NaN` 仍会静默解码出一张错位图纸。
+  // （±Infinity 原点不必单列：`x < 0` / `x + width > 源图宽` 已经能拦下它们。）
+  it("裁剪框原点是 NaN 时抛错（四条不等式全为假，必须单独查有限性）", async () => {
+    for (const { origin, message } of [
+      { origin: { x: Number.NaN, y: 0 }, message: "裁剪框原点必须是有限数字（当前 x=NaN y=0）" },
+      { origin: { x: 0, y: Number.NaN }, message: "裁剪框原点必须是有限数字（当前 x=0 y=NaN）" },
+    ]) {
+      const exact = makeStub("exact", "native");
+      await expect(
+        generatePattern(
+          {
+            source,
+            sourceSize: SOURCE_SIZE,
+            crop: { ...origin, width: 100, height: 100 },
+            rotation: 0,
+            longSide: 4,
+            maxColors: 16,
+          },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        ),
+      ).rejects.toThrow(message);
+      expect(exact.requests).toHaveLength(0);
+    }
+  });
+
+  // 宽、高**两条分支各查一遍**，并逐条钉住消息与回显的当前值：只测宽的话，删掉高度那条 `if`
+  // 或把两条消息写反都不会有断言转红；消息不钉到值上的话，去掉 `${String(...)}` 插值也不红。
+  it("源图尺寸非整数或 < 1 时抛错（宽高各一条分支，消息不能互换、当前值要回显）", async () => {
+    const exact = makeStub("exact", "native");
+    const validCrop = { x: 0, y: 0, width: 100, height: 100 };
+    for (const { size, message } of [
+      { size: { width: 1.5, height: 600 }, message: "原图宽度必须是 ≥1 的整数（当前 1.5）" },
+      { size: { width: 0, height: 600 }, message: "原图宽度必须是 ≥1 的整数（当前 0）" },
+      { size: { width: Number.NaN, height: 600 }, message: "原图宽度必须是 ≥1 的整数（当前 NaN）" },
+      { size: { width: 800, height: 1.5 }, message: "原图高度必须是 ≥1 的整数（当前 1.5）" },
+      { size: { width: 800, height: 0 }, message: "原图高度必须是 ≥1 的整数（当前 0）" },
+      { size: { width: 800, height: Number.NaN }, message: "原图高度必须是 ≥1 的整数（当前 NaN）" },
+    ]) {
+      await expect(
+        generatePattern(
+          {
+            source,
+            sourceSize: size,
+            crop: validCrop,
+            rotation: 0,
+            longSide: 4,
+            maxColors: 16,
+          },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        ),
+      ).rejects.toThrow(message);
+    }
+    expect(exact.requests).toHaveLength(0);
   });
 });

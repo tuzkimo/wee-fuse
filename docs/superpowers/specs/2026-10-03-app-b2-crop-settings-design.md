@@ -1,7 +1,8 @@
 # 一起拼豆（WeeFuse）计划 B2：选区页与尺寸/色卡/档位设置页 设计规格
 
 - 日期：2026-10-03
-- 状态：待实现
+- 状态：**已实现**（`feat/app-b2`，14 个任务；实现与审查的完整记录见
+  [计划 B2 构建记录](../notes/2026-10-03-app-b2-build-log.md)）
 - 上游规格：[第一阶段：图片转图纸](2026-09-30-image-to-pattern-design.md)（下称「主规格」）、
   [计划 B1：应用骨架、工程文件契约与图纸库](2026-10-03-app-skeleton-design.md)（下称「B1 规格」）
 - 范围：主规格 §14 第 5 步「向导页：选图 → 选区 → 尺寸 / 档位 → 生成」。
@@ -131,7 +132,9 @@ DOM 全局；`src/services/**` 是唯一接触平台 API 的层。B2 新增/改�
 **不做**双指捏合、不做惯性、不做长按。
 
 选区最小边长 = 原图坐标下 `MIN_CROP_SIDE = 2` 像素（保证还能再次抓住手柄，**不是质量门槛**）；
-源图本身小于 2 像素时取整张图。真正挡住生成的是 §4.7 的 `isCropResolvable`。
+**源图某个方向的边长本身小于 2 像素时，该方向取源图的整条边**（逐轴读法：`1×1` 源图 → 整张图 `1×1`；
+`800×1` 源图配 `9:16` → 抬底得宽 2、高由源图的 1 像素封顶，即 `2×1`——**不是**「任一轴小于 2 就返回整张图」）。
+真正挡住生成的是 §4.7 的 `isCropResolvable`。
 
 ### 4.4 缩放与平移
 
@@ -140,8 +143,12 @@ DOM 全局；`src/services/**` 是唯一接触平台 API 的层。B2 新增/改�
 
 `ResizeObserver` 监听容器尺寸变化。**一条决定测试形态的实测事实**：happy-dom 的 `ResizeObserver`
 是空实现（`observe()` 里只有 `// TODO: Not implemented`，实测 `node_modules/happy-dom/lib/resize-observer/ResizeObserver.js`）
-——因此「容器尺寸 → 画布尺寸 / 适配比例」的计算**全部落在 core 纯函数**上直接单测，组件里只断言
-「注册了 `observe`」，**绝不声称测到了重算行为**。
+——因此「容器尺寸 → 画布尺寸 / 适配比例」的计算**全部落在 core 纯函数**上直接单测。
+
+**但组件里的接线仍要有一条用例**（2026-10-03 任务 8 修复轮 1 的审查发现）：测试**自己 stub 掉全局 `ResizeObserver`** 之后，
+驱动那个假对象的回调测的是**组件自己的接线**（`() => resizeCanvas()` 有没有接上），不是 happy-dom 的行为——这条天花板只在「用真的 happy-dom 实现」时才成立。
+实测缺口：不写这条时，把回调换成空函数 `() => {}` 是 **0 红**，而后果是画布停在初始尺寸、遮罩与选框整体错位。
+所以必须有「改桩盒子 → 手动触发回调 → 断言画布尺寸跟着变」的用例。
 
 canvas 尺寸 = CSS 尺寸 × `devicePixelRatio`（happy-dom 的该属性有 setter，实测可设），`ctx.scale(dpr, dpr)`
 （主规格 §6.3.1：不按 DPR 缩放，高分屏上预览发虚）。
@@ -190,7 +197,10 @@ canvas 尺寸 = CSS 尺寸 × `devicePixelRatio`（happy-dom 的该属性有 set
 
 ```ts
 // core/crop/rect.ts
-export function isCropResolvable(crop: CropRect, grid: Size, rotation: Rotation): boolean;
+// 注意类型：`crop` 是**运行期**的 `Rect`（`core/image/types.ts` 的 `{x, y, width, height}`），
+// 不是落盘类型的 `CropRect`（`core/project/types.ts` 的 `{x, y, w, h, rotate}`）——两者字段名不同，
+// 映射只在 `core/project/file.ts` 一处做（B1 规格 §5.3）。
+export function isCropResolvable(crop: Rect, grid: Size, rotation: Rotation): boolean;
 ```
 
 **必须带 `rotation`**：网格尺寸与 `crop` 分属不同朝向（`computeGridSize` 的入参是**旋转后**的尺寸），
@@ -261,7 +271,9 @@ export interface GenerateRequest {
 **这是 B1-12 / B1-13 的裁决：拒绝，不静默夹取。** 依据是 B1 构建记录 §5 的真实 Chromium 实测——
 `createImageBitmap(blob, sx, sy, sw, sh)` 源矩形越界**不抛错**，输出仍是请求尺寸、越界区域填透明，
 于是产物是一张「带透明边、看起来正常」的图纸；而静默夹取会产出一张**与用户选区不一致**的图纸。
-两条路都是本项目要消灭的失败形态，所以入口响亮失败，越界由 UI 侧 `clampRectToSource` 保证不可能发生。
+两条路都是本项目要消灭的失败形态，所以**流水线入口这一层**响亮失败。越界由 UI 侧
+`clampRectToSource` 保证不可能发生——**UI 侧是静默夹取**（「拒绝、不夹取」说的是入口这一层，
+不是 UI 侧；重跑路径对旧工程的越界 `crop` 也走那条静默夹取，见 §14 的 B2-R6）。
 
 `crop.width/height` 沿用既有口径（有限且 ≥1，不升级为整数：小数会被 `Math.round` 收敛成整数网格，
 见 `AGENTS.md`「入口校验」的网格/尺寸类一条）。
@@ -301,21 +313,48 @@ export interface GenerateRequest {
 
 生成即落盘（用户已确认的选择）：**首次生成**用 `crypto.randomUUID()`（不可用时退到时间戳 + 随机数，
 逻辑从被删的 `GeneratePage` 迁来）+ `defaultProjectName(file.name)`；**就地重跑与从已有工程重跑**
-沿用原 `record.meta` 的 `id` / `name` / `createdAt`，由 `save()` 刷新 `updatedAt`。
+沿用原 `record.meta` 的 `id` / `name` / `createdAt`。
+
+**`updatedAt` 有两处写，职责不同**（2026-10-03 最终审查修正）：页面组装 `meta` 时先盖一次
+`updatedAt: now`，`save()` 落盘时再盖一次 `new Date().toISOString()`——**`save()` 那份是权威**
+（真正写进存储的 `updatedAt` 来自它；`project.test.ts:203` 用 `not.toBe(META.updatedAt)` 单点钉住
+它确实被刷新）。页面那份只进内存记录（`session.adopt`）：保存失败时它是那条记录**唯一**的
+`updatedAt`（`save()` 没写成），保存成功时被权威值覆盖。两者都在同一 tick 取 `new Date()`，所以
+这不是「两个口径」，是「一份权威值 + 一份内存回退值」。
+
+**身份（`id` / 名称 / `createdAt`）住在 store 里**（`stores/draft.ts` 的 `rerunOf`，写入口是
+`setRerunOf`，见其 JSDoc）：`SetupPage` 在生成**并保存成功**之后把这次落盘的 meta 写回它。
+于是「生成成功 → 改参数（`generated` 落回 false）→ 离开页面 → 从 `/new` 的『继续上次的选区』回来
+→ 再生成」这条可达主流程**仍然覆盖同一条记录**，不会新建出第二条同名记录（身份此前放在页面级
+`ref` 里，组件一销毁就丢，这条路上会静默分叉）。
 
 重跑**不弹确认框**：同参数 + 同源图可再生成出同一张图纸（`params` 落盘的全部意义就在此，主规格 §4.4
 决策 3），它不是破坏性操作；主规格 §6.4 的儿童设计原则也是「破坏性操作靠可撤销兜底，而不是弹窗拦截」。
-但结果阶段必须**显式说明「已更新这张图纸」**，否则用户分不清自己刚才是新建还是覆盖。
+但结果阶段必须**显式说明这一次是新建还是覆盖**（否则用户分不清自己刚才是新建还是覆盖）：新建 →
+「已保存到图纸库」，覆盖 → 「已更新这张图纸」；判据是**本次生成之前**store 里有没有身份
+（写回之后再判就恒为「覆盖」）。
 
 `session.save()` 失败（配额满）时：**结果照常显示**（图纸还在内存里）、给琥珀错误条 + 「重试保存」，
 不静默、不丢态（主规格 §8）。
 
 ### 6.3 结果阶段
 
-显示：豆图预览（复用 `renderPatternThumbnail(pattern, palette, RESULT_PREVIEW_MAX_EDGE)`，
-`RESULT_PREVIEW_MAX_EDGE = 1024`——列表封面 512 在 500×500 图纸上每格只有 1px、看不出轮廓，
-1024 给它 2px；一次 1024² 画布 + PNG 编码的成本见 B2-R4）、
-`成品 W × H 颗`、`实际用了 N 种颜色`、厘米 / 板数、色卡 `accuracy` 声明、「已更新这张图纸」提示。
+显示：豆图预览（复用 `renderPatternThumbnail(pattern, palette, RESULT_PREVIEW_MAX_EDGE)`）、
+`成品 W × H 颗`、厘米 / 板数（三行都走**产物自身**的 `width`/`height`）、`实际用了 N 种颜色`、
+**新建 / 覆盖**提示（新建「已保存到图纸库」、覆盖「已更新这张图纸」，判据见 §6.2）。
+
+> **色卡 `accuracy` 声明（主规格 §11）由参数面板的色卡卡片承载，不在结果面板重复**：
+> 主规格要求的是「显示在**色卡 UI** 上」，而色卡卡片就是那个 UI（平板结果阶段右栏常驻；
+> 手机点「改参数」可见）。结果面板只放结果本身——重复一遍声明只是噪声。
+
+> **2026-10-03 修正（任务 11 审查发现）**：上面那句「列表封面 512 在 500×500 图纸上每格只有 1px、
+> 1024 给它 2px」的**理由不成立**——`renderPatternThumbnail` 是「**只缩不放**」
+> （`longEdge > maxEdge ? maxEdge / longEdge : 1`），而图纸长边 ≤ `MAX_LONG_SIDE = 500`，
+> 512 与 1024 都在阈值之上，于是两条路径产出**逐像素相同**的位图，用户可见差异为零。
+> **裁决：保留常量与「只缩不放」契约**（破它就要把 8×8 的图纸放大成糊图），
+> 但如实承认它对本阶段一切合法图纸是**空操作**——它的意义是「若将来放宽长边上限，
+> 这里是画布尺寸的上界」。结果面板里那三行尺寸走**产物自身**的 `width`/`height`
+> 加 `beadsToCm` / `formatCm` / `boardCount`（不是重算预测值），与参数面板的预测值互为校验。
 
 操作：「改参数」（手机回到参数阶段；平板右栏本来就在）、「重新生成」、「去编辑」（`/edit/:id`）、
 「回图纸库」（`/`）。
@@ -357,7 +396,7 @@ B1 的只读编辑器上已经写着「原图已保存，可以改参数重新�
 
 | 失败点 | 语义 | UI 行为 |
 |---|---|---|
-| `getProjectStore()` 抛错 | 装配错误（`main.ts` 在挂载前注入，生产不可达） | 照实显示原因；禁用新建 |
+| `getProjectStore()` 抛错 | 装配错误（`main.ts` 在挂载前注入，生产不可达） | 禁用新建；显示**面向用户**的原因（「这个浏览器不允许本地保存（可能是隐私模式）…」）。**不要**把内部话术（「工程存储尚未初始化：请先调用 setProjectStore()」）甩给用户——那对用户无用、只暴露实现细节，且 B1 已有断言禁止它出现在界面上 |
 | `list()` 抛错 | **库打不开**（隐私模式 / 配额 / 陈旧库缺 object store） | 禁用新建并说明原因——在那之前任何生成都注定写不进去 |
 | `estimateUsage()` 抛错 | 只是读不到占用 | **单独一个 `try`**：列表照常、占用行消失、新建**不**禁用 |
 
@@ -380,7 +419,8 @@ export const useDraft = defineStore("draft", () => {
   rerunOf: { id: string; name: string; createdAt: string } | null
 
   // 选区与视图
-  crop: CropRect                               // 原图未旋转坐标
+  crop: Rect | null                            // 原图未旋转坐标；**null = 选区尚未落定**（adoptProject 之后、
+                                               // setSourceSize 之前），消费方必须 null 检查，否则就是「拿 null 算几何」
   rotation: Rotation
   aspect: AspectLock
   zoom: ZoomLevel
@@ -403,8 +443,11 @@ export const useDraft = defineStore("draft", () => {
 | 时机 | 行为 |
 |---|---|
 | 离开 `SetupPage`（含硬件返回键） | **总是**释放 `preview`（置 null）；下次进入若 `source` 仍在则重新解码 |
-| 离开时 `generated === true` 且此后没有改动 | **清空草稿**（图纸已在库里，重跑从 §7 的入口走） |
+| 离开时 `generated === true` 且此后没有改动 | **清空草稿**（图纸已在库里，重跑从 §7 的入口走）**——但「图纸已在库里」是这一支的前提，不是同义反复**：若最后一次 `save()` **失败**（配额满等），图纸并不在库里，此时离开**只释放预览、保留 `source` / 几何 / 参数**，`/new` 仍能「继续上次的选区」，用户可重新生成并重试保存。这一支由页面级的「上次保存是否失败」决定，**不改本 store 的规则** |
 | 离开时 `generated === false`（中途退出） | 保留 `source` / 几何 / 参数；`/new` 上给「继续上次的选区」入口 |
+
+**「继续上次」回到的是离开时的那一个阶段**（`stage` 不重置）：从参数阶段退出再进来就落在参数页，
+手机上用「上一步」回选区即可。规格在这里只定这一条，不再细化（用户没有迷路的可能，且选区与参数都在）。
 | 任何改动（拖框、改参数、换比例） | `generated = false` |
 
 `preview` 与 B1 的 `pattern` 同样用 `markRaw` 存放：canvas 被 Vue 深度代理既没有收益也有开销。
@@ -459,11 +502,26 @@ export const useDraft = defineStore("draft", () => {
   `document.createElement("canvas")` 与 `getBoundingClientRect`（happy-dom 里它返回全 0），
   几何、流水线、两个 store、`toProjectDocument` **全是真的**（照 B1 任务 7 的做法，那一轮已证明
   它能在 CI 里跑完整条成功路径，且变异打在 `services/imageSource.ts` 上仍能红）。
-- **断点**：设 `window.innerWidth`（happy-dom 的 `matchMedia` 真实按它求值，实测
-  `MediaQueryItem.matchesRange` 读 `innerWidth`）后 mount，断言两种布局与按钮语义。
-- **手势**：`dispatchEvent(new PointerEvent(...))` 驱动，断言**最终 `crop` / 视图状态**——
-  **不断言 canvas 的绘制调用**（那测的是我自己的画法，不是行为）。
-- **canvas 相关只留一条**：「按 DPR 设了 `width/height` 并调用了 `drawImage`」；不声称测了画面。
+- **断点**：**必须打桩 `matchMedia`**。实测（2026-10-03，任务 11）：在 vitest 的 happy-dom 环境里
+  `window.innerWidth` 可读写（读得回 500 / 2000），但 `matchMedia("(min-width: 768px)").matches` **恒为 true**、
+  `(min-width: 2000px)` 恒为 false——即它对着 happy-dom 的默认视口 1024 求值，**不随 `window.innerWidth` 变**；
+  而在 bare `new Window()` 里 `matches` 是实时求值的，两者的 `window` 不是同一个对象。
+  因此桩要按浏览器契约提供 `matches`（读 `window.innerWidth`）与 `change` 通知，**并记录/断言查询串**
+  （否则 `"(min-width: 768px)"` 写错也全绿）；跨断点用「改宽度 + 手动派发 `change`」模拟。
+- **手势**：`dispatchEvent(new PointerEvent(...))` 驱动，断言**最终 `crop` / 视图状态**。
+  **画法断言（canvas 的绘制调用）只允许用在「CI 无法用像素验证、且被变异证明承重」的那几条上**
+  ——「测的是我自己的画法」这条理由不能用来一刀切禁掉它们：
+  - `CropCanvas.test.ts` 有**两处**有意保留的画法断言，都被变异证明承重：
+    ① **交给 `drawImage` 的实参**（`preview, -400, -300, 800, 600`）——位图按**源图尺寸 × scale**
+    画（转 90° 后外接矩形才是 600×800），这是「内容跟着转、不是被拉伸」的外部可观察量：把
+    修复前那版「按旋转后盒子宽高直接拉伸未旋转位图」退回去，该组红 **2**（构建记录 §2 第 14 条）；
+    ② **`save → translate → rotate → drawImage → restore` 的顺序**——少了 `restore`，遮罩与选框会
+    画在已旋转 + 已平移的坐标系里：删掉 `ctx.restore()` 红 **1**（本轮实测；补这条顺序断言之前是
+    21 条全绿）。
+  - 判据：**能否用像素验证**（本环境不能：canvas 是桩、`toDataURL` 返回空字节）**且变异是否红**
+    （上两条分别为红 2 与红 1）。**不声称测了画面**——像素断言在这里恒真。
+- **canvas 相关**：除上面那两条承重的画法断言之外，只保留「按 DPR 设了 `width/height` 并调用了
+  `drawImage`」这一层；其余一律走平台桩与状态断言。
 - **入口守卫**：在草稿为空时挂载 `/new/setup` → 重定向到 `/new`（§9）。
 
 ### 10.4 四条端到端承重断言
@@ -533,10 +591,10 @@ npm run dev       # 浏览器人工走：选图 → 选区（拖 / 锁比例 / �
 8. **共享校验模块 / 错误信息口径统一**（L4）：沿用内联就地校验的既有风格，不引入第二种。
 9. **`source` 的体积上限或压缩**：B1 规格 §4.3 已定存全尺寸原图字节。
 10. **`probeSourceSize`（`services/imageSource.ts`）在 B2 之后没有生产消费者**：新的
-    `loadImageSource` 一次解码同时给出尺寸与预览，`probeSourceSize` 因此被取代。**保留不删**，
-    并在 JSDoc 里写明它是「只读尺寸」的姊妹 API（`/lab/decode`、将来的真机分支都可能用）——
-    删它会连带改 `imageSource.test.ts` 的既有用例，而 `AGENTS.md` 明令「不可删改已有测试」，
-    保留本身无害。
+    `loadImageSource` 一次解码同时给出尺寸与预览，`probeSourceSize` 因此被取代（`/lab/decode`
+    走的是 `services/probe.ts` 的 `probeImageSize`，**不经过这层包装**）。**保留不删**，
+    并在 JSDoc 里写明它是「只读尺寸」的姊妹 API——删它会连带改 `imageSource.test.ts` 的既有用例，
+    而 `AGENTS.md` 明令「不可删改已有测试」，保留本身无害。
 
 ---
 
@@ -549,7 +607,7 @@ npm run dev       # 浏览器人工走：选图 → 选区（拖 / 锁比例 / �
 | B2-R3 | 高 DPR 下预览清晰度（主规格 §9 真机清单） | 真机人工对照 | 已在 B1 规格 §12 记过同类项（B1-2）；必要时提高 `PREVIEW_MAX_EDGE` |
 | B2-R4 | 500×500 图纸下结果预览（`RESULT_PREVIEW_MAX_EDGE` 画布 + PNG 编码）的耗时与内存**在 CI 里测不到** | 浏览器人工量：生成 500×500 后记录结果预览耗时 | 调小 `RESULT_PREVIEW_MAX_EDGE`；结果预览本来只服务「看得出成品长什么样」 |
 | B2-R5 | `touch-action` / 指针捕获 / 页面滚动在真实 WebView 上的相互作用 | 真机人工：在选区页上下滑动、拖框、缩放 | 若滑动被吞，改为「画布区域允许页面滚动、只有手柄与选框吃手势」 |
-| B2-R6 | 越界 `crop` 的拒绝口径会让**已存在的旧工程**无法载入重跑（若某个旧 `params.crop` 本就越界） | 实现时用一份越界的假 doc 跑一次重跑路径 | 拒绝时给出可操作的错误（指出越界量），并允许用户改用新建流程；不静默夹取 |
+| B2-R6 | 越界 `crop` 的拒绝口径会让**已存在的旧工程**无法载入重跑（若某个旧 `params.crop` 本就越界） | **未按该方式验证**：原定「实现时用一份越界的假 doc 跑一次重跑路径」，本轮**没有执行**（与 B2-R1…R5 同列为待验证风险） | **如实叙述（三处口径已统一，2026-10-03 最终审查修正）**：重跑路径上 `stores/draft.ts` 的 `setSourceSize` 用 `clampRectToSource` **静默夹取**旧 `pendingCrop`（与 §5.2 的「越界由 UI 侧 `clampRectToSource` 保证不可能发生」是同一条），所以旧工程**不会**载入失败、也不会带着越界选区进流水线；流水线入口的**拒绝**（§5.2）是覆盖「UI 被绕过」的第二道防线。因此**不存在**「拒绝时给出可操作的错误、不静默夹取」这一支——原降级方案那句与本实现冲突，已按实现改写 |
 
 **主规格 R5 的状态更新**：主规格 §12 的 R5「拼豆板规格与豆径常量」在 2026-10-03 由人类伙伴核对实物闭环——
 **5mm 豆、29×29 格/板**，落进 `core/pattern/board.ts` 并注明「已核对实物」。

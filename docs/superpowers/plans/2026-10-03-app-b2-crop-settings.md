@@ -27,7 +27,7 @@
 - 变异验证必须报告「**改了哪一行、改成什么**」与**原始输出**。只报「红了几条」无法被复核，本项目已因此两次得出错误结论。
 - 控制者纪律：不在子代理运行期间跑全量测试；不清理 `%TEMP%` 下本会话的目录；报告工作树状态前连读两次 `git status`。
 - 实现者**不许自己派审查者**；任务级审查由控制者另派全新子代理。
-- 测试环境的实测事实（决定了哪些断言可写、哪些只能是桩）：happy-dom 无 `indexedDB`（用 `fake-indexeddb/auto`）；全局 `Blob` 过不了结构化克隆；`fetch` 拒绝 `blob:` scheme（`<img>` 挂 blob URL 永不 load、`naturalWidth` 恒 0）；canvas 是桩（`getContext("2d")` 返回 `null`、`toDataURL` 返回空字节）；`ResizeObserver.observe()` 是空实现；`getBoundingClientRect()` 返回全 0；`matchMedia` **真实**按 `window.innerWidth` 求值 `min-width`；`window.devicePixelRatio` 可赋值；`PointerEvent` 与 `Element.setPointerCapture` 都有真实实现。
+- 测试环境的实测事实（决定了哪些断言可写、哪些只能是桩）：happy-dom 无 `indexedDB`（用 `fake-indexeddb/auto`）；全局 `Blob` 过不了结构化克隆；`fetch` 拒绝 `blob:` scheme（`<img>` 挂 blob URL 永不 load、`naturalWidth` 恒 0）；canvas 是桩（`getContext("2d")` 返回 `null`、`toDataURL` 返回空字节）；`ResizeObserver.observe()` 是空实现；`getBoundingClientRect()` 返回全 0；**`matchMedia` 在 vitest 的 happy-dom 环境里不随 `window.innerWidth` 变**（实测：`window.innerWidth` 可读回 500/2000，但 `matchMedia("(min-width: 768px)").matches` 恒 true、`(min-width: 2000px)` 恒 false——happy-dom 默认视口 1024；**bare `new Window()` 里 `matches` 却是实时求值的**，两者不是同一个对象），所以组件的断点测试**必须打桩 `matchMedia`**，且桩要记录并断言查询串；`window.devicePixelRatio` 可赋值；`PointerEvent` 与 `Element.setPointerCapture` 都有真实实现。
 
 ## 既有测试的处置（动手删 `GeneratePage` 之前必须先做完）
 
@@ -897,6 +897,11 @@ git commit -m "feat(core): 选区视图变换与含旋转的坐标映射"
 ---
 
 ## 任务 4：选区几何（`core/crop/rect.ts`）
+
+> **⚠️ 2026-10-03 裁决修正（已实现，以代码为准）**：本节下面的 `resizeByHandle` 代码块与其中两条 rotation 1 期望值**已被废止**，实际交付以 `src/core/crop/rect.ts` 为准。两处修正：
+> ① **手柄名按显示空间解释**（规格 §4.3「拖左上角，右下角不动」是用户视角）：指针与当前矩形都先映射到显示空间，锚点表与「朝指针一侧展开」都在显示空间里做，比例锁因此是显示空间里的直接 `width / height` 比较，最后用 `orientedToSource` 映射两对角回源坐标再夹取（提交 `191deda`）。交付代码里 rotation 1 的「锁 4:3」结果是 `{0, 100, 225, 300}`，**不是**本节里的 `{0, 0, 300, 400}`。
+> ② **最小边长抬底对两种比例锁都适用**（`a165d1e`）：自由比例下把指针拖到与锚点同一列/行会得到 0 宽高，不抬底就会被 `clampRectToSource` 的 `requireRect` 抛错——而那是用户可达的正常操作。
+> 后续任务（尤其任务 8 的 `CropCanvas`）按显示空间口径命中并透传同名手柄，换算全部在 `resizeByHandle` 内部完成。
 
 **文件：**
 - 创建：`src/core/crop/rect.ts`
@@ -1831,6 +1836,16 @@ const sourceSize = { width: 8192, height: 8192 };
 
 然后给每个 `generatePattern({ … })` 的请求字面量补上 `sourceSize,`（对象字面量的任意位置都可以，建议紧跟 `source`）。**只加字段，不改任何断言。**
 
+**还有一处必须同步，否则任务 6 一落地 `npm run build` 就红**：`src/views/GeneratePage.vue` 也调用 `generatePattern`，
+而它要到任务 14 才删。给它补上 `sourceSize: size`（该页已经 `await probeSourceSize(picked.file)` 拿到了尺寸，
+就在同一个 `run()` 里）。**这是临时的兼容改动，文件删除时一并消失**——不这么做，任务 6 到任务 13 之间
+`vue-tsc` 一直报「缺少属性 sourceSize」，等于把 CI 的红灯藏起来八个任务。
+
+- [ ] **步骤 3b：确认构建仍然通过**
+
+运行：`npm run build`
+预期：exit 0（含 `vue-tsc --noEmit`）。
+
 - [ ] **步骤 4：运行测试验证失败**
 
 运行：`npm run test -- src/services/__tests__/pipeline.test.ts`
@@ -2467,6 +2482,11 @@ props:  preview: HTMLCanvasElement, sourceSize: Size, crop: Rect, rotation: Rota
 emits:  "update:crop"(Rect) / "update:pan"({ x, y })
 ```
 
+**手柄名的口径（任务 4 修复轮 1 的裁决，有约束力）**：`nw` / `ne` / `sw` / `se` 指的是**显示空间（屏幕）**的角，
+不是源坐标的角——规格 §4.3「拖左上角，右下角不动」是用户视角的陈述，而 `rotation` 为 1/3 时两种口径下的同名角
+不是同一个角。`CropCanvas` 因此在 `sourceRectToScreen` 得到的**屏幕矩形**上做命中判定并按同名透传，
+`core/crop/rect.ts` 的 `resizeByHandle` 内部负责换算到显示空间再映射回源坐标。**两侧不要各写一份口径。**
+
 **视图变换的组装方式（三层，全部来自 `core/crop/view.ts`）：**
 
 ```
@@ -2484,6 +2504,7 @@ view   = clampView(zoomed + pan, viewport, oriented)       // pan 是叠加在�
 // src/components/crop/__tests__/CropCanvas.test.ts
 import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sourceRectToOriented } from "@/core/crop/view";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 
 /**
@@ -2694,12 +2715,19 @@ describe("手势 → 选区", () => {
     // 源图选区 {100,100,300,300} → 显示空间 {200,100,300,300}（顺时针 90° 把源图左上 (100,100)
     // 送到 (500,100)）→ 屏幕 x 150–300、y 50–200，右下角手柄中心在 (300,200)。
     await pointer(wrapper, "pointerdown", 300, 200);
-    // 拖到屏幕 (250,250) → 显示空间 (400,500) → 逆旋转回原图 (oy, H − ox) = (500, 200)
+    // 拖到屏幕 (250,250) → 显示空间 (400,500)
     await pointer(wrapper, "pointermove", 250, 250);
 
     const emitted = wrapper.emitted("update:crop")?.at(-1)?.[0] as { x: number; y: number; width: number; height: number };
-    // 锚点是原图左上 (100,100)，指针落在源坐标 (500,200) → 400×100
-    expect(emitted).toEqual({ x: 100, y: 100, width: 400, height: 100 });
+    // **手柄名是显示空间的角**（任务 4 修复轮 1 的裁决：规格 §4.3「拖左上角，右下角不动」是用户视角）：
+    // 拖显示空间右下角 → 锚点是显示空间左上角 (200,100)；指针在显示空间 (400,500) →
+    // 显示空间矩形 {200,100,200,400}；映射回源坐标 → {100,200,400,200}。
+    // （控制者手算，先按它跑；不一致就写出推导再改。）
+    expect(emitted).toEqual({ x: 100, y: 200, width: 400, height: 200 });
+    // 不变量：显示空间里被固定住的那一角必须逐位不动。
+    const fixed = sourceRectToOriented(emitted, 1, SOURCE);
+    expect(fixed.x).toBe(200);
+    expect(fixed.y).toBe(100);
   });
 });
 ```
@@ -3387,9 +3415,25 @@ function stubPlatform(options: { width?: number; height?: number; decodeError?: 
   const ctx = { drawImage: vi.fn(), imageSmoothingEnabled: false, imageSmoothingQuality: "low" };
   vi.stubGlobal("Image", FakeImage);
   vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:fake"), revokeObjectURL: vi.fn() });
-  vi.stubGlobal("document", {
-    createElement: () => ({ width: 0, height: 0, getContext: () => ctx }),
-  });
+  stubCanvasFactory(() => ctx);
+}
+
+/**
+ * 只把 `"canvas"` 换成假画布，其余 tag 走 happy-dom 的原实现。
+ *
+ * **不能整替 `document`**：`@vue/test-utils` 挂载组件本身就要用 `document.createElement`，
+ * 整替之后用例会在挂载那一步就崩，而崩的原因与被测行为毫无关系。
+ * `createElement` 的重载签名很严，实现体需要 `as typeof document.createElement` 转一次。
+ */
+function stubCanvasFactory(makeCtx: () => unknown): void {
+  const original = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation(((
+    tag: string,
+    options?: ElementCreationOptions,
+  ) =>
+    tag === "canvas"
+      ? ({ width: 0, height: 0, getContext: makeCtx } as unknown as HTMLElement)
+      : original(tag, options)) as typeof document.createElement);
 }
 
 /** 造一个真 `<input type="file">` 并塞进选中的文件（照 imageSource.test.ts 的写法）。 */
@@ -3711,7 +3755,22 @@ function stubPlatform(options: { alpha?: number } = {}) {
   vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
   vi.stubGlobal("Image", FakeImage);
   vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:fake"), revokeObjectURL: vi.fn() });
+  // 「重跑路径」那条用例会走真的 `loadImageSource`，它需要一个能拿到 2D 上下文的画布。
+  // 只换 `"canvas"`，其余 tag 放行——`@vue/test-utils` 挂载组件还要用真 `document.createElement`。
+  stubCanvasFactory(() => makeCtx(new Uint8ClampedArray(0)));
   return { createBitmap };
+}
+
+/** 见任务 10 的同名助手注释：只换 canvas，不整替 document。 */
+function stubCanvasFactory(makeCtx: () => unknown): void {
+  const original = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation(((
+    tag: string,
+    options?: ElementCreationOptions,
+  ) =>
+    tag === "canvas"
+      ? ({ width: 0, height: 0, getContext: makeCtx } as unknown as HTMLElement)
+      : original(tag, options)) as typeof document.createElement);
 }
 
 function fakePreview(): HTMLCanvasElement {
@@ -3986,7 +4045,7 @@ export const RESULT_PREVIEW_MAX_EDGE = 1024;
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { isCropResolvable } from "@/core/crop/rect";
+import { centerSquare, isCropResolvable } from "@/core/crop/rect";
 import { orientedSizeOf } from "@/core/crop/view";
 import { computeGridSize } from "@/core/pattern/build";
 import { patternStats } from "@/core/pattern/stats";
@@ -4198,12 +4257,10 @@ function rotate(): void {
 function resetCrop(): void {
   if (draft.sourceSize === null) return;
   draft.setAspect("free");
-  draft.setCrop({
-    x: Math.round((draft.sourceSize.width - Math.min(draft.sourceSize.width, draft.sourceSize.height)) / 2),
-    y: Math.round((draft.sourceSize.height - Math.min(draft.sourceSize.width, draft.sourceSize.height)) / 2),
-    width: Math.min(draft.sourceSize.width, draft.sourceSize.height),
-    height: Math.min(draft.sourceSize.width, draft.sourceSize.height),
-  });
+  // **用 `centerSquare`，不在这里重写一遍居中口径**：同一段「居中正方、边长取短边、奇偶不齐时
+  // `Math.round`」的逻辑在 `core/crop/rect.ts` 里已被四条用例钉住（含 801×600 的奇偶情形），
+  // 视图层再抄一份就是第二处会漂的副本（任务 4 修复轮 3 的审查发现）。
+  draft.setCrop(centerSquare(draft.sourceSize));
 }
 </script>
 
