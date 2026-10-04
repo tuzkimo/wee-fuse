@@ -699,6 +699,112 @@ describe("选框铺满视口时平移仍可达（4× 被困住的现场缺陷）
   });
 });
 
+/**
+ * 审查者点名的覆盖缺口：`coversViewport` 是**四个合取项的合取**，而上一组只钉了两个极端——
+ * 「四条边全在视口外」与「选框完整落在视口内」。审查者实测：删掉其中任意一条边，既有 35 条一条都不红。
+ * 于是「横向铺满、上下各留一条可见空白带」这种很常见的大选框会被误判成「铺满 → 平移」，
+ * 用户在真实几何下静默失去「移动选框」的手感，而没有一条断言会红。
+ *
+ * 本组**按边各钉一条**：每行只让一条边落在视口内、其余三边都在视口外，所以每行恰好杀死一个合取项。
+ * 场景统一为源图 800×600、视口 400×400、rotation 0、dpr 1、zoom 4（直接挂在 4× 上，不触发换档
+ * watch，`props.pan` 保持 `{0,0}`）。独立复算：适配 `fitTransform` = `{0.5, 0, 50}`（scale
+ * = min(400/800, 400/600)、offsetY = (400−300)/2）；`withZoom` 后 scale = 2、ratio = 4、
+ * offset = `(200 − (200−0)×4, 200 − (200−50)×4)` = `{2, −600, −400}`；`clampView` 的夹取范围是
+ * X [−1200,0]、Y [−800,0]，装得下。故 `sourceRectToScreen` = `{2x−600, 2y−400, 2w, 2h}`。
+ *
+ * 按下点都取「在选框屏幕矩形内、且离四个手柄中心两轴各 >24px」的位置（否则会走 resize 分支）；
+ * 拖动统一 +40/+30 屏幕像素 ÷ scale 2 = +20/+15 源像素。
+ */
+describe("coversViewport 的四条边与相切口径（按边逐条钉）", () => {
+  interface EdgeCase {
+    /** 本行只让这一条边落在视口内（其余三边在外）——即本行专杀的合取项。 */
+    edge: string;
+    crop: Rect;
+    /** 该 crop 在 4× 下的屏幕矩形：既是「只有一条边在内」的证据，也是场景自检的期望值。 */
+    screen: Rect;
+    /** 选框屏幕矩形内的按下点（离四个手柄中心两轴各 >24px）。 */
+    press: { x: number; y: number };
+    /** 拖 +20/+15 源像素后的期望 crop（未触边，未被夹取）。 */
+    moved: Rect;
+  }
+
+  const CASES: EdgeCase[] = [
+    {
+      // 屏幕矩形 {−500,−300,800,800}：x/y 在外、bottom 在外，只有 right = 300 < 400 在视口内。
+      edge: "right=300<400（只让 right 边落在视口内）",
+      crop: { x: 50, y: 50, width: 400, height: 400 },
+      screen: { x: -500, y: -300, width: 800, height: 800 },
+      press: { x: 200, y: 200 },
+      moved: { x: 70, y: 65, width: 400, height: 400 },
+    },
+    {
+      // 屏幕矩形 {−500,−300,1000,400}：只有 bottom = 100 < 400 在视口内（横竖都铺满、下方留一条空白带）。
+      edge: "bottom=100<400（只让 bottom 边落在视口内）",
+      crop: { x: 50, y: 50, width: 500, height: 200 },
+      screen: { x: -500, y: -300, width: 1000, height: 400 },
+      press: { x: 200, y: 50 },
+      moved: { x: 70, y: 65, width: 500, height: 200 },
+    },
+    {
+      // 屏幕矩形 {40,−20,440,440}：只有 x = 40 > 0 在视口内（left 边可见，其余三边在外）。
+      edge: "x=40>0（只让 left 边落在视口内）",
+      crop: { x: 320, y: 190, width: 220, height: 220 },
+      screen: { x: 40, y: -20, width: 440, height: 440 },
+      press: { x: 200, y: 200 },
+      moved: { x: 340, y: 205, width: 220, height: 220 },
+    },
+    {
+      // 屏幕矩形 {−500,240,1400,440}：只有 y = 240 > 0 在视口内（top 边可见，其余三边在外）。
+      edge: "y=240>0（只让 top 边落在视口内）",
+      crop: { x: 50, y: 320, width: 700, height: 220 },
+      screen: { x: -500, y: 240, width: 1400, height: 440 },
+      press: { x: 200, y: 300 },
+      moved: { x: 70, y: 335, width: 700, height: 220 },
+    },
+  ];
+
+  it.each(CASES)("$edge：框内拖动仍是移动选框（发 update:crop，不发 update:pan）", async ({ crop, screen, press, moved }) => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+    const wrapper = mountCanvas({ zoom: 4, crop });
+    await wrapper.vm.$nextTick();
+
+    // 场景自检：组件**实际画出**的屏幕矩形必须与本行表格一致。视图换算一旦漂移（本行就不再是
+    // 「只有一条边落在视口内」），这条会先红——否则下面按的点可能落到框外或手柄上，
+    // 用例会**静默失去判别力**（这正是本组要补的那类缺口）。
+    expect(ctx.argsOf("strokeRect")).toEqual([screen.x, screen.y, screen.width, screen.height]);
+
+    await pointer(wrapper, "pointerdown", press.x, press.y);
+    await pointer(wrapper, "pointermove", press.x + 40, press.y + 30);
+
+    // 选框没有铺满视口（框外还有可见空白）→ 规格 §4.3 的「拖框内 = 移动选框」必须成立。
+    // 删掉任一合取项都会让本行走平移分支：update:crop 一条不发、update:pan 载荷 {40,30}。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([moved]);
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+  });
+
+  it("相切：屏幕矩形恰好等于视口（{0,0,400,400}）判为平移（四处比较是 <= / >=，含相切）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+    // crop {300,200,200,200} → 屏幕 {0,0,400,400}：四条边**恰好压在**视口边上。实现取 `<=` / `>=`
+    // （相邻即算覆盖）→ 判为铺满 → 平移；把四处比较改成严格不等（< / >）时本行立刻转红。
+    const wrapper = mountCanvas({ zoom: 4, crop: { x: 300, y: 200, width: 200, height: 200 } });
+    await wrapper.vm.$nextTick();
+
+    expect(ctx.argsOf("strokeRect")).toEqual([0, 0, 400, 400]);
+    // 视口中心按下：离四个手柄中心各 200px（两轴都 >24）→ 不是 resize，只在「框内」这条路上。
+    await pointer(wrapper, "pointerdown", 200, 200);
+    await pointer(wrapper, "pointermove", 240, 230);
+
+    expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: 40, y: 30 }]);
+    expect(wrapper.emitted("update:crop")).toBeUndefined();
+  });
+});
+
 describe("手柄命中：命中半径内取离指针最近的手柄", () => {
   /**
    * 小选区场景（本组两条共用）：源图 800×600、容器 400×400 → 适配比例 0.5、偏移 (0,50)。
