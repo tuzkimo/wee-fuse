@@ -92,11 +92,50 @@ export const useProjectSession = defineStore("projectSession", () => {
     error.value = "";
   }
 
-  /** 把当前状态写回存储。失败时保留内存状态并返回 false（规格 §9）。 */
-  async function save(): Promise<boolean> {
+  /**
+   * 把 `dirty` 置 `true`。**幂等**——重复调用不改变结果。
+   *
+   * 为什么需要它：`dirty` 的语义一直是「内存与存储不一致」，但在 B3 之前**只有 `adopt` 会置它**
+   * （全仓 `dirty.value = true` 只有那一处）。编辑器的提交 / 撤销 / 重做都会让内存与存储不一致，
+   * 却都不走 `adopt`。**不新增第二个 dirty 标志**（规格 §8.1）：两个标志迟早会出现「一个真一个假」
+   * 的状态，而路由守卫只看其中一个——那正是「用户以为保存过了、其实没保存」的来源。
+   *
+   * 只有 `save()` 成功、`load()` 成功、`reset()` 会把它复位成 `false`。
+   */
+  function markDirty(): void {
+    dirty.value = true;
+  }
+
+  /**
+   * 把当前状态写回存储。失败时保留内存状态并返回 false（规格 §9）。
+   *
+   * `options.thumbnail`（B3 新增，可选）是**编辑后重算的封面**。规格 §8.2 的实测结论：
+   * `put` 只从 `doc` 覆盖 `width` / `height` / `colorCount`（两个实现的 `deriveMeta` /
+   * `withDerivedMeta`），**封面不在覆盖之列**——所以编辑过图纸之后不把新封面传进来，
+   * 图纸库列表里的封面就永远停在首次生成那一刻的样子（不报错、只是看着是旧的）。
+   * 调用方用 `renderPatternThumbnail(pattern, palette)` 出图，再 `save({ thumbnail })`。
+   *
+   * 不传 `options`（或 `options.thumbnail` 为 `undefined`）时行为与 B2 **逐字一致**：
+   * 沿用 `record.value.meta.thumbnail`，既有调用点与既有断言一行都不用改。
+   *
+   * 入参校验在**任何写操作之前**、且**抛错而不是返回 false**：`thumbnail` 非法是调用方的编程错误，
+   * 吞成 `false` 只会变成「按了保存没反应」——静默降级比响亮失败难查得多。
+   * 空串**明确拒绝**：它在 `put` 的守卫里是合法值（= 无封面），在这里却是「保留原封面」的歧义源，
+   * 两种语义共用一个值迟早写错。
+   */
+  async function save(options?: { thumbnail?: string }): Promise<boolean> {
     if (record.value === null || pattern.value === null || params.value === null) {
       error.value = "当前没有可保存的工程";
       return false;
+    }
+    const nextThumbnail = options?.thumbnail;
+    if (
+      nextThumbnail !== undefined &&
+      (typeof nextThumbnail !== "string" || nextThumbnail === "" || !nextThumbnail.startsWith("data:image/"))
+    ) {
+      throw new Error(
+        `保存时提供的工程封面必须是非空且以 data:image/ 开头的字符串（当前 ${String(nextThumbnail)}）`,
+      );
     }
     try {
       const doc = toProjectDocument(pattern.value, getBuiltinPalette(), {
@@ -111,7 +150,11 @@ export const useProjectSession = defineStore("projectSession", () => {
         },
       });
       const saving: ProjectRecord = {
-        meta: { ...record.value.meta, updatedAt: new Date().toISOString() },
+        meta: {
+          ...record.value.meta,
+          updatedAt: new Date().toISOString(),
+          ...(nextThumbnail === undefined ? {} : { thumbnail: nextThumbnail }),
+        },
         doc,
         source: record.value.source,
       };
@@ -130,5 +173,5 @@ export const useProjectSession = defineStore("projectSession", () => {
     error.value = "";
   }
 
-  return { record, pattern, params, dirty, error, load, adopt, save, reset };
+  return { record, pattern, params, dirty, error, load, adopt, save, markDirty, reset };
 });
