@@ -327,7 +327,8 @@ canvas 尺寸 = 容器 CSS 尺寸 × `devicePixelRatio`，`ctx.setTransform(dpr,
 
 - 当前色为 `EMPTY` 时等价于「整块抠掉」；
 - **工具保持框选**（用户常要连框几块），当前色不变；
-- 起止点落在同一格（`cellRectFromScreen` 返回非 `null` 的 1×1）是合法操作，等同于点一格。
+- 起止点落在同一格（`cellRectFromScreen` 返回非 `null` 的 1×1）是合法操作，等同于点一格；
+- 拖动中的矩形高亮是**组件内部**的预览（§7 的收窄），抬手即应用并消失，store 不持有选区。
 
 ### 6.5 吸管
 
@@ -361,7 +362,6 @@ export const useEditor = defineStore("editor", () => {
   tool: EditorTool
   currentColor: number               // 0..colorCount-1，或 EMPTY（橡皮）
   history: EditHistory               // markRaw
-  selection: Rect | null             // 格子坐标的框选（仅用于叠加层高亮）
 
   // 视图与显示
   view: ViewTransform
@@ -377,6 +377,12 @@ export const useEditor = defineStore("editor", () => {
 
 要点：
 
+> **2026-10-04 收窄（写实现计划时发现，已回写本节与 §12）**：本规格早期草稿在 store 里放过
+> `selection: Rect | null` 与 `setSelection`，用于「框选高亮」。**取消**：框选高亮是**拖动期间组件
+> 内部的预览**，抬手即应用并消失（覆盖后的结果本身就是反馈），而每次 `pointermove` 往 store 写一次
+> 选区、只为画一个方块，是不必要的反应式 churn。`PatternCanvas` 因此把已提交的选区也画成「抬手前的
+> 最后一帧」，页面与 store 都不持有它。
+
 0. **动作面**（写进计划时逐个都有用例）：
 
    ```ts
@@ -390,7 +396,6 @@ export const useEditor = defineStore("editor", () => {
    applyRect(rect: Rect): void                               // 框选：一条命令
    pickFromCell(x: number, y: number): void                  // 吸管：设当前色并切回画笔
    undo(): void  /  redo(): void
-   setSelection(rect: Rect | null): void
    setShowGrid(next: boolean): void  /  setShowLabels(next: boolean): void
    setSaving(next: boolean): void  /  setError(message: string): void
    ```
@@ -604,7 +609,7 @@ B3 **不消费** `core/pattern/edit.ts` 的 `buildReplaceCommand`（「整色替
 | 导出 | 校验 |
 |---|---|
 | `core/pattern/view.ts` 各函数 | 视口：**有限且 > 0**（CSS 像素允许小数）；`grid`：整数且 ≥1；`view`：`scale` 有限 > 0、偏移有限；`nextScale` 有限 > 0；`anchorScreen` / `Point` 分量有限；`CellPoint` 整数（`cellsAlongLine` 的两个端点非整数时抛错，不许静默取整） |
-| `stores/editor.ts` 各 action | `beginSession` 的 `pattern` 必须是合法图纸（宽高整数 ≥1、`cells.length === width × height`）、`colorCount` 是 `1..EMPTY` 的整数；`setCurrentColor` 的值必须是 `0..colorCount-1` 的整数**或** `EMPTY`；`paint` / `applyRect` 的下标与矩形分量必须是有限整数（矩形宽高 ≥1）；`selection` 为 `null` 或合法 `Rect` |
+| `stores/editor.ts` 各 action | `beginSession` 的 `pattern` 必须是合法图纸（宽高整数 ≥1、`cells.length === width × height`）、`colorCount` 是 `1..EMPTY` 的整数；`setCurrentColor` 的值必须是 `0..colorCount-1` 的整数**或** `EMPTY`；`paint` 的下标与 `applyRect` 的矩形分量必须是有限整数（矩形宽高 ≥1，非数组 / 非法形态抛错） |
 | `session.save(options)` | `options.thumbnail` 若提供，必须是**非空字符串且以 `data:image/` 开头**（空串是「保留原封面」的语义歧义源，明确拒绝）；不提供时行为与 B2 完全一致 |
 | `useCanvasSurface` | 容器或画布 ref 未挂载时**安静返回**（挂载期会调一次、`ResizeObserver` 回调也可能早于 ref 就位），不抛错 |
 
