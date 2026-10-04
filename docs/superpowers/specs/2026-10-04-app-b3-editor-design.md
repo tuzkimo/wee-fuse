@@ -622,6 +622,12 @@ B3 **不消费** `core/pattern/edit.ts` 的 `buildReplaceCommand`（「整色替
 `AGENTS.md` 与 B2 spec §13 第 8 条定的是「共享校验模块不修，保持内联就地校验」——这条纪律的代价
 （口径漂移）已经发生过一次，记在 `stores/draft.ts` 的注释里；B3 不扩大它。
 
+> **2026-10-04 修正（实现时发现本句过头）**：`visibleCellRange` 与 `cellRectFromScreen` **不经过**
+> `fitTransform` / `clampView`（它们只调 `screenToOriented`，后者不复检视口与图纸尺寸），而规格与用例都
+> 要求这两个函数对「视口 ≤ 0」「图纸非整数」响亮抛错。**因此它们各自内联一份视口 / 图纸守卫**
+> （措辞与 B2 的 `view.ts` / `rect.ts` 逐字相同）——这不是「新增第六份全套副本」，而是「没有别的守卫
+> 可复用的那两个函数必须自己守」。守卫副本因此从 5 处变为 **7 处**，代价（口径漂移风险）如实记录在此。
+
 **「为何公开」的 JSDoc 必须在本轮补齐**（`AGENTS.md`「公开 API ≠ 被使用的 API」，B1 规格 §13 第 3 条与
 B2 规格 §13 第 7 条都记着这笔账）：B3 是 `buildPaintCommand` / `buildRectPaintCommand` / `cellAt` /
 `pointToCell` 的**第一个生产消费者**，四者都要写明消费者是谁；`buildReplaceCommand` 仍零消费者，

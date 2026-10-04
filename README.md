@@ -57,13 +57,26 @@ npm run build
     阶段与几何都活在 store 里，跨断点或横竖屏切换**不丢状态**。
   - 路由表本身有**用例**守着（`/new` 指的是选图页、`/new/setup` 指的是装配页，且 loader 解出的组件
     做**恒等**比较）。
-- `/edit/:id` **只读编辑器**：载入并显示只读**参数**（名称、尺寸、用色数，以及是否保存了原图），
-  并区分「原图已保存，可以改参数重新生成」与「这个工程没有原图」；前者新增
-  **「改参数重新生成」**入口——回到 `/new/setup`、**还原上次的选区与参数**，再生成仍覆盖同一条记录。
-  **图纸预览与编辑属计划 B3**（画笔、框选、吸管、撤销、缩放平移），导出是计划 **B4**。
+应用层 **B3（编辑器）** 已完成：B1 的「只读编辑器」被真正的编辑器替换——缩放平移、画笔单颗与拖动连涂、
+框选批量换色、吸管、撤销 / 重做、网格线与格内色号开关，调色板按**当前图纸的实时用色与颗数**列出；
+**编辑只改内存、显式「保存」才落盘**，保存会重算封面；**有未保存改动时离开会被页面内的确认条拦下**。
+`npm run dev` 后：
+
+- `/edit/:id` **编辑器**（B3 交付）：载入图纸后可以**缩放平移**（双指捏合 / 双指拖动 / 工具栏适配与 ±（初始缩放 ≥24 px/格、缩放上界基准 64 px/格，实际范围 = 适配比例 – max(64, 适配比例×2)），惯性平移不做）、**画笔单颗与拖动连涂**（拖动经过的格子由 8 连通补格，
+  一次手势 = 一条撤销命令）、**框选批量换色**、**吸管**取色（含吸空格 = 橡皮）、**撤销 / 重做**
+  （栈深 50，`Ctrl+Z` / `Ctrl+Shift+Z`）、网格线与格内色号开关；调色板按**当前图纸的实时用色与颗数**
+  列出，另有「添加颜色」打开 MARD 221 全色卡（已用色有标记）与「橡皮 / 不拼豆」。
+  **编辑只改内存，显式「保存」才落盘**（裁决 1）：保存会**重算封面**并刷新 `updatedAt`，
+  图纸库列表的封面与用色数随之更新；保存失败给琥珀条 + 「重试保存」，**内存里的改动不丢**。
+  **有未保存改动时离开会被拦下**（返回图纸库 / 去重跑 / 改 URL / 换 id）：页面内出现「保存并离开」/
+  「放弃改动」/「继续编辑」确认条（**不是浏览器弹窗**）；关标签页走 `beforeunload` 的原生提示。
+  「改参数重新生成」入口**照旧**，只在其旁固定说明「重新生成会按原图重做整张图纸，手工涂改不会保留」
+  ——**不额外拦截、不做第二次确认**；有未保存改动时仍走上面那条同一条确认条（裁决 2）。
+  编辑器读参数一律走 `pattern`（图纸本体）与 `patternStats`，**不读 `meta` 的冗余字段**——后者是
+  上一次保存时的值。
 - `/lab/decode` **解码实验台**：同一张图对比两条解码路径的画质（回答规格 §12.1 的 R1）。
 
-下一步：计划 B3（编辑器）→ B4（导出），以及 Tauri Android 壳。
+下一步：计划 B4（导出：施工图 / 分享图 / 分片）→ Tauri Android 壳（相机 / 相册 / 系统分享）。
 
 实测（2026-10-01，Node 24.19.0 / npm 11.5.2，Windows 桌面 CPU，均在 `vitest run` 进程内测量）：
 
@@ -80,13 +93,19 @@ npm run build
   不聚类、直接在全库逐格取最近色，候选从 ≤32 变成 **221**（内置 MARD221）。按 32 档的数字外推会低估它约 **4.6 倍**
   （58×58 只差 1.4 倍——格子少时固定开销占比大）。即使取最坏档位与最慢负载，也仍在 3 s 预算内约一个数量级；
   真机上的**解码**耗时另算，那才是主要瓶颈（见规格 §12.1）。
-- **全量测试**：**47 文件 / 755 用例**全绿（2026-10-03 应用层 B2 收尾 + 最终审查修复波之后**回原始清单重数**；修复波之前是 47 文件 / 749 用例）。
-  对照：B1 收尾时本行记的是 35 文件 / 476 用例（B1 合并进 `main` 后又补过时区用例，**进 B2 时的
-  基线是 36 文件 / 493 用例**），引擎阶段是 22 文件 / 312 用例——B2 净增 **+11 文件 / +262 用例**
-  （其中 +256 来自 14 个任务，+6 来自修复波）。
-  `npm run test` 实测约 **4.1 s**，其中 vitest 内部约 3.4 s；
-  `TZ=UTC npm run test`（与 CI 同环境）同样 **47 文件 / 755 用例**绿。
-- **构建**：`npm run build`（`vue-tsc --noEmit` + Vite）通过，实测 Vite 构建 919 ms（81 modules）。
+- **全量测试**：**54 文件 / 978 用例**全绿（2026-10-04 应用层 B3 收尾之后**回原始清单重数**：
+  54 个测试文件按路径显式枚举、`describe` **218** 行、`it(` **895** 条 + 7 个 `it.each`（展开 **28**
+  例）+ `services/__tests__/projectStoreContract.ts` 的 **27** 条被内存 / IndexedDB 两个实现各跑一遍
+  （54 例）+ 1 例来自声明在 2 行数据循环里的 `it` = **978**）。
+  对照：B2 收尾时本行记的是 47 文件 / 755 用例，而 B3 规格 §15 记的规划期实测是 47 文件 / 775 用例
+  ——**两个旧数字不一致**，本行以本分支的实测输出为准（B3 净增 **+7 文件**，用例数对 775 是 +203、
+  对 755 是 +223；其中 `views/__tests__/EditorPage.test.ts` 7 → **41** 条，本任务新增 3 条端到端
+  承重断言）。
+  `npm run test` 实测约 **8 s**（本机多次实测 7.7–8.6 s；冷启动那次 18.2 s，含 happy-dom 环境的
+  一次性开销。**绝对耗时随机器负载波动**，单次读数别当基准）；`TZ=UTC npm run test`（与 CI 同环境）
+  同样 **54 文件 / 978 用例**绿（7.7–8.2 s）。
+- **构建**：`npm run build`（`vue-tsc --noEmit` + Vite）通过，实测 Vite 构建 **0.97–1.90 s（94 modules）**
+  （同一台机器多次实测，绝对耗时随负载波动）。
 - **干净安装**：`npm ci` 安装 206 个包、约 5 s。
 
 ## 目录结构
@@ -97,7 +116,8 @@ npm run build
   - `image/`：解码契约与类型、面积平均重采样、90° 旋转
   - `quantize/`：直方图、中位切割聚类、最近色查找
   - `pattern/`：图纸构建（`build.ts`）、**板与豆径换算（`board.ts`：5mm 豆、29×29 格/板、
-    豆数→厘米 / 板数）**、用量统计、增量编辑、撤销栈
+    豆数→厘米 / 板数）**、用量统计、增量编辑、撤销栈、**编辑器视图数学（`view.ts`：默认缩放 /
+    锚点缩放 / 可见格范围 / 框选矩形 / 拖动补格）**
   - `crop/`：**选区几何（`rect.ts`：比例锁、手柄缩放、夹取、可解析性判定、初始选区）与视图变换
     （`view.ts`：适配 / 缩放档位 / 平移夹取、屏幕↔原图坐标映射含旋转）**——B3 编辑器的缩放平移
     复用同一套数学
@@ -108,12 +128,16 @@ npm run build
   与单例存储适配器（`projectStore.ts`）**、工程存储：IndexedDB 与内存两个实现共用一套契约测试）
 - `src/stores/` — Pinia 状态（`project.ts`：当前工程的载入 / 采纳新图纸 / 保存 / 脏标记；
   **`draft.ts`：向导草稿与阶段机（`stage` / `crop` / `rotation` / `aspect` / `zoom` / `pan` /
-  `longSide` / `maxColors` / `generated`）**）
+  `longSide` / `maxColors` / `generated`）**；**`editor.ts`：编辑器的工具 / 当前色 / 视图 /
+  `markRaw(EditHistory)` / `revision`·`lastDirty`**）
 - `src/components/` — **props 进、事件出的展示组件**（`crop/CropCanvas.vue`：canvas 绘制按 DPR 缩放
-  + 指针手势；`param/ParamPanel.vue`：长边 / 档位 / 色卡卡片 / 尺寸摘要 / 生成按钮）
+  + 指针手势；`param/ParamPanel.vue`：长边 / 档位 / 色卡卡片 / 尺寸摘要 / 生成按钮；
+  **`editor/`：`PatternCanvas` 分层渲染与手势、`PatternToolbar`、`PalettePanel`、`PalettePicker`**）
+- `src/composables/` — **`useCanvasSurface.ts`：DPR 尺寸 + 量容器 + `ResizeObserver` 接线**
+  （`crop/CropCanvas.vue` 与 `editor/PatternCanvas.vue` 两个消费者共用一套「量容器、不量画布」的口径）
 - `src/views/` — 页面（`LibraryPage.vue` 图纸库、**`PickPage.vue` 选图（`/new`）**、
-  **`SetupPage.vue` 选区 / 参数 / 结果（`/new/setup`）**、`EditorPage.vue` 编辑器（只读 + 改参数重跑）、
-  `DecodeLabPage.vue` 解码实验台）
+  **`SetupPage.vue` 选区 / 参数 / 结果（`/new/setup`）**、`EditorPage.vue` 编辑器宿主
+  （装配 / 保存 / 未保存拦截 / 重载）、`DecodeLabPage.vue` 解码实验台）
 - `src/router/` — 路由表（`/`、`/new`、`/new/setup`、`/edit/:id`、`/lab/decode`）与
   **`__tests__/index.test.ts`**（钉住 `/new` 与 `/new/setup` 指向哪个组件）
 - `src/__tests__/coreBoundary.test.ts` — 分层边界闸门（`core/**` 不得引用 Vue / Tauri / DOM 全局）
@@ -159,14 +183,14 @@ npm run build
 | B1-5 | `probeSourceSize` 的**成功路径在 CI 中零覆盖**。 | happy-dom 使该路径不可能达成；`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖。 |
 | B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口）。 | 响亮失败但用户无出路；**本轮已修**（`GeneratePage.defaultName` 夹到 100，并补断言）。B2 把这份逻辑迁成 `services/projectStore.ts` 的 `defaultProjectName`，`GeneratePage.vue` 随之删除——本项的历史措辞保留。 |
 | B1-7 | `LibraryPage` 在**存储级失败**时不置 `storeUnavailable`（只给琥珀错误条，新建**不禁用**）。 | 真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径。**已在 B2 闭环**（规格 §8）：现在**未注入**给「不允许本地保存」、**`list()` 打不开**显示具体原因，两种都置 `storeUnavailable` 并**禁用「新建」**；`LibraryPage.test.ts` 三条用例分别钉住（未注入 / `list` 抛错 / 只有 `estimateUsage` 失败时列表与新建照常）。 |
-| B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载**。 | B1 的导航图生不出这个跳转，B3 会遇到。 |
+| B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载**。 | B1 的导航图生不出这个跳转，B3 会遇到。**已在 B3 闭环**：`EditorPage.vue` 新增 `watch(() => route.params.id, …)` 重载 + `editor.reset()`，有未保存改动时先走同一条确认条，**「保存并离开」= 保存旧 id 的改动、再载入新 id**——同一条路由记录只变参数时 `onBeforeRouteLeave` **不触发**（它不是 `beforeRouteUpdate`），那次导航其实**已经提交**、`route.params.id` 已是 b，重放的目标与当前地址逐字相同会被 vue-router 当成重复导航直接 resolve，所以「再载入」必须由 `replayPending()` 自己做、不能留给 `watch`（`loadedId` 在 `activate` 入口就写，保证只载入一次）。`EditorPage.test.ts` 两条用例钉住，其中「有未保存改动时先拦下，确认后才切到新 id」**按真实顺序断言**（确认后画布/标题/历史都是 b 的内容，不再手动把路由参数退回空值替生产代码补一步）。 |
 | B1-9 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`）。 | 它是 B2/B3 的接口面；注释已改为与事实一致。**已在 B2 闭环**：`SetupPage.generate()` 走 `session.adopt(pattern, params, meta)` + `await session.save()`（`SetupPage.vue`），保存失败时按主规格 §8 保留内存态并给重试。 |
 | B1-10 | `data:image/` 是**前缀**判定，故 `data:image/svg+xml` 会放行。 | 规格 §12 的既有口径。 |
 | B1-11 | 两个实现的 `rename("nope", "   ")` 错误文案优先级不同（IDB 先校验 name、内存先查存在性）。 | 契约未定义优先级，两条都对。 |
 | B1-12 | `crop.x/y` 允许负数 → 越界源矩形**静默产出带透明边的图纸**（构建记录 §5）。 | B1 生产路径可证明永不越界；是否在入口夹取/拒绝交 B2。**已在 B2 闭环**（规格 §5.2）：`GenerateRequest.sourceSize` 改为**必填**，`services/pipeline.ts` 在解码之前**拒绝**越界 `crop`（**不夹取**，报错带上实际数字），UI 侧另有 `clampRectToSource` 夹取作为第一道。 |
 | B1-13 | `generatePattern` 未按源图尺寸校验 `crop`。 | 同上，B2 决策。**已在 B2 闭环**：同 B1-12——校验落在 `pipeline.ts` 的入口，`pipeline.test.ts`（任务 6）与 `SetupPage.test.ts`「选区大于源图时流水线响亮拒绝（第二道防线真的在）」两处覆盖。 |
 | B1-14 | `LibraryPage` 的 rename/delete `catch` 分支、改名预填值、「算了」取消按钮、`maxColors: null` 的 `save→load` 往返未断言。 | 已自曝，属覆盖面。 |
-| B1-15 | 「打开」在 B1 只显示只读**参数**（名称 / 尺寸 / 用色数 / 是否存了原图），**不渲染 `session.pattern` 预览**（`fromProjectDocument` 的 `pattern` / `params` 在应用层无 UI 消费者）。 | 渲染 `pattern` 是 B3 的核心交付（Canvas 分层渲染），B1 的临时预览会被整体替换；本轮**如实收窄规格口径**而不补预览（构建记录 §8）。 |
+| B1-15 | 「打开」在 B1 只显示只读**参数**（名称 / 尺寸 / 用色数 / 是否存了原图），**不渲染 `session.pattern` 预览**（`fromProjectDocument` 的 `pattern` / `params` 在应用层无 UI 消费者）。 | 渲染 `pattern` 是 B3 的核心交付（Canvas 分层渲染），B1 的临时预览会被整体替换；本轮**如实收窄规格口径**而不补预览（构建记录 §8）。**已在 B3 闭环**：`pattern` 成为画布与调色板面板的数据源（B3 规格 §5 / §9），`params` 已在 B2 被重跑入口消费。 |
 | B1-16 | `src/components/ui/*.vue` 不存在：B1 的 UI 组件以内联 Tailwind class 写在各 view 内。 | 抽公共组件推迟到出现第二个消费者时（构建记录 §8）。**不为对齐规格新建 `components/` 目录**——那会造出没有消费者的抽象。 |
 | B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error`。 | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）；本轮裁决维持现状（构建记录 §8）。**已在 B2 闭环**（规格 §8）：两个失败域已分开，`LibraryPage.test.ts`「只有 `estimateUsage` 失败：列表正常、占用行消失、新建**不**禁用」。 |
 | B1-18 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走）。 | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文（规格 §14 的 B1-R3）；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。**B2 删页后的现状**：这份 `createId` 现在是 `SetupPage.vue` 里的唯一一份（与旧页逐字相同），回退分支**同样无断言**——补断言应补在那里。 |
@@ -240,9 +264,9 @@ B2-50…B2-57 是本轮另外明确接受的四类项（规格 §13 的不做项
 | B2-47 | 库打不开时保留上一次的 `projects` 与 `usage`、卡片仍可点（287）。 | 点开会在编辑器里响亮失败，危害有界；收紧要同时改两条撤销用例 → 建议另立任务。 |
 | B2-48 | 任务 13 新用例的桩形态自相矛盾（`:295` 逐个 bind、`:328`/`:367` 用 `...base`）（288）。 | 当前实现是对象字面量故三条都成立，换 class 会以报错形式红。 |
 | B2-49 | 无断言读「库打不开那支不会同时再叠一条琥珀错误条」（289）。 | 一行可补。 |
-| B2-50 | 双指捏合缩放 / 惯性平移（规格 §13 第 1 条、§2）。 | B2 用固定缩放档位（适配 / 2× / 4×）+ 单指平移覆盖「照片很大、主体很小」；真正的缩放平移由 B3 编辑器交付，复用同一套 `core/crop/view.ts` 数学。 |
+| B2-50 | 双指捏合缩放 / 惯性平移（规格 §13 第 1 条、§2）。 | B2 用固定缩放档位（适配 / 2× / 4×）+ 单指平移覆盖「照片很大、主体很小」；真正的缩放平移由 B3 编辑器交付，复用同一套 `core/crop/view.ts` 数学。**已在 B3 闭环（捏合与双指平移部分）**：`core/pattern/view.ts` 的 `zoomCellView` / `panCellView` 与编辑器的双指手势；**惯性 / momentum 仍不做**（B3 规格 §2 / §13 第 1 条）。 |
 | B2-51 | 生成进度与取消（规格 §13 第 2 条、§2）。 | 无自动重跑，busy 态足够；500×500 的慢跑期间用户只能等。 |
-| B2-52 | 选区页的撤销 / 重做（规格 §13 第 3 条、§2）。 | 靠「重置选区」与再拖一次；真正的撤销栈是 B3 编辑器的交付。 |
+| B2-52 | 选区页的撤销 / 重做（规格 §13 第 3 条、§2）。 | 靠「重置选区」与再拖一次；真正的撤销栈是 B3 编辑器的交付。**已在 B3 闭环**：`EditHistory` 有了生产消费者（`stores/editor.ts` 的 `paint` / `applyRect` / `undo` / `redo`），工具栏与 `Ctrl+Z` / `Ctrl+Shift+Z` 两个入口；选区页本身仍不做撤销（设计如此）。 |
 | B2-53 | `probeSourceSize` 在 B2 之后**没有生产消费者**（规格 §13 第 10 条）。 | 新的 `loadImageSource` 一次解码同时给出尺寸与预览；保留不删（删它会连带改既有用例），JSDoc 已写明它是「只读尺寸」的姊妹 API。 |
 | B2-54 | **删页带来的口径收窄**：`GeneratePage.test.ts` 那条「平台不支持 `createImageBitmap`」的**具体原因**断言没有新家（任务 14 裁决 C）。 | **理由已修正（2026-10-03 最终审查，原文失实）**：原文说「`probe.ts` 把具体原因包进同一个中文前缀、不再回显底层英文 cause」——那条文案其实来自 `services/decoders.ts` 的 `createDomBitmapPlatform`（`requireApi` 抛「当前环境不支持 createImageBitmap」），与选图页的 `<img>` 解码路径（`services/probe.ts`）无关，所以在 `PickPage.test.ts` 里**无从断言**，不是「口径收窄」。该守卫在**原层**一直有 `domPlatform.test.ts:107-109` 钉着（`createImageBitmap = undefined` → 构造平台抛 `/createImageBitmap/`）；**修复波另把断言补回了真正的新家**：`SetupPage.test.ts` 的「平台缺少 createImageBitmap 时把中文原因显示出来，且不落盘」（生成路径就是 `createDomBitmapPlatform()` 的消费者）。 |
 | B2-55 | 规格 §13 第 4–9 条（B1-8 编辑器重载、B1-14 覆盖面、`/lab/decode` 去留、`buildPatternFromImage` / `edit.ts` 的「为何公开」JSDoc、共享校验模块、`source` 体积上限）。 | 逐条记在 B2 规格 §13，不在本表重复展开（B1-8 / B1-14 另见上面的 B1 表）。 |

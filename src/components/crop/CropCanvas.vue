@@ -3,7 +3,11 @@
 //
 // 选区画布：只负责「画」与「收手势」。几何一律来自 core/crop/*，本文件不自己算坐标
 // （屏幕 → 原图的整条链错了不会报错，只会产出一张位置不对的图纸）。
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+//
+// DPR 尺寸与 `ResizeObserver` 那段接线已抽到 `composables/useCanvasSurface.ts`（B3 任务 2）：
+// 编辑器画布 `components/editor/PatternCanvas.vue` 是第二个消费者，两边**量容器、不量画布**的
+// 口径必须只有一份。**绘制与手势没有被这次抽取改动**（既有 42 条用例一条未改）。
+import { computed, ref, watch } from "vue";
 import {
   applyAspect,
   clampRectToSource,
@@ -26,6 +30,7 @@ import {
   type ZoomLevel,
 } from "@/core/crop/view";
 import type { Rect, Rotation } from "@/core/image/types";
+import { useCanvasSurface } from "@/composables/useCanvasSurface";
 
 /** 手柄命中区的 CSS 尺寸（触控目标 ≥44px，主规格 §6.4）。 */
 const HANDLE_HIT_SIZE = 48;
@@ -51,7 +56,9 @@ const emit = defineEmits<{
 
 const container = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
-const viewport = ref<Size>({ width: 0, height: 0 });
+const surface = useCanvasSurface({ container, canvas, onMeasure: (size) => { viewport.value = size; draw(); } });
+/** 容器的 CSS 像素尺寸（量它、不量画布自己）；由 `useCanvasSurface` 写入。 */
+const viewport = surface.viewport;
 
 const oriented = computed(() => orientedSizeOf(props.sourceSize, props.rotation));
 
@@ -268,7 +275,7 @@ watch(
  * `panToCenterSelection` 在 fit 下恒返回 `{0,0}`，而 `props.pan` 也已被夹取归位）。
  *
  * 视口还没量到尺寸（`0×0`）时直接返回：`fitTransform` 会抛错，而真实路径上缩放 / 旋转按钮只在
- * 画布量过尺寸之后才可点（挂载即 `resizeCanvas` 量一次）。
+ * 画布量过尺寸之后才可点（`useCanvasSurface` 在挂载时量一次容器）。
  */
 watch(
   [() => props.zoom, () => props.rotation],
@@ -292,30 +299,13 @@ watch(
 // 绘制
 // ---------------------------------------------------------------------------
 
-/**
- * 量**容器**而不是画布自己：画布是 `h-full w-full`，若按它自己的 CSS 盒设 `width/height`
- * 属性，属性会反过来撑大它的盒子，形成每帧放大的循环（这是 canvas 尺寸最经典的一类 bug）。
- */
-function resizeCanvas(): void {
-  const element = canvas.value;
-  const box = container.value;
-  if (element === null || box === null) return;
-  const rect = box.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
-  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-  element.width = Math.max(1, Math.round(rect.width * dpr));
-  element.height = Math.max(1, Math.round(rect.height * dpr));
-  element.style.width = `${rect.width}px`;
-  element.style.height = `${rect.height}px`;
-  viewport.value = { width: rect.width, height: rect.height };
-  draw();
-}
-
 function draw(): void {
   const element = canvas.value;
   if (element === null) return;
   const ctx = element.getContext("2d");
   if (ctx === null) return;
+  // 这里**刻意不读** `useCanvasSurface` 的 `dpr`：绘制路径沿用既有口径，DPR 口径的唯一定义处
+  // 在 `useCanvasSurface`（画布物理尺寸 = 容器 CSS 尺寸 × DPR）。
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
   const size = viewport.value;
   if (size.width <= 0 || size.height <= 0) return;
@@ -360,21 +350,6 @@ function draw(): void {
     ctx.fillRect(center.x - HANDLE_DRAW_SIZE / 2, center.y - HANDLE_DRAW_SIZE / 2, HANDLE_DRAW_SIZE, HANDLE_DRAW_SIZE);
   }
 }
-
-let observer: ResizeObserver | null = null;
-
-onMounted(() => {
-  resizeCanvas();
-  if (typeof ResizeObserver === "function") {
-    observer = new ResizeObserver(() => resizeCanvas());
-    if (container.value !== null) observer.observe(container.value);
-  }
-});
-
-onBeforeUnmount(() => {
-  observer?.disconnect();
-  observer = null;
-});
 
 // 五个 watch 源都是**浅引用 / 标量**：`crop` 与 `pan` 每次变化在 store 里都是新对象
 // （`setCrop` 走 `clampRectToSource`、`setPan` 直接构造），浅比较足够。
