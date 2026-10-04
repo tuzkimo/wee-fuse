@@ -8,6 +8,7 @@ import { EMPTY } from "@/core/pattern/types";
 import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
+import PatternToolbar from "@/components/editor/PatternToolbar.vue";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -1114,5 +1115,61 @@ describe("页面接线（续）：色板 / 显示开关 / 工具栏命令与状�
     expect(editor.saving).toBe(false);
     expect(wrapper.get("[data-testid='editor-save']").attributes("disabled")).toBeUndefined();
     expect(wrapper.get("[data-testid='editor-save']").text()).toContain("保存");
+  });
+});
+
+/**
+ * 页面接线（终）：**类型兼容的 props 错接**。
+ *
+ * 复审点名的三处：把它们互换 / 绑成常量时 `vue-tsc` **一句话都不说**——`boolean` 换 `boolean`、
+ * `number` 换 `number` 在类型上完全合法，页面上却是用户可见（网格线开关去控色号）或**静默**
+ * （同色格第二次涂不刷新）的行为错。本项目在任务 1 就吃过一次同形态的亏：
+ * `grid` 与 `viewport` 同为 `Size`，实参对调 TS 不报错。
+ *
+ * 判据是**读子组件真的收到了什么**（`props(...)`），不是像素级断言；夹具必须让那两个可能被互换的
+ * 值**相反 / 不相等**，否则「逐项对应」是恒真的。
+ */
+describe("页面接线（终）：三条类型兼容的 props 错接", () => {
+  it("画布收到 `showGrid` / `showLabels`：两个开关取相反值时逐项对应（互换必红）", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    // 两个都是 boolean：互换时类型完全合法。**夹具取相反值**，否则「对应」不可观测。
+    editor.setShowGrid(false);
+    editor.setShowLabels(true);
+    await nextTick();
+
+    const canvas = wrapper.findComponent(PatternCanvas);
+    expect(canvas.props("showGrid")).toBe(false);
+    expect(canvas.props("showLabels")).toBe(true);
+  });
+
+  it("画布收到 `revision` / `currentColor`：两个数各不相同且逐项对应（互换必红）", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    // 两个都是 number：把 `currentColor` 喂给 `revision` 会让 `PatternCanvas.syncLayer` 早退
+    // → **同色格第二次涂不刷新**（不报错、只是屏幕上没变）。夹具必须让两个数不同：
+    // 涂一格后 `revision` 是 1、`currentColor` 是 2。
+    expect(editor.revision).toBe(1);
+    expect(editor.currentColor).toBe(2);
+
+    const canvas = wrapper.findComponent(PatternCanvas);
+    expect(canvas.props("revision")).toBe(1);
+    expect(canvas.props("currentColor")).toBe(2);
+    // 互换的写法会让上面两条同时红；这一条额外钉住「夹具确实取了两个不同的数」
+    expect(canvas.props("revision")).not.toBe(canvas.props("currentColor"));
+  });
+
+  it("工具栏收到 `tool`：跟着 store 走（绑常量必红）", async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("brush"); // 播种值
+
+    useEditor().setTool("pick");
+    await nextTick();
+
+    // 绑成常量 `'brush'` 的写法在这里红：页面从不读这个 prop，用户只看到按钮高亮永不跟随
+    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("pick");
   });
 });
