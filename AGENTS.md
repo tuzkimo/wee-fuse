@@ -113,5 +113,5 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 - 预览解码位图长边 ≤ 1600
 - 空格判定：alpha 加权覆盖率 ≥ 0.25
 - 撤销栈上限 50
-- 编辑器单格像素范围 `MIN_CELL_PX = 24` / `MAX_CELL_PX = 64`（初始缩放下限 / 缩放上界基准，`core/pattern/view.ts`）
+- 编辑器初始缩放下限 / 缩放上界基准 `MIN_CELL_PX = 24` / `MAX_CELL_PX = 64`（初始缩放下限 / 缩放上界基准，`core/pattern/view.ts`）
 - 编辑器显示阈值 `GRID_LINE_MIN_CELL_PX = 6`（低于它不画网格线）/ `CELL_LABEL_MIN_CELL_PX = 28`（低于它不画格内色号）

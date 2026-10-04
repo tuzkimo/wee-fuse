@@ -1252,10 +1252,22 @@ describe("端到端 ①：载入 → 拖动涂抹 → 撤销", () => {
     expect(session.dirty).toBe(true);
     expect(editor.history.canUndo).toBe(true);
 
-    // 撤销一次 → 逐格回到原值（含那格空格：`revertChanges` 记的是每格的 `from`）
+    // **先把这一笔存掉，让下面那条 `dirty` 断言有判别力**（审查意见 R-4 选**方案 ①**）：
+    // 涂抹那一步已经把 `dirty` 置真，而 `markDirty()` 是**幂等**的——不先清脏，「撤销后 dirty 仍为真」
+    // 在这条用例里是**恒真**的（删掉 `publishChange` 里的 `markDirty()` 也不会红）。
+    // 保存**不清历史**（它只写盘，不动 `EditHistory`），所以撤销这一步照常可走；把这一点先钉住，
+    // 否则「撤销后仍脏」与「保存根本没成功」不可区分。方案 ① 不削弱本用例其它断言：
+    // 逐格 `toEqual`、对象身份、`canUndo` 全在保存之前或之后照常成立。
+    await wrapper.get("[data-testid='editor-save']").trigger("click");
+    await flushPromises();
+    expect(session.dirty).toBe(false);
+    expect(editor.history.canUndo).toBe(true);
+
+    // 撤销一次 → 逐格回到原值（含那格空格：`revertChanges` 记的是每格的 `from`）；
+    // 内存与存储**再次不一致**（这一条现在真的承重：`publishChange` 里少了 `markDirty()` 就红，
+    // 因为此刻磁盘上躺着的正是刚才那笔涂抹）。
     editor.undo();
     expect(Array.from(pattern.cells)).toEqual([0, 0, EMPTY]);
-    // 撤销**不改**「内存与存储是否一致」：磁盘上仍是旧图纸，改动没有落盘
     expect(session.dirty).toBe(true);
   });
 });
@@ -1315,6 +1327,9 @@ describe("端到端 ②：编辑 → 保存 → 存储里那条记录真的变�
     expect(stored.meta.height).toBe(pattern.height);
 
     // ③ **封面重算**：这一条同时覆盖规格 §11.2 的变异「保存时不传 thumbnail」
+    // **真正承重的是下一行**（`not.toBe(OLD)`：不传 `thumbnail` 时 `session.save()` 沿用旧封面）。
+    // 这一行的 `startsWith("data:image/")` 判别力很弱——`memoryProjectStore.put` 已经把「非空且非
+    // `data:image/` 开头」的值拒掉，所以它只防「传了空串」这一种假设变异（空串是 `put` 的合法值）。
     expect(stored.meta.thumbnail).not.toBe("data:image/png;base64,OLD");
     expect(stored.meta.thumbnail.startsWith("data:image/")).toBe(true);
   });
