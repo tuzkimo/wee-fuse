@@ -528,6 +528,55 @@ describe("换档取景：切档那一刻把选区中心映射到视口中心（�
     expect(y + height).toBeLessThanOrEqual(400);
   });
 
+  /**
+   * 同一根因的**第二个入口**（审查者实测）：已经放大到 4× 时按 `rotate`（`rotation` 0 → 1），
+   * 显示空间 800×600 → 600×800 换轴，取景基准跟着变——触发源只 watch `zoom` 时，这一次旋转
+   * 不取景，选框被推到视口左侧外，与上一轮修掉的现场缺陷一模一样。
+   *
+   * 起点刻意选「已经取过景、选框看得见」的好状态：断言的是**旋转把它推出视野**这件事，而不是
+   * 从一个本来就坏的初始状态出发（那样即使代码完全没取景也可能蒙对方向）。
+   */
+  it("4× 下旋转 90°：同样按选区中心取景，不在画面中心的小选区仍完整落在视口内", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const ctx = stubContext();
+    // 与上一条同一个选区（源图 800×600 上的 {600,450,100,80}，离画面中心很远）。
+    const wrapper = mountCanvas({ crop: { x: 600, y: 450, width: 100, height: 80 } });
+    await wrapper.vm.$nextTick();
+
+    // 先切到 4× 并把取景 pan 回灌（真实形态）→ 选框在视口内 {100,120,200,160}：这是「旋转前
+    // 用户看得见选区」的起点。
+    await wrapper.setProps({ zoom: 4 });
+    await wrapper.setProps({ pan: { x: -500, y: -380 } });
+    expect(ctx.argsOf("strokeRect")).toEqual([100, 120, 200, 160]);
+
+    await wrapper.setProps({ rotation: 1 });
+    // 父级 `v-model:pan` 把旋转后的取景结果回灌。**刻意先不判它取什么值**：若在事件层先断言，
+    // 失败会停在那里，掩盖「选区到底还在不在视野里」这条对用户可见的判据。没有新事件时回灌的
+    // 就是旋转前的 pan（视图停在未取景状态），下面的判据立刻红。
+    const framed = wrapper.emitted("update:pan")?.at(-1)?.[0] as { x: number; y: number } | undefined;
+    await wrapper.setProps({ pan: framed ?? { x: -500, y: -380 } });
+
+    const box = ctx.argsOf("strokeRect") as [number, number, number, number];
+    // **用户可见判据**（与上一条同款写法）：整块选框都在视口内。触发源漏掉 `rotation` 时视图
+    // 停在旋转前的 pan（夹取后 {2,−800,−980}），选框屏幕矩形是 {−660,220,160,200}——整块在
+    // 视口左侧外；而旋转后的选框铺满可见区域，任何位置按下都落在框内（规格 §4.3 = 移动选框）
+    // → 没有空白可拖 → 平移不可达 → 选区找不回视野。
+    const [x, y, width, height] = box;
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(x + width).toBeLessThanOrEqual(400);
+    expect(y + height).toBeLessThanOrEqual(400);
+
+    // 判据成立的确切原因也钉住：旋转 1 → 显示空间 600×800 → 适配 {0.5,50,0}、4× 的
+    // zoomed = {2,−400,−600}；选区显示空间矩形 {70,600,80,100}，中心 (110,650) 送到视口中心
+    // (200,200) 需要视图偏移 (−20,−1100)，落在夹取范围（X [−800,0]、Y [−1200,0]）内。
+    expect(box).toEqual([120, 100, 160, 200]);
+    // 取景经**既有** `update:pan` 出口发出（与平移手势同一个出口，组件仍是 props 进 / 事件出）。
+    expect(framed).toEqual({ x: 380, y: -500 });
+  });
+
   it("取景是一次性动作：换档后改 crop，只有选框动、图像不动（防止「选框钉在视口中心」回归）", async () => {
     stubContainer();
     stubResizeObserver();
