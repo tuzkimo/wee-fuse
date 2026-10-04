@@ -90,6 +90,22 @@ function inside(rect: Rect, point: { x: number; y: number }): boolean {
 }
 
 /**
+ * 选框在屏幕上的矩形是否**完全覆盖视口**（四条边全在视口之外，框内没有任何一块可见的空白）。
+ *
+ * 判据直接用屏幕矩形与 `viewport` 比，不另写坐标换算：`screenCrop` 已经是
+ * `sourceRectToScreen(props.crop, view.value, …)` 的结果，换轴 / 缩放 / 平移都已经在里面。
+ * 四条边取 `<=` / `>=`（**相邻即算覆盖**）：边恰好压在视口边上时，用户看到的同样是「满屏是框」。
+ */
+function coversViewport(screenCrop: Rect, size: Size): boolean {
+  return (
+    screenCrop.x <= 0 &&
+    screenCrop.y <= 0 &&
+    screenCrop.x + screenCrop.width >= size.width &&
+    screenCrop.y + screenCrop.height >= size.height
+  );
+}
+
+/**
  * 命中半径内**离指针最近**的手柄；一个都没命中时返回 `null`。
  *
  * 不能用「命中即返回」的 `find`：选框在屏幕上的边长小于命中区（48px）时，四个命中区互相重叠，
@@ -150,10 +166,20 @@ function onPointerDown(event: PointerEvent): void {
 
   if (handle !== null) {
     gesture.value = { mode: "resize", handle };
-  } else if (inside(screenCrop, point)) {
+  } else if (inside(screenCrop, point) && !coversViewport(screenCrop, viewport.value)) {
+    // 框内的**可见**空白：规格 §4.3，拖框内 = 移动选框。
     gesture.value = { mode: "move" };
   } else {
-    // 适配视图下没有可平移的量，拖空白就是拖选框本身（规格 §4.3）。
+    // 两条路都到这里：① 按在选框**外**；② 按在选框内、但选框铺满了整个视口。
+    //
+    // ② 是这个分支新增的一条：真机复测实测「4× 后视野全是框内的，拖动只是在移动一个看不见边的
+    // 选框」——放大的选框一旦盖住视口，它的边全在视口外（用户看不到框的边界），框内又没有任何
+    // 空白可拖，于是**平移彻底不可达，用户被困死**。控制者裁决：平移必须在任何状态下可达，
+    // 所以这一条归到平移，而不是移动选框（移动的对象本就看不见边，等于没有反馈）；规格 §4.4
+    // 将按此回写。
+    //
+    // 这里**不需要**再写「且 `zoom !== "fit"`」：`"fit"` 档下整图（故选框）都在视口内，没有可
+    // 平移的量，同一个表达式已经把它判回 `move`——见下一行的三元。也就是说 fit 档行为逐字不变。
     gesture.value = props.zoom === "fit" ? { mode: "move" } : { mode: "pan" };
   }
 

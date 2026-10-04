@@ -625,6 +625,80 @@ describe("换档取景：切档那一刻把选区中心映射到视口中心（�
   });
 });
 
+describe("选框铺满视口时平移仍可达（4× 被困住的现场缺陷）", () => {
+  /**
+   * 人类伙伴真机复测的原话：「2× 的时候能看到选框外的画面，拖动框外图像也正常，但 4× 后视野都是
+   * 框内的，拖动也只是移动看不到的选框」。
+   *
+   * 根因：放大后的选框屏幕尺寸大于视口 → 「框外的空白」在任何位置都不存在 → 按规格 §4.3
+   * 「拖框内 = 移动选框」，用户拖到哪都在移动一个**看不见边**的框 → 平移不可达、被困死。
+   * 裁决：`zoom !== "fit"` 且选框的屏幕矩形**完全覆盖视口**时，框内的按下改判为平移；
+   * 手柄仍优先；选框**小于**视口时拖框内仍是移动选框（2× 的手感一字不改）。
+   *
+   * 场景（三条共用）：源图 800×600、视口 400×400、rotation 0、dpr 1 → 适配 `{0.5,0,50}`、
+   * 4× 的 `zoomed = {2,−600,−400}`。三条都直接挂在 `zoom: 4` 上（挂载不触发换档 watch，
+   * `props.pan` 保持 `{0,0}`，视图就是 `{2,−600,−400}`）。
+   */
+  it("大选区时框内拖动是平移：发 update:pan（载荷 = 拖动位移），update:crop 一次都没发", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    // 选区 {50,50,700,500}：4× 下屏幕矩形 {−500,−300,1400,1000}，四条边全在视口外——正是
+    // 人类伙伴看到的「视野全是框内的」。这个选区关于画面中心对称，`panToCenterSelection` 的
+    // 取景结果恰好就是 `{0,0}`，所以直接挂在 4× 与真实路径（fit → 4× 取景后回灌）同形。
+    const wrapper = mountCanvas({ zoom: 4, crop: { x: 50, y: 50, width: 700, height: 500 } });
+
+    // 视口中心按下：离四个手柄中心（屏幕矩形的四个角）都在 500px 以上，绝不会命中手柄；
+    // 落在框内。按老口径这是「移动选框」，而选框的边全在视口外，用户既看不见移动、也平移不了。
+    await pointer(wrapper, "pointerdown", 200, 200);
+    await pointer(wrapper, "pointermove", 240, 230);
+
+    // **用户可见判据**：这一拖必须走平移，载荷就是拖动位移本身（平移分支的算法与
+    // `update:pan` 出口一字未改，仍是 startPan + 指针位移再夹取；此处未触边，增量原样透出）。
+    expect(wrapper.emitted("update:pan")?.at(-1)).toEqual([{ x: 40, y: 30 }]);
+    // 「移动选框」那条路必须一次都没走：它发的是 update:crop（此时会算出 {70,65,700,500}），
+    // 而用户什么都看不见——这正是被困住时的症状。
+    expect(wrapper.emitted("update:crop")).toBeUndefined();
+  });
+
+  it("对照（防改坏 2× 的手感）：框装得下时，框内拖动仍是移动选框，不发 update:pan", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    // 选区 {300,200,100,100}：4× 下屏幕矩形 {0,0,200,200}，**完整落在视口内**（框外有可见空白）
+    // → 不满足豁免条件，拖框内仍是规格 §4.3 的「移动选框」。
+    const wrapper = mountCanvas({ zoom: 4, crop: { x: 300, y: 200, width: 100, height: 100 } });
+
+    // (100,100) 是选框中心，离四个手柄中心各 100px > 命中半径 24 → 不是 resize。
+    await pointer(wrapper, "pointerdown", 100, 100);
+    await pointer(wrapper, "pointermove", 130, 120);
+
+    // 屏幕位移 (30,20) ÷ scale 2 = 源图位移 (15,10) → {315,210,100,100}（未触边，未被夹取）。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 315, y: 210, width: 100, height: 100 }]);
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+  });
+
+  it("手柄优先：框比视口略大、手柄仍在视野里时，拖手柄仍是缩放（尺寸变了）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    // 选区 {290,190,220,220}：4× 下屏幕矩形 {−20,−20,440,440}——四条边都在视口外 20px，**属于**
+    // 上面那条豁免的范围；但 nw 手柄中心在 (−20,−20)，命中区是 ±24 的方块，伸进视口 4px。
+    // 于是视口左上角 (0,0) 同时满足「在框内」与「命中 nw 手柄」两个条件。
+    const wrapper = mountCanvas({ zoom: 4, crop: { x: 290, y: 190, width: 220, height: 220 } });
+
+    // **手柄必须优先**：框比视口略大时边上的手柄可能还在视野里，那条路要一直可用；
+    // 否则用户连「把框缩小一点、让框外空白重新出现」这条自救路径都没有。
+    await pointer(wrapper, "pointerdown", 0, 0);
+    await pointer(wrapper, "pointermove", -40, -40);
+
+    // nw 拖到屏幕 (−40,−40) = 源 (280,180)，se 角 (510,410) 固定 → {280,180,230,230}：边长
+    // 220 → 230，**尺寸确实变了**（不是被误判成平移或移动选框）。
+    expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 280, y: 180, width: 230, height: 230 }]);
+    expect(wrapper.emitted("update:pan")).toBeUndefined();
+  });
+});
+
 describe("手柄命中：命中半径内取离指针最近的手柄", () => {
   /**
    * 小选区场景（本组两条共用）：源图 800×600、容器 400×400 → 适配比例 0.5、偏移 (0,50)。
