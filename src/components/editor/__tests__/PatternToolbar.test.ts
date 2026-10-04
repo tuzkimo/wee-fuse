@@ -118,9 +118,11 @@ describe("显示开关", () => {
   });
 
   // 【修复轮 1，控制者裁决补】这条断言是把上面两条**各自的 off 半段**（`showGrid: false` 那一次、
-  // `showLabels: false` 那一次）合并成一处更直白的断言：两条用例各跑一次 off 取值，但每次只读
-  // **自己那一颗**按钮的 aria-pressed，于是「把 toggle-labels 的 aria-pressed 绑成 showGrid」
-  // 这种串台写法在那两条里看不出来（被点的那颗按钮自己的那个 prop 是对的）。而 aria-pressed 是
+  // `showLabels: false` 那一次）合并成一处更直白的断言：上面两条用例其实**各能抓住反向的串台**——
+  // `mountToolbar` 的默认是 `showGrid: true`，第二条用例用 `mountToolbar({ showLabels: false })`
+  // 挂载（showGrid 仍为默认 true），把 `toggle-labels` 的 `aria-pressed` 改绑 `showGrid` 之后那里
+  // 会渲染 `"true"`、那条用例直接转红；反向绑定同理被第一条抓住。这条断言的价值是**在同一次挂载里
+  // 同时断言两颗按钮**、把配对关系钉在一处。而 aria-pressed 是
   // 这一控件对辅助技术的**状态陈述**——绑错 prop 意味着读屏用户被告知相反的状态（点开了却听到「未开」）。
   //
   // **本轮复审更正**：这条注释原来写「13 条用例全绿」「被点的那颗按钮两个 prop 取值恰好相同」，
