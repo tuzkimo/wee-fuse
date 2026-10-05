@@ -196,8 +196,13 @@ const pointers = new Map<number, Point>();
 let toolGesture: ToolGesture | null = null;
 let viewGesture: ViewGesture | null = null;
 
-/** 画布上指针位置的 CSS 坐标（相对**容器**左上角；画布是容器的 h-full w-full 子节点，无内边距）。 */
-function localPoint(event: PointerEvent): Point {
+/**
+ * 画布上指针位置的 CSS 坐标（相对**容器**左上角；画布是容器的 h-full w-full 子节点，无内边距）。
+ *
+ * 参数取 `MouseEvent`（`PointerEvent` 是它的子类型）：桌面 wheel 的锚点要复用同一份 rect 换算法，
+ * 不写第二份「clientX − rect.left」。触摸路径不受影响——它传进来的仍是 `PointerEvent`。
+ */
+function localPoint(event: MouseEvent): Point {
   const element = container.value;
   if (element === null) return { x: event.clientX, y: event.clientY };
   const rect = element.getBoundingClientRect();
@@ -394,6 +399,58 @@ function onPointerCancel(event: PointerEvent): void {
   }
   if (toolGesture !== null && toolGesture.pointerId === event.pointerId) toolGesture = null;
   draw();
+}
+
+// ---------------------------------------------------------------------------
+// 桌面 wheel：平移与以指针为锚的缩放（**桌面调试增强**）
+// ---------------------------------------------------------------------------
+
+/**
+ * 与 `core/pattern/view.ts` 的 `requireScale` **同一口径、同一措辞**：同一个量在两处的错误消息
+ * 必须逐字对上，否则读错误消息的用例会漂。
+ */
+function requireWheelScale(scale: number): number {
+  if (typeof scale !== "number" || !Number.isFinite(scale)) {
+    throw new Error(`缩放比例必须是有限数字（当前 ${String(scale)}）`);
+  }
+  if (scale <= 0) throw new Error(`缩放比例必须大于 0（当前 ${scale}）`);
+  return scale;
+}
+
+/**
+ * 桌面（鼠标滚轮 / 触控板）的 `wheel`。**定位：桌面调试增强**——主规格 §6.2 说桌面端仅开发调试，
+ * 而在此之前桌面上**根本没有平移手段**（单指 = 画笔，工具栏只有缩放与适配）：触控板双指在浏览器里
+ * 就是 `wheel`，没有这条通路时它的效果是**页面跟着滚**（人工验证实测「整个页面在动」）。
+ *
+ * - **无修饰键 = 平移**：`dx = -deltaX`、`dy = -deltaY`（滚轮下滑把内容向上带，与触摸板「往上推内容」
+ *   同一手感）。夹取交给 `panCellView`，组件里不写第二份夹取。
+ * - **`ctrlKey` = 以指针位置为锚缩放**：触控板的捏合、以及浏览器把捏合映射出来的 `ctrl+wheel`
+ *   都走这一支。`nextScale = view.scale × exp(-deltaY × 0.002)`（滚上 / 双指张开 = 放大），
+ *   锚点是**指针所在的 local 点**，越界与锚点数学由 `zoomCellView` 全权处理。
+ *
+ * **触摸屏的双指路径不受影响**：它走 `pointer*`（模板上的 `touch-none` 保留 `touch-action: none`），
+ * 与这条 wheel 通路各走各的；本处理器一行都不碰 `pointers` / `toolGesture` / `viewGesture`。
+ *
+ * **为什么用模板上的 `@wheel.prevent`，而不是手动 `addEventListener(..., { passive: false })`**：
+ * Chrome 只把 `window` / `document` / `body` 上的 `wheel` 默认设成 passive，`<canvas>` 上的不是——
+ * 所以 `.prevent` 真的能生效；手动注册还得在 `onBeforeUnmount` 里摘掉，多一条可能漏掉的接线。
+ *
+ * **两种输入各自的失败口径**（`AGENTS.md`「入口校验」）：分量非有限的 `deltaX` / `deltaY` 是平台
+ * 给出的**退化事件**，忽略它（不写 store、不 emit）；而 `nextScale` 非有限或 ≤ 0 是**我们自己的
+ * 算术**出了问题（`exp` 上溢），必须响亮失败——`.prevent` 已经在处理器之前取消了默认行为，
+ * 所以抛错也不影响「页面不会跟着滚」。
+ */
+function onWheel(event: WheelEvent): void {
+  const { deltaX, deltaY } = event;
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return;
+  const grid = gridSize();
+  if (event.ctrlKey) {
+    const nextScale = props.view.scale * Math.exp(-deltaY * 0.002);
+    requireWheelScale(nextScale);
+    emit("update:view", zoomCellView(props.view, viewport.value, grid, nextScale, localPoint(event)));
+    return;
+  }
+  emit("update:view", panCellView(props.view, viewport.value, grid, -deltaX, -deltaY));
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +657,7 @@ watch([() => props.view, () => props.currentColor, () => props.showGrid, () => p
       @pointerup="onPointerUp"
       @pointercancel="onPointerCancel"
       @lostpointercapture="onPointerUp"
+      @wheel.prevent="onWheel"
     />
   </div>
 </template>
