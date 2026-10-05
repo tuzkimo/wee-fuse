@@ -68,7 +68,18 @@ interface Reading {
 type DirectionSummary =
   | { readonly direction: Direction; readonly status: "idle" }
   | { readonly direction: Direction; readonly status: "no-lower" }
-  | { readonly direction: Direction; readonly status: "no-upper"; readonly lower: number }
+  | {
+      readonly direction: Direction;
+      readonly status: "no-upper";
+      /** 档位梯**末档**的档位值（它三项全过，所以「上界未触及」）。 */
+      readonly lastLadderValue: number;
+      /**
+       * 档位梯里判定不是 `pass` 的档数。**不是**用来判断收不收敛，而是为了让结论文案与表格自洽：
+       * 只要它 > 0，读数就非单调（本页扫完全部 17 档正是为了如实暴露这种读数），
+       * 结论就不能写成「全部 17 档通过」。
+       */
+      readonly failedLadderCount: number;
+    }
   | {
       readonly direction: Direction;
       readonly status: "bisected";
@@ -227,9 +238,15 @@ function summarize(direction: Direction, rows: readonly Reading[]): DirectionSum
   if (ladder.length === 0) return { direction, status: "idle" };
   const bounds = findBounds(ladder);
   if (bounds === null) {
-    const anyPass = ladder.some((r) => r.verdict === "pass");
-    if (!anyPass) return { direction, status: "no-lower" };
-    return { direction, status: "no-upper", lower: ladder[ladder.length - 1]!.value };
+    const failedLadderCount = ladder.filter((r) => r.verdict !== "pass").length;
+    // 一档都没过 ⇒ 没有可收敛的下界（failedLadderCount === ladder.length ⟺ 没有任何一档 pass）
+    if (failedLadderCount === ladder.length) return { direction, status: "no-lower" };
+    return {
+      direction,
+      status: "no-upper",
+      lastLadderValue: ladder[ladder.length - 1]!.value,
+      failedLadderCount,
+    };
   }
   let converged = bounds.lower;
   for (const row of rows) {
@@ -317,7 +334,13 @@ function conclusionText(summary: DirectionSummary): string {
     return `${label}：档位梯的第一档（${LADDER[0]}）三项判据就没过——没有可收敛的下界，二分未执行（如实记录，不外推）。`;
   }
   if (summary.status === "no-upper") {
-    return `${label}：档位梯全部 ${LADDER.length} 档通过——上界未触及，二分未执行（要更高只能加档位梯，不许外推）。`;
+    // 末档通过只说明「上界未触及」；梯上另有未通过的档位时必须如实说出来，
+    // 否则结论会与本页自己的表格矛盾（读数非单调时「全部 17 档通过」是假的）。
+    const tail =
+      summary.failedLadderCount === 0
+        ? `全部 ${LADDER.length} 档均通过，二分未执行`
+        : `本梯另有 ${summary.failedLadderCount} 档未通过（读数非单调，勿外推），二分未执行`;
+    return `${label}：末档 ${summary.lastLadderValue} 通过、上界未触及；${tail}`;
   }
   return `${label}：下界 ${summary.lower}（末档三项全过）· 上界 ${summary.upper}（${verdictText(summary.upperVerdict)}）· 二分 ${BISECT_STEPS} 次后收敛值 ${summary.converged}`;
 }
