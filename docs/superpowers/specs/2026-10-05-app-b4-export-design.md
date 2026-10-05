@@ -470,8 +470,16 @@ export function createCanvasStrict(width: number, height: number): HTMLCanvasEle
 export function requireContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D
 export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob>
 export function downloadBlob(blob: Blob, filename: string): void
-export function exportFilename(projectName: string, item: ExportItemLabel): string
+export function assertCanvasPainted(canvas: HTMLCanvasElement): void
+export function exportFilename(
+  projectName: string,
+  item: ExportItemLabel,
+  tile?: { rowIndex: number; colIndex: number },   // 只有施工图带；非分片项**不带序号**
+): string
 ```
+
+**六条签名以契约 §2 为准**（2026-10-05 按任务 3 的实现者回报更正：本节早先只列了 5 条、且 `exportFilename` 漏了 `tile` 形参）。
+`assertCanvasPainted` 是规格 §9 第 5 条那条自检的落点，它的**生产消费者是任务 4 的导出面板**（渲染后、`canvasToBlob` 之前调用）。
 
 - `createCanvasStrict`：`width` / `height` 必须是**整数且 ≥1**（措辞沿用既有守卫）；建好并写宽高后
   **回读** `canvas.width` / `canvas.height`——浏览器对超限画布会**静默钳制**（或置 0），读回不一致即抛中文错误。

@@ -3783,7 +3783,7 @@ npx vitest run src/services/__tests__/exporter.test.ts
 
 | 变异 | 实测红数 | 失败点标题（逐条抄 `FAIL` 行） | 还原后复跑 |
 |---|---|---|---|
-| M8 删掉回读校验 | 权威值 **3**（复跑确认后填你的实测值） | （实现者回填，逐条抄 `FAIL` 行） | 全绿（回填 `Test Files 1 passed` / `Tests 25 passed`） |
+| M8 删掉回读校验 | 权威值 **3**（复跑确认后填你的实测值） | （实现者回填，逐条抄 `FAIL` 行） | 全绿（回填 `Test Files 1 passed` / `Tests 26 passed`） |
 
 - [ ] **步骤 8：变异实测 M13（`exportFilename` 跳过 `normalizeProjectName`）**
 
@@ -3848,8 +3848,9 @@ git commit -m "feat(services): 导出落盘与文件名"
 1. `npm run test` / `$env:TZ="UTC"; npm run test` / `npm run build` 三条命令的**原始输出尾巴**
    （文件数 / 用例数 / 构建结果），以及与本任务落地前后的对比；
 2. 步骤 7 / 8 的**实测红数与失败点标题**（逐条抄 `FAIL` 行），以及 `git checkout --` 还原后复跑的
-   全绿证据（`Test Files 1 passed` / `Tests 25 passed`）；与权威值（M8 = 3、M13 = 4）不一致时
-   立刻报告，**不许改实现或用例去对齐任何文档里的数字**；
+   全绿证据（`Test Files 1 passed` / `Tests 26 passed`——**2026-10-05 更正：本节早先写的 `25` 是计数错**，
+   任务 3 的实现者实测为 26 并如实上报，未为对齐数字改任何实现或用例）；与权威值（M8 = 3、M13 = 4）
+   不一致时立刻报告，**不许改实现或用例去对齐任何文档里的数字**；
 3. **自加的一条变异**（本片段未点名，由你挑一处最能暴露假绿的断言做）：建议二选一——
    （a）把 `getImageData(SELF_CHECK_X, SELF_CHECK_Y, 1, 1)` 的常量改成 `0` / `0`；
    （b）在 `downloadBlob` 里删掉 `link.download = safeName;`。动作、实测红数、失败点标题、
