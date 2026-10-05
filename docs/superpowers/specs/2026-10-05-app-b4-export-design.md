@@ -231,14 +231,19 @@ export interface SheetTilePlan {
 （`const c = tile.cellPx`）就能绕过；它挡的是「后人顺手再写一份」，不是恶意规避。第 2 条的同理：把 stride
 拆成两步赋值即可绕过。两道闸门的价值在 §13.3 用**变异**证明（把 `cellPx` 写回 `sheet.ts` → 恰好 1 红）。
 
-### 4.5 格内色号的墨色
+### 4.5 格内色号的墨色与颜色的序列化
 
-`export function labelInk(rgb: readonly [number, number, number]): "#000000" | "#ffffff"`：取该色
-`rgbToLab` 的 `L*`，**离黑（L\*=0）与白（L\*=100）谁近用谁**（`L* ≥ 50` → 黑字，否则白字）。
+`export function labelInk(rgb: readonly [number, number, number]): "rgb(0, 0, 0)" | "rgb(255, 255, 255)"`：
+取该色 `rgbToLab` 的 `L*`，**离黑（L\*=0）与白（L\*=100）谁近用谁**（`L* ≥ 50` → 黑字，否则白字）。
 它**不放进 plan**（plan 保持纯数据），由渲染器按 `palette.colors[index].rgb` 现算。用 Lab 而不是自算
 相对亮度，是为了不破坏「颜色计算一律在 CIE Lab 空间做」这条项目约束；这是**对比度启发式**，不是色差
 判定，也不是可采购信息。色卡外的下标（坏数据）由 `patternToRgbaImage` 那一类既有守卫负责响亮失败，
 本处按 `palette.colors[index]` 缺失即抛。
+
+`export function rgbCss(rgb): string` 是**输出层唯一的颜色序列化口径**（`rgbCss([255, 0, 0]) === "rgb(255, 0, 0)"`）：
+两个渲染器共用，不许在 `sheet.ts` / `share.ts` 里各拼一份 `rgb(...)` 字符串——同一件事的第二份实现，
+漂移（例如一处夹取、一处不夹）在任何断言里都看不出来。夹取口径与 `rgbToLab` 一致：越界的**有限**值夹到
+0–255，非有限即抛。两者都由 `layout.ts` 导出（`labelInk` 与 `rgbCss` 是同一类「输出层的颜色口径」）。
 
 ---
 
@@ -538,6 +543,7 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | `cellBox(tile, col, row)` | `col` / `row` **安全整数**且落在本片范围内（越界抛，不夹取） |
 | `countTileBeads(pattern, tile)` | 同上两条（范围与安全整数）；O(本片格数) |
 | `labelInk(rgb)` | 三个分量**有限**（越界的有限值按 `rgbToLab` 的既有口径夹取）；非有限即抛 |
+| `rgbCss(rgb)` | 同上（越界的有限值夹到 0–255；非有限即抛），保证不产出 `rgb(NaN, …)` |
 | `planLegend(usages, options)` | `usages` 是数组；每项 `code` 非空字符串、`name` 字符串、`count` 非负整数、`code` 不重复；`options.maxEdge` 同上 |
 | `planShare(pattern, options)` | 同 `planSheets` 的前两条 + `maxEdge` |
 | `drawSheetTile` / `drawLegend` / `drawShare` | plan 的 `kind` 必须匹配（把 share plan 传给 `drawSheetTile` ⇒ 抛）；**`tile` 必须是 `plan.tiles` 里的同一个对象**（`includes` 判定，防「A 计划的 tile 配 B 计划的 plan」——那种错配不会报错、只会把坐标映射到另一个片）；`pattern.paletteId === palette.id` |
@@ -579,11 +585,14 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 3. **渲染器 → 产物尺寸**：导出产物的画布尺寸 = 格数 × cellPx（与 `THUMBNAIL_MAX_EDGE = 512` 无关）。
    变异：把导出改走 `renderPatternThumbnail` → 应红。
 
-### 13.3 必须转红的变异清单（逐条点名「改了哪一行、期望几条红」）
+### 13.3 必须转红的变异清单（逐条点名「改哪一行、打红哪条断言」）
 
-**本表必须由起草者在写计划前实跑一遍并回填实测红数**（B3 的教训：简报里的期望红数与实测不符是本轮最有价值的教训本身）。
+**红数在实现之后实跑回填，不许预估。** 本表在计划阶段只列「变异动作 + 它该打红的断言」；**实现者必须在
+自己的报告里逐条附实测红数与失败点标题**，控制者与审查者各自独立复核（B3 的教训：简报里的「期望红数」
+与实际不符，是那一轮最有价值的教训本身；把预估数字当验收标准会同时误导实现者与审查者）。
+纪律不变：**断言存在 ≠ 断言有效——只有变异或删行能证明。**
 
-| # | 变异 | 期望判据 |
+| # | 变异 | 该红的断言（红数由实现者实跑回填） |
 |---|---|---|
 | M1 | `cellBox` 去掉 `− tile.originCol` | §13.2-2 与分片用例红 |
 | M2 | `cellBox` 的越界守卫改成夹取 | 越界用例红 1 |
