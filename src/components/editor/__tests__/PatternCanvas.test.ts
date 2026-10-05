@@ -1,10 +1,11 @@
 // src/components/editor/__tests__/PatternCanvas.test.ts
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ViewTransform } from "@/core/crop/view";
+import { screenToOriented, type ViewTransform } from "@/core/crop/view";
 import { loadPalette } from "@/core/palette/registry";
 import type { Palette } from "@/core/palette/types";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
+import { maxCellScale, minCellScale } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 
@@ -702,5 +703,202 @@ describe("三指：只用前两根，第三根既不产生平移也不取消当�
     await pointer(wrapper, "pointerup", 340, 340, { pointerId: 3, isPrimary: false });
 
     expect(wrapper.emitted("paint")).toBeUndefined();
+  });
+});
+
+/**
+ * F3（人工验证发现）：桌面（鼠标 / 触控板）此前**根本没有平移手段**——模板上只有 `pointer*`，
+ * 触控板的双指手势在浏览器里是 `wheel`，于是「整个页面在动」（人类伙伴实测原话）。
+ * 这一组钉的是新加的 wheel 通路：无修饰键 = 平移、`ctrlKey` = 以指针为锚缩放。
+ *
+ * **定位是桌面调试增强**（主规格 §6.2：桌面端仅开发调试），所以这里不进 core：
+ * wheel 是组件层的输入通路，几何仍然**全部**由 `core/pattern/view.ts` 的既有函数算。
+ * 触摸屏的双指路径**不受影响**——它走 `pointer*`（`touch-action: none` 保留），本组一行都没碰。
+ *
+ * 判据一律是 **emit 出来的 `update:view`**（组件不自己写 store，也不自己夹取 props.view），
+ * 外加 `defaultPrevented`（「页面不会跟着滚 / 浏览器不会自己缩放」在本环境里唯一可观察的形式）。
+ */
+describe("桌面 wheel：平移与 ctrl+wheel 以指针为锚缩放（F3，桌面调试增强）", () => {
+  /**
+   * 派发一次**可取消**的 `wheel` 事件（`cancelable: true` 是 `defaultPrevented` 唯一可观察的前提）。
+   *
+   * 坐标是**容器本地**坐标：本文件的桩矩形 left / top 都是 0，所以 `clientX` / `clientY` 就是
+   * `localPoint()` 交出来的锚点。默认无位移、无修饰键——用例只显式给关心的那几个分量。
+   */
+  async function wheel(
+    wrapper: ReturnType<typeof mount>,
+    options: {
+      clientX?: number;
+      clientY?: number;
+      deltaX?: number;
+      deltaY?: number;
+      ctrlKey?: boolean;
+    } = {},
+  ): Promise<WheelEvent> {
+    const canvas = wrapper.get("[data-testid='editor-canvas']");
+    const event = withMouseFields(
+      new WheelEvent("wheel", {
+        clientX: options.clientX ?? 0,
+        clientY: options.clientY ?? 0,
+        deltaX: options.deltaX ?? 0,
+        deltaY: options.deltaY ?? 0,
+        ctrlKey: options.ctrlKey ?? false,
+        bubbles: true,
+        cancelable: true,
+      }),
+      options,
+    );
+    canvas.element.dispatchEvent(event);
+    await wrapper.vm.$nextTick();
+    return event;
+  }
+
+  /**
+   * 把 happy-dom 丢掉的那三个 `MouseEvent` 成员补回实例上。
+   *
+   * **为什么必须补**：happy-dom（v20 实测）的 `WheelEvent` **不是** `MouseEvent` 的子类
+   * （`new WheelEvent("wheel", { ctrlKey: true }) instanceof MouseEvent === false`），构造参数里的
+   * `ctrlKey` / `clientX` / `clientY` 会被**静默丢掉**（读出来是 `undefined`），只有 `deltaX` /
+   * `deltaY` 留下。真机上 `WheelEvent extends MouseEvent`，这三个成员真实存在——不补的话
+   * `ctrlKey` 恒为假、**ctrl 那一支永远走不到**，本组用例会退化成「恒定走平移分支」的假绿，
+   * 而锚点也永远只能是 (0,0)。补的是**桩的缺口**，不是被测行为。
+   */
+  function withMouseFields<T extends WheelEvent>(
+    event: T,
+    fields: { ctrlKey?: boolean; clientX?: number; clientY?: number },
+  ): T {
+    Object.defineProperties(event, {
+      ctrlKey: { value: fields.ctrlKey ?? false, configurable: true },
+      clientX: { value: fields.clientX ?? 0, configurable: true },
+      clientY: { value: fields.clientY ?? 0, configurable: true },
+    });
+    return event;
+  }
+
+  /** 取最后一次 `update:view` 的载荷（拿不到就抛，避免下面写成对 `undefined` 的恒真断言）。 */
+  function lastView(wrapper: ReturnType<typeof mount>): ViewTransform {
+    const view = wrapper.emitted("update:view")?.at(-1)?.[0] as ViewTransform | undefined;
+    if (view === undefined) throw new Error("没有 emit update:view");
+    return view;
+  }
+
+  it("无修饰键 wheel → 平移：偏移 -= delta（滚轮下滑把内容向上带，两个轴同号），且取消默认行为", async () => {
+    const wrapper = mountCanvas(); // 32×32 + VIEW_32 `{24, -200, -200}`，视口 400×400
+    await wrapper.vm.$nextTick();
+
+    // 方向钉死：`dx = -deltaX`、`dy = -deltaY`（两个轴各自独立）。把符号反过来（改回 `+delta`）
+    // 会得到 `{offsetX: -170, offsetY: -150}`，这一条立刻红。
+    const down = await wheel(wrapper, { deltaX: 30, deltaY: 50 });
+    expect(lastView(wrapper)).toEqual({ scale: 24, offsetX: -230, offsetY: -250 });
+    // 「页面不会跟着滚」在本环境里唯一可观察的形式：事件被取消（模板上的 `@wheel.prevent`）。
+    expect(down.defaultPrevented).toBe(true);
+
+    // 反方向（滚轮上滑 / 双指上推）：偏移减小，同样只由 -delta 得到。
+    await wheel(wrapper, { deltaY: -50 });
+    expect(lastView(wrapper)).toEqual({ scale: 24, offsetX: -200, offsetY: -150 });
+  });
+
+  it("wheel 平移也过 clampView：拖到两端都顶住，不出现图纸之外的空白", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 32×32 在 24px/格下是 768px > 视口 400px ⇒ 偏移的可取区间是 [400 − 768, 0] = [−368, 0]。
+    // 往下滑：`dy = -900` ⇒ 未夹取时是 −1100，夹取后是 −368。
+    // **把 `panCellView` 换成「自己加偏移」的写法（漏掉夹取）这条立刻红**（实收 −1100）。
+    await wheel(wrapper, { deltaX: 900, deltaY: 900 });
+    expect(lastView(wrapper)).toEqual({ scale: 24, offsetX: -368, offsetY: -368 });
+
+    // 另一端：`dy = +900` ⇒ 未夹取时是 +700，夹取后是 0（图纸左 / 上边缘不许离开视口边缘）。
+    await wheel(wrapper, { deltaX: -900, deltaY: -900 });
+    expect(lastView(wrapper)).toEqual({ scale: 24, offsetX: 0, offsetY: 0 });
+  });
+
+  it("ctrl+wheel（触控板捏合）→ 以**指针位置**为锚缩放：滚上放大，锚点处的格子坐标不变", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 锚点取离视口中心明显偏的位置（100,100 ≠ 200,200）：锚点若写成视口中心，下面的偏移会变成
+    // `200 − 400×e^0.2 ≈ −288.6`（实收 −266.4），这一条立刻红。
+    const anchor = { x: 100, y: 100 };
+    const event = await wheel(wrapper, {
+      clientX: anchor.x,
+      clientY: anchor.y,
+      deltaY: -100,
+      ctrlKey: true,
+    });
+    // ctrl+wheel 也必须取消默认行为：不取消就是浏览器**自己**缩放整个页面（与画布缩放打架）。
+    expect(event.defaultPrevented).toBe(true);
+
+    // 方向与系数一起钉死：`nextScale = view.scale × exp(-deltaY × 0.002)` ⇒ 24 × e^0.2 ≈ 29.3137
+    // （滚上 / 双指张开 = 放大）。把系数改成 0.001、或把 `-deltaY` 写成 `+deltaY`，这里都红。
+    const ratio = Math.exp(0.2);
+    const view = lastView(wrapper);
+    expect(view.scale).toBeCloseTo(24 * ratio, 10);
+    // 偏移由 `zoomCellView` 的契约给出：`offset' = anchor − (anchor − offset) × (scale' / scale)`。
+    // 锚点 (100,100)、原偏移 (200,200) 距锚点各 300 ⇒ 偏移各 −266.4208…
+    expect(view.offsetX).toBeCloseTo(anchor.x - (anchor.x - VIEW_32.offsetX) * ratio, 10);
+    expect(view.offsetY).toBeCloseTo(anchor.y - (anchor.y - VIEW_32.offsetY) * ratio, 10);
+
+    // 锚点不变量（规格 §4.3 的口径）：锚点处的**格子坐标**缩放前后不变。用既有的权威换算
+    // `screenToOriented` 现算，不在用例里手写第二份「(屏幕 − 偏移) / 比例」。
+    // 这正是「锚点必须是指针」与「锚点是视口中心」的分水岭（后者这里会差 1.75 格）。
+    const before = screenToOriented(anchor, VIEW_32);
+    const after = screenToOriented(anchor, view);
+    expect(after.x).toBeCloseTo(before.x, 9);
+    expect(after.y).toBeCloseTo(before.y, 9);
+  });
+
+  it("ctrl+wheel 的两个方向与两个夹取端：滚下缩小、比例被夹进 [minCellScale, maxCellScale]", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+    const grid = { width: 32, height: 32 };
+    const viewport = { width: 400, height: 400 };
+
+    // ① 滚下（deltaY 为正）= 缩小：24 × e^−0.2 ≈ 19.65（仍在 [12.5, 64] 内，未被夹取）。
+    await wheel(wrapper, { clientX: 100, clientY: 100, deltaY: 100, ctrlKey: true });
+    expect(lastView(wrapper).scale).toBeCloseTo(24 * Math.exp(-0.2), 10);
+
+    // ② 上界：一次极端放大（24 × e^10 ≈ 528000）必须被 `maxCellScale` 夹住——不夹取的话这里的比例
+    //    会是 528000，画布上是一格几百万像素。
+    await wheel(wrapper, { clientX: 100, clientY: 100, deltaY: -5000, ctrlKey: true });
+    expect(lastView(wrapper).scale).toBe(maxCellScale(viewport, grid));
+
+    // ③ 下界：一次极端缩小（24 × e^−10 ≈ 0.0011）被夹到适配比例 `minCellScale` = 12.5；此时
+    //    32 格 × 12.5 = 400 = 视口宽，两轴都落进「图像不大于视口 ⇒ 居中锁定」那一支 ⇒ 偏移归 0。
+    //    **如实标注**：这一支里锚点不变量**不成立**——`zoomCellView` 的 JSDoc 写明「夹取生效时锚点
+    //    会变」，用户看到的就是「缩到适配就顶住、以中心为准」。所以本条只钉夹取后的结果。
+    await wheel(wrapper, { clientX: 390, clientY: 390, deltaY: 5000, ctrlKey: true });
+    expect(lastView(wrapper)).toEqual({ scale: minCellScale(viewport, grid), offsetX: 0, offsetY: 0 });
+  });
+
+  it("退化输入：delta 非有限时一个字节都不写 store；nextScale 非有限时响亮失败", async () => {
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 非有限的 delta 是平台给出的退化事件：忽略它（不 emit）。少了这条守卫，`panCellView` 的
+    // `requireFinite` 会抛错——那等于把一个「可以安全忽略」的输入升级成渲染路径上的异常。
+    await wheel(wrapper, { deltaY: Number.POSITIVE_INFINITY });
+    await wheel(wrapper, { deltaX: Number.NaN, deltaY: 0 });
+    expect(wrapper.emitted("update:view")).toBeUndefined();
+
+    // 反过来，`nextScale` 非有限是**我们自己的算术**出了问题（`exp` 上溢）：必须**响亮失败**，
+    // 而不是静默夹取成上界、也不是静默忽略——**检查点在 `zoomCellView` 内部的 `requireScale`**
+    // （消息与 `core/pattern/view.ts` 的 `requireScale` 逐字一致），组件**不复制第二份守卫**：
+    // 删掉组件里那份重复守卫时这条断言**照样绿**（实测 0 红，见报告 M-F3-f 与构建记录 §11）。
+    // 所以它钉的是「坏视图一个字节都没写出去 + 响亮失败」这个外部可观察行为，而不是某个具体函数。
+    // `deltaY = -1e308` 是**有限**值（所以过得了上面那道守卫），但 `exp(2e305)` 是 `Infinity`。
+    //
+    // **观察通道**：本仓的 vitest + happy-dom 不让 happy-dom 吞掉监听器里的异常——错误直接从
+    // `dispatchEvent` 抛回调用方（实测；真实浏览器里同一个错误是报到 window 的 `error` 事件上、
+    // 不影响 `dispatchEvent` 的返回）。两种形态都算「响亮失败」；要打掉的是**静默夹取成上界**或
+    // **提前 return 忽略掉**这两种写法——那样下面三条会同时红。
+    const canvas = wrapper.get("[data-testid='editor-canvas']");
+    const overflow = withMouseFields(
+      new WheelEvent("wheel", { deltaY: -1e308, bubbles: true, cancelable: true }),
+      { ctrlKey: true },
+    );
+    expect(() => canvas.element.dispatchEvent(overflow)).toThrow(/缩放比例必须是有限数字/);
+    expect(overflow.defaultPrevented).toBe(true); // 抛错也不影响「页面不会跟着滚」
+    expect(wrapper.emitted("update:view")).toBeUndefined(); // 抛在 emit 之前：坏视图一个字节都没写出去
   });
 });

@@ -5,7 +5,13 @@
 // 保存、未保存离开拦截、B1-8 重载、键盘撤销。**画与手势在 PatternCanvas，状态在 stores/editor.ts，
 // 视图数学在 core/pattern/view.ts**；本文件里不许出现第二份坐标数学或第二个 dirty 标志。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
+import {
+  RouterLink,
+  onBeforeRouteLeave,
+  useRoute,
+  useRouter,
+  type RouteLocationRaw,
+} from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
 import type { Rect } from "@/core/image/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
@@ -343,7 +349,17 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 /**
- * 关闭 / 刷新标签页时用浏览器原生提示（规格 §8.4）。
+ * **整页导航**（改地址栏 / 刷新 / 关标签页）**都走这条通道，但弹不弹由浏览器决定**（规格 §8.4）：
+ * 实测 Chrome **刷新有提示、关标签页不弹**。
+ *
+ * **两条如实边界**（2026-10-04 人工实测，Chrome）：
+ *
+ * 1. 它**只**覆盖**整页导航**：刷新时 `preventDefault()` 会弹原生提示，而**关闭标签页时不会弹**
+ *    （实测）——所以后一种情况下**未保存的改动会静默丢失**。这不是本页能补的（提示是否出现由浏览器
+ *    决定），移动壳里也没有标签页：**退出 / 切后台**的生命周期处理留给引入 Tauri 壳的那一轮
+ *    （规格 §8.4 的既有口径）。
+ * 2. **SPA 内的路由离开不走这条路**（返回图纸库 / 去重跑 / 换 id）：页面不会被卸载，走的是
+ *    `onBeforeRouteLeave` + 页面内确认条——那一条不依赖浏览器给不给面子。
  *
  * **`preventDefault()` 就是这条通道的全部**：现代浏览器不再读 `returnValue` 的文案，
  * 但它仍然要求处理器**显式**取消事件才弹框。干净时**什么都不做**（连 `returnValue` 都不设），
@@ -435,7 +451,26 @@ function rerun(): void {
     </p>
 
     <template v-else-if="session.record">
-      <h1 class="text-3xl font-bold text-slate-900">{{ session.record.meta.name }}</h1>
+      <!--
+        回图纸库入口（F1：人工验证发现编辑页**没有任何回库入口**——Tauri 壳里没有浏览器工具栏，
+        这个缺口更明显）。它是**普通的 `RouterLink`**：
+
+        - 不用 `@click="router.push(...)"`：`RouterLink` 渲染成 `<a>`，平板与读屏都更好
+          （主规格 §6.4）；
+        - **不为它写任何新的拦截逻辑**——`onBeforeRouteLeave` 会把这次导航当成一次普通的离开，
+          有未保存改动时自动弹**同一条**页面内确认条（下面那段 JSDoc 就是那条守卫）；
+        - 触控目标 ≥44px（`min-h-11`）、字号 ≥16px（`text-base`，主规格 §6.4）。
+      -->
+      <div class="flex flex-wrap items-center gap-3">
+        <RouterLink
+          data-testid="back-to-library"
+          to="/"
+          class="inline-flex min-h-11 items-center rounded border border-slate-300 px-4 text-base text-slate-700"
+        >
+          ← 回图纸库
+        </RouterLink>
+        <h1 class="text-3xl font-bold text-slate-900">{{ session.record.meta.name }}</h1>
+      </div>
       <!-- 尺寸与用色数读**图纸**（规格 §8.3），不是 `meta` 的冗余字段 -->
       <p v-if="editor.pattern" data-testid="editor-size" class="mt-2 text-lg text-slate-600">
         {{ editor.pattern.width }} × {{ editor.pattern.height }} ·
