@@ -94,7 +94,8 @@
  * **为什么 core 自己声明 `RenderTarget2D` 而不是用 `CanvasRenderingContext2D`**：后者在分层边界闸门
  * （`src/__tests__/coreBoundary.test.ts` 的 `FORBIDDEN_GLOBALS`）里是禁用全局——core 不得引用 DOM 全局。
  * 按 `AGENTS.md` 的口径「在 core 定义接口，在 services 注入实现」：`services/exporter.ts` 把真 ctx 传进来
- * （结构上满足本接口），测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
+ * （**2026-10-05 更正：不是"结构上满足"**——真实 ctx 与它有四处不兼容：`fillStyle` / `strokeStyle` /
+ * `textAlign` / `textBaseline`；窄化在 `services/exporter.ts` 的 `requireContext2D` 里做一次），测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
  */
 export interface PixelRect {
   readonly x: number;
@@ -1205,6 +1206,8 @@ git commit -m "feat(render): 施工图/用量表/分享图的布局与唯一坐�
    M14 属任务 4）。做法：改一行 → 跑聚焦用例 → 记红数 → `git checkout -- <文件>` 还原 → 再跑一次确认回到
    全绿。**不许预估红数**；
 4. 任何与本计划 / 契约不符之处，以及你的处置（不许自行发明名字）。
+
+---
 
 ---
 
@@ -3450,9 +3453,11 @@ export function createCanvasStrict(width: number, height: number): HTMLCanvasEle
  * 取 2D 上下文；拿不到即抛（不静默返回 `null`，让调用方在别处裸崩成 `TypeError`）。
  *
  * **消费者**：`ExportPanel.vue` 把返回值直接传给 `core/render/sheet.ts` / `share.ts`——
- * `CanvasRenderingContext2D` 结构上满足 core 的 `RenderTarget2D`，无需转换、无需断言。
+ * **返回类型就是 `RenderTarget2D`**（内部一次具名窄化）。**2026-10-05 更正**：本节早先那句「结构上满足、
+ * 无需转换、无需断言」是**假的**（任务 3 的审查用编译器实测出四处不兼容：`fillStyle`/`strokeStyle`/
+ * `textAlign`/`textBaseline`）。任务 4 的 `drawSheetTile(requireContext2D(canvas), …)` 写法因此原样可编译。
  */
-export function requireContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+export function requireContext2D(canvas: HTMLCanvasElement): RenderTarget2D {
   const ctx = canvas.getContext("2d");
   if (ctx === null) {
     throw new Error("无法获取 2D 上下文");
@@ -3783,7 +3788,7 @@ npx vitest run src/services/__tests__/exporter.test.ts
 
 | 变异 | 实测红数 | 失败点标题（逐条抄 `FAIL` 行） | 还原后复跑 |
 |---|---|---|---|
-| M8 删掉回读校验 | 权威值 **3**（复跑确认后填你的实测值） | （实现者回填，逐条抄 `FAIL` 行） | 全绿（回填 `Test Files 1 passed` / `Tests 26 passed`） |
+| M8 删掉回读校验 | 权威值 **3**（复跑确认后填你的实测值） | （实现者回填，逐条抄 `FAIL` 行） | 全绿（回填 `Test Files 1 passed` / `Tests 25 passed`） |
 
 - [ ] **步骤 8：变异实测 M13（`exportFilename` 跳过 `normalizeProjectName`）**
 
@@ -3848,9 +3853,8 @@ git commit -m "feat(services): 导出落盘与文件名"
 1. `npm run test` / `$env:TZ="UTC"; npm run test` / `npm run build` 三条命令的**原始输出尾巴**
    （文件数 / 用例数 / 构建结果），以及与本任务落地前后的对比；
 2. 步骤 7 / 8 的**实测红数与失败点标题**（逐条抄 `FAIL` 行），以及 `git checkout --` 还原后复跑的
-   全绿证据（`Test Files 1 passed` / `Tests 26 passed`——**2026-10-05 更正：本节早先写的 `25` 是计数错**，
-   任务 3 的实现者实测为 26 并如实上报，未为对齐数字改任何实现或用例）；与权威值（M8 = 3、M13 = 4）
-   不一致时立刻报告，**不许改实现或用例去对齐任何文档里的数字**；
+   全绿证据（`Test Files 1 passed` / `Tests 25 passed`）；与权威值（M8 = 3、M13 = 4）不一致时
+   立刻报告，**不许改实现或用例去对齐任何文档里的数字**；
 3. **自加的一条变异**（本片段未点名，由你挑一处最能暴露假绿的断言做）：建议二选一——
    （a）把 `getImageData(SELF_CHECK_X, SELF_CHECK_Y, 1, 1)` 的常量改成 `0` / `0`；
    （b）在 `downloadBlob` 里删掉 `link.download = safeName;`。动作、实测红数、失败点标题、
@@ -6609,7 +6613,8 @@ B4 的导出也不消费它；保留还是收窄留给下一次动到它的人�
 - `core/render/types.ts` 的 `RenderTarget2D` 是 **core 里第一份不是纯数据的类型**：core 不得引用 DOM
   全局，而 `CanvasRenderingContext2D` 在边界闸门（`src/__tests__/coreBoundary.test.ts` 的
   `FORBIDDEN_GLOBALS`）的禁用清单里——按本节上一条「在 core 定义接口，在 services 注入实现」的口径，
-  由 `services/exporter.ts` 把真 ctx 传进去（结构上满足该接口），测试用普通对象桩。取舍如实记录：
+  由 `services/exporter.ts` 把真 ctx 传进去（**2026-10-05 更正：不是"结构上满足"**——实测四处不兼容，
+  窄化在 `requireContext2D` 里做一次；见任务 3 的那段 JSDoc），测试用普通对象桩。取舍如实记录：
   换到的是渲染器的全部布局与文字位置都能在 Node 里被断言。
 - `core/render/layout.ts` 的 `planSheets` / `planLegend` / `planShare`：生产消费者是
   `components/editor/ExportPanel.vue`（面板自己持 plan、自己调渲染器）；`cellBox` / `shareCellBox` /

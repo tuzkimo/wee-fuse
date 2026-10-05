@@ -128,7 +128,11 @@ export interface RenderTarget2D {
 }
 ```
 
-`CanvasRenderingContext2D` 结构上满足它 ⇒ `services` 把真 ctx 直接传进去即可；测试用普通对象桩。
+`CanvasRenderingContext2D` **并不**严格满足它（2026-10-05 由任务 3 的审查用编译器实测更正，本节早先那句
+「结构上满足 ⇒ 直接传进去即可」是**假的**）：实测**四处**不兼容——`fillStyle` / `strokeStyle` 是
+`string | CanvasGradient | CanvasPattern`、`textAlign` 含 `"start" | "end"`、`textBaseline` 含
+`"alphabetic" | "hanging" | "ideographic"`。所以窄化在 **`services/exporter.ts` 的 `requireContext2D`
+里做一次**（返回类型就是 `RenderTarget2D`），core 不为此放宽类型（core 必须与 DOM 无关）；测试用普通对象桩。
 **取舍如实记录**：这个接口是 core 里第一份「不是纯数据」的类型，但它换到的是——渲染器的全部布局与
 文字位置都能在 Node 里被断言（happy-dom 的 canvas 是桩，真实像素在本环境永远测不到，见 §14）。
 
@@ -467,7 +471,7 @@ export type ExportWarning =
 
 ```ts
 export function createCanvasStrict(width: number, height: number): HTMLCanvasElement
-export function requireContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D
+export function requireContext2D(canvas: HTMLCanvasElement): RenderTarget2D   // 内部一次具名窄化；§3 有四处不兼容的清单
 export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob>
 export function downloadBlob(blob: Blob, filename: string): void
 export function assertCanvasPainted(canvas: HTMLCanvasElement): void
