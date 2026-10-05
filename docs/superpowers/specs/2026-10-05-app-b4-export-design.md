@@ -159,7 +159,13 @@ export interface RenderTarget2D {
 
 - **格坐标**：`(col, row)`，**全图全局**、安全整数，左上为 `(0, 0)`。
 - **输出像素**：产物画布内的像素，左上为 `(0, 0)`。
-- 唯一映射：`cellBox(tile, col, row) → PixelRect`。分片**只**体现在 tile 的 `originCol` / `originRow` 上。
+- 唯一映射：`cellBox(tile, col, row) → PixelRect`（施工图分片）。分片**只**体现在 tile 的
+  `originCol` / `originRow` 上。
+- 分享图没有 tile（不分片），但**同样不许自己乘格像素**：它的映射是 `shareCellBox(plan, col, row)`，
+  与 `cellBox` 一条口径（安全整数、越界抛错）。
+  **如实记录这个洞是 2026-10-05 由任务 2 起草者发现的**：`SharePlan` 原本只有 `cellPx`，而渲染器不许读
+  `cellPx` ⇒ 分享图的格像素没有合法来源，起草者当时只能拿 `canvasWidth / pattern.width` 反推——那正是
+  「自己乘格像素」。修法就是本条的 `shareCellBox`，并给 `SharePlan` 补 `cols` / `rows`（范围守卫要用）。
 
 ```ts
 // core/render/types.ts
@@ -370,7 +376,8 @@ export type ExportWarning =
   每项 `code` 是非空字符串、`name` 是字符串、`count` 是非负整数、且 **`code` 不重复**
   （重复会让表里出现两行同一个色号——页面看起来正常、数字翻倍，属静默错误）。
 - `planShare(pattern, options)`：`cellPx = clamp(floor(maxEdge / max(width, height)), 4, 64)`；
-  `canvasW = width × cellPx`、`canvasH = height × cellPx`；**无边距、无文字、无分片**。
+  `canvasW = width × cellPx`、`canvasH = height × cellPx`；**无边距、无文字、无分片**；
+  `cols` / `rows` 原样记下图纸宽高（供 `shareCellBox` 的范围守卫）。
 
 ---
 
@@ -389,11 +396,14 @@ export type ExportWarning =
 3. **色块与空格**：逐格 `cellBox` → 每格的值读一次 `cellAt(pattern, col, row)`；实心格 `fillRect`
    （**不画每格边框**，格线统一在第 5 步画）；空格**不填**（整张底已经是白的）只在格内画一条浅灰斜线
    （MARD 有白色豆，**不能用「白 = 空」**，与 B3 规格 §5.5 同一口径）。
-4. **格内色号**：仅当 `plan.labels` 为真时，逐格 `fillText(色号, 格中心, …)`，`font = ${labelFontPx}px`
+4. **格内色号**：仅当 `plan.labels` 为真时，逐格 `fillText(色号, 格中心, …)`，`font = ${labelFontPx}px sans-serif`
    （`labelFontPx = cellPx × 0.38`，与编辑器同比例、**常量各自持有**：那里的 28 是屏幕即时提示，
    这里的 32 是纸面输出，共享会让「改一处影响两处语义不同的观感」变成静默耦合），
    `textAlign: "center"`、`textBaseline: "middle"`，颜色取 `labelInk(palette.colors[index].rgb)`。
    位置取 `cellBox` 的矩形中心（渲染器不自己算中心）。
+   **字体族 `sans-serif` 是必需的，不是风格选择**（2026-10-05 由任务 2 起草者发现）：只写
+   `${labelFontPx}px` 在真实 canvas 上是**非法 CSS font 简写**，赋值会被**静默忽略**、文字沿用上一次的
+   字体——而 happy-dom 的桩完全看不出这一点。**所有 `font` 赋值一律 `${sizePx}px sans-serif`。**
 5. **网格线**：按 `kind` 分三组、由细到粗依次画（`thin` → `major` → `board`），线宽取
    `tile.lineWidths[kind]`。**顺序不能反**：先画粗线会被后画的细线切断，板边界就不再连续。
    **每条线不单独 `beginPath`/`stroke`**：一组线共用一次 `beginPath` + 每线两条 `moveTo`/`lineTo`
@@ -406,16 +416,31 @@ export type ExportWarning =
    （`originCol + 1` … `originCol + cols`），r / c 取 `tile.rowIndex + 1` / `tile.colIndex + 1`
    ——**渲染器不从 `index` 反推网格形状**（那会变成第二份分片数学）。
 
-`drawLegend(target, usages, plan, meta)`（同一个文件，因为它是"施工图的第二种纸"）：标题行 +
-表头 + 每项（色块 / 色号 / 名称 / 颗数）+ 合计行 + 精度声明 + 生成时间。
+`drawLegend(target, palette, usages, plan, meta)`（同一个文件，因为它是"施工图的第二种纸"）：标题行 +
+**表头（仅当 `plan.itemRows ≥ 1`）** + 每项（色块 / 色号 / 名称 / 颗数）+ 合计行 + 精度声明 + 生成时间。
+**`palette` 是必需入参**（2026-10-05 裁定，见 §12 的同名守卫与契约 §2b）：色块要画真色，而 `ColorUsage`
+只有 `code` / `name` / `count`；色号 → rgb 只走 `createPaletteRuntime(palette).indexByCode`（B3 规格 §9.2
+的权威实现），找不到即抛。
+**空表的例外（口径以此为准）**：`usages` 为空时**不画表头、不画色块、不画任何项**，只留标题、`合计 0 颗`、
+精度声明与生成时间——没有数据行的表头是噪声（§13.1 的用例行与本条一致；§6 上一段的「表头」按此限定）。
+**两条入参守卫**：`plan.itemRows !== ceil(usages.length / plan.itemCols)` ⇒ 抛（防「A 计划的表配 B 表」，
+与 R-3 的 `tile ∈ plan.tiles` 同一类：不报错、只让行数溢出画布）；色号不在色卡里 ⇒ 抛。
+
+**图上文案与图上常量集中在 `sheet.ts` 顶部并各带 JSDoc**（`EMPTY_STROKE` 浅灰、`GRID_STROKE`、`TEXT_INK`、
+五个字号常量、`RULER_TEXT_GAP` / `BOARD_TEXT_INSET` / `LEGEND_*` 一组落位偏移、空格斜线方向左上→右下）。
+**两点边界如实写明**：① 字号常量**不随格子缩放**（只有 `labelFontPx` / `tickFontPx` 由 plan 给）；
+② 「带内文字落位」的偏移由本层常量给是**允许**的——plan 只给沿线的那一个坐标（`colTicks.x`），
+另一轴本来就不来自格子坐标；它不构成「第二份格子↔像素映射」。逐字文案见契约 §4b。
 
 ---
 
 ## 7. 分享图渲染（`core/render/share.ts`）
 
 `drawShare(target, pattern, palette, plan)`：`imageSmoothingEnabled = false`（图纸是色块，插值会造出
-不存在的中间色——与 `patternThumbnail` 同一条既有口径），逐格 `fillRect`，**空格跳过**（画布已零初始化
-⇒ 完全透明），无网格无文字无边距。
+不存在的中间色——与 `patternThumbnail` 同一条既有口径），逐格经 **`shareCellBox(plan, col, row)`** 取位置、
+`fillRect`，**空格跳过**（画布已零初始化 ⇒ 完全透明），无网格无文字无边距。
+**不许用 `plan.canvasWidth / pattern.width` 反推格像素**（那是「自己乘格像素」；渲染器里出现标识符
+`cellPx` 即闸门红）。
 
 ---
 
@@ -472,16 +497,20 @@ export function exportFilename(projectName: string, item: ExportItemLabel): stri
 
 ### 10.1 位置与数据来源
 
-- 工具栏（`PatternToolbar.vue`）新增「导出」按钮（`min-h-14`、字号 ≥16px，主规格 §6.4），`emit("export")`。
+- 工具栏（`PatternToolbar.vue`）新增「导出」按钮（`min-h-11`、字号 ≥16px，**与工具栏既有按钮同口径**——
+  规格早先写的 `min-h-14` 是从 `SetupPage` 的主按钮抄来的，不适用于工具栏；2026-10-05 裁定以契约为准），
+  `emit("export")`。
 - `EditorPage.vue` 持有 `exporting: boolean`；为真时渲染 `<ExportPanel>`。
 - **图纸来源是 `editor.pattern`（内存态）**：`planSheets` / `planLegend` / `planShare` 的输入就是它，
   **不读 `session.record.meta.*`**（那是上次 `put` 时的冗余值，B3 规格 §8.3 的既有口径）。
   面板不读写 `indexedDB`，导出**不触发保存**（是否需要保存由用户自己决定）。
-- **plan 必须跟着图纸走**：计划是一个 `computed`，显式依赖 `editor.revision`（与 `EditorPage.vue` 的
-  `stats` 同一条失效通道），并且**图纸一改，所有「已生成」的逐项状态立刻回到「待生成」、预览图丢弃**。
+- **失效的归属（2026-10-05 由任务 4 起草者发现并更正）**：**三个 plan 不需要跟着 `revision` 失效**——
+  `planSheets` / `planLegend` / `planShare` 的输入只有图纸**尺寸**与色卡，编辑格子不改变其中任何一个，
+  在 plan 里写 `void editor.revision` 是**惰性代码**（会让后人误以为 plan 依赖编辑）。真正需要失效的是
+  **逐项状态与预览**：用 `watch([() => props.revision, () => props.pattern], …)` 复位，
+  **必须带 `props.pattern` 的对象身份**（`beginSession` 把 `revision` 从 0 归零，0→0 那一跳不触发）。
   这条比"面板打开时禁止编辑"更硬：它不依赖 UI 是否真的挡住了每一个改动入口（撤销 / `Ctrl+Z` /
-  工具栏在面板之上都可能改到 `cells`），从根上消灭「摘要与预览是旧图纸」这一类静默错误。
-  它也是 §13.1 的一条用例（改一格 → 逐项状态复位 + 摘要数字变）。
+  工具栏在面板之上都可能改到 `cells`），从根上消灭「预览是旧图纸」这一类静默错误。
 
 ### 10.2 面板内容
 
@@ -551,6 +580,8 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 |---|---|
 | `planSheets(pattern, palette, options)` | 图纸宽高**整数且 ≥1**、`cells.length === width*height`；`palette.id === pattern.paletteId`；`options.maxEdge` **整数且 ≥1**（`NaN` / 小数一律抛）；`innerW` / `innerH` < 1 时抛「画布上限太小」 |
 | `cellBox(tile, col, row)` | `col` / `row` **安全整数**且落在本片范围内（越界抛，不夹取） |
+| `shareCellBox(plan, col, row)` | 同上（范围是 `[0, plan.cols) × [0, plan.rows)`）；**分享图格像素的唯一来源** |
+| `drawLegend(target, palette, usages, plan, meta)` | `plan.kind === "legend"`；`plan.itemRows === ceil(usages.length / plan.itemCols)`（不同源即抛）；每个 `usage.code` 都能在 `palette` 里查到（否则抛，不静默画一块错色） |
 | `countTileBeads(pattern, tile)` | 同上两条（范围与安全整数）；O(本片格数） |
 | `labelInk(rgb)` | 三个分量**有限**（越界的有限值按 `rgbToLab` 的既有口径夹取）；非有限即抛 |
 | `rgbCss(rgb)` | 同上（越界的有限值夹到 0–255；非有限即抛），保证不产出 `rgb(NaN, …)` |
@@ -579,7 +610,7 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | `cellBox` | 片内四角与中心逐位断言；越界（本片之外）抛错；非安全整数抛错 |
 | **跨计划不变量** | 同一 `(col,row)`、同一 `cellPx` 下，单张计划与分片计划的 `cellBox` **逐位相等**（§4.2） |
 | `drawSheetTile`（mock target） | `fillRect` 次数 = 1（整张底）+ 实心格数；`moveTo` 与 `lineTo` **各** = 三组网格线条数之和 + 空格数（每条线一对调用）；关键格的坐标与颜色逐条断言；`labels = false` 时**格区域内**的 `fillText` 为 0 次（信息条 / 刻度 / 页脚仍有文字，断言必须按 `y` 区域过滤，否则假绿）；线宽按 `kind` 三档分别断言；板边界线在细线之后画（用调用顺序断言） |
-| `drawLegend` | 每项一行；合计颗数 = 各项之和；精度声明文本出现；`usages` 为空 ⇒ 只有标题与合计 |
+| `drawLegend` | 每项一行；**色块真是那个颜色**（`fillRect` 的 `fillStyle` = 该色卡的 `rgbCss`，2026-10-05 补 `palette` 入参后才可断言）；合计颗数 = 各项之和；精度声明与生成时间文本出现；`usages` 为空 ⇒ 不画表头、不画色块、只留标题 + `合计 0 颗` + 精度声明 + 生成时间；`usages` 与 plan 不同源 ⇒ 抛 |
 | `drawShare` | `imageSmoothingEnabled === false`；`fillRect` 次数 = 实心格数（空格 0 次）；无 `fillText`；画布尺寸取自 plan（`planShare` 那条用例断言 `canvasWidth === 格数 × cellPx`） |
 | 源码闸门 | `sheet.ts` / `share.ts` 里 `cellPx` 零命中；无 stride 乘法（§4.4） |
 | `services/exporter` | `createCanvasStrict` 回读不一致 ⇒ 抛（桩一个会钳制的 canvas）；`ctx` 为 null ⇒ 抛；`toBlob` 给 null ⇒ reject；`downloadBlob` 建一个 `<a>`、`click`、`revoke` 各一次；`exportFilename` 的分支与清洗 |
