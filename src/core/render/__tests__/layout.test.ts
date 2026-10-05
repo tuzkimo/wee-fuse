@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { BOARD_COLS } from "../../pattern/board";
+import type { ColorUsage } from "../../pattern/stats";
 import { EMPTY, type Pattern } from "../../pattern/types";
 import type { Palette } from "../../palette/types";
 import {
   EXPORT_CELL_PX_FLOOR,
   EXPORT_CELL_PX_TARGET,
   EXPORT_MAX_EDGE,
+  LEGEND_COLS_MAX,
+  LEGEND_ITEM_W,
   LEGEND_ROW_H,
+  SHEET_FOOTER_H,
   SHEET_INFO_BAR_H,
   SHEET_LABEL_MIN_CELL_PX,
   SHEET_MARGIN,
   SHEET_RULER_LEFT,
   SHEET_RULER_TOP,
+  SHEET_TICK_FONT_MIN,
   SHARE_CELL_PX_MAX,
   SHARE_CELL_PX_MIN,
   SHARE_MAX_EDGE,
@@ -65,6 +70,10 @@ describe("B4 布局常量", () => {
     expect(SHEET_RULER_LEFT).toBe(64);
     expect(SHEET_RULER_TOP).toBe(44);
     expect(SHEET_INFO_BAR_H).toBe(108);
+    expect(SHEET_FOOTER_H).toBe(44);
+    expect(LEGEND_ITEM_W).toBe(300);
+    expect(LEGEND_COLS_MAX).toBe(15);
+    expect(SHEET_TICK_FONT_MIN).toBe(12);
     // 分片步长必须来自 board.ts，不是另一份字面量 29
     expect(TILE_STEP).toBe(BOARD_COLS);
     expect(TILE_STEP).toBe(29);
@@ -88,6 +97,10 @@ describe("planSheets：单张", () => {
     expect(tile.index).toBe(0);
     expect(tile.rowIndex).toBe(0);
     expect(tile.colIndex).toBe(0);
+    // 派生字号（渲染器只许读它们、不许自己乘格像素）：40 × 0.38 = 15.2 → 15；
+    // 40 × 0.3 = 12，恰好等于 SHEET_TICK_FONT_MIN 的下限。
+    expect(tile.labelFontPx).toBe(15);
+    expect(tile.tickFontPx).toBe(SHEET_TICK_FONT_MIN);
   });
 
   it("116×116 仍是 1 张，格像素被两轴取小压到 33", () => {
@@ -97,6 +110,10 @@ describe("planSheets：单张", () => {
     expect(plan.labels).toBe(true);
     expect(plan.tiles[0]!.canvasWidth).toBe(3940);
     expect(plan.tiles[0]!.canvasHeight).toBe(4072);
+    // 33 × 0.38 = 12.54 → 13；33 × 0.3 = 9.9 → 10，被 SHEET_TICK_FONT_MIN 抬到 12
+    //（这一条与上一条合起来证明下限真的生效，而不是恰好等于比例值）。
+    expect(plan.tiles[0]!.labelFontPx).toBe(13);
+    expect(plan.tiles[0]!.tickFontPx).toBe(SHEET_TICK_FONT_MIN);
   });
 });
 
@@ -270,7 +287,12 @@ describe("网格线、刻度与板边界", () => {
     expect(tile.vLines[1]).toEqual({ at: 88 + 40, kind: "thin" });
     expect(tile.vLines[5]).toEqual({ at: 88 + 5 * 40, kind: "major" });
     expect(tile.vLines[29]).toEqual({ at: 88 + 29 * 40, kind: "board" });
+    // 行轴与列轴是 `makeTile` 里两段独立循环，不是彼此的副产品 ⇒ 逐位对称地钉一遍。
     expect(tile.hLines).toHaveLength(59);
+    expect(tile.hLines[0]).toEqual({ at: 176, kind: "board" });
+    expect(tile.hLines[1]).toEqual({ at: 176 + 40, kind: "thin" });
+    expect(tile.hLines[5]).toEqual({ at: 176 + 5 * 40, kind: "major" });
+    expect(tile.hLines[29]).toEqual({ at: 176 + 29 * 40, kind: "board" });
     expect(tile.lineWidths).toEqual({ thin: 1, major: 2, board: 3 });
   });
 
@@ -279,9 +301,14 @@ describe("网格线、刻度与板边界", () => {
     expect(tile.colTicks.map((t) => t.col)).toEqual([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
     expect(tile.colTicks[1]).toEqual({ col: 5, x: 88 + 5 * 40 });
     expect(tile.rowTicks.map((t) => t.row)).toEqual([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
+    expect(tile.rowTicks[1]).toEqual({ row: 5, y: 176 + 5 * 40 });
     expect(tile.colBoards).toEqual([
       { board: 1, col: 0, x: 88 },
       { board: 2, col: 29, x: 88 + 29 * 40 },
+    ]);
+    expect(tile.rowBoards).toEqual([
+      { board: 1, row: 0, y: 176 },
+      { board: 2, row: 29, y: 176 + 29 * 40 },
     ]);
   });
 
@@ -291,6 +318,15 @@ describe("网格线、刻度与板边界", () => {
     expect(second.originCol).toBe(116);
     expect(second.colTicks[0]).toEqual({ col: 120, x: 88 + (120 - 116) * 33 });
     expect(second.colBoards[0]).toEqual({ board: 5, col: 116, x: 88 });
+    // 行轴另取一片（第 1 行第 0 列片：行 116–231）——行轴的板序号 / 刻度同样按全局行号取，
+    // 且同样要减掉本片原点行号。
+    const below = plan.tiles[5]!;
+    expect(below.originRow).toBe(116);
+    expect(below.rowTicks[0]).toEqual({ row: 120, y: 176 + (120 - 116) * 33 });
+    expect(below.rowBoards[0]).toEqual({ board: 5, row: 116, y: 176 });
+    // 行线的像素位置同样要减掉本片原点行号（只断言原点为 0 的那张是判不开 `− originRow` 的）。
+    expect(below.hLines[0]).toEqual({ at: 176, kind: "board" });
+    expect(below.hLines[1]).toEqual({ at: 176 + 33, kind: "thin" });
   });
 });
 
@@ -322,6 +358,10 @@ describe("planLegend", () => {
         { code: "A1", name: "y", count: 2 },
       ]),
     ).toThrow("用量表里的色号重复：A1");
+    // 非数组：`usages` 是外部输入（如 `JSON.parse` 的结果），TS 类型挡不住它；
+    // 这是 `requireUsages` 的第一道守卫，消息逐字见契约 §3。
+    expect(() => planLegend(null as unknown as ColorUsage[])).toThrow("用量表必须是数组");
+    expect(() => planLegend({ length: 1 } as unknown as ColorUsage[])).toThrow("用量表必须是数组");
   });
 
   it("上限太小放不下时响亮拒绝", () => {
