@@ -82,7 +82,16 @@ export const TILE_STEP = BOARD_COLS;
  * 本就不同；共享一个比例常量会把「改一处观感影响两处语义」变成静默耦合。真要合并，必须同时改两处用例。
  */
 const LABEL_FONT_RATIO = 0.38;
-/** 刻度数字字号比例（0.3 × cellPx，下限 `SHEET_TICK_FONT_MIN`）。 */
+/**
+ * 刻度数字字号比例（0.3 × cellPx，下限 `SHEET_TICK_FONT_MIN`）。
+ *
+ * **在当前常量域内它与下限同值、行为上不可观测**：`cellPx ≤ hi ≤ EXPORT_CELL_PX_TARGET = 40` ⇒
+ * `round(0.3 × cellPx) ≤ 12 = SHEET_TICK_FONT_MIN` ⇒ `tickFontPx` 恒等于 `SHEET_TICK_FONT_MIN`
+ * （`cellPx` 最小的 8 px 格也只给出 2，同样被下限抬到 12）。保留它是因为它编码了「刻度字号随格子缩放」
+ * 的意图——提高 `EXPORT_CELL_PX_TARGET` 后立刻生效；与 `services/patternThumbnail.ts` 的
+ * `RESULT_PREVIEW_MAX_EDGE`（同样当前不可观测、保留并写明）是同一个先例。
+ * **不要**为它造一条「看起来能判别」的用例：判不开的断言比没有断言更坏。
+ */
 const TICK_FONT_RATIO = 0.3;
 
 /** 一张施工图分片。字段与契约 §2 逐字一致；**plan 是纯数据**（不含函数 / 闭包）。 */
@@ -137,8 +146,8 @@ export interface LegendPlan {
   readonly rowHeight: number;
   readonly headerY: number;
   readonly tableTop: number;
+  /** 页脚三行的起点（三行落在 `+2` / `+16` / `+30`，合计 44 = `SHEET_FOOTER_H` 正好放下）。 */
   readonly totalY: number;
-  readonly footerY: number;
 }
 
 export interface SharePlan {
@@ -192,7 +201,11 @@ function requirePalette(pattern: Pattern, palette: Palette): Palette {
 }
 
 function requireMaxEdge(options: PlanOptions | undefined, fallback: number): number {
-  return requirePositiveInteger(options?.maxEdge ?? fallback, "画布上限");
+  // **不能写 `options?.maxEdge ?? fallback`**：`??` 把显式传入的 `null`（以及 `JSON.parse` 之类的
+  // 外部来源）当成「没传」而静默回落到默认上限——与 `maxColors` 的运行期校验同源的同一条纪律。
+  // 只有 `undefined` 才算没传，其余一律交给 `requirePositiveInteger` 响亮失败。
+  const raw = options?.maxEdge === undefined ? fallback : options.maxEdge;
+  return requirePositiveInteger(raw, "画布上限");
 }
 
 /** 网格线档位：板边界优先于 5 格主刻度（145 这类重叠位置必须算板边界）。 */
@@ -270,9 +283,13 @@ export function planSheets(pattern: Pattern, palette: Palette, options?: PlanOpt
 
   const kc = Math.floor(innerW / (TILE_STEP * SHEET_LABEL_MIN_CELL_PX));
   const kr = Math.floor(innerH / (TILE_STEP * SHEET_LABEL_MIN_CELL_PX));
-  const labels = kc >= 1 && kr >= 1;
   const tileCols = Math.min(pattern.width, TILE_STEP * Math.max(kc, 1));
   const tileRows = Math.min(pattern.height, TILE_STEP * Math.max(kr, 1));
+  // `labels` 按**实际片格数**判，不是按「几块板」判：图纸小于一块板时（如 20×20），
+  // 整板粒度会算出 `kr = 0` 而**误降级**（丢色号、格像素被压到 27），
+  // 而实际片宽 `tileCols × 32` 明明放得下。两轴各判一次，无需循环。
+  const labels =
+    tileCols * SHEET_LABEL_MIN_CELL_PX <= innerW && tileRows * SHEET_LABEL_MIN_CELL_PX <= innerH;
 
   const rawCellPx = Math.min(Math.floor(innerW / tileCols), Math.floor(innerH / tileRows));
   if (!labels && rawCellPx < EXPORT_CELL_PX_FLOOR) {
@@ -444,7 +461,6 @@ export function planLegend(usages: readonly ColorUsage[], options?: PlanOptions)
     headerY: SHEET_MARGIN,
     tableTop,
     totalY: tableTop + itemRows * LEGEND_ROW_H,
-    footerY: canvasHeight - SHEET_MARGIN - SHEET_FOOTER_H,
   };
 }
 

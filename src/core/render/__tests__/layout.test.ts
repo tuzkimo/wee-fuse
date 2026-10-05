@@ -175,6 +175,25 @@ describe("planSheets：色号阈值与降级链", () => {
     expect(plan.warnings).toEqual([{ code: "labels-omitted", maxEdge: 1143, cellPx: 31 }]);
   });
 
+  it("20×20、maxEdge = 1040：labels 按实际片格数判，不因整板粒度误降级", () => {
+    // innerW = 1040 − 2×24 − 64 = 928；innerH = 1040 − 48 − 108 − 44 − 44 = 796。
+    // 旧判据（`kc ≥ 1 && kr ≥ 1`，整板粒度）算出 `kr = floor(796/928) = 0` ⇒ 误判 labels = false、
+    // cellPx 被 `hi = 31` 压到 27（丢色号）；实际片宽只要 `20 × 32 = 640 ≤ 928` 且 `≤ 796`。
+    // 新判据按实际片格数 ⇒ labels = true，cellPx = min(floor(928/20)=46, floor(796/20)=39) = 39。
+    const plan = planSheets(makePattern(20, 20), makePalette(), { maxEdge: 1040 });
+    expect(plan.tileCols).toBe(20);
+    expect(plan.tileRows).toBe(20);
+    expect(plan.labels).toBe(true);
+    expect(plan.cellPx).toBe(39);
+    expect(plan.warnings).toEqual([]);
+  });
+
+  it("maxEdge 显式传 null 不算「没传」：响亮失败，而不是静默回落默认上限", () => {
+    expect(() =>
+      planSheets(makePattern(4, 4), makePalette(), { maxEdge: null as unknown as number }),
+    ).toThrow("画布上限必须是 ≥1 的整数");
+  });
+
   it("降级链全部失败时响亮拒绝（maxEdge = 320）", () => {
     expect(() => planSheets(makePattern(500, 500), makePalette(), { maxEdge: 320 })).toThrow(
       "连 8 px/格 都放不下",
@@ -316,6 +335,10 @@ describe("网格线、刻度与板边界", () => {
     const plan = planSheets(makePattern(500, 500), makePalette());
     const second = plan.tiles[1]!; // 第 0 行第 1 列片：列 116–231
     expect(second.originCol).toBe(116);
+    // 列线的原点项（F1）：只断言原点为 0 的片时，`at` 里那个 `− originCol` 对**任何断言都不可见**
+    // （实测：把它改成 `grid.x + col * cellPx` 在补这两条之前是 30 passed / 0 红）。
+    expect(second.vLines[0]).toEqual({ at: 88, kind: "board" });
+    expect(second.vLines[1]).toEqual({ at: 88 + 33, kind: "thin" });
     expect(second.colTicks[0]).toEqual({ col: 120, x: 88 + (120 - 116) * 33 });
     expect(second.colBoards[0]).toEqual({ board: 5, col: 116, x: 88 });
     // 行轴另取一片（第 1 行第 0 列片：行 116–231）——行轴的板序号 / 刻度同样按全局行号取，
