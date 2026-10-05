@@ -66,7 +66,10 @@ export interface MockCalls {
   readonly texts: TextCall[];
   readonly paths: PathCall[];
   readonly strokeRects: StrokeRectCall[];
-  /** 没有 `beginPath` 就打头的路径操作：漏写 `beginPath` 必须可观察，不静默并入上一组。 */
+  /**
+   * 没有 `beginPath` 就打头的路径操作。**`stroke()` 之后 `hasPath` 复位**，所以「漏写 `beginPath`」
+   * 在**每一组**路径上都会被记到这里（不复位时只有第一组可观察，后几组会静默并入上一组）。
+   */
   readonly strayOps: string[];
   /**
    * `save()` / `restore()` 的调用次数。当前两个渲染器一次都不调（都是 0），但**配平是必须保持的
@@ -150,6 +153,10 @@ export function createMockTarget(): { readonly target: RenderTarget2D; readonly 
         current.strokeStyle = target.strokeStyle;
       }
       ops.push({ op: "stroke" });
+      // `stroke()` 之后路径就结束了：`hasPath` 必须复位，否则**第二、三组**漏写 `beginPath` 会被
+      // 静默并进上一组（`strayOps` 永远为空），「漏写 beginPath 必须可观察」就只对第一组成立。
+      // （2026-10-05 任务级审查抓到；两个渲染器的每条路径都以 `beginPath` 开头，故复位是安全的。）
+      hasPath = false;
     },
     fillText(text, x, y) {
       calls.texts.push({

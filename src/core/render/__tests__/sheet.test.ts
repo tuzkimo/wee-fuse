@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Palette } from "../../palette/types";
+import type { ColorUsage } from "../../pattern/stats";
 import { EMPTY, type Pattern } from "../../pattern/types";
 import {
   SHEET_FOOTER_H,
@@ -389,6 +390,18 @@ describe("drawSheetTile / drawLegend：入口守卫", () => {
     expect(() =>
       drawLegend(target, palette, [], plan as unknown as LegendPlan, makeMeta()),
     ).toThrow("plan 的类型不匹配：期望 legend，实际 sheet");
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("drawLegend 的 usages 不是数组即抛（消息说真原因，不是「应为 NaN 行」）", () => {
+    // 缺这条守卫时，非数组会走到 `Math.ceil(undefined / itemCols)`，最终抛
+    // 「用量表计划与本表不符：计划 0 行、按 undefined 项应为 **NaN** 行」——响亮但**消息失实**：
+    // 真正的原因是入参根本不是数组（契约 §3 已有逐字消息）。
+    const legendPlan = planLegend([]);
+    const { target, calls } = createMockTarget();
+    expect(() =>
+      drawLegend(target, palette, "not-an-array" as unknown as readonly ColorUsage[], legendPlan, makeMeta()),
+    ).toThrow("用量表必须是数组（当前 string）");
     expect(calls.fills).toEqual([]);
   });
 });

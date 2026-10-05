@@ -26,7 +26,9 @@ import type { PixelRect, RenderTarget2D } from "./types";
  * **本文件零算术**（规格 §4.4 / 计划任务 0 的 R-1、R-2）：所有像素位置来自 plan 的派生字段
  * （`grid` / `vLines` / `hLines` / `colTicks` / `rowTicks` / `colBoards` / `rowBoards` /
  * `lineWidths` / `labelFontPx` / `tickFontPx`），格子位置一律经 `cellBox`，格子值一律经 `cellAt`。
- * 源码级闸门 `__tests__/layoutGate.test.ts` 守着这两条；改动这里之前先读它的两条规则。
+ * 源码级闸门 `__tests__/layoutGate.test.ts` 守着这些约束（**五条检查**，全部先剥注释再扫）；
+ * 与本文件直接相关的是第 1 条（代码里不出现 `cellPx`）与第 2 / 4 条（不读 `pattern.cells`、
+ * 必须经 `cellAt` 取格值）。改动这里之前先读那五条。
  *
  * **`save` / `restore` 当前一次都不调，但成对调用是必须保持的不变量**：每张产物都用一张新画布
  * （规格 §9.6「逐张渲染、即时释放」），没有需要保护的既有 ctx 状态，所以现在两边的计数都是 0；
@@ -100,7 +102,7 @@ function colorOf(palette: Palette, index: number): PaletteColor {
   return color;
 }
 
-/** 信息条第一行。**口径未定（哪个尺寸算「成品」），见 G-3**：这里取长边豆数换算成厘米。 */
+/** 信息条第一行。**成品口径见契约 §4b：取长边**（`max(width, height)` 经 `beadsToCm` / `formatCm`），不是总颗数。 */
 function infoLineOne(pattern: Pattern, meta: SheetMeta): string {
   const longEdge = Math.max(pattern.width, pattern.height);
   return `${meta.projectName} · ${pattern.width} × ${pattern.height} 格 · 成品 ${formatCm(beadsToCm(longEdge))} 厘米`;
@@ -111,7 +113,7 @@ function infoLineTwo(meta: SheetMeta, tileBeads: number): string {
   return `${meta.paletteName} · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色）/ 本片 ${tileBeads} 颗 · ${meta.generatedAt} · ${meta.accuracy}`;
 }
 
-/** 页脚：`r / c` 取 tile 的行序 / 列序（+1），列行范围是 1 起的**全局**格坐标。文案口径见 G-3。 */
+/** 页脚：`r / c` 取 tile 的行序 / 列序（+1），列行范围是 1 起的**全局**格坐标。文案口径见契约 §4b。 */
 function footerLine(tile: SheetTilePlan, tileBeads: number): string {
   const firstCol = tile.originCol + 1;
   const lastCol = tile.originCol + tile.cols;
@@ -122,6 +124,13 @@ function footerLine(tile: SheetTilePlan, tileBeads: number): string {
 
 /**
  * 画一张施工图分片：固定 8 步（规格 §6 第 1–8 步）。每一步只读 plan 给的几何，渲染器零算术。
+ *
+ * **色号越界的校验时机**（控制者 2026-10-05 裁定，记 minor）：色号是**逐格**取用的，`colorOf` 在
+ * 绘制循环里抛，因此坏色号抛出时画布上可能已经有一些格子。这是**校验时机**问题、不是「是否响亮
+ * 失败」问题（它一定抛），而且调用方随后就在 `finally` 里释放画布、产物不落盘，所以不存在静默的
+ * 错产物；代价上，动笔前预扫描要多一次 O(格数) 的遍历（25 万格量级）。
+ * **升级条件**：若将来 sheet / share 的产物**不**被丢弃（例如直接落盘或复用画布），这条要升为
+ * 必须在任何写操作之前（`drawLegend` 已经那样做，因为它的色块必须先有真色）。
  *
  * **为何公开**：`views/EditorPage.vue` 的导出面板（任务 4）是唯一生产消费者——它拿到 plan 的
  * `tiles`，逐片调用本函数、逐片下载（裁决 3 的用户手势口径）。用例用普通对象桩调用它。
@@ -301,6 +310,11 @@ function sumUsageCounts(usages: readonly ColorUsage[]): number {
  * **空表的例外**：`usages` 为空时**不画表头、不画色块、不画任何项**，只留标题、`合计 0 颗`、
  * 精度声明与生成时间（没有数据行的表头是噪声）。
  *
+ * **色号 → rgb 必须前置解析**（与 `drawSheetTile` 的 `colorOf` **口径不同**）：这里的每一项都先要
+ * 那支色块的真色才能动笔，所以色号一旦有坏值，必须在 `fillRect` 之前就抛，不留半张表；
+ * 施工图的色号是**逐格**取用，坏值只会在画到那一格时抛（控制者 2026-10-05 裁定：校验时机记
+ * minor，理由与升级条件见 `drawSheetTile` 的 JSDoc）。
+ *
  * **为何公开**：`views/EditorPage.vue` 的导出面板（任务 4）是唯一生产消费者。
  */
 export function drawLegend(
@@ -313,6 +327,13 @@ export function drawLegend(
   const kind: string = plan.kind;
   if (kind !== "legend") {
     throw new Error(`plan 的类型不匹配：期望 legend，实际 ${kind}`);
+  }
+  // `usages` 是**参数**、不是 plan 的一部分，所以它自己的形状也要在这里守（`planLegend` 的
+  // `requireUsages` 只在 plan 由它构造时才生效；伪造的 plan 绕得过去）。缺这一条时非数组会走到
+  // `Math.ceil(undefined / itemCols)`，最后抛「…应为 NaN 行」——响亮但**消息失实**。
+  // 位置与契约 §3 的枚举无关：都是「plan 对象自身的类型错配优先于参数错配」，且都在任何写操作之前。
+  if (!Array.isArray(usages)) {
+    throw new Error(`用量表必须是数组（当前 ${typeof usages}）`);
   }
 
   // plan 内部自洽性（规格 §12，2026-10-05 裁定 G-11）：列数 × 每项宽 + 两侧边距必须等于画布宽。

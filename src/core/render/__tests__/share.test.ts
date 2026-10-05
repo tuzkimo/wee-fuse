@@ -73,15 +73,18 @@ describe("drawShare", () => {
     expect(big.canvasHeight).toBe(2000);
   });
 
-  it("四角：fillRect 的实参与 shareCellBox 逐位一致（右下角是空格 ⇒ 那里没有 fillRect）", () => {
+  it("四角与格子 (4,5)：fillRect 的实参与 shareCellBox 逐位一致（(4,5) 是空格 ⇒ 那里没有 fillRect）", () => {
     const { target, calls } = createMockTarget();
     drawShare(target, pattern, palette, plan);
 
-    for (const [col, row] of [[0, 0], [5, 0], [0, 5], [5, 5]] as const) {
+    // **列表的第四项必须是真空格**：夹具的空格在 (2,0) / (4,2) / (4,5)，而右下角 (5,5) 是**实心格 3**
+    // （本文件后面那条颜色用例断言它被填成 `rgb(200, 200, 210)`）。第一版这里写的是 (5,5)，
+    // 于是「空格不填」那一路**一次都没执行**——一条死分支（2026-10-05 任务级审查抓到）。
+    for (const [col, row] of [[0, 0], [5, 0], [0, 5], [4, 5]] as const) {
       const box = shareCellBox(plan, col, row);
       const fill = calls.fills.find((candidate) => candidate.x === box.x && candidate.y === box.y);
       if ((pattern.cells[row * 6 + col] as number) === EMPTY) {
-        expect(fill).toBeUndefined(); // (5,5) 是空格
+        expect(fill).toBeUndefined(); // (4,5) 是空格 ⇒ 一个块都不该有
         continue;
       }
       expect(fill).toMatchObject({ w: box.width, h: box.height });
@@ -188,7 +191,11 @@ describe("drawShare", () => {
     expect(calls.fills).toEqual([]);
   });
 
-  it("plan.kind 不匹配 / 色卡不一致 / 色号下标越界：写在任何写操作之前", () => {
+  it("plan.kind 不匹配 / 色卡不一致：写在任何写操作之前", () => {
+    // 标题只声称这两项：它们各有 `calls.fills` 为空作「动笔之前」的证据。
+    // 本用例末尾的第三项（坏色号）**不属于**这两项——`drawShare` 的色号解析在绘制循环里，
+    // 它只保证「响亮失败」，不保证画布干净（控制者 2026-10-05 裁定记 minor，理由与升级条件见
+    // `share.ts` 那段 JSDoc）。
     const { target, calls } = createMockTarget();
 
     const sheetPlan = planSheets(pattern, palette);
@@ -202,6 +209,7 @@ describe("drawShare", () => {
     );
     expect(calls.fills).toEqual([]);
 
+    // 坏色号：只钉「响亮失败」（不在这里断言 `calls.fills` 为空——那会把时机问题伪装成已守）
     const broken = makePattern(6, 6);
     broken.cells[0] = 9;
     expect(() => drawShare(target, broken, palette, planShare(broken))).toThrow(

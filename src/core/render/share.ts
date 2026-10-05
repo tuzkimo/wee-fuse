@@ -7,9 +7,12 @@ import type { RenderTarget2D } from "./types";
 /**
  * 分享图（规格 §7）：纯色块、**无网格无文字无边距**、空格跳过（画布零初始化 ⇒ 完全透明）。
  *
- * 与 `sheet.ts` 同样受两条源码级闸门约束：不出现格像素标识符、格值只经 `cellAt`。
- * 格子 → 像素一律经 `shareCellBox(plan, col, row)`（2026-10-05 裁定新增；第一版只能拿
- * `canvasWidth / pattern.width` 反推，那正是「自己乘格像素」）。
+ * 与 `sheet.ts` 同受 `__tests__/layoutGate.test.ts` 的**五条**源码级检查约束（全部先剥注释再扫）。
+ * 守本文件的恰好是其中两条：第 3 条（不得出现 `canvasWidth /` / `canvasHeight /` 这类除法）与
+ * 第 5 条（必须出现 `shareCellBox(`）——**这两条是成对的**：格子 → 像素只能经
+ * `shareCellBox(plan, col, row)`（2026-10-05 裁定新增；第一版只能拿 `canvasWidth / pattern.width`
+ * 反推，那正是「自己乘格像素」）。第 1 / 2 / 4 条（不出现 `cellPx`、不读 `pattern.cells`、
+ * 必须经 `cellAt`）同样适用于本文件。
  *
  * **为何公开**：`views/EditorPage.vue` 的导出面板（任务 4）是唯一生产消费者。
  */
@@ -46,6 +49,9 @@ export function drawShare(
     for (let col = 0; col < plan.cols; col += 1) {
       const value = cellAt(pattern, col, row);
       if (value === EMPTY) continue;
+      // 色号越界的校验**在这里**抛（不是动笔之前）：逐格取色，坏色号抛出时画布上可能已有色块。
+      // 控制者 2026-10-05 裁定记 minor（校验时机问题、产物随即被释放、不落盘），理由与升级条件
+      // 见 `sheet.ts` 的 `drawSheetTile` JSDoc。
       const color = palette.colors[value];
       if (color === undefined) {
         throw new Error(`色卡里没有下标 ${value} 的颜色`);
