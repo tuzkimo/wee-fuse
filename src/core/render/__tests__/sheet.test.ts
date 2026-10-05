@@ -107,6 +107,38 @@ function fillAt(calls: MockCalls, x: number, y: number) {
   return calls.fills.find((fill) => fill.x === x && fill.y === y);
 }
 
+/**
+ * 细线组应有的 `ops` 序列（K1）。
+ *
+ * **期望值只拼槽位、不重算渲染器算法**：竖线是 `(line.at, grid.y) → (line.at, grid.y + grid.height)`，
+ * 横线是 `(grid.x, line.at) → (grid.x + grid.width, line.at)`，末尾一次 `stroke`。`vLines` / `hLines` /
+ * `grid` 各自的**值**由 `layout.test.ts` 独立钉住，所以这一条断的是「渲染器把哪个数放进哪个槽」。
+ */
+function thinGridOps(tile: SheetTilePlan): readonly Record<string, unknown>[] {
+  return [
+    ...tile.vLines
+      .filter((line) => line.kind === "thin")
+      .flatMap((line) => [
+        { op: "moveTo", x: line.at, y: tile.grid.y },
+        { op: "lineTo", x: line.at, y: tile.grid.y + tile.grid.height },
+      ]),
+    ...tile.hLines
+      .filter((line) => line.kind === "thin")
+      .flatMap((line) => [
+        { op: "moveTo", x: tile.grid.x, y: line.at },
+        { op: "lineTo", x: tile.grid.x + tile.grid.width, y: line.at },
+      ]),
+    { op: "stroke" },
+  ];
+}
+
+/** 取某张片子的细线组路径（线宽 = thin 且墨色 = 网格线色）。 */
+function thinPathOf(calls: MockCalls, tile: SheetTilePlan) {
+  return calls.paths.find(
+    (path) => path.lineWidth === tile.lineWidths.thin && path.strokeStyle === "#0f172a",
+  );
+}
+
 describe("drawSheetTile：底色、色块与文字", () => {
   const pattern = makePattern(6, 6, CELLS_6X6);
   const palette = makePalette();
@@ -219,6 +251,11 @@ describe("drawSheetTile：底色、色块与文字", () => {
     expect(calls.texts[1]).toMatchObject({
       text: "测试色卡 · 全图 33 颗（4 种色）/ 本片 33 颗 · 2026-10-05 12:00 · 屏幕色仅供参考，以实物为准",
       y: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2),
+      // 第二行的字体 / 对齐被单独钉住（K 家族）：两行文字共用同一段状态赋值，只断第一行时
+      // 「第二行被改了字号 / 对齐」不会被发现。
+      font: "18px sans-serif",
+      textAlign: "left",
+      textBaseline: "top",
     });
 
     expect(tile.colTicks.map((tick) => tick.col)).toEqual([0, 5]);
@@ -233,6 +270,9 @@ describe("drawSheetTile：底色、色块与文字", () => {
     expect(calls.texts.find((text) => text.text === "6" && text.textBaseline === "middle")).toMatchObject({
       x: tile.grid.x - 8,
       y: tile.rowTicks[1]?.y,
+      // 行刻度的对齐也必须逐条钉住（K 家族）：`textAlign` 在刻度段被显式改成 `right`，
+      // 少了这一条，把它留成 `center`（或漏写）不会有任何断言变红。
+      textAlign: "right",
     });
 
     expect(calls.texts.filter((text) => text.text === "第 1 块板")).toHaveLength(2);
@@ -242,6 +282,9 @@ describe("drawSheetTile：底色、色块与文字", () => {
       x: tile.grid.x,
       y: tile.grid.y - SHEET_RULER_TOP + 2,
       textBaseline: "top",
+      // 板号字号 = 刻度字号（`tickFontPx`，契约 §4b 的字号表）。**显式赋值**，不靠继承：
+      // 靠继承时「在刻度段与板号段之间插一次 font 赋值」会静默改掉板号字号，而没有任何断言看得见。
+      font: "12px sans-serif",
     });
     expect(
       calls.texts.find((text) => text.text === "第 1 块板" && text.textAlign === "left"),
@@ -249,12 +292,16 @@ describe("drawSheetTile：底色、色块与文字", () => {
       x: tile.grid.x - SHEET_RULER_LEFT + 2,
       y: tile.grid.y,
       textBaseline: "middle",
+      font: "12px sans-serif",
     });
-
+    expect(tile.tickFontPx).toBe(12);
     expect(calls.texts.find((text) => text.text.startsWith("第 1/1 片"))).toMatchObject({
       text: "第 1/1 片 · 列 1–6 · 行 1–6（含）· 本片 33 颗",
       x: SHEET_MARGIN,
       y: tile.grid.y + tile.grid.height + SHEET_FOOTER_H / 2,
+      // 页脚字号（K 家族）：`FOOTER_FONT_PX = 16`，与信息条的 18 不同，写错会在这里红。
+      font: "16px sans-serif",
+      textAlign: "left",
     });
   });
 });
@@ -309,6 +356,71 @@ describe("drawSheetTile：网格线、调用顺序与降级", () => {
     expect(ops.filter((op) => op.op === "moveTo")).toHaveLength(gridLines + 3);
     expect(ops.filter((op) => op.op === "lineTo")).toHaveLength(gridLines + 3);
     expect(calls.strayOps).toEqual([]);
+  });
+
+  /**
+   * **K1**：细线组的 `ops` 逐位断言（修复波）。上面两条只断「条数与线宽」，对三种改坏方式
+   * **全都绿**（控制者 2026-10-05 实测 32 passed / 0 红）：把竖线的两轴交换、把竖线全塌到 `grid.x`、
+   * 把 `lineTo` 里的 `grid.height` 去掉（线长 0）——条数一个都不变。
+   * 「坐标基准不要长出第二份坐标数学」的另一半就是这一条：`layout.test.ts` 钉住了 `vLines` / `hLines`
+   * 的**值**，这里钉住「渲染器把哪个数放进哪个槽」。
+   */
+  it("细线组逐位取自 plan 的 vLines / hLines / grid（两轴交换 / 塌到 grid.x / 去掉线长都会红）", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    const thin = thinPathOf(calls, tile);
+    expect(thin).toBeDefined();
+    expect(thin?.ops).toEqual(thinGridOps(tile));
+    // 判别力的前提：细线组两轴都非空（两轴交换后**条数不变**，所以只靠上面那条逐位断言才判得开）
+    expect(tile.vLines.filter((line) => line.kind === "thin").length).toBeGreaterThan(0);
+    expect(tile.hLines.filter((line) => line.kind === "thin").length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 同一件事在**原点非零**的片上再钉一遍：`tiles[0]` 的 `originCol / originRow` 恒为 0，
+   * 「只对第一片成立」的错法（例如把片内坐标当全局坐标）在那张片上不可见（任务 1 的 F1 同款形态）。
+   */
+  it("原点非零的片（500×500 的 tiles[1]，originCol = 116）同样逐位对上", () => {
+    const big = makePattern(500, 500);
+    const bigPlan = planSheets(big, palette);
+    const offsetTile = bigPlan.tiles[1] as SheetTilePlan;
+    // 前提：这一片真的带偏移（否则这条与上一条等价、判别力是假的）
+    expect(offsetTile.originCol).toBe(116);
+    expect(offsetTile.originRow).toBe(0);
+
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, big, palette, bigPlan, offsetTile, makeMeta());
+
+    const thin = thinPathOf(calls, offsetTile);
+    expect(thin).toBeDefined();
+    expect(thin?.ops).toEqual(thinGridOps(offsetTile));
+    expect(thinGridOps(offsetTile).length).toBeGreaterThan(2);
+  });
+
+  it("createMockTarget 的桩自检：漏写 beginPath 记进 strayOps，stroke 之后路径结束（K 家族的仪器证明）", () => {
+    // **这不是被测行为的断言，而是仪器的自检**：上面那条「没有游离的路径操作」只有在
+    // 「漏写 beginPath 真的会被记下来」时才有判别力。这里逐条走一遍桩的两半行为。
+    const { target, calls } = createMockTarget();
+
+    target.moveTo(1, 2); // 没有 beginPath ⇒ 应记为游离
+    expect(calls.strayOps).toEqual(["moveTo(1, 2)"]);
+
+    target.beginPath();
+    target.moveTo(3, 4);
+    target.lineTo(5, 6);
+    target.stroke();
+    expect(calls.strayOps).toEqual(["moveTo(1, 2)"]);
+    expect(calls.paths[0]?.ops).toEqual([
+      { op: "moveTo", x: 3, y: 4 },
+      { op: "lineTo", x: 5, y: 6 },
+      { op: "stroke" },
+    ]);
+
+    // `stroke()` 复位 `hasPath`：**第二组**漏写 beginPath 也必须可观察（不复位时它会静默并进上一组）
+    target.lineTo(7, 8);
+    target.stroke();
+    expect(calls.strayOps).toEqual(["moveTo(1, 2)", "lineTo(7, 8)", "stroke()"]);
   });
 
   it("某一档一条线都没有时不发空 stroke（4×4 只有板边界与细线）", () => {
@@ -385,6 +497,17 @@ describe("drawSheetTile / drawLegend：入口守卫", () => {
     ).toThrow("色卡里没有下标 9 的颜色");
   });
 
+  it("`pattern.cells` 长度与宽高不符时在**任何写操作之前**抛（长度校验由 countTileBeads 传递）", () => {
+    // `countTileBeads` → `requirePattern` 必须跑到填白之前（修复波 A-m2）：把它放回填白之后，
+    // 坏长度的图纸会先留下半张「已经画过」的产物——这条断言 `fills` 为空就是那个时机的判据。
+    const short = { ...makePattern(6, 6), cells: new Uint16Array(35) };
+    const { target, calls } = createMockTarget();
+    expect(() => drawSheetTile(target, short, palette, plan, tile, makeMeta())).toThrow(
+      "图纸数据与尺寸不一致：6×6 需要 36 格，实际 35 格",
+    );
+    expect(calls.fills).toEqual([]);
+  });
+
   it("drawLegend 的 plan.kind 不匹配即抛（把 sheet plan 传进去）", () => {
     const { target, calls } = createMockTarget();
     expect(() =>
@@ -447,6 +570,32 @@ describe("drawLegend", () => {
       "名称",
       "颗数",
     ]);
+    // 标题行与表头的**位置与字号**（K 家族）：只断顺序时，`headerY` 被改成 0 或表头被挪到
+    // 表格中间都不会红。表头的 y = `tableTop − rowHeight / 2`（契约 §4b 的带内落位口径）。
+    expect(calls.texts[0]).toMatchObject({
+      x: SHEET_MARGIN,
+      y: plan.headerY,
+      font: "20px sans-serif",
+      textAlign: "left",
+      textBaseline: "top",
+    });
+    const headerY = plan.tableTop - plan.rowHeight / 2;
+    expect(calls.texts.find((text) => text.text === "色号")).toMatchObject({
+      x: SHEET_MARGIN + 28,
+      y: headerY,
+      font: "14px sans-serif",
+      textAlign: "left",
+      textBaseline: "middle",
+    });
+    expect(calls.texts.find((text) => text.text === "名称")).toMatchObject({
+      x: SHEET_MARGIN + 88,
+      y: headerY,
+    });
+    expect(calls.texts.find((text) => text.text === "颗数")).toMatchObject({
+      x: SHEET_MARGIN + plan.itemWidth - 8,
+      y: headerY,
+      textAlign: "right",
+    });
 
     // 每项一行：第 i 项落在第 i 列（默认上限下 itemCols = 13，两项同行不同列）
     expect(plan.itemCols).toBe(13);
@@ -486,6 +635,11 @@ describe("drawLegend", () => {
     });
     expect(calls.strokeRects).toHaveLength(2);
     expect(calls.strokeRects[0]).toMatchObject({ x: cellX(0), y: swatchY, w: 20, h: 20 });
+    // 外框的**颜色与线宽**也逐条钉住（K 家族）：只断位置时，外框画成粗黑边不会有任何断言变红
+    //（而它压在真色之上，真实观感会明显不同）。
+    expect(calls.strokeRects[0]).toMatchObject({ strokeStyle: "#94a3b8", lineWidth: 1 });
+    // 每项行的字号（`LEGEND_FONT_PX = 14`，与表头同号但独立赋值）
+    expect(calls.texts.find((text) => text.text === "A1")).toMatchObject({ font: "14px sans-serif" });
 
     // 合计：测试自己求和，与被测实现不同源
     const expectedTotal = usages.reduce((sum, usage) => sum + usage.count, 0);
@@ -509,6 +663,14 @@ describe("drawLegend", () => {
     expect(footer("屏幕色仅供参考，以实物为准")).toMatchObject({ y: plan.totalY + 16 });
     const last = footer("生成时间：2026-10-05 12:00");
     expect(last).toMatchObject({ y: plan.totalY + 30 });
+    // 页脚三行的字号与对齐（K 家族）：`LEGEND_FOOTER_FONT_PX = 12`，三行共用同一次赋值。
+    expect(footer("合计 42 颗")).toMatchObject({
+      x: SHEET_MARGIN,
+      font: "12px sans-serif",
+      textAlign: "left",
+      textBaseline: "top",
+    });
+    expect(last).toMatchObject({ font: "12px sans-serif" });
 
     // 几何不变量：最后一行加上行距仍在页脚块内（30 + 14 = 44 = `SHEET_FOOTER_H`）。
     // **用实际画出的 `last.y` 而不是 `plan.totalY + 30`**：后者的比较结果只由 plan 的字段决定，

@@ -1568,6 +1568,64 @@ describe("导出面板接线（任务 4）", () => {
     expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
   });
 
+  it("面板的 `:project-name` / `:revision` 真的接了线：文件名与图上标题带记录的工程名，涂一格后该项复位", async () => {
+    // 修复波 C-M2：这两条 props 原来**零断言**——把 `:revision` 钉成 0（只有画布那条用例红、面板
+    // 这条不红）、把 `:project-name` 钉成常量（0 红）都能全绿，而它们是「图纸来源是内存态」这条
+    // 承诺在面板这一侧的**唯一**接线。
+    const wrapper = await mountPage();
+    await wrapper.get("[data-testid='export']").trigger("click");
+    await wrapper.get("[data-testid='export-save-tile-0']").trigger("click");
+    await flushPromises();
+
+    // ① `:project-name` 取自**记录**（夹具名「小猫」）：文件名与图上信息条都必须带上它
+    expect(wrapper.get("[data-testid='export-item-tile-0']").text()).toContain("已生成");
+    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(true);
+    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
+    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("小猫-施工图-r1c1.png");
+    expect(
+      recording.texts.some((call) => call.text.startsWith("小猫 · 2 × 1 格")),
+    ).toBe(true);
+
+    // ② `:revision`：涂一格 ⇒ 面板必须收到新的 revision ⇒ 该项回「待生成」、预览被丢弃
+    //    （钉成常量 `0` 时这一条必红——而先前只有 `PatternCanvas` 的 props 用例能发现）
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    await flushPromises();
+    expect(wrapper.get("[data-testid='export-item-tile-0']").text()).toContain("待生成");
+    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(false);
+  });
+
+  it("导出面板打开时按返回：确认条浮在覆盖层**之上**（z 序），用户看得见、也点得动", async () => {
+    // 修复波 B-2：面板是 `fixed inset-0 z-30`，确认条原来是 `z-20` ⇒ 守卫拦下了导航、`leaving` 也
+    // 置真了，但用户看到的是「按了没反应」：什么都看不见、也没有出口。
+    const wrapper = await mountPage();
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    await wrapper.get("[data-testid='export']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+
+    expect(getLeaveGuard()({ name: "home" }, { name: "editor" })).toBe(false);
+    await nextTick();
+
+    const bar = wrapper.get("[data-testid='leave-bar']");
+    const panel = wrapper.get("[data-testid='export-panel']");
+    /** 类名里那个 `z-NN` 的数值（没有 `z-*` 时是 `NaN` ⇒ 后面的比较恒假、必红）。 */
+    const zOf = (el: { classes: () => string[] }): number => {
+      const match = /(?:^|\s)z-(\d+)(?:\s|$)/.exec(el.classes().join(" "));
+      return match === null ? Number.NaN : Number(match[1]);
+    };
+    expect(zOf(panel)).toBe(30);
+    expect(zOf(bar)).toBe(40);
+    expect(zOf(bar)).toBeGreaterThan(zOf(panel));
+    // 三个动作都在：用户有真的出口（而不是「面板盖住了确认条」这种静默死路）
+    // `wrapper.get(...)` 的返回类型是 `Omit<DOMWrapper<Element>, "exists">`（VTU 2.4.10），
+    // 所以「还在不在」必须走 `find(...).exists()`（B4 规格里记过这一条）。
+    expect(wrapper.find("[data-testid='leave-save']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='leave-discard']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='leave-cancel']").exists()).toBe(true);
+  });
+
   it("面板的 `usages` 跟着图纸走：全空图纸如实说明，涂一格之后那句话消失", async () => {
     // 夹具：**全空**的 2×1 → `patternStats` 的 usages 为空（`EditorPage` 的 `usages` 就是它）
     const doc = toProjectDocument(

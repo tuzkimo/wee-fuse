@@ -23,7 +23,7 @@ import type { PixelRect, RenderTarget2D } from "./types";
 /**
  * 施工图（分片）与用量表的绘制。
  *
- * **本文件零算术**（规格 §4.4 / 计划任务 0 的 R-1、R-2）：所有像素位置来自 plan 的派生字段
+ * **本文件零格子↔像素算术**（只有带内落位偏移，见下）：所有像素位置来自 plan 的派生字段
  * （`grid` / `vLines` / `hLines` / `colTicks` / `rowTicks` / `colBoards` / `rowBoards` /
  * `lineWidths` / `labelFontPx` / `tickFontPx`），格子位置一律经 `cellBox`，格子值一律经 `cellAt`。
  * 源码级闸门 `__tests__/layoutGate.test.ts` 守着这些约束（**五条检查**，全部先剥注释再扫）；
@@ -33,7 +33,8 @@ import type { PixelRect, RenderTarget2D } from "./types";
  * **`save` / `restore` 当前一次都不调，但成对调用是必须保持的不变量**：每张产物都用一张新画布
  * （规格 §9.6「逐张渲染、即时释放」），没有需要保护的既有 ctx 状态，所以现在两边的计数都是 0；
  * 将来若要临时改 ctx 状态，**不配平会泄漏 target 的全局状态**（`sheet.test.ts` / `share.test.ts`
- * 的配平断言会红）。`RenderTarget2D` 里的这两个方法由真实 ctx 结构兼容性带进来。
+ * 的配平断言会红）。`RenderTarget2D` 里的这两个方法由**配平不变量 + 测试桩**带进来——不是「真实 ctx
+ * 的结构兼容性」（实测四处不兼容，见 `types.ts` 文件头）。
  */
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,8 @@ export function drawSheetTile(
 ): void {
   // 入口守卫（契约 §12）写在任何写操作之前。`kind` 与 `tile` 的归属都是「错配不报错、
   // 只把坐标静默映射到另一片」的形态（计划任务 0 的 R-3），故一条不少。
+  // **`pattern.cells` 的长度校验也由这里传递**：`countTileBeads` → `requirePattern` 会在
+  // 第一次写（第 1 步填白）之前跑完，所以坏长度的图纸不会留下半张已经画过的产物。
   const kind: string = plan.kind;
   if (kind !== "sheet") {
     throw new Error(`plan 的类型不匹配：期望 sheet，实际 ${kind}`);
@@ -156,12 +159,15 @@ export function drawSheetTile(
     throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
   }
 
+  // 本片颗数（O(本片格数)）**必须在填白之前算**：它顺带跑完 `requirePattern` 的
+  // 「`cells` 长度与宽高自洽」校验，而那条校验属于「入口守卫写在任何写操作之前」。
+  const tileBeads = countTileBeads(pattern, tile);
+
   // 第 1 步：底。整张画布填白（空格因此天然是白的，第 3 步不再填）。
   target.fillStyle = SHEET_BACKGROUND;
   target.fillRect(0, 0, tile.canvasWidth, tile.canvasHeight);
 
-  // 第 2 步：信息条两行。本片颗数走 layout 的 countTileBeads（O(本片格数)），渲染器不自己数格子。
-  const tileBeads = countTileBeads(pattern, tile);
+  // 第 2 步：信息条两行。本片颗数走 layout 的 countTileBeads（渲染器不自己数格子）。
   target.fillStyle = TEXT_INK;
   target.font = `${INFO_FONT_PX}px sans-serif`;
   target.textAlign = "left";
@@ -262,6 +268,9 @@ export function drawSheetTile(
   }
 
   // 第 7 步：板边界标注。位置取自 plan 的 colBoards / rowBoards（带内远离网格的那一侧）。
+  // **字号显式取自 `tile.tickFontPx`**（契约 §4b 的字号表）：它与刻度同号是有意的，但不靠继承——
+  // 继承会让「在刻度段与板号段之间插一次 `target.font` 赋值」静默改掉板号字号，而两条断言都看不见。
+  target.font = `${tile.tickFontPx}px sans-serif`;
   target.textAlign = "center";
   target.textBaseline = "top";
   for (const edge of tile.colBoards) {

@@ -30,6 +30,7 @@ import {
  */
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -261,7 +262,14 @@ describe("canvasToBlob", () => {
 });
 
 describe("downloadBlob", () => {
-  it("恰好建一个 <a>、点一次、建与回收各一次 object URL；属性与顺序都对", () => {
+  /**
+   * 延时释放的毫秒数（`exporter.ts` 的模块私有常量 `REVOKE_DELAY_MS`，不新增导出）。
+   * **写死在用例里是有意的**：改延时必须同时改这里（与「契约口径行写死在用例里」同一手法）。
+   */
+  const REVOKE_DELAY_MS = 1000;
+
+  it("恰好建一个 <a>、点一次、建 URL 一次；revoke **延后** 1000 ms 且恰好一次", () => {
+    vi.useFakeTimers();
     const url = stubUrlApi();
     const clickSpies: ReturnType<typeof vi.fn>[] = [];
     const created = stubCreateElement(
@@ -289,8 +297,18 @@ describe("downloadBlob", () => {
     expect(clickSpies).toHaveLength(1);
     expect(clickSpies[0]).toHaveBeenCalledTimes(1);
     expect(url.createObjectURL.mock.calls).toEqual([[png]]);
+
+    // **同步释放是错的**（修复波 A-1）：浏览器要在 `click()` 之后异步从 blob URL 取字节，
+    // 同一任务里 revoke 可能让下载**静默不落地**（FileSaver.js 正为此把 revoke 放进 setTimeout）。
+    expect(url.revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(REVOKE_DELAY_MS - 1);
+    expect(url.revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     expect(url.revokeObjectURL.mock.calls).toEqual([[OBJECT_URL]]);
-    // 顺序：先 click 后 revoke。反过来的话部分浏览器会在数据被读走之前把它释放掉。
+    // 恰好一次：再多推 5 s 也不会有第二次回收（重复 revoke 同样是缺陷）
+    vi.advanceTimersByTime(5000);
+    expect(url.revokeObjectURL).toHaveBeenCalledTimes(1);
+    // 顺序：先 click 后 revoke（反过来的话部分浏览器会在数据被读走之前把它释放掉）
     expect(clickSpies[0]!.mock.invocationCallOrder[0]!).toBeLessThan(
       url.revokeObjectURL.mock.invocationCallOrder[0]!,
     );
@@ -305,7 +323,8 @@ describe("downloadBlob", () => {
     );
   });
 
-  it("click 抛错 ⇒ 异常照常上抛，但 object URL 仍被恰好回收一次（F4 的靶子）", () => {
+  it("click 抛错 ⇒ 异常照常上抛，但 object URL 仍被**恰好一次**延后回收（F4 的靶子）", () => {
+    vi.useFakeTimers();
     const url = stubUrlApi();
     const boom = new Error("下载被拒绝");
     stubCreateElement(
@@ -322,8 +341,13 @@ describe("downloadBlob", () => {
 
     // 不吞异常：失败要能被面板看见（面板把它渲染成「失败：原因」）。
     expect(() => downloadBlob(png, "图纸-施工图-r1c1.png")).toThrow(boom);
-    // 但回收必须照做，且只做一次：写在 click 之后的顺序语句会在这一路径上漏掉回收（blob URL 泄漏）。
+    // **失败路径也要安排这次延后回收**（保留「恰好一次」语义）：写在 `try` 尾部的写法会在这一路径上
+    // 漏掉回收（blob URL 泄漏）——所以它在 `finally` 里。
+    expect(url.revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(REVOKE_DELAY_MS);
     expect(url.revokeObjectURL.mock.calls).toEqual([[OBJECT_URL]]);
+    vi.advanceTimersByTime(5000);
+    expect(url.revokeObjectURL).toHaveBeenCalledTimes(1);
   });
 
   it("写进 download 属性的是去空白后的名字（F5 的靶子）", () => {
@@ -448,6 +472,14 @@ describe("exportFilename：清洗与序号守卫（M13 的靶子）", () => {
     expect(() => exportFilename("小猫", "施工图")).toThrow("施工图的分片序号缺失");
   });
 
+  it("施工图显式传 `null` ⇒ 抛契约消息，不落裸 TypeError（修复波 A-m10）", () => {
+    // 修复前：`tile === undefined` 判不出 `null` ⇒ 下一句 `tile.rowIndex` 抛
+    // `TypeError: Cannot read properties of null (reading 'rowIndex')`——响亮，但**没有契约口径**。
+    expect(() =>
+      exportFilename("小猫", "施工图", null as unknown as { rowIndex: number; colIndex: number }),
+    ).toThrow("施工图的分片序号缺失");
+  });
+
   it("用量表 / 分享图带了 tile ⇒ 抛（静默忽略会让调用方以为自己传对了）", () => {
     expect(() => exportFilename("小猫", "用量表", { rowIndex: 0, colIndex: 0 })).toThrow(
       "用量表 / 分享图不带分片序号",
@@ -455,6 +487,11 @@ describe("exportFilename：清洗与序号守卫（M13 的靶子）", () => {
     expect(() => exportFilename("小猫", "分享图", { rowIndex: 3, colIndex: 4 })).toThrow(
       "用量表 / 分享图不带分片序号",
     );
+    // 显式 `null` 也算「带了序号」这条语义非法（「没传」只认 `undefined`）——与 `requireMaxEdge`
+    // 的「显式 null 不算没传」同源（修复波 A-m10）。
+    expect(() =>
+      exportFilename("小猫", "用量表", null as unknown as { rowIndex: number; colIndex: number }),
+    ).toThrow("用量表 / 分享图不带分片序号");
   });
 
   it("分片序号必须是 ≥0 的安全整数 ⇒ 否则抛（负数会静默产出 r0c0）", () => {

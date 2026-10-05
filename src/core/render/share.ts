@@ -7,12 +7,13 @@ import type { RenderTarget2D } from "./types";
 /**
  * 分享图（规格 §7）：纯色块、**无网格无文字无边距**、空格跳过（画布零初始化 ⇒ 完全透明）。
  *
- * 与 `sheet.ts` 同受 `__tests__/layoutGate.test.ts` 的**五条**源码级检查约束（全部先剥注释再扫）。
- * 守本文件的恰好是其中两条：第 3 条（不得出现 `canvasWidth /` / `canvasHeight /` 这类除法）与
- * 第 5 条（必须出现 `shareCellBox(`）——**这两条是成对的**：格子 → 像素只能经
+ * 与 `sheet.ts` 同受 `__tests__/layoutGate.test.ts` 的**五条**源码级检查约束（禁止类三条先剥注释再扫，
+ * 正向两条还会再剥一层**字符串内容**——那是 `void "shareCellBox(";` 那次事故的修法）。
+ * **本文件的设计压力恰好落在这两条上**：第 3 条（不得出现 `canvasWidth /` / `canvasHeight /` 这类除法）
+ * 与第 5 条（必须出现 `shareCellBox(`）——它们**成对**：格子 → 像素只能经
  * `shareCellBox(plan, col, row)`（2026-10-05 裁定新增；第一版只能拿 `canvasWidth / pattern.width`
- * 反推，那正是「自己乘格像素」）。第 1 / 2 / 4 条（不出现 `cellPx`、不读 `pattern.cells`、
- * 必须经 `cellAt`）同样适用于本文件。
+ * 反推，那正是「自己乘格像素」）。**其余三条（不出现 `cellPx`、不读 `pattern.cells`、必须经
+ * `cellAt`）同样适用于本文件。**
  *
  * **为何公开**：`views/EditorPage.vue` 的导出面板（任务 4）是唯一生产消费者。
  */
@@ -38,6 +39,13 @@ export function drawShare(
       `分享图计划与图纸不符：计划 ${plan.cols}×${plan.rows}、图纸 ${pattern.width}×${pattern.height}`,
     );
   }
+  // `plan` 自身的自洽性探针（修复波 A-m11）：`shareCellBox` 是格子 → 像素的**唯一**映射，它的守卫
+  // 里也包含「计划的格像素合法」（≥1 的安全整数）。这里在**任何写操作之前**先问它一次——
+  // 坏格像素会让每一格都画成 0×0 / `NaN` 尺寸的矩形，而 `fillRect` **不抛错**：结果是一张静默的
+  // 全透明 PNG（分享图按设计就是透明的，所以连"看起来不对"都没有）。
+  // 刻意**不**在这里读计划里的那个字段：渲染器一个像素坐标都不许自己碰（闸门第 1 条），
+  // 只有 `shareCellBox` 可以（它就在 `layout.ts` 里，是这条映射的权威）。
+  void shareCellBox(plan, 0, 0);
 
   // 图纸是色块：插值会造出图纸里真不存在的中间色（与 services/patternThumbnail.ts 同一口径），
   // 而且必须在**第一次填充之前**关掉。

@@ -16,8 +16,11 @@ import { computed, nextTick, ref } from "vue";
  * 判定列按判据顺序取**第一个不通过的**，如实区分「被钳制 / 无 2D 上下文 / 像素读不回 / 通过」。
  * `getContext` 返回 `null` **不是通过**；尺寸被钳制时**不读**像素（读了也是别人的像素）。
  *
- * **没有区间时不外推**：第一档就不过 ⇒ 写「没有可收敛的下界，二分未执行」；17 档全过 ⇒ 写
- * 「上界未触及，二分未执行」。
+ * **没有区间时不外推**：第一档就不过 ⇒ 写「没有可收敛的下界，二分未执行」；全梯都过 ⇒ 写
+ * 「上界未触及，二分未执行」；**梯子中途出错（只跑了前几档）⇒ 写「未跑完」**，不许把半截梯
+ * 当完整梯出结论（修复波 B-m4）。`bisected` 分支还要看**下界档之前**有没有未通过的档位：
+ * 有就追加「读数非单调，勿外推」，且报告里的回写规程改成「没有收敛值 ⇒ 不得回写梯顶 / 梯上界」
+ * （修复波 B-1）。
  */
 
 /** 单边上限方向的短边（规格 §11：固定短边为 64）。 */
@@ -67,7 +70,14 @@ interface Reading {
 
 type DirectionSummary =
   | { readonly direction: Direction; readonly status: "idle" }
-  | { readonly direction: Direction; readonly status: "no-lower" }
+  | {
+      readonly direction: Direction;
+      readonly status: "no-lower";
+      /** 本梯实际扫过的档数（**只在等于 `LADDER.length` 时才算完整梯**）。 */
+      readonly ladderCount: number;
+      /** 梯子是否扫完（某档 `getContext` 抛错会中断 `runDirection`，此时结论只能说「未跑完」）。 */
+      readonly ladderComplete: boolean;
+    }
   | {
       readonly direction: Direction;
       readonly status: "no-upper";
@@ -79,6 +89,9 @@ type DirectionSummary =
        * 结论就不能写成「全部 17 档通过」。
        */
       readonly failedLadderCount: number;
+      /** 本梯实际扫过的档数 / 是否扫完（含义同 `no-lower`）。 */
+      readonly ladderCount: number;
+      readonly ladderComplete: boolean;
     }
   | {
       readonly direction: Direction;
@@ -87,6 +100,12 @@ type DirectionSummary =
       readonly upper: number;
       readonly upperVerdict: Verdict;
       readonly converged: number;
+      /**
+       * 下界档**之前**（低档方向）判定不是 `pass` 的档数（修复波 B-1）：`bisected` 只保证
+       * 「有一个三项全过的档位」，不保证**它下面每一档都通过**。> 0 时读数非单调，
+       * 结论必须如实追加、不能让人类伙伴把高报的收敛值写进 `EXPORT_MAX_EDGE`。
+       */
+      readonly failedBeforeLowerCount: number;
     };
 
 const busy = ref(false);
@@ -157,22 +176,27 @@ function probeSize(direction: Direction, stage: Stage, value: number): Reading {
 
 /**
  * 最后一个三项全过的档位 + 它的下一档（含**那一档**的判定）；没有区间时返回 `null`
- * （第一档就不过 / 17 档全过）。
+ * （第一档就不过 / 全梯都过）。
  *
  * `upperVerdict` 取自**上界那一档**，不是最后一档：单调平台上两者逐字相同（所以 CI 的三种读数
  * 在这一处**没有判别力**，如实标注），但一旦出现非单调读数（本页扫完全部 17 档正是为了如实暴露它），
- * 只有「上界那一档」是对的。
+ * 只有「上界那一档」是对的。`lowerIndex` 让调用方能数出**下界档之前**有多少档没过（修复波 B-1）。
  */
 function findBounds(
   ladder: readonly Reading[],
-): { lower: number; upper: number; upperVerdict: Verdict } | null {
+): { lower: number; upper: number; upperVerdict: Verdict; lowerIndex: number } | null {
   let lastPass = -1;
   for (let i = 0; i < ladder.length; i += 1) {
     if (ladder[i]!.verdict === "pass") lastPass = i;
   }
   if (lastPass === -1 || lastPass === ladder.length - 1) return null;
   const upper = ladder[lastPass + 1]!;
-  return { lower: ladder[lastPass]!.value, upper: upper.value, upperVerdict: upper.verdict };
+  return {
+    lower: ladder[lastPass]!.value,
+    upper: upper.value,
+    upperVerdict: upper.verdict,
+    lowerIndex: lastPass,
+  };
 }
 
 /**
@@ -236,16 +260,25 @@ async function run(): Promise<void> {
 function summarize(direction: Direction, rows: readonly Reading[]): DirectionSummary {
   const ladder = rows.filter((r) => r.direction === direction && r.stage === "ladder");
   if (ladder.length === 0) return { direction, status: "idle" };
+  // **完整梯**的判据：`runDirection` 是「先扫完全部 17 档再二分」，所以任何一档抛错（例如
+  // `getContext` 抛）都会让梯子停在半途、`readings` 里只留下前几档。此时**不许**拿它当完整梯出结论
+  // （修复波 B-m4）：半截梯「没有区间」只说明「还没测到」，不说明「上界未触及」或「无一通过」。
+  const ladderCount = ladder.length;
+  const ladderComplete = ladderCount === LADDER.length;
   const bounds = findBounds(ladder);
   if (bounds === null) {
     const failedLadderCount = ladder.filter((r) => r.verdict !== "pass").length;
     // 一档都没过 ⇒ 没有可收敛的下界（failedLadderCount === ladder.length ⟺ 没有任何一档 pass）
-    if (failedLadderCount === ladder.length) return { direction, status: "no-lower" };
+    if (failedLadderCount === ladder.length) {
+      return { direction, status: "no-lower", ladderCount, ladderComplete };
+    }
     return {
       direction,
       status: "no-upper",
       lastLadderValue: ladder[ladder.length - 1]!.value,
       failedLadderCount,
+      ladderCount,
+      ladderComplete,
     };
   }
   let converged = bounds.lower;
@@ -261,6 +294,11 @@ function summarize(direction: Direction, rows: readonly Reading[]): DirectionSum
     upper: bounds.upper,
     upperVerdict: bounds.upperVerdict,
     converged,
+    // 下界档**之前**（低档方向）未通过的档数。> 0 ⇒ 读数非单调：低档过不去、更高的档反而过了，
+    // 于是「收敛值」会被高报（表格里明明写着某一档「被钳制 / 像素读不回」）。
+    failedBeforeLowerCount: ladder
+      .slice(0, bounds.lowerIndex)
+      .filter((r) => r.verdict !== "pass").length,
   };
 }
 
@@ -302,8 +340,17 @@ function buildReportText(
   lines.push("结论");
   for (const direction of DIRECTIONS) lines.push(conclusionText(sums[direction]));
   lines.push("");
+  // **回写规程是有条件的**（修复波 B-1）：两种「没有区间」的结论（第一档就不过 / 全梯都过）都
+  // **没有收敛值**，此时任何「取收敛值 → 向下取整到 2 的幂」的规程都无从执行——规程必须明写
+  // 「不得回写梯顶 / 梯上界」，否则人类伙伴会把「末档 / 梯顶」当成答案填进 `EXPORT_MAX_EDGE`。
+  const noConvergence = DIRECTIONS.some((direction) => {
+    const status = sums[direction].status;
+    return status === "no-lower" || status === "no-upper" || status === "idle";
+  });
   lines.push(
-    "回写规程：取两个方向收敛值里更保守的那个，向下取整到 2 的幂 ⇒ EXPORT_MAX_EDGE（core/render/layout.ts）+ 主规格 §12 的 R2 行 + B4 规格 §16 的 B4-R1（规格 §11）。",
+    noConvergence
+      ? "回写规程：本次读数**没有收敛值**（至少一个方向没有区间）⇒ **不得回写梯顶 / 梯上界**、不得据以外推 EXPORT_MAX_EDGE；请先复查装置与读数再重测（规格 §11）。"
+      : "回写规程：取两个方向收敛值里更保守的那个，向下取整到 2 的幂 ⇒ EXPORT_MAX_EDGE（core/render/layout.ts）+ 主规格 §12 的 R2 行 + B4 规格 §16 的 B4-R1（规格 §11）。",
   );
   return lines.join("\n");
 }
@@ -331,9 +378,17 @@ function conclusionText(summary: DirectionSummary): string {
   const label = directionLabel(summary.direction);
   if (summary.status === "idle") return `${label}：尚未测量。`;
   if (summary.status === "no-lower") {
-    return `${label}：档位梯的第一档（${LADDER[0]}）三项判据就没过——没有可收敛的下界，二分未执行（如实记录，不外推）。`;
+    // **「未跑完」与「跑完了但一档没过」是两件事**（修复波 B-m4）：半截梯（某档抛错中断）里
+    // 前几档全不通过，只说明「还没测到能过的档」，不能写成「本梯 17 档无一通过」。
+    if (!summary.ladderComplete) {
+      return `${label}：已跑的 ${summary.ladderCount}/${LADDER.length} 档无一通过，但**梯子未跑完**（测量中途出错）——结论不可用、更要紧的是**不得回写**，请重测（规格 §11）。`;
+    }
+    return `${label}：档位梯的第一档（${LADDER[0]}）三项判据就没过——本梯 ${LADDER.length} 档无一通过，没有可收敛的下界，二分未执行（如实记录，不外推）。`;
   }
   if (summary.status === "no-upper") {
+    if (!summary.ladderComplete) {
+      return `${label}：只跑了 ${summary.ladderCount}/${LADDER.length} 档（测量中途出错）——**未跑完，不得据此判「上界未触及」，也不得回写梯顶**，请重测（规格 §11）。`;
+    }
     // 末档通过只说明「上界未触及」；梯上另有未通过的档位时必须如实说出来，
     // 否则结论会与本页自己的表格矛盾（读数非单调时「全部 17 档通过」是假的）。
     const tail =
@@ -342,7 +397,14 @@ function conclusionText(summary: DirectionSummary): string {
         : `本梯另有 ${summary.failedLadderCount} 档未通过（读数非单调，勿外推），二分未执行`;
     return `${label}：末档 ${summary.lastLadderValue} 通过、上界未触及；${tail}`;
   }
-  return `${label}：下界 ${summary.lower}（末档三项全过）· 上界 ${summary.upper}（${verdictText(summary.upperVerdict)}）· 二分 ${BISECT_STEPS} 次后收敛值 ${summary.converged}`;
+  // `bisected`：下界档**之前**若已有未通过的档位，读数就是非单调的——表格里明明写着某一档
+  // 「被钳制 / 像素读不回」，收敛值却是更高的档位，人类伙伴照抄下去会把**大于真实上限**的数
+  // 写进 `EXPORT_MAX_EDGE`（修复波 B-1）。所以这一句必须追加，且用词与表格一致。
+  const monotonicTail =
+    summary.failedBeforeLowerCount === 0
+      ? ""
+      : `（本梯低档已有 ${summary.failedBeforeLowerCount} 档未通过，读数非单调，勿外推）`;
+  return `${label}：下界 ${summary.lower}（梯上最后一个三项全过的档位）${monotonicTail} · 上界 ${summary.upper}（${verdictText(summary.upperVerdict)}）· 二分 ${BISECT_STEPS} 次后收敛值 ${summary.converged}`;
 }
 
 async function copy(): Promise<void> {
@@ -375,7 +437,8 @@ async function copy(): Promise<void> {
       都只能在手机上跑（B4 规格 §13.4 / §14 清单 3）。每档三个判据缺一不可——写入值一致 / 有 2D 上下文 /
       填色后能读回写入的颜色；<b>判定列逐档如实区分「通过 / 被钳制 / 无 2D 上下文 / 像素读不回」</b>，
       <code>getContext</code> 返回 <code>null</code> 不算通过。档位梯扫完全部
-      {{ LADDER.length }} 档、不提前退出；没有区间时结论如实写「二分未执行」，不外推。
+      {{ LADDER.length }} 档、不提前退出；没有区间时结论如实写「二分未执行」，不外推；
+      梯子中途出错时写「未跑完」（不拿半截梯出结论），读数非单调时结论会追加「勿外推」。
     </p>
 
     <div class="mt-4 flex flex-wrap items-center gap-3">

@@ -8,6 +8,7 @@ import * as layout from "@/core/render/layout";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
 import {
   createRecordingTarget,
+  createdBlobs,
   createdUrls,
   resetExporterMock,
   revokedUrls,
@@ -269,7 +270,7 @@ describe("计划摘要（规格 §10.2 / 契约 §4）", () => {
 });
 
 describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
-  it("待生成 → 生成中… → 已生成：期间按钮禁用，画布尺寸取自 plan，预览指向同一颗 blob", async () => {
+  it("待生成 → 生成中… → 已生成：期间按钮禁用，画布尺寸取自 plan，预览 URL 是**落盘那一颗** blob 造的", async () => {
     const wrapper = mountPanel(makeSmallPattern());
     const item = () => wrapper.get("[data-testid='export-item-legend']");
     expect(item().text()).toContain("待生成");
@@ -303,6 +304,11 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     expect(wrapper.get("[data-testid='export-preview-legend']").attributes("src")).toBe(
       createdUrls[0],
     );
+    // **与落盘那条恒等断言对称**（修复波 C-M4）：`createObjectURL` 收到的必须就是喂给
+    // `downloadBlob` 的那**一颗**对象（下面 `expect(blobArg).toBe(blob)` 是同一件事的另一端）。
+    // 只断 `src === createdUrls[0]` 时，「预览另造一颗 blob」的实现在旧桩下照样绿（桩把实参丢了）。
+    expect(createdBlobs).toHaveLength(1);
+    expect(createdBlobs[0]).toBe(blob);
     // **画布尺寸取自 plan**：用量表计划的 3948×230（不是别处的常量、不是缩略图的 512 上限）
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(3948, 230);
     // 面板确实把**真渲染器**跑在它自己那份 plan 上。判据不能用「有没有画过」这种存在性断言
@@ -348,6 +354,64 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     await saveAndSettle(wrapper, "share");
     expect(wrapper.get("[data-testid='export-item-share']").text()).toContain("已生成");
     expect(exporter.downloadBlob).toHaveBeenCalledTimes(2);
+  });
+
+  it("重存同一项：先销号旧预览，再指向新 URL —— 旧 URL 恰好销号一次", async () => {
+    // 修复波 C-M1：`downloadAndPreview` 里的 `revokePreview(item)` 原来**零断言**——
+    // 删掉它（只覆盖 `item.previewUrl`）会让旧 object URL 永久泄漏，而先前所有用例照样全绿。
+    const wrapper = mountPanel(makeSmallPattern());
+    await saveAndSettle(wrapper, "legend");
+    await saveAndSettle(wrapper, "legend");
+
+    // 两次生成各造一个 URL；**旧的那个被销号一次、新的那个没有被销号**
+    expect(createdUrls).toEqual(["blob:test-1", "blob:test-2"]);
+    expect(revokedUrls).toEqual([createdUrls[0]]);
+    expect(wrapper.get("[data-testid='export-preview-legend']").attributes("src")).toBe(
+      createdUrls[1],
+    );
+  });
+
+  it("逐项的画布尺寸取自**各自的** plan（用量表 / 分享图 / 施工图各一次）", async () => {
+    // 修复波 C-M5：面板层「plan → 平台调用实参」原来只有用量表一条被断（`3948×230`）。
+    // 4×2 夹具：用量表 3948×230（13 列 × 1 行）、分享图 256×128（64 px/格）、施工图 272×324。
+    const wrapper = mountPanel(makeSmallPattern());
+
+    await saveAndSettle(wrapper, "legend");
+    expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(3948, 230);
+
+    await saveAndSettle(wrapper, "share");
+    expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(256, 128);
+
+    await saveAndSettle(wrapper, "tile-0");
+    // canvasWidth = 2×24 + 64 + 4×40 = 272；canvasHeight = 48 + 108 + 44 + 2×40 + 44 = 324
+    expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(272, 324);
+    expect(exporter.createCanvasStrict).toHaveBeenCalledTimes(3);
+  });
+
+  it("200×200 的第 4 片（tile-3）：文件名带 r2c2（分片序号真的接了线）", async () => {
+    // 修复波 C-M5：`r{行}c{列}` 的接线（`rowIndex + 1` / `colIndex + 1`）在面板这一层零断言——
+    // 把两个序号对调、或写死 r1c1，先前都判不开（文件名格式本身由 exporter.test.ts 钉住）。
+    const wrapper = mountPanel(makeLargePattern());
+    await saveAndSettle(wrapper, "tile-3");
+
+    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
+    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("小猫-施工图-r2c2.png");
+  });
+
+  it("逐项清单的 DOM 顺序 = 用量表 → 分享图 → 各片（契约 §2b）", () => {
+    // 修复波 C（K 家族）：顺序原来没有任何断言——把分享图挪到用量表之前照样全绿，
+    // 而契约 §2b 的「渲染顺序」正是这一串。
+    const wrapper = mountPanel(makeLargePattern());
+    expect(
+      wrapper.findAll("[data-testid^='export-item-']").map((el) => el.attributes("data-testid")),
+    ).toEqual([
+      "export-item-legend",
+      "export-item-share",
+      "export-item-tile-0",
+      "export-item-tile-1",
+      "export-item-tile-2",
+      "export-item-tile-3",
+    ]);
   });
 
   it("改一格（revision 变）⇒ 所有「已生成」复位为「待生成」，预览销号后丢弃", async () => {
@@ -633,5 +697,84 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
     //    这里**没有** `toBlob` 这一段：本用例用 `mockImplementationOnce` 顶掉了默认实现，
     //    而 `toBlob` 是默认实现推进顺序表的——顺序表在这里的作用只是证明释放照常发生。
     expect(steps).toEqual(["selfcheck", "release:width", "release:height"]);
+  });
+
+  /**
+   * **保存飞行中图纸变了**（修复波 B-3）：面板**没有**卸载，只是清单被 `rebuildItems` 重建
+   * （面板开着时 `Ctrl+Z` / 切换工程 `pattern` 身份变化都会走到这里）。原来的 `unmounted` 守卫
+   * 对这一支完全不设防 ⇒ 那个 object URL 写在一个已经被丢弃的 `item` 上、**永不回收**。
+   */
+  it("保存飞行中涂改（revision 变）：await 之后诞生的 URL 被立即回收，且不写到被丢弃的项上", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    let resolveBlob = (): void => {};
+    exporter.canvasToBlob.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveBlob = () => {
+            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
+          };
+        }),
+    );
+    await wrapper.get("[data-testid='export-save-legend']").trigger("click");
+    expect(wrapper.get("[data-testid='export-item-legend']").text()).toContain("生成中…");
+
+    // 飞行中「涂了一格」：`revision` 变 ⇒ 清单整体重建、旧 item 被丢弃
+    await wrapper.setProps({ revision: 1 });
+    await flushPromises();
+    expect(wrapper.get("[data-testid='export-item-legend']").text()).toContain("待生成");
+
+    resolveBlob();
+    await flushPromises();
+
+    // ① URL 诞生了又被立刻销号（`toEqual`：顺序也钉住）
+    expect(createdUrls).toEqual(["blob:test-1"]);
+    expect(revokedUrls).toEqual(createdUrls);
+    // ② 它**没有**被写到那个被丢弃的项上：新清单里的该项仍是「待生成」、没有 `<img>`
+    expect(wrapper.get("[data-testid='export-item-legend']").text()).toContain("待生成");
+    expect(wrapper.find("[data-testid='export-preview-legend']").exists()).toBe(false);
+  });
+
+  /**
+   * **保存飞行中切换工程**（修复波 B-3 的第二半）：`pattern` 换对象 + `:project-name` 跟着换，
+   * 而画布上的字节是 `await` **之前**那张图纸的。修好之前，文件名会在 `await` 之后读
+   * `props.projectName` ⇒ 产出「**文件名的工程名是新的、字节是旧图纸的**」这种静默错产物
+   * （没有报错、没有异常，用户拿到一份名不副实的文件）。
+   */
+  it("保存飞行中换工程：文件名用取用那一刻的工程名（旧图纸的字节不配新名字）", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    let resolveBlob = (): void => {};
+    exporter.canvasToBlob.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveBlob = () => {
+            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
+          };
+        }),
+    );
+    await wrapper.get("[data-testid='export-save-legend']").trigger("click");
+
+    // 飞行中换到另一张图纸 + 另一个工程名（真实路径是 `/edit/a → /edit/b`）
+    const large = makeLargePattern();
+    await wrapper.setProps({
+      pattern: large,
+      projectName: "海边的猫",
+      usages: patternStats(large, palette).usages,
+    });
+    await flushPromises();
+
+    resolveBlob();
+    await flushPromises();
+
+    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
+    const filename = exporter.downloadBlob.mock.calls[0]?.[1] ?? "";
+    // 落盘的名字是**取用那一刻**的工程名；新工程名一次都不许出现在这一笔里
+    expect(filename).toBe("小猫-用量表.png");
+    expect(filename).not.toContain("海边的猫");
+    // 画布上的标题同样是旧工程名（字节与名字同源）——这条与上一条合起来才是「不错配」的完整判据
+    expect(recording.texts.map((call) => call.text)).toContain("小猫 · 用量表");
+    // 被丢弃的那一项不许被写上 URL
+    expect(createdUrls).toEqual(["blob:test-1"]);
+    expect(revokedUrls).toEqual(createdUrls);
+    expect(wrapper.find("[data-testid='export-preview-legend']").exists()).toBe(false);
   });
 });

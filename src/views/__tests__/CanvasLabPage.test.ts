@@ -47,6 +47,11 @@ interface FakeOptions {
   readonly withoutContext?: boolean;
   /** `getContext("2d")` 直接抛错（模拟平台级失败：页面的兜底红字路径）。 */
   readonly throwOnContext?: boolean;
+  /**
+   * 请求尺寸的长边**超过它**时 `getContext("2d")` 抛错（模拟「测到某一档时平台直接失败」）：
+   * 用来钉住 `summarize` 的「梯子未跑完」分支（修复波 B-m4）——只跑了前几档时结论只能说「未跑完」。
+   */
+  readonly throwOnContextAbove?: number | null;
   /** `getContext("2d")` 抛一个 **message 为空**、`name` 为这个字符串的 `Error`（钉住 `errorText` 的「空串取 name」分支）。 */
   readonly throwEmptyMessageNamed?: string | null;
   /** `getContext("2d")` 直接抛这个**非 `Error`** 值（钉住 `errorText` 的「非 Error 取 String(e)」分支）。 */
@@ -119,6 +124,10 @@ class FakeCanvas {
     }
     if (this.options.throwValue !== undefined) throw this.options.throwValue;
     if (this.options.throwOnContext === true) throw new Error("假平台：无法获取上下文");
+    const throwAbove = this.options.throwOnContextAbove ?? null;
+    if (throwAbove !== null && Math.max(this.measuredWidth, this.measuredHeight) > throwAbove) {
+      throw new Error(`假平台：长边超过 ${throwAbove} px 时无法获取上下文`);
+    }
     if (kind !== "2d" || this.options.withoutContext === true) return null;
     const canvas = this;
     return {
@@ -388,6 +397,79 @@ describe("/lab/canvas 探针页", () => {
       expect(conclusion).not.toContain("档均通过");
       expect(conclusion).not.toContain("收敛值");
     }
+
+    wrapper.unmount();
+  });
+
+  /**
+   * **`bisected` 也会高报收敛值**（修复波 B-1，本页最危险的那条读数）：小档读不回、中段通过、
+   * 大档被钳制时，「最后一个通过的档位」下面明明躺着几档未通过，收敛值却是那个更高的数。
+   * 人类伙伴若把高报的数（这里 6144）向下取整到 2 的幂写进 `EXPORT_MAX_EDGE`，就会得到**大于真实
+   * 上限**的常量 —— 正是这条用例要拦的形态。
+   */
+  it("bisected 但低档已有未通过：结论追加「读数非单调，勿外推」（否则会高报收敛值）", async () => {
+    // ≤2048 的五档读不回、2560–6144 通过、≥8192 被钳制 ⇒ 最后通过的是 6144，而它下面有 5 档没过
+    stubCanvases({ readbackColor: [10, 20, 30], readbackColorMaxEdge: 2048, clampAbove: 6144 });
+    const writeText = stubClipboard();
+    const wrapper = mount(CanvasLabPage);
+    await runProbe(wrapper);
+
+    const conclusion = wrapper.get('[data-testid="probe-conclusion-edge"]').text();
+    expect(conclusion).toContain("下界 6144");
+    // 文案口径：下界是「梯上**最后一个**三项全过的档位」（B-m1 的同词两义更正）
+    expect(conclusion).toContain("梯上最后一个三项全过的档位");
+    expect(conclusion).toContain("上界 8192");
+    expect(conclusion).toContain("本梯低档已有 5 档未通过，读数非单调，勿外推");
+
+    // 这一支**有**收敛值（bisected）⇒ 报告里的回写规程仍是正常那条，不能被上一条改坏
+    await wrapper.get('[data-testid="probe-copy"]').trigger("click");
+    await flushPromises();
+    const copied = String(writeText.mock.calls[0]?.[0] ?? "");
+    expect(copied).toContain("取两个方向收敛值里更保守的那个");
+    expect(copied).not.toContain("不得回写梯顶");
+
+    wrapper.unmount();
+  });
+
+  it("没有收敛值时：结论文案「本梯 17 档无一通过」，报告里的回写规程明写「不得回写梯顶 / 梯上界」", async () => {
+    // 两个方向都是 `no-lower`（一档都没过）⇒ 报告里**没有**可回写的收敛值
+    stubCanvases({ withoutContext: true });
+    const writeText = stubClipboard();
+    const wrapper = mount(CanvasLabPage);
+    await runProbe(wrapper);
+
+    const conclusion = wrapper.get('[data-testid="probe-conclusion-edge"]').text();
+    expect(conclusion).toContain(`本梯 ${LADDER.length} 档无一通过`);
+    expect(conclusion).toContain("没有可收敛的下界");
+
+    await wrapper.get('[data-testid="probe-copy"]').trigger("click");
+    await flushPromises();
+    const copied = String(writeText.mock.calls[0]?.[0] ?? "");
+    expect(copied).toContain("不得回写梯顶 / 梯上界");
+    expect(copied).not.toContain("取两个方向收敛值里更保守的那个");
+
+    wrapper.unmount();
+  });
+
+  it("梯子没跑完（某档 getContext 抛错）：结论写「未跑完」，不判「上界未触及」、也不写「无一通过」", async () => {
+    // 1024 / 1280 / 1536 三档通过，1792 那一档抛错 ⇒ `readings` 里只留下前 3 档
+    stubCanvases({ throwOnContextAbove: 1536 });
+    const wrapper = mount(CanvasLabPage);
+    await runProbe(wrapper);
+
+    const rows = wrapper.findAll('[data-testid="probe-row-edge"]');
+    expect(rows).toHaveLength(3);
+    const conclusion = wrapper.get('[data-testid="probe-conclusion-edge"]').text();
+    expect(conclusion).toContain("未跑完");
+    expect(conclusion).toContain(`3/${LADDER.length}`);
+    // 半截梯「没有区间」只说明「还没测到」：完整梯那两句**结论**（「…通过、上界未触及」与
+    // 「全部 N 档均通过」）都不许出现（文案里那句「不得据此判『上界未触及』」是**警告**，不是结论）
+    expect(conclusion).not.toContain("通过、上界未触及");
+    expect(conclusion).not.toContain("档均通过");
+    expect(conclusion).not.toContain("无一通过");
+    expect(conclusion).not.toContain("收敛值");
+    // 测量中断是**响亮**的：兜底红字带着平台原因出现
+    expect(wrapper.get('[data-testid="probe-error"]').text()).toContain("无法获取上下文");
 
     wrapper.unmount();
   });

@@ -120,7 +120,11 @@ export function createRecordingTarget(): RecordingTarget {
     font: "",
     textAlign: "center",
     textBaseline: "middle",
-    imageSmoothingEnabled: false,
+    // **与真实 ctx 的默认值一致（`true`）**，也与 `core/render/__tests__/helpers.ts` 的桩一致
+    // （修复波 C-m4）：两个共享桩的初值不一致时，将来谁在面板侧断「分享图关了插值」都是**恒真**
+    // （桩自己给的 `false`），而不是被测行为。`drawShare` 把它改成 `false` 这件事由
+    // `share.test.ts` 的「关插值」用例负责（那边先断言初值 `true`）。
+    imageSmoothingEnabled: true,
     fillRect: (x, y, w, h) => {
       fills.push({ x, y, w, h, fillStyle: target.fillStyle });
     },
@@ -196,6 +200,14 @@ export function createFakeCanvas(
 
 /** `URL.createObjectURL` 造出来的串，按调用顺序；由 `stubObjectUrl` 每次重置。 */
 export const createdUrls: string[] = [];
+/**
+ * `URL.createObjectURL` **收到的 blob**，按调用顺序（与 `createdUrls` 同序）。
+ *
+ * **为什么必须记实参**（修复波 C-M4）：只记返回串时，「预览指向同一颗 blob」这句话**比断言更强**
+ * ——把 `<img src>` 指向另一次 `createObjectURL(new Blob())` 的产物照样绿。记下实参之后，
+ * 用例才能像 `downloadBlob` 那条恒等断言一样问「预览用的就是落盘的那**一颗**对象吗」。
+ */
+export const createdBlobs: Blob[] = [];
 /** `URL.revokeObjectURL` 收到的串，按调用顺序（用来证明预览**销号后**才丢弃）。 */
 export const revokedUrls: string[] = [];
 
@@ -212,12 +224,14 @@ export function stubObjectUrl(): void {
     revokeObjectURL: (url: string) => void;
   };
   createdUrls.length = 0;
+  createdBlobs.length = 0;
   revokedUrls.length = 0;
   let seq = 0;
-  target.createObjectURL = () => {
+  target.createObjectURL = (blob: Blob) => {
     seq += 1;
     const url = `blob:test-${seq}`;
     createdUrls.push(url);
+    createdBlobs.push(blob);
     return url;
   };
   target.revokeObjectURL = (url: string) => {

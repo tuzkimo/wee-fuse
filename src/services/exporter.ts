@@ -132,15 +132,33 @@ export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 }
 
 /**
- * 触发一次下载：`URL.createObjectURL` → 临时 `<a download>` → `click()` → `revokeObjectURL`。
+ * 下载时 object URL 的**延后释放延时**（ms）。
+ *
+ * **为什么不能同步释放**（这是真实理由，不是防御性洁癖）：`link.click()` 只是把下载**排进**浏览器的
+ * 取数流程，真正的字节是**之后**由浏览器异步从 blob URL 读走的；同一任务里立刻
+ * `URL.revokeObjectURL(url)` 会在部分浏览器上让这次下载**什么都没下下来**（静默失败：没有报错、
+ * 没有文件，用户以为存过了）。这正是 FileSaver.js 把 revoke 放进 `setTimeout(…, 4e4)` 的原因。
+ * **取舍**：FileSaver 用 40 s（够慢网取用，但把一个全分辨率 blob 钉住 40 s）；本功能一张产物最大
+ * ≈64 MB RGBA，取 1 s——足够浏览器启动取数（`click()` 之后取数是立刻开始的），又不长期钉住大 blob。
+ * **恰好一次**：这次延后释放写在 `finally` 里，成功与失败两条路径都只安排一次。
+ */
+const REVOKE_DELAY_MS = 1000;
+
+/**
+ * 触发一次下载：`URL.createObjectURL` → 临时 `<a download>` → `click()` → **延后** `revokeObjectURL`。
  *
  * **两条守卫都写在任何副作用之前**（`AGENTS.md`「入口校验」）：`blob.size === 0` 即抛（空文件是
  * 真实存在的失败形态，见 `canvasToBlob`）；文件名去空白后为空即抛。顺序上**先 `click()` 后
  * `revokeObjectURL`**：反过来会在部分浏览器上让下载拿不到数据。
  *
- * **`revokeObjectURL` 放在 `finally` 里**（2026-10-05 任务 3 审查的 F4 裁定）：`click()` 是唯一可能抛错的
- * 一步（例如被下载拦截器 / 受限环境拒绝），而 object URL 一旦创建就必须回收——写成顺序语句
- * （`link.click(); URL.revokeObjectURL(url);`）会让「抛错那一次」漏掉回收、在页面生命周期内泄漏一个 blob URL。
+ * **`revokeObjectURL` 延后到 `setTimeout(…, REVOKE_DELAY_MS)`**（2026-10-05 修复波 A-1）：
+ * 同步释放是**错误**的——浏览器是异步从 blob URL 取字节的，同一任务里释放可能让下载静默不落地
+ * （理由与 40 s / 1 s 的取舍见 `REVOKE_DELAY_MS` 的 JSDoc）。这一点在本层尤其承重：这是本功能
+ * **唯一**的落盘路径，它静默失败就等于「保存」按钮什么都没做。
+ *
+ * **它仍然放在 `finally` 里**（2026-10-05 任务 3 审查的 F4 裁定）：`click()` 是这一步里唯一现实会
+ * 抛错的一步（例如被下载拦截器 / 受限环境拒绝），而 object URL 一旦创建就必须回收——写成顺序语句
+ * （`link.click(); setTimeout(…)`）会让「抛错那一次」漏掉回收、在页面生命周期内泄漏一个 blob URL。
  * `try / finally` 让回收在成功与失败两条路径上都是**恰好一次**；异常照常上抛，不吞。
  *
  * **这个 `文件名不能为空` 守卫不是 `normalizeProjectName` 的副本**（控制者裁定 2026-10-05）：两者校验的
@@ -171,7 +189,8 @@ export function downloadBlob(blob: Blob, filename: string): void {
   try {
     link.click();
   } finally {
-    URL.revokeObjectURL(url);
+    // 延后释放：浏览器此刻才真正开始从 `url` 取字节（理由见 `REVOKE_DELAY_MS`）。
+    setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
   }
 }
 
@@ -229,12 +248,17 @@ export function exportFilename(
     throw new Error(`导出内容标签非法：${item}`);
   }
   if (item !== "施工图") {
+    // 「没传」只认 `undefined`；显式传进来的 `null`（`JSON.parse` / 强转都能给）同样算「带了序号」
+    // 这条语义非法——与 `requireMaxEdge` 里「显式 `null` 不算没传」同源（2026-10-05 修复波 A-m10）。
     if (tile !== undefined) {
       throw new Error("用量表 / 分享图不带分片序号");
     }
     return `${safeName}-${item}.png`;
   }
-  if (tile === undefined) {
+  // **`null` 也要挡**（2026-10-05 修复波 A-m10）：`tile === undefined` 判不出显式传进来的 `null`
+  // （`JSON.parse` / 强转都能给），下一步 `tile.rowIndex` 会落成一句**裸 TypeError**
+  //（`Cannot read properties of null`）——那是没有契约口径的失败。这里按契约消息响亮拒绝。
+  if (tile === undefined || tile === null) {
     throw new Error("施工图的分片序号缺失");
   }
   if (

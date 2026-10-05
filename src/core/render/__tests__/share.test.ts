@@ -142,6 +142,11 @@ describe("drawShare", () => {
     const { target, calls } = createMockTarget();
     drawShare(target, pattern, palette, plan);
 
+    // **A1 是纯白 `rgb(255, 255, 255)`，必须真的被填**（K 家族）：MARD 色卡里有白豆，
+    // 「白 ≠ 空」——把纯白格当空格跳过的实现会在这里红（空格在 (2,0)/(4,2)/(4,5)，(0,0) 不是空格）。
+    expect(calls.fills.find((fill) => fill.x === 0 && fill.y === 0)).toMatchObject({
+      fillStyle: "rgb(255, 255, 255)",
+    });
     expect(
       calls.fills.find((fill) => fill.x === plan.cellPx && fill.y === plan.cellPx),
     ).toMatchObject({ fillStyle: "rgb(0, 0, 0)" }); // (col=1, row=1) 是 1 号色（黑）
@@ -191,9 +196,9 @@ describe("drawShare", () => {
     expect(calls.fills).toEqual([]);
   });
 
-  it("plan.kind 不匹配 / 色卡不一致：写在任何写操作之前", () => {
-    // 标题只声称这两项：它们各有 `calls.fills` 为空作「动笔之前」的证据。
-    // 本用例末尾的第三项（坏色号）**不属于**这两项——`drawShare` 的色号解析在绘制循环里，
+  it("plan.kind 不匹配 / 色卡不一致 / 格像素非法：写在任何写操作之前", () => {
+    // 标题只声称这几项：它们各有 `calls.fills` 为空作「动笔之前」的证据。
+    // 本用例末尾的坏色号**不属于**它们——`drawShare` 的色号解析在绘制循环里，
     // 它只保证「响亮失败」，不保证画布干净（控制者 2026-10-05 裁定记 minor，理由与升级条件见
     // `share.ts` 那段 JSDoc）。
     const { target, calls } = createMockTarget();
@@ -208,6 +213,17 @@ describe("drawShare", () => {
       "与传入的色卡 other 不一致",
     );
     expect(calls.fills).toEqual([]);
+
+    // `plan.cellPx` 也要守（修复波 A-m11）：坏值会让每格都画成尺寸非法 / `NaN` 的矩形，而
+    // `fillRect` **不抛错** —— 结果是一张静默的全透明 PNG（分享图本来就透明，连"看起来不对"都没有）。
+    for (const bad of [0, -4, 1.5, Number.NaN]) {
+      expect(() => drawShare(target, pattern, palette, { ...plan, cellPx: bad })).toThrow(
+        `分享图计划的格像素非法：${String(bad)}（必须是 ≥1 的安全整数）`,
+      );
+      expect(calls.fills).toEqual([]);
+      // 落位开关（`imageSmoothingEnabled`）也是写：守卫必须在它之前
+      expect(target.imageSmoothingEnabled).toBe(true);
+    }
 
     // 坏色号：只钉「响亮失败」（不在这里断言 `calls.fills` 为空——那会把时机问题伪装成已守）
     const broken = makePattern(6, 6);

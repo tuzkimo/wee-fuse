@@ -196,4 +196,22 @@ describe("渲染器的词法闸门", () => {
     const real = `// 注释\nconst c = tile.cellPx;`;
     expect(/\bcellPx\b/.test(stripComments(real))).toBe(true);
   });
+
+  /**
+   * **`stripStrings` 才是真正易被绕过的那一半**（修复波 C-m3）：`stripComments` 刻意保留字符串内容
+   * （禁止类规则靠它更严），所以正向检查必须再剥一层字符串——否则一句 `void "shareCellBox(";`
+   * 就能让 `toContain` 永远绿（闸门自测原来只测了 `stripComments`，等于没测这条防线）。
+   */
+  it("剥离字符串：字符串里的函数名不算调用，真调用算（正向检查的唯一防线）", () => {
+    expect(stripCommentsAndStrings('void "shareCellBox(";')).not.toContain("shareCellBox(");
+    expect(stripCommentsAndStrings("void 'cellAt(';")).not.toContain("cellAt(");
+    expect(stripCommentsAndStrings("const s = `cellAt(`;")).not.toContain("cellAt(");
+    // 正向半边：真的调用（含模板字面量之外的一切形态）必须留下来
+    expect(stripCommentsAndStrings("const box = shareCellBox(plan, col, row);")).toContain(
+      "shareCellBox(",
+    );
+    expect(stripCommentsAndStrings("cellAt(pattern, col, row);")).toContain("cellAt(");
+    // `stripComments` 自己**不**剥字符串内容（禁止类规则的方向安全）：两个基线的分工被钉住
+    expect(stripComments('void "shareCellBox(";')).toContain("shareCellBox(");
+  });
 });

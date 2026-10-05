@@ -77,6 +77,11 @@ describe("B4 布局常量", () => {
     // 分片步长必须来自 board.ts，不是另一份字面量 29
     expect(TILE_STEP).toBe(BOARD_COLS);
     expect(TILE_STEP).toBe(29);
+    // **常量关系**（修复波 A-m1）：`planSheets` 的 `labels` 判据用的是 `SHEET_LABEL_MIN_CELL_PX`，
+    // 而最终格像素是 `min(rawCellPx, EXPORT_CELL_PX_TARGET)` ⇒ 目标格像素**必须不低于**色号阈值，
+    // 否则「含格内色号」这句话会在低于可读阈值的格像素上说出来（`labels` 为真、实际画不下）。
+    expect(EXPORT_CELL_PX_TARGET).toBeGreaterThanOrEqual(SHEET_LABEL_MIN_CELL_PX);
+    expect(EXPORT_CELL_PX_FLOOR).toBeLessThanOrEqual(SHEET_LABEL_MIN_CELL_PX);
   });
 });
 
@@ -127,7 +132,10 @@ describe("planSheets：分片", () => {
       expect(tile.originCol % TILE_STEP).toBe(0);
       expect(tile.originRow % TILE_STEP).toBe(0);
     }
-    const coverage = new Uint8Array(200 * 200);
+    // **普通数组，不是 `Uint8Array`**（修复波 C-M3）：`Uint8Array` 的越界写会被**静默丢弃**，
+    // 于是「`Math.min(tileCols, pattern.width - originCol)` 被删掉」这类越界覆盖在旧写法下全绿。
+    // 普通数组会因越界写把长度撑大、把洞留成 0 / `NaN`，两种都会被下面两条抓住。
+    const coverage: number[] = Array.from({ length: 200 * 200 }, () => 0);
     for (const tile of plan.tiles) {
       for (let row = tile.originRow; row < tile.originRow + tile.rows; row += 1) {
         for (let col = tile.originCol; col < tile.originCol + tile.cols; col += 1) {
@@ -135,6 +143,7 @@ describe("planSheets：分片", () => {
         }
       }
     }
+    expect(coverage).toHaveLength(200 * 200);
     expect(coverage.every((n) => n === 1)).toBe(true);
   });
 
@@ -151,12 +160,22 @@ describe("planSheets：分片", () => {
     expect(plan.tiles[24]!.colIndex).toBe(4);
   });
 
-  it("末片取剩余格数（200 的第二列片是 84 格）", () => {
+  it("末片取剩余格数（200 的第二列片是 84 格，两轴各钉一遍）", () => {
     const plan = planSheets(makePattern(200, 200), makePalette());
     const right = plan.tiles[1]!;
     expect(right.originCol).toBe(116);
     expect(right.cols).toBe(84);
     expect(right.canvasWidth).toBe(2 * SHEET_MARGIN + SHEET_RULER_LEFT + 84 * plan.cellPx);
+    // **行轴同样要等值断言**（修复波 C-M3）：只断列轴时，`rows` 上少写
+    // `Math.min(tileRows, pattern.height - originRow)` 不会有任何用例变红（200 − 116 ≠ tileRows）。
+    const last = plan.tiles[3]!;
+    expect(last.originRow).toBe(116);
+    expect(last.rows).toBe(84);
+    expect(last.canvasHeight).toBe(
+      2 * SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP + 84 * plan.cellPx + SHEET_FOOTER_H,
+    );
+    // 行轴的「剩余格数」真的不等于整片行数（否则上面那条与「rows = tileRows」不可区分）
+    expect(last.rows).toBeLessThan(plan.tileRows);
   });
 });
 
@@ -422,6 +441,13 @@ describe("planShare 与 shareCellBox", () => {
     expect(() => shareCellBox(plan, -1, 0)).toThrow("列 -1 不在分享图范围 0–7 内");
     expect(() => shareCellBox(plan, 0.5, 0)).toThrow("格子列号必须是安全整数");
     expect(() => shareCellBox(plan, 0, 2 ** 53)).toThrow("格子行号必须是安全整数");
+    // 计划的格像素同样在这里守（修复波 A-m11）：`drawShare` 靠动笔前的这一次调用拿到这条校验，
+    // 而渲染器自己按闸门第 1 条不许读 `cellPx`。
+    for (const bad of [0, -3, 1.5, Number.NaN]) {
+      expect(() => shareCellBox({ ...plan, cellPx: bad }, 0, 0)).toThrow(
+        `分享图计划的格像素非法：${String(bad)}（必须是 ≥1 的安全整数）`,
+      );
+    }
   });
 
   it("上限连 4 px/格 都放不下时抛", () => {

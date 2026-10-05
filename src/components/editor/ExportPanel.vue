@@ -191,8 +191,10 @@ function revokePreview(item: ExportItem): void {
 
 /**
  * 图纸一变就重建清单：所有逐项状态回 `idle`、预览一律销号后丢弃（规格 §10.1）。
- * 它比「面板打开时禁止编辑」更硬——不依赖 UI 是否真的挡住了每一个改动入口：撤销、`Ctrl+Z`、
- * 工具栏在面板之上都能改到 `cells`。
+ * 它比「面板打开时禁止编辑」更硬——不依赖 UI 是否真的挡住了每一个改动入口。
+ * **面板打开期间真正活着的编辑通道只有窗口键盘监听**（`EditorPage` 的 `Ctrl+Z` / `Ctrl+Shift+Z`）：
+ * 工具栏在覆盖层**之下**（面板是 `fixed inset-0 z-30`），所以它的按钮点不到；键盘监听挂在 `window` 上、
+ * 不受 z 序影响，**撤销照常改到 `cells`**。（早期这里写「工具栏在面板之上」，与 z 序相反，已更正。）
  *
  * 源是**两个**（契约 §2b 逐字规定，缺一不可）：
  * - `revision`：`cells` 原地写，只有它能让 `markRaw` 的图纸失效；
@@ -203,7 +205,23 @@ function revokePreview(item: ExportItem): void {
  * 顺序写成 `[revision, pattern]` 或 `[pattern, revision]` 都可以，**两个都必须在**：
  * 顺手删掉 `() => props.pattern` 是一条会被 `计划摘要` 那组用例抓住的静默错误（见步骤 12 的 M-rev-B）。
  */
+/**
+ * **清单代数**：`rebuildItems`（图纸变了：`revision` 或 `pattern` 身份）与 `onUnmounted` 各 +1。
+ *
+ * 为什么需要它而不只是 `unmounted`（修复波 B-3）：一次导出唯一的异步点是 `canvasToBlob`，而
+ * `await` 期间 `items` 可能被整体重建（撤销 / 切换工程），**面板却没有卸载**——此时手里那个
+ * `item` 已经被丢弃，把新诞生的 object URL 写到它上面等于**永远没人回收**；更糟的是文件名若在
+ * `await` **之后**读 `props.projectName`，就会产出「文件名的工程名是新的、字节是旧图纸的」这种
+ * 静默错产物。代数 + 「工程名在 `await` 之前取」两条一起把这两种形态堵住。
+ *
+ * **声明必须在 `rebuildItems()` 首次调用之前**（`let` 的 TDZ：下面那一次调用就会读它）。
+ */
+let generation = 0;
+
 function rebuildItems(): void {
+  // **代数自增**：飞行中的导出在 `await` 之后靠它判「我这一项（以及它用的 plan / tile）还在不在」。
+  // 只判 `unmounted` 挡不住「面板还在、图纸换了」——那正是「旧图纸的字节配上新工程名」的形态。
+  generation += 1;
   for (const item of items.value) revokePreview(item);
   items.value = makeItems();
 }
@@ -235,6 +253,9 @@ let unmounted = false;
  */
 onUnmounted(() => {
   unmounted = true;
+  // 卸载也算一次代数变化：`downloadAndPreview` 因此不必在两条判据里挑一条（`unmounted` 仍是
+  // 「不写被丢弃的项」这条语义的显式名字，读起来比 `gen !== generation` 直白）。
+  generation += 1;
   for (const item of items.value) revokePreview(item);
 });
 
@@ -250,14 +271,19 @@ function statusText(item: ExportItem): string {
 /**
  * 落盘 + 出预览。两步共用**同一颗 blob**：预览就是刚下载的那一份字节，不是重新渲染的第二份。
  *
- * 文件名的第三个实参**只在施工图上传**：契约 §3 明写「用量表 / 分享图**不带**分片序号」，
- * 传一个显式的 `undefined` 也是在把「非分片项」这条语义赌在实现读不读 `arguments.length` 上。
+ * 文件名的第三个实参**只在施工图上传**：契约 §3 明写「用量表 / 分享图**不带**分片序号」。
+ * （`tile === undefined` 与显式传 `undefined` 在 `exportFilename` 里**完全等价**——它读的是形参，
+ * 不读 `arguments.length`；`exportFilename` 另外把显式 `null` 也按「带了序号」拒绝。这里分两支只是
+ * 让「哪一类产物带序号」在调用点一眼可见。）
  *
- * **`await` 之后必须先查「面板还在不在」**（修复轮 F6）：`canvasToBlob` 是这条路径上唯一的异步点，
- * 而关闭按钮没有 `disabled` ⇒ 用户可以在等待期间卸载本组件。此时：
- * 1. `item` 已经被丢弃（`items.value` 里不再是它），把 URL 写上去等于**永远没人回收它**；
- * 2. 所以这里创建完 URL 立刻查 `unmounted`，已卸载就**就地销号并返回**——不写 `item.previewUrl`
- *    （不在被丢弃的对象上留可观察的残留状态），也不把状态改成「已生成」（那个 UI 已经不存在了）。
+ * **`await` 前后必须用同一个「这一刻」**（修复轮 F6 + 修复波 B-3）：`canvasToBlob` 是这条路径上唯一
+ * 的异步点，而 `await` 期间图纸 / 工程都可能已经变了。所以：
+ * 1. **代数与工程名都在 `await` 之前取**：`gen = generation` 判「这一项还在不在」，`projectName`
+ *    保证「文件名的工程名」与「画布上那批字节」出自同一次取用（否则会出现「名字是新的、图纸是旧的」
+ *    的静默错产物）；
+ * 2. `await` 回来后若 `gen !== generation`（清单被重建）或 `unmounted`（面板下树）⇒ **立刻销号并
+ *    return**：不写 `item.previewUrl`（那是一个已经被丢弃、永远没人回收的对象）、也不把状态改成
+ *    「已生成」（那个 UI 已经不存在了）。
  */
 async function downloadAndPreview(
   item: ExportItem,
@@ -265,14 +291,16 @@ async function downloadAndPreview(
   label: ExportItemLabel,
   tile?: SheetTilePlan,
 ): Promise<void> {
+  const gen = generation;
+  const projectName = props.projectName;
   const blob = await canvasToBlob(canvas);
   const filename =
     tile === undefined
-      ? exportFilename(props.projectName, label)
-      : exportFilename(props.projectName, label, tile);
+      ? exportFilename(projectName, label)
+      : exportFilename(projectName, label, tile);
   downloadBlob(blob, filename);
   const url = URL.createObjectURL(blob);
-  if (unmounted) {
+  if (unmounted || gen !== generation) {
     // 先销号再返回：这一步之后 `item.previewUrl` 仍是 `""`，这个 URL 不留在任何一个 `item` 上。
     URL.revokeObjectURL(url);
     return;

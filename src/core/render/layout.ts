@@ -32,7 +32,14 @@ import type {
 
 /** 产物画布单边上限。**4096 是主规格 §7.3 所给区间的保守下界**，探针页 `/lab/canvas` 实测后调整。 */
 export const EXPORT_MAX_EDGE = 4096;
-/** 施工图的目标格像素（色号可读、文件不至于过大）。 */
+/**
+ * 施工图的目标格像素（色号可读、文件不至于过大）。
+ *
+ * **隐含前提：它必须 ≥ `SHEET_LABEL_MIN_CELL_PX`**（当前 40 ≥ 32）。`planSheets` 的 `labels`
+ * 判据按 `SHEET_LABEL_MIN_CELL_PX` 算（「32 px 才画得下色号」），而最终格像素是
+ * `min(rawCellPx, EXPORT_CELL_PX_TARGET)` ⇒ 把这个上限调到 32 以下时，`labels` 仍会是真、
+ * 面板摘要会说「含格内色号」，实际格像素却低于可读阈值。`layout.test.ts` 有一条常量关系断言守着它。
+ */
 export const EXPORT_CELL_PX_TARGET = 40;
 /**
  * 格内色号阈值，同时是默认降级下限（主规格 §7.2 的 32px）。
@@ -179,15 +186,19 @@ function requireSafeInteger(value: number, what: string): number {
 }
 
 function requirePattern(pattern: Pattern): Pattern {
-  if (!Number.isInteger(pattern.width) || pattern.width < 1) {
+  // 整数判据统一走同文件的 `requireSafeInteger`（`Number.isInteger(2 ** 53)` 也为真，而
+  // `2 ** 53 × height` 早已不是一个可表示的长度）；≥1 那一条各自保留自己的消息。
+  const width = requireSafeInteger(pattern.width, "图纸宽度");
+  if (width < 1) {
     throw new Error(`图纸宽度必须是 ≥1 的整数（当前 ${String(pattern.width)}）`);
   }
-  if (!Number.isInteger(pattern.height) || pattern.height < 1) {
+  const height = requireSafeInteger(pattern.height, "图纸高度");
+  if (height < 1) {
     throw new Error(`图纸高度必须是 ≥1 的整数（当前 ${String(pattern.height)}）`);
   }
-  if (pattern.cells.length !== pattern.width * pattern.height) {
+  if (pattern.cells.length !== width * height) {
     throw new Error(
-      `图纸数据与尺寸不一致：${pattern.width}×${pattern.height} 需要 ${pattern.width * pattern.height} 格，实际 ${pattern.cells.length} 格`,
+      `图纸数据与尺寸不一致：${width}×${height} 需要 ${width * height} 格，实际 ${pattern.cells.length} 格`,
     );
   }
   return pattern;
@@ -295,9 +306,14 @@ export function planSheets(pattern: Pattern, palette: Palette, options?: PlanOpt
   if (!labels && rawCellPx < EXPORT_CELL_PX_FLOOR) {
     throw new Error(`画布上限 ${maxEdge} px 连 ${EXPORT_CELL_PX_FLOOR} px/格 都放不下`);
   }
-  const lo = labels ? SHEET_LABEL_MIN_CELL_PX : EXPORT_CELL_PX_FLOOR;
-  const hi = labels ? EXPORT_CELL_PX_TARGET : SHEET_LABEL_MIN_CELL_PX - 1;
-  const cellPx = Math.min(Math.max(rawCellPx, lo), hi);
+  // **不需要 `clamp(rawCellPx, lo, hi)`**——那两个界在当前判据下都是死代码，可证：
+  // - `labels ⟺ tileCols × 32 ≤ innerW ∧ tileRows × 32 ≤ innerH`，而
+  //   `rawCellPx = min(⌊innerW / tileCols⌋, ⌊innerH / tileRows⌋)` ⇒ **`labels` 成立时 `rawCellPx ≥ 32`**
+  //   ⇒ 下界 `SHEET_LABEL_MIN_CELL_PX` 是死的（`max(raw, 32) === raw`），只剩上界 `EXPORT_CELL_PX_TARGET` 有活；
+  // - `!labels` ⇒ 至少一轴 `tileCols × 32 > innerW` ⇒ `⌊innerW / tileCols⌋ ≤ 31` ⇒ **`rawCellPx ≤ 31`**
+  //   ⇒ 上界 `SHEET_LABEL_MIN_CELL_PX − 1 = 31` 也是死的（`min(raw, 31) === raw`），下界另有
+  //   `EXPORT_CELL_PX_FLOOR` 的前置守卫兜着（`!labels && rawCellPx < 8` 已经抛在上一条）。
+  const cellPx = labels ? Math.min(rawCellPx, EXPORT_CELL_PX_TARGET) : rawCellPx;
   const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
   const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
 
@@ -388,6 +404,10 @@ export function countTileBeads(pattern: Pattern, tile: SheetTilePlan): number {
  *
  * 这是**对比度启发式**（不是色差判定，也不是可采购信息）；用 Lab 而不是自算相对亮度，是为了不与
  * 「颜色计算一律在 CIE Lab 空间做」这条项目约束冲突。分量有限性由 `rgbToLab` 的既有守卫负责（不写第二份）。
+ *
+ * **它是 core 里唯一手写「颜色 → `rgb(...)` 字符串」的第二处**（契约把返回类型钉成字面量联合，
+ * 所以这里**不能**改调 `rgbCss`）。格式与 `rgbCss` **同源**：两边都必须是 `rgb(r, g, b)`、
+ * 分量间一个空格——**改一处必须改两处**（`rgbCss` 是输出层唯一的口径，这里是它钉死的例外）。
  */
 export function labelInk(rgb: readonly [number, number, number]): "rgb(0, 0, 0)" | "rgb(255, 255, 255)" {
   const [lightness] = rgbToLab(rgb[0], rgb[1], rgb[2]);
@@ -424,7 +444,10 @@ function requireUsages(usages: readonly ColorUsage[]): readonly ColorUsage[] {
     if (typeof item.name !== "string") {
       throw new Error(`用量表第 ${i} 项的 name 非法`);
     }
-    if (!Number.isInteger(item.count) || item.count < 0) {
+    // 整数判据与同文件的 `requireSafeInteger` 同一口径（`Number.isInteger(2 ** 53)` 为真，而
+    // 2 ** 53 颗豆不是一个可数的量）；消息保持契约 §3 的逐字口径（既有用例断言的是它）。
+    requireSafeInteger(item.count, `用量表第 ${i} 项的 count`);
+    if (item.count < 0) {
       throw new Error(`用量表第 ${i} 项的 count 非法`);
     }
     if (seen.has(item.code)) {
@@ -487,10 +510,19 @@ export function planShare(pattern: Pattern, options?: PlanOptions): SharePlan {
  * **为什么必须有它**（2026-10-05 由任务 2 的起草者发现的洞）：`SharePlan` 不含 `SheetTilePlan`，
  * 而渲染器按闸门又不许读 `cellPx` ⇒ 分享图的格像素本来**没有合法来源**，起草者当时只能拿
  * `canvasWidth / pattern.width` 反推——那正是「自己乘格像素」这条要消灭的形态。
+ *
+ * **它同时是计划自洽性的入口**（修复波 A-m11）：`plan.cellPx` 的合法性在这里守（**≥1 的安全整数**）。
+ * 放在这里的理由有两条：① 渲染器按闸门第 1 条不许出现 `cellPx` 标识符，而它是唯一的格↔像素映射；
+ * ② 坏格像素会让 `fillRect` 收到 0×0 / `NaN` 尺寸——真实 canvas **不抛错**，于是静默产出一张全透明
+ * 的「分享图」（它按设计就是透明的，所以连"看起来不对"都没有）。`drawShare` 因此在动笔前先问一次
+ * `shareCellBox(plan, 0, 0)`。
  */
 export function shareCellBox(plan: SharePlan, col: number, row: number): PixelRect {
   requireSafeInteger(col, "格子列号");
   requireSafeInteger(row, "格子行号");
+  if (!Number.isSafeInteger(plan.cellPx) || plan.cellPx < 1) {
+    throw new Error(`分享图计划的格像素非法：${String(plan.cellPx)}（必须是 ≥1 的安全整数）`);
+  }
   if (col < 0 || col >= plan.cols) {
     throw new Error(`列 ${col} 不在分享图范围 0–${plan.cols - 1} 内`);
   }

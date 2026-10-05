@@ -4,7 +4,9 @@
  * **为什么 core 自己声明 `RenderTarget2D` 而不是用 `CanvasRenderingContext2D`**：后者在分层边界闸门
  * （`src/__tests__/coreBoundary.test.ts` 的 `FORBIDDEN_GLOBALS`）里是禁用全局——core 不得引用 DOM 全局。
  * 按 `AGENTS.md` 的口径「在 core 定义接口，在 services 注入实现」：`services/exporter.ts` 把真 ctx 传进来，
- * 测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
+ * 测试用普通对象桩。代价如实记录：这是 core 里第一份**照平台对象形状声明的窄化绘制目标接口**
+ * （「不是纯数据」按字面为假——`core/image/decode.ts` 的 `Decoder`、`core/pattern/history.ts` 的
+ * `EditHistory` 都更早；真正特殊的是「照平台对象的形状声明」这一件事）。
  *
  * **真实 ctx 与它并不严格结构兼容**（2026-10-05 按任务 3 的审查实测更正；原文那句「结构上满足本接口」
  * 是假的）。实测**四处**不合：`fillStyle` / `strokeStyle`（DOM 是 `string | CanvasGradient | CanvasPattern`）、
