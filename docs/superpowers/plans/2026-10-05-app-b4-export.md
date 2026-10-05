@@ -1221,6 +1221,8 @@ git commit -m "feat(render): 施工图/用量表/分享图的布局与唯一坐�
 
 ---
 
+---
+
 ## 任务 2：施工图与分享图渲染器（注入式绘制目标）
 
 **文件：**
@@ -6159,7 +6161,7 @@ describe("/lab/canvas 探针页", () => {
     expect(wrapper.find('[data-testid="probe-table-area"]').exists()).toBe(false);
     // 页面不崩：按钮回到可用、页首自标仍在
     expect(wrapper.get('[data-testid="probe-run"]').attributes("disabled")).toBeUndefined();
-    expect(wrapper.get('[data-testid="lab-notice"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="lab-notice"]').exists()).toBe(true);
 
     wrapper.unmount();
   });
@@ -6194,7 +6196,10 @@ describe("/lab/canvas 探针页", () => {
 - [ ] **步骤 3：跑用例，并做五条定向变异证明判定列与兜底路径都有判别力**
 
 运行：`npx vitest run src/views/__tests__/CanvasLabPage.test.ts`
-预期：**PASS——6 条用例全绿**（`Test Files 1 passed (1)` / `Tests 6 passed (6)`）。
+预期：**PASS——7 条用例全绿**（`Test Files 1 passed (1)` / `Tests 7 passed (7)`）。
+**2026-10-05 更正（按任务 5 实现者的实测回报，三处）**：① 本节早先写的「6 条用例」是计数错——本节逐字给出的代码里有 **7 个 `it`**，以逐字代码为准；
+② 本节逐字代码里 `wrapper.get(...).exists()` **过不了 `vue-tsc`**（TS2339：VTU 的 `get` 返回类型 `Omit<…, "exists">`），已改为 `wrapper.find(...).exists()`；
+③ 实现者另**追加**了 2 条断言（只加不改）：一条读「**未钳制档**的 readback 等值」、一条读 `cell-requested`（原逐字代码把这两个量漏成未断言/只被间接覆盖），补后 P1–P5 的红数不变。
 
 然后逐条做变异 → 记红数 → `git checkout -- src/views/CanvasLabPage.vue` 还原 → 再跑一次确认回到全绿。
 **红数不许预估**：下面只写「变异动作 + 该红的用例标题」，实现者必须在自己报告里逐条附**实跑红数与失败点标题**（B4 规格 §13.3 的既有纪律）。
@@ -6274,7 +6279,7 @@ $env:TZ="UTC"; npm run test                             # 预期：与上一条�
 npm run build                                           # 预期：vue-tsc --noEmit 无输出 + Vite 构建成功
 ```
 
-**账目**：本任务新增 **1 个测试文件**（`src/views/__tests__/CanvasLabPage.test.ts`，**6 条用例**）与 **1 条路由用例**，合计 **+7 条用例**；`src/router/index.ts` 与 `src/router/__tests__/index.test.ts` 都是**只加不改**。
+**账目**：本任务新增 **1 个测试文件**（`src/views/__tests__/CanvasLabPage.test.ts`，**7 条用例**——**2026-10-05 更正：本节早先写 6 条是计数错**）与 **1 条路由用例**，合计 **+8 条用例**；`src/router/index.ts` 与 `src/router/__tests__/index.test.ts` 都是**只加不改**。
 **闭合校验**：用 `node .superpowers/sdd/2026-10-05-app-b4-export/tools/count.mjs` 取分解式，与 `npm run test` 报出的 `Tests  N passed (N)` **逐位相等**；不等就先查清（多/少一条往往意味着用例没被收集或写重了），**不许把运行期总数与分解式任一直接抄进报告**。
 
 - [ ] **步骤 6：Commit**
@@ -6308,7 +6313,7 @@ git commit -m "feat(app): /lab/canvas 上限探针页（R2）与路由用例"
 |---|---|
 | 路由 | `path: "/lab/canvas"`、`name: "canvas-lab"`、组件 `() => import("@/views/CanvasLabPage.vue")` |
 | 页面文件 | `src/views/CanvasLabPage.vue` |
-| 用例文件 | `src/views/__tests__/CanvasLabPage.test.ts`（**6 条用例**，对应 P1–P5 五条变异） |
+| 用例文件 | `src/views/__tests__/CanvasLabPage.test.ts`（**7 条用例**，对应 P1–P5 五条变异） |
 | 入口约定 | 只在路由表里存在、**不进任何用户入口**；CI 无断言（自查命令 + 报告如实记录）；约定同步进 README 的 `src/router/` 行 |
 
 **`data-testid`（页面上共 8 个，全部会被用例读到）**
