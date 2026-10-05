@@ -296,18 +296,20 @@ if (innerW < 1 || innerH < 1) → 抛「画布上限 {maxEdge} px 太小，无�
 # ① 先按「色号可读的最小格像素」估每片最多几块板
 kc = floor(innerW / (TILE_STEP × SHEET_LABEL_MIN_CELL_PX))
 kr = floor(innerH / (TILE_STEP × SHEET_LABEL_MIN_CELL_PX))
-labels = kc ≥ 1 && kr ≥ 1
 tileCols = min(width,  TILE_STEP × max(kc, 1))
 tileRows = min(height, TILE_STEP × max(kr, 1))
 
-# ② 格像素：两轴取小，再夹进 [下限, 目标]
+# ② labels 按**实际片格数**判，不是按「几块板」判（2026-10-05 由任务 1 的任务审查修正）
+labels = tileCols × SHEET_LABEL_MIN_CELL_PX ≤ innerW && tileRows × SHEET_LABEL_MIN_CELL_PX ≤ innerH
+
+# ③ 格像素：两轴取小，再夹进 [下限, 目标]
 lo = labels ? SHEET_LABEL_MIN_CELL_PX : EXPORT_CELL_PX_FLOOR
 hi = labels ? EXPORT_CELL_PX_TARGET  : SHEET_LABEL_MIN_CELL_PX − 1
 cellPx = clamp(min(floor(innerW / tileCols), floor(innerH / tileRows)), lo, hi)
 if (!labels && min(floor(innerW/tileCols), floor(innerH/tileRows)) < EXPORT_CELL_PX_FLOOR)
     → 抛「画布上限 {maxEdge} px 连 {EXPORT_CELL_PX_FLOOR} px/格 都放不下」
 
-# ③ 划片（行优先），每片一个 tile；末片取剩余格数
+# ④ 划片（行优先），每片一个 tile；末片取剩余格数
 for rowStart in 0, tileRows, 2×tileRows, … while rowStart < height:
   for colStart in 0, tileCols, … while colStart < width:
     cols = min(tileCols, width − colStart); rows = min(tileRows, height − rowStart)
@@ -348,7 +350,9 @@ for rowStart in 0, tileRows, 2×tileRows, … while rowStart < height:
 | 200×200 | **4 张**（116+84 两轴），33 px/格；每片画布 ≤ 3940×4072 |
 | 500×500 | **25 张**（116 格/片 × 5×5 片），33 px/格 |
 | `maxEdge = 1200`、500×500 | `kc = kr = 1` → 1 块板/片，`cellPx = min(floor(1088/29), floor(956/29)) = min(37, 32) = 32`，含色号；片数 `ceil(500/29)² = 324` |
+| **20×20、`maxEdge = 1040`** | `innerW = 928`、`innerH = 796`；`kc = 1` 但 **`kr = 0`** ⇒ 旧判据（按「几块板」）会**误降级**（`labels = false`、格像素被压到 27、丢色号），而实际片宽 `20×32 = 640 ≤ 928`、片高 `640 ≤ 796` 明明放得下 ⇒ **新判据 `labels = true`、`cellPx = 39`**（2026-10-05 由任务 1 的任务审查发现并修正，附用例） |
 | `maxEdge = 320`、500×500 | `innerW = 320−48−64 = 208`、`innerH = 320−48−108−44−44 = 76`；`kc = floor(208/928) = 0` ⇒ `labels = false`；`min(floor(208/29), floor(76/29)) = min(7, 2) = 2 < 8` ⇒ **抛错**（降级链全部失败，主规格 §8 的出口） |
+| `maxEdge` 显式传 `null` | **抛「画布上限必须是 ≥1 的整数」**（`null` 不是「没传」；口径与 `maxColors` 的运行期校验同源——TS 类型挡不住 `JSON.parse` 出来的值） |
 
 `maxEdge` 是**入参**（默认取常量），所以上表最后两行那种平台上限场景可以用合成值在 CI 里判别，
 不必等真机。
@@ -622,7 +626,7 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | `layout` 常量 | 直接断言常量值（改坏即红）：`EXPORT_MAX_EDGE`、`SHEET_LABEL_MIN_CELL_PX = 32`、`EXPORT_CELL_PX_FLOOR = 8`、`SHARE_MAX_EDGE`、`TILE_STEP` 来自 `BOARD_COLS/ROWS` |
 | `planSheets` 单张 | 58×58 → 1 张、40px/格、`labels = true`、画布尺寸逐位断言 |
 | `planSheets` 分片 | 200×200 → 4 张、范围覆盖 0–199 且**无重叠无缺口**（并集 = 全图、两两交集为空）；500×500 → 25 张；每片边界落在 29 的整数倍上 |
-| `planSheets` 阈值 | `maxEdge = 1200`、500×500 ⇒ `cellPx = 32` 且 `labels = true`（画色号）；`maxEdge = 1143`、500×500 ⇒ `cellPx = 31` 且 `labels = false`、`warnings` 含 `labels-omitted`（已实算：`innerW = 1031`、`innerH = 899`、`kr = floor(899/928) = 0`） |
+| `planSheets` 阈值 | `maxEdge = 1200`、500×500 ⇒ `cellPx = 32` 且 `labels = true`（画色号）；`maxEdge = 1143`、500×500 ⇒ `cellPx = 31` 且 `labels = false`、`warnings` 含 `labels-omitted`（已实算：`innerW = 1031`、`innerH = 899`、`kr = floor(899/928) = 0`）；**20×20、`maxEdge = 1040` ⇒ `labels = true`、`cellPx = 39`**（按实际片格数判，不因整板粒度误降级）；**`maxEdge` 显式传 `null` ⇒ 抛**（不是「没传」） |
 | `planSheets` 失败 | 合成极小 `maxEdge`（如 320）⇒ 抛中文错，消息含实际数字 |
 | `cellBox` | 片内四角与中心逐位断言；越界（本片之外）抛错；非安全整数抛错 |
 | **跨计划不变量** | 同一 `(col,row)`、同一 `cellPx` 下，单张计划与分片计划的 `cellBox` **逐位相等**（§4.2） |
