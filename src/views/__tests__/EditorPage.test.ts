@@ -11,6 +11,9 @@ import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
+import ExportPanel from "@/components/editor/ExportPanel.vue";
+import { cellBox, planSheets } from "@/core/render/layout";
+import type { RenderTarget2D } from "@/core/render/types";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -73,6 +76,85 @@ vi.mock("vue-router", () => ({
   },
   RouterLink: { template: "<a><slot /></a>" },
 }));
+
+/**
+ * 导出面板的平台边界（任务 4）：`@/services/exporter` 的五个碰平台的函数换成替身，
+ * `exportFilename` 用**真实现**（文件名的逐字格式是任务 3 用例的事）。
+ *
+ * 为什么不 mock `@/core/render/*`：规格 §13.2 第 1 条要的判据是「`drawSheetTile` **收到的该格
+ * `fillRect` 颜色**是新色」——只有让真渲染器跑在下面这个记录型 target 上，`cellBox → fillRect`
+ * 这条链才真的被走过（happy-dom 的 canvas 没有像素语义，CONTRACT §5.1）。
+ */
+const exporter = vi.hoisted(() => ({
+  createCanvasStrict: vi.fn<(width: number, height: number) => HTMLCanvasElement>(),
+  requireContext2D: vi.fn<(canvas: HTMLCanvasElement) => RenderTarget2D>(),
+  // 面板也会调它（施工图 / 用量表；分享图按设计不调）：这里是**空实现**，
+  // 「在哪一项上调用、顺序如何」由 `ExportPanel.test.ts` 用顺序表钉住。
+  assertCanvasPainted: vi.fn<(canvas: HTMLCanvasElement) => void>(),
+  canvasToBlob: vi.fn<(canvas: HTMLCanvasElement) => Promise<Blob>>(),
+  downloadBlob: vi.fn<(blob: Blob, filename: string) => void>(),
+}));
+
+vi.mock("@/services/exporter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/exporter")>();
+  return { ...actual, ...exporter };
+});
+
+interface FillCall {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly fillStyle: string;
+}
+
+interface RecordingTarget {
+  readonly target: RenderTarget2D;
+  readonly fills: readonly FillCall[];
+}
+
+/** 记录型绘制目标：`RenderTarget2D` 的普通对象桩 + `fillRect` 记录（不碰 happy-dom 的 canvas）。 */
+function createRecordingTarget(): RecordingTarget {
+  const fills: FillCall[] = [];
+  const target: RenderTarget2D = {
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 0,
+    font: "",
+    textAlign: "center",
+    textBaseline: "middle",
+    imageSmoothingEnabled: false,
+    fillRect: (x, y, w, h) => {
+      fills.push({ x, y, w, h, fillStyle: target.fillStyle });
+    },
+    strokeRect: () => undefined,
+    beginPath: () => undefined,
+    moveTo: () => undefined,
+    lineTo: () => undefined,
+    stroke: () => undefined,
+    fillText: () => undefined,
+    save: () => undefined,
+    restore: () => undefined,
+  };
+  return { target, fills };
+}
+
+/**
+ * object URL 的桩：happy-dom 下这两个方法**可能不存在**（CONTRACT §5.2），所以不用 `vi.spyOn`；
+ * 也**不整替 `URL` 全局**（它的构造函数还有别的用途）。
+ */
+function stubObjectUrl(): void {
+  const target = URL as unknown as {
+    createObjectURL: (blob: Blob) => string;
+    revokeObjectURL: (url: string) => void;
+  };
+  let seq = 0;
+  target.createObjectURL = () => {
+    seq += 1;
+    return `blob:page-${seq}`;
+  };
+  target.revokeObjectURL = () => undefined;
+}
 
 const palette = getBuiltinPalette();
 
@@ -1486,5 +1568,121 @@ describe("回图纸库入口（F1）", () => {
     await flushPromises();
     expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith(target);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 新增（任务 4）：导出面板的接线与端到端
+//
+// 面板自己持有 plan 与逐项状态（契约 §2b / 规格 §10），页面只做三件事：`exporting` 开关、
+// 把**内存态**图纸与页面已有的 `usages` 传下去、`@close` 关掉。下面三条用例把这三件事各钉一条，
+// 第三条就是规格 §13.2 第 1 条（「导出旧图」的判别性用例）。
+// ---------------------------------------------------------------------------
+
+describe("导出面板接线（任务 4）", () => {
+  let recording: RecordingTarget;
+
+  beforeEach(() => {
+    recording = createRecordingTarget();
+    exporter.createCanvasStrict
+      .mockReset()
+      .mockImplementation((width, height) => ({ width, height }) as unknown as HTMLCanvasElement);
+    exporter.requireContext2D.mockReset().mockImplementation(() => recording.target);
+    exporter.assertCanvasPainted.mockReset();
+    exporter.canvasToBlob
+      .mockReset()
+      .mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+    exporter.downloadBlob.mockReset();
+    stubObjectUrl();
+  });
+
+  it("点「导出」→ 面板出现；点「关闭」→ 回编辑态（图纸与编辑态都没被丢掉）", async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+
+    await wrapper.get("[data-testid='export']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+    // 面板真的被挂起来了（不是空壳）：组件实例在，标题也在
+    expect(wrapper.findComponent(ExportPanel).exists()).toBe(true);
+    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("导出图纸");
+
+    await wrapper.get("[data-testid='export-close']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    // 「回编辑态」不是把页面卸载重建：画布、工具栏与图纸都原样还在
+    expect(wrapper.find("[data-testid='editor-canvas']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='tool-brush']").exists()).toBe(true);
+    expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
+  });
+
+  it("面板的 `usages` 跟着图纸走：全空图纸如实说明，涂一格之后那句话消失", async () => {
+    // 夹具：**全空**的 2×1 → `patternStats` 的 usages 为空（`EditorPage` 的 `usages` 就是它）
+    const doc = toProjectDocument(
+      { width: 2, height: 1, paletteId: palette.id, cells: Uint16Array.from([EMPTY, EMPTY]) },
+      palette,
+      { longSide: 2, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
+    );
+    const store = await createMemoryProjectStore();
+    await store.put({
+      meta: {
+        id: "a",
+        name: "小猫",
+        createdAt: "2026-10-03T00:00:00.000Z",
+        updatedAt: "2026-10-03T01:00:00.000Z",
+        thumbnail: "",
+        width: 0,
+        height: 0,
+        colorCount: 0,
+      },
+      doc,
+      source: null,
+    });
+    setProjectStore(store);
+
+    const wrapper = await mountPage();
+    await wrapper.get("[data-testid='export']").trigger("click");
+    expect(wrapper.get("[data-testid='export-empty-note']").text()).toBe("这张图纸没有可拼的像素");
+
+    // 涂一格：`patternStats().usages` 从空变成 1 项——面板那一行必须跟着消失（`:usages` 的接线）。
+    // 少了 `:usages` 这一条 props 的实时性，面板会一直说「没有可拼的像素」（不报错、只是撒谎）。
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [0, 0], [0, 0]);
+    expect(wrapper.find("[data-testid='export-empty-note']").exists()).toBe(false);
+  });
+
+  it("端到端（规格 §13.2-1）：改一格 → 导出施工图 → 渲染器收到的该格是新色，不是落盘记录里的旧值", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const pattern = editor.pattern;
+    if (pattern === null) throw new Error("载入失败：编辑器还没有图纸");
+    const paintedColor = palette.colors[2];
+    if (paintedColor === undefined) throw new Error("色卡至少要有三色");
+
+    // 起点：(1,0) 是**空格**。涂成 2 号色 ⇒ 内存态与落盘记录从这一刻起不一致。
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    expect(Array.from(pattern.cells)).toEqual([0, 2]);
+    // **夹具的判别力**：存储里那一格仍是旧的 EMPTY。少了这一句，「渲染器收到新色」与
+    // 「新旧两份恰好一样」不可区分——M14 变异会照样绿。
+    expect(storedCells(await getProjectStore().get("a"))).toEqual([0, EMPTY]);
+
+    await wrapper.get("[data-testid='export']").trigger("click");
+    await wrapper.get("[data-testid='export-save-tile-0']").trigger("click");
+    await flushPromises();
+
+    // 判据 = 渲染器**实际收到的**那一格 `fillRect` 的颜色（规格 §13.2 第 1 条逐字）。
+    // 计划与坐标都由真 core 现算：单张施工图的 tile 覆盖全图，`(1,0)` 的片内像素由 `cellBox` 给出。
+    const plan = planSheets(pattern, palette);
+    const tile = plan.tiles[0];
+    if (tile === undefined) throw new Error("施工图计划没有分片");
+    const box = cellBox(tile, 1, 0);
+    const painted = recording.fills.filter(
+      (fill) => fill.x === box.x && fill.y === box.y && fill.w === box.width && fill.h === box.height,
+    );
+    // 期望值**不用 `rgbCss` 现算**（那是被测口径之一）：直接拼出契约 §2 的序列化形状
+    expect(painted.map((fill) => fill.fillStyle)).toEqual([
+      `rgb(${paintedColor.rgb[0]}, ${paintedColor.rgb[1]}, ${paintedColor.rgb[2]})`,
+    ]);
+    // 那一格只被画一次；M14（数据源换成落盘图纸）下它是空格 ⇒ 这里**一格都没有**
+    expect(painted).toHaveLength(1);
   });
 });
