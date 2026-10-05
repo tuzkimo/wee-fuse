@@ -229,9 +229,11 @@ export interface SheetTilePlan {
 
 1. `sheet.ts` 与 `share.ts` 的**源码文本里 `\bcellPx\b` 零命中**——渲染器要线宽 / 字号只能读 plan 上的
    派生字段（`lineWidths`、`labelFontPx`…）。格子的像素位置只能经 `cellBox` 取得。
-2. `sheet.ts` / `share.ts` 里**不得出现 `row * ` / `* width +` 形态的缓冲下标推导**（行优先 stride 属于
-   `cellAt` 的职责）：渲染器读格子值一律走既有 core 导出 `cellAt(pattern, col, row)`
+2. `sheet.ts` / `share.ts` 里**不得直接读 `pattern.cells`**——格值一律经 `cellAt(pattern, col, row)`
    （`core/pattern/edit.ts`，B3 已有生产消费者，越界返回 `EMPTY`，且它的 JSDoc 已写明消费者）。
+   **口径对齐（2026-10-05）**：闸门实现禁的是标识符形态 `pattern.cells`（不是本条早先写的「`row * ` / `* width +`
+   stride 形态」——后者是**意图**，前者是**实际判据**；两条都写出来是为了让实现与文档对得上）。
+   **已知偏差（宁漏不误）**：`const { cells } = pattern` 能同时绕过本条与「正向要求出现 `cellAt(`」那条检查。
 3. `sheet.ts` / `share.ts` 里**不得出现 `canvasWidth /` / `canvasHeight /` 这类除法**，且 `share.ts` 必须
    出现 `shareCellBox(`。**这一条不是洁癖，是本轮最值得记的一次教训**（2026-10-05，任务 2 起草者实测）：
    `plan.canvasWidth / pattern.width` 与 `shareCellBox` **数值逐位相同**，把前者换回 `share.ts` 的变异实测
@@ -380,6 +382,11 @@ export type ExportWarning =
   `patternStats` 的那次遍历，不在 core 里再走一遍 O(格数)），但**必须校验**：`usages` 是数组、
   每项 `code` 是非空字符串、`name` 是字符串、`count` 是非负整数、且 **`code` 不重复**
   （重复会让表里出现两行同一个色号——页面看起来正常、数字翻倍，属静默错误）。
+  **产出坐标的语义（2026-10-05 补齐，此前规格从未定义它们 → 契约自造了 6 个字段，其中两个恒等）**：
+  `headerY` = 标题行基线、`tableTop` = 表格区首行基线、`totalY` = **页脚三行（合计 / 精度声明 / 生成时间）
+  的起点**（三行分别落在 `totalY + 2` / `+16` / `+30`，合计高度 44 = `SHEET_FOOTER_H` 正好放下）。
+  **`footerY` 已删除**：它与 `totalY` 代数恒等（`canvasH − 边距 − FOOTER_H` 展开即 `tableTop + itemRows×rowHeight`）
+  且零消费者——任务审查（2026-10-05）抓到的正是这条：**保留一个与另一个字段恒等的字段，就是埋了一份会漂移的真相**。
 - `planShare(pattern, options)`：`cellPx = clamp(floor(maxEdge / max(width, height)), 4, 64)`；
   `canvasW = width × cellPx`、`canvasH = height × cellPx`；**无边距、无文字、无分片**；
   `cols` / `rows` 原样记下图纸宽高（供 `shareCellBox` 的范围守卫）。
