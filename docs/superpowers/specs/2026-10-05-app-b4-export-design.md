@@ -436,9 +436,12 @@ export function exportFilename(projectName: string, item: ExportItemLabel): stri
 - `canvasToBlob`：Promise 化的 `toBlob("image/png")`；回调给 `null` 即 **reject**（不静默返回空串）。
 - `downloadBlob`：`URL.createObjectURL` + 临时 `<a download>` + `click()` + `revokeObjectURL`；
   `blob.size === 0` 或 `filename` 清洗后为空 ⇒ 抛。
-- `exportFilename`：`<清洗后的工程名>-<内容>-<序号>.png`。清洗复用 `services/projectStore.ts` 的
+- `exportFilename`：`<清洗后的工程名>-<内容>[-r{行}c{列}].png`。清洗复用 `services/projectStore.ts` 的
   `normalizeProjectName`（不写第二份），内容标签：`施工图` / `用量表` / `分享图`；
-  分片序号 `r{行}c{列}`（1 起）。**文件名只用 ASCII 安全字符 + 中文标签**，不引入新的 sanitize 实现。
+  **分片序号只对施工图存在**（`-r{行}c{列}`，两轴都 1 起），用量表与分享图**不带序号**
+  （`X-用量表.png` / `X-分享图.png`）。**如实记录一处口径差**：`normalizeProjectName` 只做
+  trim / 非空 / 长度上限，**不做文件名字符清洗**（`/`、`:`、`*` 会原样留下）——本轮沿用既有行为、
+  不新增第二份清洗实现（改了它会动到 B1/B2 的既有用例与已落盘记录的名字）。
 
 ---
 
@@ -450,11 +453,14 @@ export function exportFilename(projectName: string, item: ExportItemLabel): stri
 3. **不经过 `renderPatternThumbnail`**：它的 `THUMBNAIL_MAX_EDGE = 512` 会让 500×500 得到 1px/格的
    「看起来正常」的低分辨率图。§13.2 有一条判别性断言（导出产物尺寸 = 格数 × cellPx，且与 512 无关）。
 4. **canvas 尺寸回读**（§8）：把静默钳制变成抛错。
-5. **生成后自检**：渲染完成后在**信息条区域**（该处必定被白底填满，与图纸内容无关）读回 1×1
-   （`getImageData(2, 2, 1, 1)`），要求 `rgba = (255,255,255,255)`；不是就抛错。理由：分配成功但内容
-   全空 / 读回全 0 是本平台真实存在的失败形态，而它在 UI 上表现为「一张白图」，用户会以为图纸本来
-   就这样。**自检点必须选一个与图纸内容无关、且必定不透明的位置**——选「最后一个格」会选到空格上，
-   那条自检就会对一张合法图纸误报。**本环境（happy-dom）测不到这条**，如实标注进 §14。
+5. **生成后自检**：渲染完成后读回**左上角边距**里的一像素（`getImageData(2, 2, 1, 1)`；该点落在
+   `SHEET_MARGIN = 24` 的边距内、被整张白底覆盖、且**该处永远没有文字**），要求 `rgba = (255,255,255,255)`；
+   不是就抛错。理由：分配成功但内容全空 / 读回全 0 是本平台真实存在的失败形态，而它在 UI 上表现为
+   「一张白图」，用户会以为图纸本来就这样。
+   **探针点必须「必定不透明且必定无字」**：选「最后一个格」会选到空格（透明 ⇒ 对合法图纸误报）；
+   选信息条里的点会压在字形上（同样误报）；边距是唯一同时满足两条的位置。
+   **分享图不调用这条自检**——它按设计就是透明的，不存在「必定不透明」的点。
+   **本环境（happy-dom）测不到这条**，如实标注进 §14。
 6. **逐张渲染、即时释放**：`canvas.width = 0; canvas.height = 0;` 释放后进入下一张 ⇒ 内存峰值 = 一张画布。
 7. **palette 与 pattern 的 `paletteId` 必须一致**（沿用 `patternStats` / `patternToRgbaImage` 的既有守卫措辞）。
 8. **一处口径**：`cellAt` 读格值、`patternStats` 算用量、`beadsToCm` / `formatCm` 算成品尺寸——渲染器
@@ -541,13 +547,13 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 |---|---|
 | `planSheets(pattern, palette, options)` | 图纸宽高**整数且 ≥1**、`cells.length === width*height`；`palette.id === pattern.paletteId`；`options.maxEdge` **整数且 ≥1**（`NaN` / 小数一律抛）；`innerW` / `innerH` < 1 时抛「画布上限太小」 |
 | `cellBox(tile, col, row)` | `col` / `row` **安全整数**且落在本片范围内（越界抛，不夹取） |
-| `countTileBeads(pattern, tile)` | 同上两条（范围与安全整数）；O(本片格数) |
+| `countTileBeads(pattern, tile)` | 同上两条（范围与安全整数）；O(本片格数） |
 | `labelInk(rgb)` | 三个分量**有限**（越界的有限值按 `rgbToLab` 的既有口径夹取）；非有限即抛 |
 | `rgbCss(rgb)` | 同上（越界的有限值夹到 0–255；非有限即抛），保证不产出 `rgb(NaN, …)` |
 | `planLegend(usages, options)` | `usages` 是数组；每项 `code` 非空字符串、`name` 字符串、`count` 非负整数、`code` 不重复；`options.maxEdge` 同上 |
 | `planShare(pattern, options)` | 同 `planSheets` 的前两条 + `maxEdge` |
 | `drawSheetTile` / `drawLegend` / `drawShare` | plan 的 `kind` 必须匹配（把 share plan 传给 `drawSheetTile` ⇒ 抛）；**`tile` 必须是 `plan.tiles` 里的同一个对象**（`includes` 判定，防「A 计划的 tile 配 B 计划的 plan」——那种错配不会报错、只会把坐标映射到另一个片）；`pattern.paletteId === palette.id` |
-| `createCanvasStrict` / `canvasToBlob` / `downloadBlob` / `exportFilename` | 尺寸整数 ≥1；blob 非空；文件名清洗后非空；**回读宽高不一致即抛** |
+| `createCanvasStrict` / `requireContext2D` / `canvasToBlob` / `downloadBlob` / `exportFilename` / `assertCanvasPainted` | 尺寸整数 ≥1；blob 非空；文件名非空；内容标签与分片序号的存在性（施工图必须有、非分片项必须没有）；**回读宽高不一致即抛**；自检探针读回不是不透明白色即抛 |
 
 **公开 API ≠ 被使用的 API**：本节新增的每个导出都要在 JSDoc 里写明「谁消费它」。特别是
 `planLegend` 的 `usages` 参数格式（`core/pattern/stats.ts` 的 `ColorUsage`）——它是**跨模块的隐式契约**，
@@ -592,24 +598,28 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 与实际不符，是那一轮最有价值的教训本身；把预估数字当验收标准会同时误导实现者与审查者）。
 纪律不变：**断言存在 ≠ 断言有效——只有变异或删行能证明。**
 
-| # | 变异 | 该红的断言（红数由实现者实跑回填） |
+| # | 变异 | 该红的断言（**红数一律由实现者实跑回填，本表不写数字**） |
 |---|---|---|
-| M1 | `cellBox` 去掉 `− tile.originCol` | §13.2-2 与分片用例红 |
-| M2 | `cellBox` 的越界守卫改成夹取 | 越界用例红 1 |
-| M3 | `labels` 判据从 `≥ 32` 改成 `> 32` | 阈值边界用例红 1 |
-| M4 | `labels = false` 时仍画色号 | 「格区域无 `fillText`」用例红 1 |
-| M5 | `kc` / `kr` 的 `max(…, 1)` 去掉 | 极小 `maxEdge` 的失败用例变成死循环或错误结果 ⇒ 红 |
-| M6 | `tileCols` 不取 29 的整数倍（改回「每片一块板」） | 分片边界用例红 |
-| M7 | 划片循环的 `while (colStart < width)` 改成 `<=` | 覆盖 / 重叠用例红 |
-| M8 | `createCanvasStrict` 删掉回读校验 | 该守卫用例红 1 |
-| M9 | 把 `tile.cellPx` 写进 `sheet.ts`（例如自己算 `col * tile.cellPx`） | 源码闸门红 1 |
-| M10 | `drawShare` 删掉 `imageSmoothingEnabled = false` | 分享图用例红 1 |
-| M11 | 空格斜线删掉 | 空格用例红 1 |
-| M12 | 板边界线宽改成与细线相同 | 板边界用例红 1 |
-| M13 | `exportFilename` 跳过 `normalizeProjectName` | 文件名用例红 1 |
-| M14 | `EditorPage` 的数据源换成 `session.record` | §13.2-1 端到端用例红 |
-| M15 | 三组网格线的绘制顺序反过来（先 `board` 后 `thin`） | 调用顺序断言红 1 |
-| M16 | `sheet.ts` 里的 `cellAt(pattern, col, row)` 换成自己写的 `pattern.cells[row * pattern.width + col]` | 源码闸门第 2 条红 1 |
+| M1 | `cellBox` 去掉 `− tile.originCol` | §13.2-2 的跨计划不变量 + 分片坐标用例 |
+| M2 | `cellBox` 的越界守卫改成夹取 | 越界用例（列 / 行两条） |
+| M3 | `labels` 判据从 `≥ 32` 改成 `> 32` | 阈值边界用例（`maxEdge = 1200` ⇒ 恰 32px 那条） |
+| M4 | `labels = false` 时仍画色号 | 「格区域内 `fillText` 为 0 次」用例 |
+| M5 | `kc` / `kr` 的 `max(…, 1)` 去掉 | 极小 `maxEdge` 的失败用例（会先撞死循环或错误结果） |
+| M6 | `tileCols` 不取 29 的整数倍（改回「每片一块板」） | 分片边界用例 |
+| M7 | 划片循环的 `while (colStart < width)` 改成 `<=` | 覆盖 / 重叠用例（并集 = 全图、两两交集为空） |
+| M8 | `createCanvasStrict` 删掉回读校验 | 会钳制的画布替身那条用例 |
+| M9 | 把 `tile.cellPx` 写进 `sheet.ts`（例如自己算 `col * tile.cellPx`） | 源码闸门第 1 条 |
+| M10 | `drawShare` 删掉 `imageSmoothingEnabled = false` | 分享图用例 |
+| M11 | 空格斜线删掉 | 空格用例（`lineTo` 计数与斜线调用） |
+| M12 | 板边界线宽改成与细线相同 | 三档线宽断言里的 `board` 那条 |
+| M13 | `exportFilename` 跳过 `normalizeProjectName`（并删掉随之无用的 import，否则 `noUnusedLocals` 会让构建因无关原因失败） | 文件名清洗用例（数量以实现者实跑为准） |
+| M14 | 面板的数据源换成 `session.record.pattern`（不是 `editor.pattern`） | §13.2-1 的端到端用例 |
+| M15 | 三组网格线的绘制顺序反过来（先 `board` 后 `thin`） | 调用顺序断言 |
+| M16 | `sheet.ts` 里的 `cellAt(pattern, col, row)` 换成自己写的 `pattern.cells[row * pattern.width + col]` | 源码闸门第 2 条 |
+
+**一条已经真实测过的参考值（不是预估）**：计划起草阶段，任务 3 的片段在**沙箱**里按片段还原代码后实跑过
+M8 与 M13 —— **M8 → 3 红、M13 → 4 红**，红点与片段点名的断言逐条对应（见该片段与任务 3 的报告）。
+权威值仍以实现者**在本仓**实跑为准；这条留档的用处是：**谁若看到「红 1」这种旧预期，那是错的**。
 
 ### 13.4 测不到的（如实标注，不许用桩做成恒真）
 
@@ -617,8 +627,8 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
   ⇒ 所有「图片好不好看」的判断都在 §14 的人工清单里，不写成断言。
 - **真实 canvas 上限**（R2）：探针页负责，CI 里只能测「探针页把读数渲染成表格」。
 - **`URL.createObjectURL` 的真实下载行为**、长按存相册、多下载拦截：全部人工。
-- **§9 第 5 条的「信息条像素」自检**：`getImageData` 在桩里恒无意义 ⇒ 该分支在 CI 里只能测「守卫被调用」，
-  真实判别力在人工清单里。
+- **§9 第 5 条的「左上角边距像素」自检**：`getImageData` 在桩里恒无意义 ⇒ 该分支在 CI 里只能测
+  「守卫被调用 + 读回非白时抛」，真实判别力在人工清单里。
 
 ---
 
@@ -658,7 +668,7 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | # | 风险 | 验证方式 | 降级方案 |
 |---|---|---|---|
 | B4-R1 | canvas 单边 / 面积上限的真值（主规格 R2） | `/lab/canvas` 探针页，手机真机二分（清单 3） | 下调 `EXPORT_MAX_EDGE` → 片数变多，正确性不变 |
-| B4-R2 | 超限画布被**静默钳制**（得到白图） | `createCanvasStrict` 回读 + §9 第 5 条的信息条像素自检；人工清单 6 | 回读不一致即抛 ⇒ 走降级链，不产出白图 |
+| B4-R2 | 超限画布被**静默钳制**（得到白图） | `createCanvasStrict` 回读 + §9 第 5 条的左上角边距像素自检；人工清单 6 | 回读不一致即抛 ⇒ 走降级链，不产出白图 |
 | B4-R3 | 手机上 64 MB 的画布是否可用 | 人工清单 6 | 下调 `EXPORT_MAX_EDGE` |
 | B4-R4 | 长按 `<img>` 存相册在目标浏览器可用 | 人工清单 4 / 5 | 退回「下载到文件管理器再导入」（如实写进 README） |
 | B4-R5 | 分片接缝在真实像素上无错行 | 人工清单 2（CI 已用坐标不变量钉住数学层） | — |
