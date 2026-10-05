@@ -94,7 +94,8 @@ vi.mock("vue-router", () => ({
  * **替身必须用 `vi.hoisted` 就地声明**（不能放共享模块）：`vi.mock` 的工厂被提升到所有 import
  * 之前，工厂里引用任何模块级导出都会崩在 TDZ（实测：`Cannot access 'exporter' before
  * initialization`）。共享模块 `@/components/editor/__tests__/exportTestKit` 提供的是
- * `MockExporter` 类型、记录型 target（含 `fillText` 记录）、假画布与 `resetExporterMock`。
+ * `MockExporter` 类型（成员由真模块派生 ⇒ 签名漂移在本文件编译失败）、记录型 target（含
+ * `fillText` 记录）、假画布与 `resetExporterMock`。
  */
 const exporter = vi.hoisted(
   () =>
@@ -106,7 +107,7 @@ const exporter = vi.hoisted(
       assertCanvasPainted: vi.fn(),
       canvasToBlob: vi.fn(),
       downloadBlob: vi.fn(),
-    }) as MockExporter,
+    }) satisfies MockExporter,
 );
 
 vi.mock("@/services/exporter", async (importOriginal) => {

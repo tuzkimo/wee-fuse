@@ -1,5 +1,6 @@
 import type { Mock } from "vitest";
 import type { RenderTarget2D } from "@/core/render/types";
+import type * as exporterModule from "@/services/exporter";
 
 /**
  * 导出面板两处用例（`src/components/editor/__tests__/ExportPanel.test.ts` 与
@@ -43,20 +44,32 @@ import type { RenderTarget2D } from "@/core/render/types";
  *       assertCanvasPainted: vi.fn(),
  *       canvasToBlob: vi.fn(),
  *       downloadBlob: vi.fn(),
- *     }) as MockExporter,
+ *     }) satisfies MockExporter,
  * );
  * ```
  *
- * `as MockExporter` 这个窄化是**承重的**：签名一改（例如 `requireContext2D` 的返回类型变了），
- * 两个文件都会在编译期失败——这正是抽共享的主要收益。
+ * **五个成员的类型都由真模块派生**（`Mock<typeof exporterModule.x>`，修复轮 F7），不是手抄一遍签名：
+ * 手写接口时，真 `@/services/exporter` 改签名（例如 `requireContext2D` 的返回类型变了）**不会**让
+ * 这两个用例文件编译失败——`vi.mock` 的字符串重载对工厂返回值零约束（`M = unknown`）。派生之后
+ * 「谁改签名谁立刻在 `vue-tsc` 上看到两处红」这句话才**成真**：`satisfies` 会对着真签名校验
+ * `vi.fn()` 的结构，而 `resetExporterMock(exporter, …)` 也因为参数类型是它而一起被校验。
+ *
+ * **为什么 `vi.fn()`（返回类型是 `unknown`）也拦得住**（实测，不是推测）：`Mock<T>` 的调用签名是
+ * `(...args: Parameters<T>) => ReturnType<T>`（`@vitest/spy/dist/index.d.ts:341`），返回类型进得去
+ * 这个类型。把真 `requireContext2D` 的返回类型改成 `number` 后，`vue-tsc` 实测报
+ * `exportTestKit.ts(258,66): error TS2322: Type 'RenderTarget2D' is not assignable to type 'number'`
+ * 以及生产代码里那几处 `TS2345` —— 类型耦合是**实的**。
+ *
+ * **刻意不用 `as`**：`satisfies` 保留对象字面量的 Mock 类型（`.mockImplementation` / `.mock` 都能直接用），
+ * 而 `as` 会把它擦成接口本身、丢掉 Mock 的方法。
  */
 export interface MockExporter {
-  createCanvasStrict: Mock<(width: number, height: number) => HTMLCanvasElement>;
-  requireContext2D: Mock<(canvas: HTMLCanvasElement) => RenderTarget2D>;
+  createCanvasStrict: Mock<typeof exporterModule.createCanvasStrict>;
+  requireContext2D: Mock<typeof exporterModule.requireContext2D>;
   /** 画布自检（契约 §2 的第 6 个导出）：生产消费者**就是导出面板**。 */
-  assertCanvasPainted: Mock<(canvas: HTMLCanvasElement) => void>;
-  canvasToBlob: Mock<(canvas: HTMLCanvasElement) => Promise<Blob>>;
-  downloadBlob: Mock<(blob: Blob, filename: string) => void>;
+  assertCanvasPainted: Mock<typeof exporterModule.assertCanvasPainted>;
+  canvasToBlob: Mock<typeof exporterModule.canvasToBlob>;
+  downloadBlob: Mock<typeof exporterModule.downloadBlob>;
 }
 
 /* ------------------------------------------------------------- 记录型绘制目标 */

@@ -43,7 +43,9 @@ import {
  *
  * 共享模块（`./exportTestKit`）因此只放**不参与 `vi.mock`** 的东西：记录型 target、假画布、
  * object URL 桩，以及 `resetExporterMock(exporter, target, hooks)` 这个「给替身逐项装默认实现」
- * 的助手。`as MockExporter` 把签名钉住：五处任一签名漂移都会在本文件编译失败。
+ * 的助手。`satisfies MockExporter` 把**真模块派生**的签名钉住：五处任一签名漂移都会在本文件
+ * 编译失败（`MockExporter` 的每个成员都是 `Mock<typeof exporterModule.x>`，不是手抄的签名——
+ * 修复轮 F7）。
  * **`exportFilename` 不在替身里** ⇒ 走 `importOriginal` 的真实现。
  */
 const exporter = vi.hoisted(
@@ -55,7 +57,7 @@ const exporter = vi.hoisted(
       assertCanvasPainted: vi.fn(),
       canvasToBlob: vi.fn(),
       downloadBlob: vi.fn(),
-    }) as MockExporter,
+    }) satisfies MockExporter,
 );
 
 vi.mock("@/services/exporter", async (importOriginal) => {
@@ -274,13 +276,16 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     expect(wrapper.get("[data-testid='export-save-legend']").attributes("disabled")).toBeUndefined();
     expect(wrapper.find("[data-testid='export-preview-legend']").exists()).toBe(false);
 
-    // 卡住 `canvasToBlob`，让「生成中」成为可观察状态（它本来只存在于两个微任务之间）
+    // 卡住 `canvasToBlob`，让「生成中」成为可观察状态（它本来只存在于两个微任务之间），
+    // 并准备好**这一颗具体的 blob**：下面用**恒等**断言钉住「落盘的就是它」，而不是
+    // `instanceof` / `type` 这类桩自证的条件（修复轮 F8）。
+    const blob = new Blob([new Uint8Array([1])], { type: "image/png" });
     let release = (): void => {};
     exporter.canvasToBlob.mockImplementationOnce(
       () =>
         new Promise<Blob>((resolve) => {
           release = () => {
-            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
+            resolve(blob);
           };
         }),
     );
@@ -311,10 +316,10 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     // 落盘的名字带着工程名与这一类产物的中文标签（逐字格式由任务 3 的用例负责）
     expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
     const [blobArg, filenameArg] = exporter.downloadBlob.mock.calls[0];
-    // blob 就是 `canvasToBlob` 回的那一颗（用**类型**与它的来源钉住，不用 `size > 0`——
-    // 桩恒返回 3 字节，`size > 0` 是「桩的回声」、不是被测行为的判据）
-    expect(blobArg).toBeInstanceOf(Blob);
-    expect(blobArg.type).toBe("image/png");
+    // **恒等**断言（修复轮 F8）：落盘的就是 `canvasToBlob` 回的那**一颗**对象，不是另一个同型 blob。
+    // `instanceof Blob` / `type === "image/png"` 两个条件都是**桩自己设的**（case 里现造的那颗 blob
+    // 也满足），属「桩的回声」；`toBe(blob)` 才是「面板把 blob 原样传下去」的判据。
+    expect(blobArg).toBe(blob);
     expect(filenameArg).toContain("小猫");
     expect(filenameArg).toContain("用量表");
     expect(filenameArg.endsWith(".png")).toBe(true);
@@ -587,5 +592,46 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
 
     expect(() => wrapper.unmount()).not.toThrow();
     expect(revokedUrls).toEqual([]);
+  });
+
+  /**
+   * **保存飞行中关掉面板**（修复轮 F6）：这是上一条挡不住的那个方向——`onUnmounted` 只扫**当时**的
+   * `items.value`，而 `downloadAndPreview` 是在 `await canvasToBlob` **之后**才 `createObjectURL`
+   * ⇒ 那个 URL 在被丢弃之后才诞生，永远扫不到。**而且触发它不需要编辑入口**：关闭按钮没有
+   * `disabled`（只有逐项保存按钮在 busy 时禁用），用户在导出 2000×2000 那张时点「关闭」就能走到。
+   *
+   * 判据同时钉两件事：① 这个 URL 被**立即**回收；② 它**没有**被写到任何 `item` 上
+   * （`previewUrl` 保持 `""`——否则它就是一个挂在被丢弃对象上、谁也回收不到的 URL）。
+   */
+  it("保存飞行中卸载：await 期间关掉面板，之后诞生的 URL 被立即回收且不留在被丢弃的项上", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    // 悬挂 `canvasToBlob`，让这一项停在「生成中…」（= 下载与建 URL 都还没发生）
+    let resolveBlob = (): void => {};
+    exporter.canvasToBlob.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveBlob = () => {
+            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
+          };
+        }),
+    );
+    await wrapper.get("[data-testid='export-save-legend']").trigger("click");
+    expect(wrapper.get("[data-testid='export-item-legend']").text()).toContain("生成中…");
+
+    // 飞行中卸载：此刻一个 object URL 都还不存在（这正是「onUnmounted 扫不到它」的原因）
+    wrapper.unmount();
+    expect(createdUrls).toEqual([]);
+    expect(revokedUrls).toEqual([]);
+
+    resolveBlob();
+    await flushPromises();
+
+    // ① 那个 URL 是诞生了又被**立刻**销号的（`toEqual` 而不是「长度相同」：顺序也钉住）
+    expect(createdUrls).toEqual(["blob:test-1"]);
+    expect(revokedUrls).toEqual(createdUrls);
+    // ② `saveItem` 的 `finally` 照常释放画布（卸载没有打乱释放这条路径）。
+    //    这里**没有** `toBlob` 这一段：本用例用 `mockImplementationOnce` 顶掉了默认实现，
+    //    而 `toBlob` 是默认实现推进顺序表的——顺序表在这里的作用只是证明释放照常发生。
+    expect(steps).toEqual(["selfcheck", "release:width", "release:height"]);
   });
 });

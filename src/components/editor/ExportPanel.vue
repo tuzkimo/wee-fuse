@@ -212,6 +212,16 @@ watch([() => props.revision, () => props.pattern], rebuildItems);
 rebuildItems();
 
 /**
+ * **已经卸载**（修复轮 F6）。它必须早于 `onUnmounted` 注册、且用 `let` 而不是 `ref`：
+ * 下面的 `onUnmounted` 只扫**当时**的 `items.value`，而一次导出可能在两步异步之间被关掉
+ * （建画布 / 自检是同步的，但 `canvasToBlob` 是 `await`；关闭按钮**没有** `disabled`，用户在
+ * 导出 2000×2000 那张时点「关闭」就能触发）——那个 object URL 是在面板被丢弃**之后**才诞生的，
+ * 永远扫不到。用一个普通布尔量当下「是否已卸载」的判据，`downloadAndPreview` 在创建 URL 之后
+ * 立刻查它。
+ */
+let unmounted = false;
+
+/**
  * 关闭面板 = **卸载**（`EditorPage` 的 `@close` 只把 `exporting` 置假，本组件整体下树），所以
  * `rebuildItems` 与「重存同一项」这两条销号路径都**不会**在关闭时跑到：不在这里回收的话，用户
  * 反复「导出 → 关闭」会把每一张全分辨率 PNG 的 object URL 一直钉在内存里（该 URL 在页面生命周期
@@ -219,8 +229,12 @@ rebuildItems();
  *
  * **复用 `revokePreview`、不新增导出**：销号的语义只有一份（「先 `revokeObjectURL` 再清空」），
  * 第二份实现正是本项目反复禁止的形态。清空 `previewUrl` 同时也让 `items` 里不再留下任何 URL。
+ *
+ * 它与 `unmounted` 是**两条互补的路径**，缺一漏一个方向的泄漏：这一条挡「卸载发生在 URL 已经
+ * 存在之后」，`downloadAndPreview` 里那一条挡「卸载发生在 URL 诞生之前」。
  */
 onUnmounted(() => {
+  unmounted = true;
   for (const item of items.value) revokePreview(item);
 });
 
@@ -238,6 +252,12 @@ function statusText(item: ExportItem): string {
  *
  * 文件名的第三个实参**只在施工图上传**：契约 §3 明写「用量表 / 分享图**不带**分片序号」，
  * 传一个显式的 `undefined` 也是在把「非分片项」这条语义赌在实现读不读 `arguments.length` 上。
+ *
+ * **`await` 之后必须先查「面板还在不在」**（修复轮 F6）：`canvasToBlob` 是这条路径上唯一的异步点，
+ * 而关闭按钮没有 `disabled` ⇒ 用户可以在等待期间卸载本组件。此时：
+ * 1. `item` 已经被丢弃（`items.value` 里不再是它），把 URL 写上去等于**永远没人回收它**；
+ * 2. 所以这里创建完 URL 立刻查 `unmounted`，已卸载就**就地销号并返回**——不写 `item.previewUrl`
+ *    （不在被丢弃的对象上留可观察的残留状态），也不把状态改成「已生成」（那个 UI 已经不存在了）。
  */
 async function downloadAndPreview(
   item: ExportItem,
@@ -251,8 +271,14 @@ async function downloadAndPreview(
       ? exportFilename(props.projectName, label)
       : exportFilename(props.projectName, label, tile);
   downloadBlob(blob, filename);
+  const url = URL.createObjectURL(blob);
+  if (unmounted) {
+    // 先销号再返回：这一步之后 `item.previewUrl` 仍是 `""`，这个 URL 不留在任何一个 `item` 上。
+    URL.revokeObjectURL(url);
+    return;
+  }
   revokePreview(item);
-  item.previewUrl = URL.createObjectURL(blob);
+  item.previewUrl = url;
 }
 
 /**
