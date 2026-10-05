@@ -1215,6 +1215,8 @@ git commit -m "feat(render): 施工图/用量表/分享图的布局与唯一坐�
 
 ---
 
+---
+
 ## 任务 2：施工图与分享图渲染器（注入式绘制目标）
 
 **文件：**
@@ -4725,7 +4727,7 @@ async function saveItem(item: ExportItem): Promise<void> {
     if (item.kind === "legend") {
       const plan = legendPlan.value;
       canvas = createCanvasStrict(plan.canvasWidth, plan.canvasHeight);
-      drawLegend(requireContext2D(canvas), props.usages, plan, meta);
+      drawLegend(requireContext2D(canvas), props.palette, props.usages, plan, meta);
       assertCanvasPainted(canvas);
       await downloadAndPreview(item, canvas, "用量表");
     } else if (item.kind === "share") {
