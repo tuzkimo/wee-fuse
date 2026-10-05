@@ -673,8 +673,9 @@ export interface LegendPlan {
   readonly rowHeight: number;
   readonly headerY: number;
   readonly tableTop: number;
+  /** 页脚三行（合计 / 精度声明 / 生成时间）的起点：`totalY + 2` / `+16` / `+30`。
+   *  **`footerY` 已删**（任务 1 审查 F2：它与 `totalY` 代数恒等且零消费者）——实现与契约都以本行为准。 */
   readonly totalY: number;
-  readonly footerY: number;
 }
 
 export interface SharePlan {
@@ -980,7 +981,6 @@ export function planLegend(usages: readonly ColorUsage[], options?: PlanOptions)
     headerY: SHEET_MARGIN,
     tableTop,
     totalY: tableTop + itemRows * LEGEND_ROW_H,
-    footerY: canvasHeight - SHEET_MARGIN - SHEET_FOOTER_H,
   };
 }
 
