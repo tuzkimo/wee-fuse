@@ -131,6 +131,8 @@ describe("drawShare", () => {
     }
     expect(new Set(calls.fills.map((fill) => `${fill.x},${fill.y}`))).toEqual(expected);
     expect(calls.fills.every((fill) => fill.w === plan.cellPx && fill.h === plan.cellPx)).toBe(true);
+    // `save` / `restore` 必须配平（当前两边都是 0）：不配平会泄漏 target 的全局状态。
+    expect(calls.saves).toBe(calls.restores);
   });
 
   it("颜色逐格取自色卡；无网格、无文字、无边距", () => {

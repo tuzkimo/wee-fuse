@@ -68,6 +68,11 @@ export interface MockCalls {
   readonly strokeRects: StrokeRectCall[];
   /** 没有 `beginPath` 就打头的路径操作：漏写 `beginPath` 必须可观察，不静默并入上一组。 */
   readonly strayOps: string[];
+  /**
+   * `save()` / `restore()` 的调用次数。当前两个渲染器一次都不调（都是 0），但**配平是必须保持的
+   * 不变量**（不配平会泄漏 target 的全局状态），由三个 `draw*` 用例各一条 `saves === restores` 守着。
+   * 计数成对增长是有意的：只记一个数就判不出「多了一次 save」，也无法允许将来正当的成对使用。
+   */
   saves: number;
   restores: number;
 }

@@ -28,8 +28,10 @@ import type { PixelRect, RenderTarget2D } from "./types";
  * `lineWidths` / `labelFontPx` / `tickFontPx`），格子位置一律经 `cellBox`，格子值一律经 `cellAt`。
  * 源码级闸门 `__tests__/layoutGate.test.ts` 守着这两条；改动这里之前先读它的两条规则。
  *
- * **不调 `save` / `restore`**：每张产物都用一张新画布（规格 §9.6「逐张渲染、即时释放」），
- * 没有需要保护的既有 ctx 状态；`RenderTarget2D` 里的这两个方法由真实 ctx 结构兼容性带进来。
+ * **`save` / `restore` 当前一次都不调，但成对调用是必须保持的不变量**：每张产物都用一张新画布
+ * （规格 §9.6「逐张渲染、即时释放」），没有需要保护的既有 ctx 状态，所以现在两边的计数都是 0；
+ * 将来若要临时改 ctx 状态，**不配平会泄漏 target 的全局状态**（`sheet.test.ts` / `share.test.ts`
+ * 的配平断言会红）。`RenderTarget2D` 里的这两个方法由真实 ctx 结构兼容性带进来。
  */
 
 // ---------------------------------------------------------------------------

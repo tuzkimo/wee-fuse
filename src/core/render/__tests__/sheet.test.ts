@@ -129,6 +129,8 @@ describe("drawSheetTile：底色、色块与文字", () => {
       h: tile.canvasHeight,
       fillStyle: "#ffffff",
     });
+    // `save` / `restore` 必须配平（当前两边都是 0）：不配平会泄漏 target 的全局状态。
+    expect(calls.saves).toBe(calls.restores);
   });
 
   it("色块的坐标取自 cellBox、颜色取自色卡（rgbCss 口径）", () => {
@@ -479,6 +481,27 @@ describe("drawLegend", () => {
     expect(calls.texts.some((text) => text.text === makeMeta().accuracy)).toBe(true);
     expect(calls.texts.some((text) => text.text === "生成时间：2026-10-05 12:00")).toBe(true);
     expect(calls.texts).toHaveLength(1 + 3 + 2 * 3 + 3);
+    // `save` / `restore` 必须配平（当前两边都是 0）：不配平会泄漏 target 的全局状态。
+    expect(calls.saves).toBe(calls.restores);
+  });
+
+  it("页脚三行按 totalY +2 / +16 / +30 落位，且最后一行不越出页脚块（几何不变量）", () => {
+    // 任务 1 的审查正是在这一带抓到 `totalY ≡ footerY`（两个字段代数恒等，会让「合计」与「精度声明」
+    // 画在同一行）。这里把三行的 y 与页脚块的下边界一起钉住，防止后人把某一行的偏移改大。
+    const { target, calls } = createMockTarget();
+    drawLegend(target, palette, usages, plan, makeMeta());
+
+    const footer = (text: string) => calls.texts.find((call) => call.text === text);
+    expect(footer("合计 42 颗")).toMatchObject({ y: plan.totalY + 2 });
+    expect(footer("屏幕色仅供参考，以实物为准")).toMatchObject({ y: plan.totalY + 16 });
+    const last = footer("生成时间：2026-10-05 12:00");
+    expect(last).toMatchObject({ y: plan.totalY + 30 });
+
+    // 几何不变量：最后一行加上行距仍在页脚块内（30 + 14 = 44 = `SHEET_FOOTER_H`）。
+    // **用实际画出的 `last.y` 而不是 `plan.totalY + 30`**：后者的比较结果只由 plan 的字段决定，
+    // 抓不到「把第三行往下推」的实现改动（那样它会恒真）。
+    // `LEGEND_FOOTER_LINE_H` 是 `sheet.ts` 的模块私有常量（不新增公开名字），故这里写它的值 14。
+    expect((last?.y ?? Number.NaN) + 14).toBeLessThanOrEqual(plan.canvasHeight - SHEET_MARGIN);
   });
 
   it("多列布局：第 14 项换到第 2 行第 1 列", () => {
