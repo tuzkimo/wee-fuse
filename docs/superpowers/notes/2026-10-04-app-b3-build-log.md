@@ -337,13 +337,17 @@ npm run build                      # vue-tsc --noEmit && vite build
   `ctrl+wheel` = 以指针为锚缩放（`scale × exp(-deltaY × 0.002)` + `zoomCellView`），两者都
   `preventDefault()`；触摸屏双指路径一行未动。**判别力**（六次变异实测）：方向反转红 2、锚点换成视口
   中心红 1（−288.56 vs −266.42）、去掉 `preventDefault` 红 3、`panCellView` 换漏夹取红 1
-  （−1100 vs −368）、删非有限 `delta` 守卫红 1。
+  （−1100 vs −368）、删非有限 `delta` 守卫红 1、**删掉 `requireWheelScale`（组件里对 `nextScale` 的
+  第二份守卫）红 0**——第 6 条**红 0 也是判别力的一部分**：它证明那份守卫没有可判别的行为差异，
+  据此在同一轮删除（详见本节末尾「两条如实记录」第 2 条）。
 - **F5**：§7 从「未执行」改成 11 条逐条实况。
 - **两条如实记录**：
   1. **`deltaMode` 未处理**：目标引擎是 Android Chromium / Tauri 的 WebView2，**`deltaMode` 恒为 0**
-     （像素），所以这条缺口不影响交付面；受影响的只有 Firefox / Safari 桌面端——它们的鼠标滚轮常给
-     `deltaMode = 1`（行）且 `deltaY ≈ ±3`，一次滚轮平移约 **3px**、`ctrl+` 滚轮一次缩放约
-     **0.6%**（几乎无感）。本轮按「范围外如实报上来、不顺手修」处置（简报把公式钉死、也没提 `deltaMode`）。
+     （像素），所以这条缺口不影响交付面；受影响的只有 **Firefox 桌面（行模式已确认）**——它的鼠标滚轮
+     常给 `deltaMode = 1`（行）且 `deltaY ≈ ±3`，一次滚轮平移约 **3px**、`ctrl+` 滚轮一次缩放约
+     **0.6%**（几乎无感）。**Safari 未核实**（本环境无法核实它的 `deltaMode`，因此不再把它与 Firefox
+     并列；若它同样给行模式，现象与 Firefox 这一档相同，结论不变）。本轮按「范围外如实报上来、
+     不顺手修」处置（简报把公式钉死、也没提 `deltaMode`）。
   2. **`requireWheelScale` 已删除**：它是组件里对 `nextScale` 的第二份守卫，**删掉后没有任何用例转红**
      （`zoomCellView` 内部的 `requireScale` 抛**逐字相同**的消息）——按 §8 第 21 条「不加没有用例可判别
      的分支」删除，非有限 / ≤ 0 的检查留在 `zoomCellView` 里。判据与实测见本轮报告 §F3 的 M-F3-f。
