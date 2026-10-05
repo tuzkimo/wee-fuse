@@ -361,3 +361,12 @@ npm run build                      # vue-tsc --noEmit && vite build
   2. 既有 `vue-router` mock 里的 `RouterLink` 桩是 `{ template: "<a><slot /></a>" }`，**点击不会驱动
      路由器**——所以 `EditorPage.test.ts` 里的 F1 用例只能断言「同一守卫 + 入口声明的目标」；
      「点击 → 路由器 → 守卫」那一跳另开 `views/__tests__/EditorPageRouterLink.test.ts`（真路由器）补上。
+     **两个文件各守一半**：替身文件钉「旁路实现会红」（读 `to` 属性与 `RouterLink` 组件本身），
+     真路由器文件钉「点击 → 路由器 → 守卫」这一跳；**旁路变体在真路由器文件里 0 红**（`onBeforeRouteLeave`
+     是路由级的，对任何离开都生效 ⇒ 旁路行为等价）——这条反直觉的实测写在该文件头注释里。
+- **另记一条工具链陷阱（本轮踩到）**：**`pwsh` 7 的 `Set-Content -Encoding utf8` 仍会写出 BOM**
+  （与 §5 那张表里 PS 5.1 的**读取**坑是两件事）；提交消息带 BOM 会被工具链容忍但污染它
+  （`git log --format=%s` 多一个不可见字符，Conventional Commits 的解析器会认不出类型）。处置：
+  写文件用 `[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($false)))`，
+  或 `git commit --amend -F` 之后**复验首字节**——本轮的一次提交就是这样修掉的（Node 复验
+  `subject.charCodeAt(0) !== 0xFEFF`）。

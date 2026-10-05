@@ -32,10 +32,9 @@ import EditorPage from "@/views/EditorPage.vue";
  *
  * **这个文件不区分「链接 vs 旁路」——如实标注**：`onBeforeRouteLeave` 是**路由级**的，对这个 route 的
  * 任何离开都生效，所以把入口换成 `@click="router.push('/')"` 的旁路按钮时，这里两条**依然全绿**
- * （实测）。「入口是 `RouterLink` 而不是绕开链接语义的 `@click`」这条判别力由
- * `EditorPage.test.ts` 的替身用例承担（那里读的是 `to` 属性与 `RouterLink` 组件本身，
- * 且替身路由器不驱动导航，所以「点击后不许有 push」在那边是有效的）。两个文件回答的是两个问题：
- * 那边问「入口声明了什么」、这边问「真实点击这条链走不走得通」。
+ * （实测）。**两个文件各守一半，合起来才是 F1 的完整证据**：`EditorPage.test.ts` 钉「**旁路实现会红**」
+ * ——那里读 `to` 属性与 `RouterLink` 组件本身，且替身路由器不驱动导航，所以「点击后不许有 push」
+ * 在那边是有效的；本文件钉「**点击 → 路由器 → 守卫**」这一跳走不走得通。
  *
  * 基础设施比 `EditorPage.test.ts` 少：这里**不需要** 2D 上下文桩——`PatternCanvas.draw()` 拿不到
  * 上下文就早退，而视图落定走的是 `useCanvasSurface.measure()` 的回调（与 2D 上下文无关），
