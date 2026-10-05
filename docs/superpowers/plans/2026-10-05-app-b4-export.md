@@ -6632,7 +6632,9 @@ npm run build                                      # 记下 B
 B4 的导出也不消费它；保留还是收窄留给下一次动到它的人）。
 **尚未写明（零消费者）**：B4 收尾时这份清单**已清空**——新增公开导出时按本段口径自查并补 JSDoc。
 **B4 新增的公开面**：
-- `core/render/types.ts` 的 `RenderTarget2D` 是 **core 里第一份不是纯数据的类型**：core 不得引用 DOM
+- `core/render/types.ts` 的 `RenderTarget2D` 是 **core 里第一份照平台对象形状声明的「窄化绘制目标」接口**
+  （**2026-10-05 由最终审查 D 片更正**：本节早先写的「core 里第一份不是纯数据的类型」按字面为假——`core/image/decode.ts` 的 `Decoder`（B1）与 `core/pattern/history.ts` 的 `EditHistory`（B3）都更早，
+  同样是「core 定义接口、services 注入实现」这一口径）：core 不得引用 DOM
   全局，而 `CanvasRenderingContext2D` 在边界闸门（`src/__tests__/coreBoundary.test.ts` 的
   `FORBIDDEN_GLOBALS`）的禁用清单里——按本节上一条「在 core 定义接口，在 services 注入实现」的口径，
   由 `services/exporter.ts` 把真 ctx 传进去（**2026-10-05 更正：不是"结构上满足"**——实测四处不兼容，

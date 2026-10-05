@@ -133,7 +133,10 @@ export interface RenderTarget2D {
 `string | CanvasGradient | CanvasPattern`、`textAlign` 含 `"start" | "end"`、`textBaseline` 含
 `"alphabetic" | "hanging" | "ideographic"`。所以窄化在 **`services/exporter.ts` 的 `requireContext2D`
 里做一次**（返回类型就是 `RenderTarget2D`），core 不为此放宽类型（core 必须与 DOM 无关）；测试用普通对象桩。
-**取舍如实记录**：这个接口是 core 里第一份「不是纯数据」的类型，但它换到的是——渲染器的全部布局与
+**取舍如实记录**：这个接口是 core 里第一份**照平台对象形状声明的「窄化绘制目标」接口**
+（**2026-10-05 由最终审查 D 片更正**：本节早先写的「core 里第一份不是纯数据的类型」按字面为假——
+`core/image/decode.ts` 的 `Decoder`（B1）与 `core/pattern/history.ts` 的 `EditHistory`（B3）都更早，
+且同样是「core 定义接口、services 注入实现」），但它换到的是——渲染器的全部布局与
 文字位置都能在 Node 里被断言（happy-dom 的 canvas 是桩，真实像素在本环境永远测不到，见 §14）。
 
 | 新增文件 | 层 | 为什么在这一层 |
