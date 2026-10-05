@@ -406,18 +406,6 @@ function onPointerCancel(event: PointerEvent): void {
 // ---------------------------------------------------------------------------
 
 /**
- * 与 `core/pattern/view.ts` 的 `requireScale` **同一口径、同一措辞**：同一个量在两处的错误消息
- * 必须逐字对上，否则读错误消息的用例会漂。
- */
-function requireWheelScale(scale: number): number {
-  if (typeof scale !== "number" || !Number.isFinite(scale)) {
-    throw new Error(`缩放比例必须是有限数字（当前 ${String(scale)}）`);
-  }
-  if (scale <= 0) throw new Error(`缩放比例必须大于 0（当前 ${scale}）`);
-  return scale;
-}
-
-/**
  * 桌面（鼠标滚轮 / 触控板）的 `wheel`。**定位：桌面调试增强**——主规格 §6.2 说桌面端仅开发调试，
  * 而在此之前桌面上**根本没有平移手段**（单指 = 画笔，工具栏只有缩放与适配）：触控板双指在浏览器里
  * 就是 `wheel`，没有这条通路时它的效果是**页面跟着滚**（人工验证实测「整个页面在动」）。
@@ -435,10 +423,11 @@ function requireWheelScale(scale: number): number {
  * Chrome 只把 `window` / `document` / `body` 上的 `wheel` 默认设成 passive，`<canvas>` 上的不是——
  * 所以 `.prevent` 真的能生效；手动注册还得在 `onBeforeUnmount` 里摘掉，多一条可能漏掉的接线。
  *
- * **两种输入各自的失败口径**（`AGENTS.md`「入口校验」）：分量非有限的 `deltaX` / `deltaY` 是平台
- * 给出的**退化事件**，忽略它（不写 store、不 emit）；而 `nextScale` 非有限或 ≤ 0 是**我们自己的
- * 算术**出了问题（`exp` 上溢），必须响亮失败——`.prevent` 已经在处理器之前取消了默认行为，
- * 所以抛错也不影响「页面不会跟着滚」。
+ * **退化输入的口径**：分量非有限的 `deltaX` / `deltaY` 是平台给出的**退化事件**，忽略它
+ * （不写 store、不 emit）；而非有限或 ≤ 0 的 `nextScale` 由 `zoomCellView` 内部的 `requireScale`
+ * **响亮拒绝**（消息与 `core/pattern/view.ts` 的措辞逐字一致）——本组件**不复制第二份守卫**：
+ * 那个函数已经是同一条件的唯一权威检查点，复制一份只会多一句可能漂移的错误消息
+ * （第一版里的 `requireWheelScale` 删掉后**没有任何用例转红**，删除理由见构建记录 §11）。
  */
 function onWheel(event: WheelEvent): void {
   const { deltaX, deltaY } = event;
@@ -446,7 +435,6 @@ function onWheel(event: WheelEvent): void {
   const grid = gridSize();
   if (event.ctrlKey) {
     const nextScale = props.view.scale * Math.exp(-deltaY * 0.002);
-    requireWheelScale(nextScale);
     emit("update:view", zoomCellView(props.view, viewport.value, grid, nextScale, localPoint(event)));
     return;
   }

@@ -882,7 +882,10 @@ describe("桌面 wheel：平移与 ctrl+wheel 以指针为锚缩放（F3，桌�
     expect(wrapper.emitted("update:view")).toBeUndefined();
 
     // 反过来，`nextScale` 非有限是**我们自己的算术**出了问题（`exp` 上溢）：必须**响亮失败**，
-    // 而不是静默夹取成上界、也不是静默忽略——口径与 `core/pattern/view.ts` 的 `requireScale` 逐字一致。
+    // 而不是静默夹取成上界、也不是静默忽略——**检查点在 `zoomCellView` 内部的 `requireScale`**
+    // （消息与 `core/pattern/view.ts` 的 `requireScale` 逐字一致），组件**不复制第二份守卫**：
+    // 删掉组件里那份重复守卫时这条断言**照样绿**（实测 0 红，见报告 M-F3-f 与构建记录 §11）。
+    // 所以它钉的是「坏视图一个字节都没写出去 + 响亮失败」这个外部可观察行为，而不是某个具体函数。
     // `deltaY = -1e308` 是**有限**值（所以过得了上面那道守卫），但 `exp(2e305)` 是 `Infinity`。
     //
     // **观察通道**：本仓的 vitest + happy-dom 不让 happy-dom 吞掉监听器里的异常——错误直接从
