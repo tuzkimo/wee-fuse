@@ -232,6 +232,11 @@ export interface SheetTilePlan {
 2. `sheet.ts` / `share.ts` 里**不得出现 `row * ` / `* width +` 形态的缓冲下标推导**（行优先 stride 属于
    `cellAt` 的职责）：渲染器读格子值一律走既有 core 导出 `cellAt(pattern, col, row)`
    （`core/pattern/edit.ts`，B3 已有生产消费者，越界返回 `EMPTY`，且它的 JSDoc 已写明消费者）。
+3. `sheet.ts` / `share.ts` 里**不得出现 `canvasWidth /` / `canvasHeight /` 这类除法**，且 `share.ts` 必须
+   出现 `shareCellBox(`。**这一条不是洁癖，是本轮最值得记的一次教训**（2026-10-05，任务 2 起草者实测）：
+   `plan.canvasWidth / pattern.width` 与 `shareCellBox` **数值逐位相同**，把前者换回 `share.ts` 的变异实测
+   **0 红**——任何取值断言都判不开这两者。**当两条实现在数学上等价时，唯一能判别的只有结构（源码）约束。**
+   若只靠 code review 与纪律，这条修复迟早会被"顺手简化"掉。
 
 取舍如实记录（宁漏不误，与 `coreBoundary` 同一口径）：这是**词法**闸门，`const p = tile.cellPx` 换个名字
 （`const c = tile.cellPx`）就能绕过；它挡的是「后人顺手再写一份」，不是恶意规避。第 2 条的同理：把 stride
@@ -441,6 +446,9 @@ export type ExportWarning =
 `fillRect`，**空格跳过**（画布已零初始化 ⇒ 完全透明），无网格无文字无边距。
 **不许用 `plan.canvasWidth / pattern.width` 反推格像素**（那是「自己乘格像素」；渲染器里出现标识符
 `cellPx` 即闸门红）。
+**两条入参守卫**（2026-10-05 裁定）：① `plan.cols/rows` 必须与 `pattern` 宽高一致——改用 plan 的尺寸做
+循环范围之后，错配从「明显错位」变成**静默**画出一张缺角 / 多空的图（`cellAt` 对图纸外返回 `EMPTY`），
+与 R-3 同类；② 该守卫与 `shareCellBox` 的存在**只能由源码级闸门守住**，理由见 §4.4 第 3 条。
 
 ---
 
@@ -588,6 +596,8 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | `planLegend(usages, options)` | `usages` 是数组；每项 `code` 非空字符串、`name` 字符串、`count` 非负整数、`code` 不重复；`options.maxEdge` 同上 |
 | `planShare(pattern, options)` | 同 `planSheets` 的前两条 + `maxEdge` |
 | `drawSheetTile` / `drawLegend` / `drawShare` | plan 的 `kind` 必须匹配（把 share plan 传给 `drawSheetTile` ⇒ 抛）；**`tile` 必须是 `plan.tiles` 里的同一个对象**（`includes` 判定，防「A 计划的 tile 配 B 计划的 plan」——那种错配不会报错、只会把坐标映射到另一个片）；`pattern.paletteId === palette.id` |
+| `drawShare(target, pattern, palette, plan)` | `plan.cols` / `plan.rows` 必须等于 `pattern` 的宽高（不一致即抛；否则会静默画出缺角 / 多空的图） |
+| `drawLegend(...)` 的 plan 自洽 | `plan.itemCols × plan.itemWidth + 2 × SHEET_MARGIN === plan.canvasWidth`（**plan 内部自洽性**）。这条替代了「比对 `itemCols` 的期望值」——后者从 `(usages, plan)` 根本推不出来（13 列 1 行与 15 列 1 行在 ≤15 项时行数相同）；改成查**计划自己是否自洽**，一行就能判别，且能抓住「列数与画布宽配错」的伪造计划。**如实记录的残余**：若伪造者连 `canvasWidth` 一起换掉，仍然不可判别 |
 | `createCanvasStrict` / `requireContext2D` / `canvasToBlob` / `downloadBlob` / `exportFilename` / `assertCanvasPainted` | 尺寸整数 ≥1；blob 非空；文件名非空；内容标签与分片序号的存在性（施工图必须有、非分片项必须没有）；**回读宽高不一致即抛**；自检探针读回不是不透明白色即抛 |
 
 **公开 API ≠ 被使用的 API**：本节新增的每个导出都要在 JSDoc 里写明「谁消费它」。特别是
@@ -610,7 +620,7 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | `cellBox` | 片内四角与中心逐位断言；越界（本片之外）抛错；非安全整数抛错 |
 | **跨计划不变量** | 同一 `(col,row)`、同一 `cellPx` 下，单张计划与分片计划的 `cellBox` **逐位相等**（§4.2） |
 | `drawSheetTile`（mock target） | `fillRect` 次数 = 1（整张底）+ 实心格数；`moveTo` 与 `lineTo` **各** = 三组网格线条数之和 + 空格数（每条线一对调用）；关键格的坐标与颜色逐条断言；`labels = false` 时**格区域内**的 `fillText` 为 0 次（信息条 / 刻度 / 页脚仍有文字，断言必须按 `y` 区域过滤，否则假绿）；线宽按 `kind` 三档分别断言；板边界线在细线之后画（用调用顺序断言） |
-| `drawLegend` | 每项一行；**色块真是那个颜色**（`fillRect` 的 `fillStyle` = 该色卡的 `rgbCss`，2026-10-05 补 `palette` 入参后才可断言）；合计颗数 = 各项之和；精度声明与生成时间文本出现；`usages` 为空 ⇒ 不画表头、不画色块、只留标题 + `合计 0 颗` + 精度声明 + 生成时间；`usages` 与 plan 不同源 ⇒ 抛 |
+| `drawLegend` | 每项一行；**色块真是那个颜色**（`fillRect` 的 `fillStyle` = 该色卡的 `rgbCss`，2026-10-05 补 `palette` 入参后才可断言）；合计颗数 = 各项之和；精度声明与生成时间文本出现；`usages` 为空 ⇒ 不画表头、不画色块、只留标题 + `合计 0 颗` + 精度声明 + 生成时间；`usages` 与 plan 不同源 ⇒ 抛；**色号解析全部前置到动笔之前**（用「第二项才是坏色号 ⇒ 一次 `fillRect` 都没发生」证明，不让半张表画完才抛）；plan 不自洽 ⇒ 抛 |
 | `drawShare` | `imageSmoothingEnabled === false`；`fillRect` 次数 = 实心格数（空格 0 次）；无 `fillText`；画布尺寸取自 plan（`planShare` 那条用例断言 `canvasWidth === 格数 × cellPx`） |
 | 源码闸门 | `sheet.ts` / `share.ts` 里 `cellPx` 零命中；无 stride 乘法（§4.4） |
 | `services/exporter` | `createCanvasStrict` 回读不一致 ⇒ 抛（桩一个会钳制的 canvas）；`ctx` 为 null ⇒ 抛；`toBlob` 给 null ⇒ reject；`downloadBlob` 建一个 `<a>`、`click`、`revoke` 各一次；`exportFilename` 的分支与清洗 |
@@ -651,6 +661,8 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | M14 | 面板的数据源换成 `session.record.pattern`（不是 `editor.pattern`） | §13.2-1 的端到端用例 |
 | M15 | 三组网格线的绘制顺序反过来（先 `board` 后 `thin`） | 调用顺序断言 |
 | M16 | `sheet.ts` 里的 `cellAt(pattern, col, row)` 换成自己写的 `pattern.cells[row * pattern.width + col]` | 源码闸门第 2 条 |
+| M17 | `drawLegend` 删掉色块的 `fillRect`（只留描边框） | 「色块真是那个颜色」用例 + `fills` 计数 |
+| M18 | `share.ts` 把 `shareCellBox(...)` 换回 `canvasWidth / pattern.width` 反推 | **源码闸门第 3 条**（起草者实测：**取值断言 0 红**——两者数值逐位相同。这条变异是「只有结构约束能判别」的实证，**不许把它当作哑弹删掉**） |
 
 **一条已经真实测过的参考值（不是预估）**：计划起草阶段，任务 3 的片段在**沙箱**里按片段还原代码后实跑过
 M8 与 M13 —— **M8 → 3 红、M13 → 4 红**，红点与片段点名的断言逐条对应（见该片段与任务 3 的报告）。
