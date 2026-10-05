@@ -5,8 +5,17 @@ import type { Palette } from "@/core/palette/types";
 import { patternStats } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import * as layout from "@/core/render/layout";
-import type { RenderTarget2D } from "@/core/render/types";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
+import {
+  createRecordingTarget,
+  createdUrls,
+  resetExporterMock,
+  revokedUrls,
+  stubObjectUrl,
+  type FakeCanvas,
+  type MockExporter,
+  type RecordingTarget,
+} from "./exportTestKit";
 
 /**
  * 导出面板用例：**只给 props 就能完整工作**（契约 §2b）。
@@ -27,14 +36,27 @@ import ExportPanel from "@/components/editor/ExportPanel.vue";
 
 /* ---------------- 桩 1：平台边界（exporter 的五个函数） ---------------- */
 
-const exporter = vi.hoisted(() => ({
-  createCanvasStrict: vi.fn<(width: number, height: number) => HTMLCanvasElement>(),
-  requireContext2D: vi.fn<(canvas: HTMLCanvasElement) => RenderTarget2D>(),
-  // 画布自检（契约 §2 的第 6 个导出）：生产消费者**就是本面板**——面板不调用它，它就是零消费者导出。
-  assertCanvasPainted: vi.fn<(canvas: HTMLCanvasElement) => void>(),
-  canvasToBlob: vi.fn<(canvas: HTMLCanvasElement) => Promise<Blob>>(),
-  downloadBlob: vi.fn<(blob: Blob, filename: string) => void>(),
-}));
+/**
+ * 五个**碰平台**的函数的替身。它们**必须**在这里用 `vi.hoisted` 声明（`vi.mock` 的工厂被提升到
+ * 所有 import 之前，工厂里引用任何顶层 `const` 都是 TDZ 的 `ReferenceError`——实测第一版把替身
+ * 放进共享模块后正是这样崩的）。
+ *
+ * 共享模块（`./exportTestKit`）因此只放**不参与 `vi.mock`** 的东西：记录型 target、假画布、
+ * object URL 桩，以及 `resetExporterMock(exporter, target, hooks)` 这个「给替身逐项装默认实现」
+ * 的助手。`as MockExporter` 把签名钉住：五处任一签名漂移都会在本文件编译失败。
+ * **`exportFilename` 不在替身里** ⇒ 走 `importOriginal` 的真实现。
+ */
+const exporter = vi.hoisted(
+  () =>
+    ({
+      createCanvasStrict: vi.fn(),
+      requireContext2D: vi.fn(),
+      // 画布自检（契约 §2 的第 6 个导出）：生产消费者**就是本面板**——面板不调用它，它就是零消费者导出。
+      assertCanvasPainted: vi.fn(),
+      canvasToBlob: vi.fn(),
+      downloadBlob: vi.fn(),
+    }) as MockExporter,
+);
 
 vi.mock("@/services/exporter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/exporter")>();
@@ -66,123 +88,14 @@ vi.mock("@/core/render/layout", async (importOriginal) => {
   };
 });
 
-/* ---------------- 记录型绘制目标 ---------------- */
+/* ---------------- 记录型绘制目标 / 假画布 / object URL 桩（共享，见 ./exportTestKit） ---------------- */
 
-interface FillCall {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-  readonly fillStyle: string;
-}
-
-interface RecordingTarget {
-  readonly target: RenderTarget2D;
-  readonly fills: readonly FillCall[];
-}
-
-/**
- * `RenderTarget2D` 的普通对象桩 + `fillRect` 记录。**不碰 `document.createElement("canvas")`**：
- * happy-dom 的 ctx 没有像素语义，`getImageData` / `toDataURL` 都不可信（CONTRACT §5.1）。
+/*
+ * `FillCall` / `TextCall` / `RecordingTarget` / `createRecordingTarget` / `FakeCanvas` /
+ * `createFakeCanvas` / `stubObjectUrl` / `createdUrls` / `revokedUrls` 全部在 `./exportTestKit`：
+ * 本文件与 `EditorPage.test.ts` 用的是**同一份**桩，所以「`fillText` 记不记」「假画布写不写顺序表」
+ * 这类口径不可能一处改、另一处没改。
  */
-function createRecordingTarget(): RecordingTarget {
-  const fills: FillCall[] = [];
-  const target: RenderTarget2D = {
-    fillStyle: "",
-    strokeStyle: "",
-    lineWidth: 0,
-    font: "",
-    textAlign: "center",
-    textBaseline: "middle",
-    imageSmoothingEnabled: false,
-    fillRect: (x, y, w, h) => {
-      fills.push({ x, y, w, h, fillStyle: target.fillStyle });
-    },
-    strokeRect: () => undefined,
-    beginPath: () => undefined,
-    moveTo: () => undefined,
-    lineTo: () => undefined,
-    stroke: () => undefined,
-    fillText: () => undefined,
-    save: () => undefined,
-    restore: () => undefined,
-  };
-  return { target, fills };
-}
-
-/* ---------------- 假画布（即时释放那一条靠它才可观察） ---------------- */
-
-interface FakeCanvas {
-  readonly canvas: HTMLCanvasElement;
-  /** 每一次 `width` / `height` 赋值都被记下来（`[属性, 值]`）。 */
-  readonly writes: readonly (readonly [string, number])[];
-}
-
-/**
- * `createCanvasStrict` 的替身：宽高**可写且记录每一次写入**。
- *
- * 面板从不读画布的宽高（尺寸只在 `createCanvasStrict` 的入参里用），所以「渲染完是否即时释放」
- * 在 CI 里唯一可观察的形式就是**有没有写回 0**（规格 §9 第 6 条）。用普通对象 + getter/setter，
- * 不碰 happy-dom 的 canvas。
- *
- * `onWrite` 把「谁先谁后」也记进用例的顺序表——只断言「写没写过 0」是证不出「释放发生在 `toBlob`
- * **之后**」的，而提前释放（拿着 0×0 的画布去 `toBlob`）在生产路径上就是一张空图。
- */
-function createFakeCanvas(
-  width: number,
-  height: number,
-  onWrite: (what: string) => void,
-): FakeCanvas {
-  const writes: (readonly [string, number])[] = [];
-  const current: { width: number; height: number } = { width, height };
-  const canvas = {
-    get width(): number {
-      return current.width;
-    },
-    set width(value: number) {
-      writes.push(["width", value]);
-      onWrite("release:width");
-      current.width = value;
-    },
-    get height(): number {
-      return current.height;
-    },
-    set height(value: number) {
-      writes.push(["height", value]);
-      onWrite("release:height");
-      current.height = value;
-    },
-  } as unknown as HTMLCanvasElement;
-  return { canvas, writes };
-}
-
-/* ---------------- object URL 的桩 ---------------- */
-
-let createdUrls: string[] = [];
-let revokedUrls: string[] = [];
-
-/**
- * happy-dom 下 `URL.createObjectURL` / `revokeObjectURL` **可能不存在**（CONTRACT §5.2），
- * 所以不用 `vi.spyOn`；也**不整替 `URL` 全局**（它的构造函数还有别的用途）。
- */
-function stubObjectUrl(): void {
-  const target = URL as unknown as {
-    createObjectURL: (blob: Blob) => string;
-    revokeObjectURL: (url: string) => void;
-  };
-  let seq = 0;
-  createdUrls = [];
-  revokedUrls = [];
-  target.createObjectURL = () => {
-    seq += 1;
-    const url = `blob:panel-${seq}`;
-    createdUrls.push(url);
-    return url;
-  };
-  target.revokeObjectURL = (url: string) => {
-    revokedUrls.push(url);
-  };
-}
 
 /* ---------------- 夹具 ---------------- */
 
@@ -251,22 +164,17 @@ beforeEach(() => {
   recording = createRecordingTarget();
   canvases = [];
   steps = [];
-  exporter.createCanvasStrict.mockReset().mockImplementation((width, height) => {
-    const fake = createFakeCanvas(width, height, (what) => {
+  // 五个替身的默认实现只有一份（`./exportTestKit` 的 `resetExporterMock`）；本文件额外挂两个钩子：
+  // 顺序表（`steps`）与假画布收集（`canvases`）——它们是「自检早于 toBlob、释放晚于 toBlob」
+  // 与「失败路径也释放」的**唯一**判据。
+  resetExporterMock(exporter, recording.target, {
+    onCanvas: (fake) => {
+      canvases.push(fake);
+    },
+    onStep: (what) => {
       steps.push(what);
-    });
-    canvases.push(fake);
-    return fake.canvas;
+    },
   });
-  exporter.requireContext2D.mockReset().mockImplementation(() => recording.target);
-  exporter.assertCanvasPainted.mockReset().mockImplementation(() => {
-    steps.push("selfcheck");
-  });
-  exporter.canvasToBlob.mockReset().mockImplementation(async () => {
-    steps.push("toBlob");
-    return new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
-  });
-  exporter.downloadBlob.mockReset();
   stubObjectUrl();
 });
 
@@ -392,13 +300,21 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     );
     // **画布尺寸取自 plan**：用量表计划的 3948×230（不是别处的常量、不是缩略图的 512 上限）
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(3948, 230);
-    // 面板确实把**真渲染器**跑在它自己那份 plan 上（尺寸那条钉的是尺寸，这条钉的是真的画了）
-    expect(recording.fills.length).toBeGreaterThan(0);
+    // 面板确实把**真渲染器**跑在它自己那份 plan 上。判据不能用「有没有画过」这种存在性断言
+    // （修复轮 F1：`fills.length > 0` 是「存在即断言」，把 `drawLegend` 换成 `drawShare` 也可能绿）；
+    // 这里改成读**图上真实的文字**：标题带着 :projectName（与 `palette.name` 不相等），
+    // 合计那一段带着**面板从 `usages` 派生**的颗数（Σ count = 7，不是格数 8、也不是色数 3）。
+    const legendText = recording.texts.map((call) => call.text);
+    expect(legendText).toContain("小猫 · 用量表");
+    expect(legendText).toContain("合计 7 颗");
 
     // 落盘的名字带着工程名与这一类产物的中文标签（逐字格式由任务 3 的用例负责）
     expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
     const [blobArg, filenameArg] = exporter.downloadBlob.mock.calls[0];
-    expect(blobArg.size).toBeGreaterThan(0);
+    // blob 就是 `canvasToBlob` 回的那一颗（用**类型**与它的来源钉住，不用 `size > 0`——
+    // 桩恒返回 3 字节，`size > 0` 是「桩的回声」、不是被测行为的判据）
+    expect(blobArg).toBeInstanceOf(Blob);
+    expect(blobArg.type).toBe("image/png");
     expect(filenameArg).toContain("小猫");
     expect(filenameArg).toContain("用量表");
     expect(filenameArg.endsWith(".png")).toBe(true);
@@ -531,5 +447,145 @@ describe("空图纸与 props 驱动（规格 §10.4 / 契约 §2b）", () => {
     const source = PANEL_SOURCES["../ExportPanel.vue"] ?? "";
     expect(source.length).toBeGreaterThan(0);
     expect(/from\s+["'][^"']*\/stores\//.test(source)).toBe(false);
+  });
+});
+
+describe("SheetMeta 的六个字段真的上到图上（修复轮 F1 / 契约 §2b、§4b）", () => {
+  /*
+   * 这一组挡的是「面板造了 meta 但字段是空的 / 是 0 / 是错的名字」这一类**静默**错误：
+   * `SheetMeta` 只经 `fillText` 出现在画布上，因此把 `generatedAt` 传成 `""`、`totalBeads` 传 0、
+   * `projectName` 传成色卡名，面板之外**没有任何其它断言**能发现（`drawSheetTile` / `drawLegend`
+   * 的用例各自喂的是自己造的 meta，与本面板的接线无关）。
+   *
+   * 期望值全部按契约 §4b 的逐字格式**现拼**，不引用 `sheet.ts` 的私有 `infoLineOne` / `infoLineTwo`
+   * （那是被测实现的内部函数，用它现算等于把被测口径当预期）。
+   */
+
+  /** 夹具的颗数 / 色数由 `usages` 现算：Σ count 与 length——它们必须与图上文字逐字相等。 */
+  function usageTotals(pattern: Pattern): { readonly total: number; readonly colors: number } {
+    const { usages } = patternStats(pattern, palette);
+    return {
+      total: usages.reduce((sum, usage) => sum + usage.count, 0),
+      colors: usages.length,
+    };
+  }
+
+  it("施工图信息条两行带上工程名、颗数、色数与非空的生成时间（4×2 夹具：7 颗 / 3 种色）", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    const { total, colors } = usageTotals(makeSmallPattern());
+    // 夹具的判别力（回原始清单数）：非空格 7 格、3 个色号——它们与格数 8、与色卡色数 16 都不相等，
+    // 所以「颗数传成了格数」或「色数传成了色卡色数」都会红。
+    expect(total).toBe(7);
+    expect(colors).toBe(3);
+
+    await saveAndSettle(wrapper, "tile-0");
+    const lines = recording.texts.map((call) => call.text);
+
+    // 第一行：工程名 + 尺寸 + 成品厘米（尺寸来自 pattern、成品取长边，契约 §4b）。
+    // `4 × 2` 的长边是 4 ⇒ `beadsToCm(4) = 4 × 5 / 10 = 2` ⇒ `formatCm` 给 `2.0`。
+    // 这一段**不用 max(width, height) 现算**（那是被测口径的一部分）：写死这条全串，
+    // 「成品取总颗数」「成品取面积」之类的错法都会红。
+    expect(lines).toContain("小猫 · 4 × 2 格 · 成品 2.0 厘米");
+    // 第二行：色卡名 · 全图 N 颗（M 种色）/ 本片 K 颗 · 生成时间 · 精度声明。
+    // `generatedAt` 用 `.+` 钉「非空」（契约 §2b：用例只断言它是非空字符串）——整行用
+    // **锚定的全串正则**：前缀、颗数、色数、`本片` 那一段与末尾的精度声明全部逐字对上。
+    const infoLine = new RegExp(
+      `^夹具色卡 · 全图 ${total} 颗（${colors} 种色）/ 本片 ${total} 颗 · .+ · 屏幕色仅供参考，以实物为准$`,
+    );
+    const matched = lines.filter((text) => infoLine.test(text));
+    expect(matched).toHaveLength(1);
+    // 生成时间确实是**日期时间**的样子（不是空串、也不是被别的东西冒充）：
+    // `zh-CN` 的 `toLocaleString` 在 zh-CN 与 UTC 两个时区下都是 `YYYY/M/D HH:mm:ss`。
+    const generatedAt = / · (\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}) · /.exec(matched[0] ?? "");
+    expect(generatedAt?.[1]).toBeTruthy();
+  });
+
+  it("同一个面板里，用量表标题与合计用的是**同一份** meta 派生值（7 颗、工程名不是色卡名）", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    await saveAndSettle(wrapper, "legend");
+    const lines = recording.texts.map((call) => call.text);
+
+    expect(lines).toContain("小猫 · 用量表");
+    expect(lines).toContain("合计 7 颗");
+    // 三处字体之一是契约 §4b 给用量表的字号（`.font` 记录把「尺寸类常量没被传错」也钉住）
+    const title = recording.texts.find((call) => call.text === "小猫 · 用量表");
+    expect(title?.font).toBe("20px sans-serif");
+  });
+
+  it("颗数与色数只有 `usages` 一个来源：把 usages 换成伪造的一份，图上文字跟着换", async () => {
+    // 这条钉的是「面板没有**第二份**真相」：`totalBeads` / `colorCount` 若从 `pattern` 现扫一遍
+    // （`patternStats(pattern, palette)`），或者写死成某个常数，下面这一条就会红——
+    // 而只喂真 `usages` 的那两条**判不开**（面板派生出来的值与现扫出来的值恰好相等）。
+    //
+    // 夹具的判别力来自**两个数故意不一致**：图纸本身是 7 颗 / 3 色（`makeSmallPattern`），
+    // 而这里喂进去的 `usages` 只有 1 项 5 颗 ⇒ 用量表页脚的「合计」必须是 **5 颗**、
+    // 施工图信息条的「本片」必须是 **7 颗**。同一份 props 下两个数不同，「各自读的是哪一份」才判得开。
+    const wrapper = mountPanel(makeSmallPattern(), {
+      usages: [{ code: "A1", name: "色 1", count: 5 }],
+    });
+    await saveAndSettle(wrapper, "legend");
+    const legendLines = recording.texts.map((call) => call.text);
+    expect(legendLines).toContain("合计 5 颗");
+    expect(legendLines.some((text) => text.includes("合计 7 颗"))).toBe(false);
+
+    // 换一项（施工图）看同一份 props 的**另一条**派生路径：本片颗数由 `countTileBeads` 现算 7，
+    // 而 `totalBeads` 仍是 usages 的 5 ⇒ 信息条那一行必须同时出现这两个数。
+    // （`recording.texts` 是**累积**的记录，不提供清空——所以这里用「用量表那一段**不**出现在
+    //  后面的判据里」的方式隔离：先取长度快照，只看新增的那一段。）
+    const legendCount = recording.texts.length;
+    await saveAndSettle(wrapper, "tile-0");
+    const sheetLines = recording.texts.slice(legendCount).map((call) => call.text);
+    expect(
+      sheetLines.some((text) => text.includes("全图 5 颗（1 种色）/ 本片 7 颗")),
+    ).toBe(true);
+    // 施工图那一段**没有**用量表的页脚（两条渲染路径没有串台）
+    expect(sheetLines.some((text) => text.startsWith("合计 "))).toBe(false);
+  });
+
+  it("换一个工程名与一张更大的图纸：图上文字跟着 props 走（不是写死的常量）", async () => {
+    const large = makeLargePattern();
+    const wrapper = mountPanel(large, { projectName: "海边的猫" });
+    const { total, colors } = usageTotals(large);
+    expect(colors).toBe(15);
+
+    await saveAndSettle(wrapper, "legend");
+    const lines = recording.texts.map((call) => call.text);
+    expect(lines).toContain("海边的猫 · 用量表");
+    expect(lines).toContain(`合计 ${total} 颗`);
+    // 反向：上一次那个工程名一次都不许出现（写死工程名 / 复用上一次的 meta 都会在这里红）
+    expect(lines.some((text) => text.includes("小猫"))).toBe(false);
+  });
+});
+
+describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
+  /*
+   * 面板只有 `v-if`、关闭即**卸载**（`EditorPage` 的 `@close` 把 `exporting` 置假），而
+   * `revokePreview` 只在「重建清单」与「重存同一项」时被调用 ⇒ 反复「导出 → 关闭」会把每一张
+   * 全分辨率 PNG 的 object URL 一直钉在内存里（一千万像素的 blob 只在下一次 GC 才可能走，
+   * 而 URL 本身在页面生命周期内永不释放）。
+   */
+  it("卸载（关闭面板）时把所有预览的 object URL 销号", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    await saveAndSettle(wrapper, "legend");
+    await saveAndSettle(wrapper, "share");
+    expect(createdUrls).toHaveLength(2);
+    expect(wrapper.find("[data-testid='export-preview-legend']").exists()).toBe(true);
+    // 卸载**之前**一个都还没销号（否则这条用例分不清「卸载时销号」与「本来就是空的」）
+    expect(revokedUrls).toEqual([]);
+
+    wrapper.unmount();
+
+    expect(revokedUrls).toEqual(createdUrls);
+  });
+
+  it("没有预览时卸载不抛错（只导出失败过 / 一张都没导出过）", async () => {
+    const wrapper = mountPanel(makeSmallPattern());
+    exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
+    await saveAndSettle(wrapper, "legend");
+    expect(wrapper.get("[data-testid='export-item-legend']").text()).toContain("失败");
+    expect(revokedUrls).toEqual([]);
+
+    expect(() => wrapper.unmount()).not.toThrow();
+    expect(revokedUrls).toEqual([]);
   });
 });

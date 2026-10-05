@@ -12,8 +12,14 @@ import type { ProjectParams } from "@/core/project/types";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
+import {
+  createRecordingTarget,
+  resetExporterMock,
+  stubObjectUrl,
+  type MockExporter,
+  type RecordingTarget,
+} from "@/components/editor/__tests__/exportTestKit";
 import { cellBox, planSheets } from "@/core/render/layout";
-import type { RenderTarget2D } from "@/core/render/types";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -82,79 +88,31 @@ vi.mock("vue-router", () => ({
  * `exportFilename` 用**真实现**（文件名的逐字格式是任务 3 用例的事）。
  *
  * 为什么不 mock `@/core/render/*`：规格 §13.2 第 1 条要的判据是「`drawSheetTile` **收到的该格
- * `fillRect` 颜色**是新色」——只有让真渲染器跑在下面这个记录型 target 上，`cellBox → fillRect`
+ * `fillRect` 颜色**是新色」——只有让真渲染器跑在记录型 target 上，`cellBox → fillRect`
  * 这条链才真的被走过（happy-dom 的 canvas 没有像素语义，CONTRACT §5.1）。
+ *
+ * **替身必须用 `vi.hoisted` 就地声明**（不能放共享模块）：`vi.mock` 的工厂被提升到所有 import
+ * 之前，工厂里引用任何模块级导出都会崩在 TDZ（实测：`Cannot access 'exporter' before
+ * initialization`）。共享模块 `@/components/editor/__tests__/exportTestKit` 提供的是
+ * `MockExporter` 类型、记录型 target（含 `fillText` 记录）、假画布与 `resetExporterMock`。
  */
-const exporter = vi.hoisted(() => ({
-  createCanvasStrict: vi.fn<(width: number, height: number) => HTMLCanvasElement>(),
-  requireContext2D: vi.fn<(canvas: HTMLCanvasElement) => RenderTarget2D>(),
-  // 面板也会调它（施工图 / 用量表；分享图按设计不调）：这里是**空实现**，
-  // 「在哪一项上调用、顺序如何」由 `ExportPanel.test.ts` 用顺序表钉住。
-  assertCanvasPainted: vi.fn<(canvas: HTMLCanvasElement) => void>(),
-  canvasToBlob: vi.fn<(canvas: HTMLCanvasElement) => Promise<Blob>>(),
-  downloadBlob: vi.fn<(blob: Blob, filename: string) => void>(),
-}));
+const exporter = vi.hoisted(
+  () =>
+    ({
+      createCanvasStrict: vi.fn(),
+      requireContext2D: vi.fn(),
+      // 面板也会调它（施工图 / 用量表；分享图按设计不调）：「在哪一项上调用、顺序如何」由
+      // `ExportPanel.test.ts` 的**同一个** `resetExporterMock` 默认实现 + 顺序表钉住。
+      assertCanvasPainted: vi.fn(),
+      canvasToBlob: vi.fn(),
+      downloadBlob: vi.fn(),
+    }) as MockExporter,
+);
 
 vi.mock("@/services/exporter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/exporter")>();
   return { ...actual, ...exporter };
 });
-
-interface FillCall {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-  readonly fillStyle: string;
-}
-
-interface RecordingTarget {
-  readonly target: RenderTarget2D;
-  readonly fills: readonly FillCall[];
-}
-
-/** 记录型绘制目标：`RenderTarget2D` 的普通对象桩 + `fillRect` 记录（不碰 happy-dom 的 canvas）。 */
-function createRecordingTarget(): RecordingTarget {
-  const fills: FillCall[] = [];
-  const target: RenderTarget2D = {
-    fillStyle: "",
-    strokeStyle: "",
-    lineWidth: 0,
-    font: "",
-    textAlign: "center",
-    textBaseline: "middle",
-    imageSmoothingEnabled: false,
-    fillRect: (x, y, w, h) => {
-      fills.push({ x, y, w, h, fillStyle: target.fillStyle });
-    },
-    strokeRect: () => undefined,
-    beginPath: () => undefined,
-    moveTo: () => undefined,
-    lineTo: () => undefined,
-    stroke: () => undefined,
-    fillText: () => undefined,
-    save: () => undefined,
-    restore: () => undefined,
-  };
-  return { target, fills };
-}
-
-/**
- * object URL 的桩：happy-dom 下这两个方法**可能不存在**（CONTRACT §5.2），所以不用 `vi.spyOn`；
- * 也**不整替 `URL` 全局**（它的构造函数还有别的用途）。
- */
-function stubObjectUrl(): void {
-  const target = URL as unknown as {
-    createObjectURL: (blob: Blob) => string;
-    revokeObjectURL: (url: string) => void;
-  };
-  let seq = 0;
-  target.createObjectURL = () => {
-    seq += 1;
-    return `blob:page-${seq}`;
-  };
-  target.revokeObjectURL = () => undefined;
-}
 
 const palette = getBuiltinPalette();
 
@@ -1584,15 +1542,10 @@ describe("导出面板接线（任务 4）", () => {
 
   beforeEach(() => {
     recording = createRecordingTarget();
-    exporter.createCanvasStrict
-      .mockReset()
-      .mockImplementation((width, height) => ({ width, height }) as unknown as HTMLCanvasElement);
-    exporter.requireContext2D.mockReset().mockImplementation(() => recording.target);
-    exporter.assertCanvasPainted.mockReset();
-    exporter.canvasToBlob
-      .mockReset()
-      .mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
-    exporter.downloadBlob.mockReset();
+    // 五个替身的默认实现与 `ExportPanel.test.ts` 共用一份（`resetExporterMock`）。本文件**不挂
+    // `onStep` / `onCanvas` 钩子**：顺序表与「释放晚于 toBlob」是面板自己那组用例的职责，
+    // 这里只需要「真渲染器把 `fillRect` 记下来」这一件事（端到端那条判据）。
+    resetExporterMock(exporter, recording.target);
     stubObjectUrl();
   });
 

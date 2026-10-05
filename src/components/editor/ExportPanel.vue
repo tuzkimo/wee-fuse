@@ -17,7 +17,7 @@
 // 与 `core/render/*` 的分工：plan 只出像素位置与尺寸，渲染器只按位置画，
 // 面板只管「建画布 → 画 → 自检 → 存 → 预览 → 释放」。导出**不乘 DPR**、
 // **不经过 `renderPatternThumbnail`**（R-6）。
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
@@ -211,6 +211,19 @@ function rebuildItems(): void {
 watch([() => props.revision, () => props.pattern], rebuildItems);
 rebuildItems();
 
+/**
+ * 关闭面板 = **卸载**（`EditorPage` 的 `@close` 只把 `exporting` 置假，本组件整体下树），所以
+ * `rebuildItems` 与「重存同一项」这两条销号路径都**不会**在关闭时跑到：不在这里回收的话，用户
+ * 反复「导出 → 关闭」会把每一张全分辨率 PNG 的 object URL 一直钉在内存里（该 URL 在页面生命周期
+ * 内永不释放，blob 也无法被回收）。这是一个**真实的泄漏**，不是兜底洁癖（修复轮 F3）。
+ *
+ * **复用 `revokePreview`、不新增导出**：销号的语义只有一份（「先 `revokeObjectURL` 再清空」），
+ * 第二份实现正是本项目反复禁止的形态。清空 `previewUrl` 同时也让 `items` 里不再留下任何 URL。
+ */
+onUnmounted(() => {
+  for (const item of items.value) revokePreview(item);
+});
+
 /* ---------------------------------------------------------- 逐项导出 */
 
 function statusText(item: ExportItem): string {
@@ -283,6 +296,12 @@ async function saveItem(item: ExportItem): Promise<void> {
       if (tile === undefined) {
         // 不可达：`tileIndex` 由本文件从 `plan.tiles` 里取。消息逐字照契约 §2b
         // （控制者裁定 11 定稿）。
+        //
+        // **显式记为「未覆盖分支」**（任务 4 修复轮，审查者点名）：整任务**没有**任何断言能走到
+        // 这一行——`layout.ts` 保证 `tiles[i].index === i`（`makeTile` 的 `index` 就是 push 前的
+        // `tiles.length`），而 `items` 在每次 `pattern` / `revision` 变化时整体重建，所以面板拿到的
+        // `item.tileIndex` 与 `plan.tiles` 恒同源。它是一条「将来有人改成手写分片清单时能响亮失败」
+        // 的守卫，不是被覆盖的行为——**别把它的存在当成已覆盖**（本项目记过账：断言存在 ≠ 断言有效）。
         throw new Error(`施工图分片不存在：${item.id}`);
       }
       canvas = createCanvasStrict(tile.canvasWidth, tile.canvasHeight);
