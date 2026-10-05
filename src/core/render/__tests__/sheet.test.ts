@@ -1,0 +1,599 @@
+import { describe, expect, it } from "vitest";
+import type { Palette } from "../../palette/types";
+import { EMPTY, type Pattern } from "../../pattern/types";
+import {
+  SHEET_FOOTER_H,
+  SHEET_INFO_BAR_H,
+  SHEET_MARGIN,
+  SHEET_RULER_LEFT,
+  SHEET_RULER_TOP,
+  cellBox,
+  planLegend,
+  planShare,
+  planSheets,
+  type LegendPlan,
+  type SheetPlan,
+  type SheetTilePlan,
+} from "../layout";
+import { drawLegend, drawSheetTile, type SheetMeta } from "../sheet";
+import { createMockTarget, type MockCalls } from "./helpers";
+
+/**
+ * 夹具：6×6、33 个实心格、3 个空格（(2,0) / (4,2) / (4,5)）、4 种颜色。
+ * 颜色刻意含**纯白与纯黑**：格内色号的墨色（`labelInk`）只有这两端能被无歧义断言。
+ */
+const CELLS_6X6: readonly number[] = [
+  0, 0, EMPTY, 0, 0, 0,
+  0, 1, 1, 1, 1, 1,
+  2, 0, 0, 0, EMPTY, 0,
+  0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, EMPTY, 3,
+];
+
+function makePalette(): Palette {
+  return {
+    id: "test-palette",
+    name: "测试色卡",
+    source: "test",
+    accuracy: "屏幕色仅供参考，以实物为准",
+    colors: [
+      { code: "A1", name: "白", rgb: [255, 255, 255] },
+      { code: "A2", name: "黑", rgb: [0, 0, 0] },
+      { code: "A3", name: "红", rgb: [255, 0, 0] },
+      { code: "A4", name: "浅灰", rgb: [200, 200, 210] },
+    ],
+  };
+}
+
+function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
+  const cells = new Uint16Array(width * height);
+  if (values !== undefined) cells.set(values);
+  return { width, height, paletteId: "test-palette", cells };
+}
+
+function makeMeta(overrides: Partial<SheetMeta> = {}): SheetMeta {
+  return {
+    projectName: "测试工程",
+    generatedAt: "2026-10-05 12:00",
+    totalBeads: 33,
+    colorCount: 4,
+    paletteName: "测试色卡",
+    accuracy: "屏幕色仅供参考，以实物为准",
+    ...overrides,
+  };
+}
+
+/** 独立的实心格计数（**不用** `countTileBeads` / `cellAt`：期望值必须与被测实现不同源）。 */
+function solidInRange(
+  pattern: Pattern,
+  originCol: number,
+  originRow: number,
+  cols: number,
+  rows: number,
+): number {
+  let count = 0;
+  for (let row = originRow; row < originRow + rows; row += 1) {
+    for (let col = originCol; col < originCol + cols; col += 1) {
+      if ((pattern.cells[row * pattern.width + col] as number) !== EMPTY) count += 1;
+    }
+  }
+  return count;
+}
+
+function solidInTile(pattern: Pattern, tile: SheetTilePlan): number {
+  return solidInRange(pattern, tile.originCol, tile.originRow, tile.cols, tile.rows);
+}
+
+/**
+ * 只取落在 `tile.grid` **内部**的文字。
+ *
+ * **这条过滤是必须的，不是洁癖**：`labels = false` 时信息条 / 刻度 / 板号 / 页脚都还在写字，
+ * `expect(calls.texts).toEqual([])` 这种写法永远是假绿——它根本没读到「格区域内没有色号」
+ * 这条真正要守的性质。渲染器用例里任何关于「格内色号」的断言都必须经过本函数。
+ */
+function textsInGrid(calls: MockCalls, tile: SheetTilePlan): MockCalls["texts"] {
+  return calls.texts.filter(
+    (text) =>
+      text.x > tile.grid.x &&
+      text.x < tile.grid.x + tile.grid.width &&
+      text.y > tile.grid.y &&
+      text.y < tile.grid.y + tile.grid.height,
+  );
+}
+
+function fillAt(calls: MockCalls, x: number, y: number) {
+  return calls.fills.find((fill) => fill.x === x && fill.y === y);
+}
+
+describe("drawSheetTile：底色、色块与文字", () => {
+  const pattern = makePattern(6, 6, CELLS_6X6);
+  const palette = makePalette();
+  const plan = planSheets(pattern, palette);
+  const tile = plan.tiles[0] as SheetTilePlan;
+
+  it("夹具锚点：6×6 里有 33 个实心格、3 个空格（后面所有次数都由它推出）", () => {
+    expect(solidInTile(pattern, tile)).toBe(33);
+    expect(pattern.cells.length - solidInTile(pattern, tile)).toBe(3);
+    expect(tile.grid).toEqual({ x: 88, y: 176, width: 240, height: 240 });
+  });
+
+  it("第 1 步整张底色 + 第 3 步实心格：fillRect 次数 = 1 + 实心格数", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+    expect(calls.fills).toHaveLength(1 + solidInTile(pattern, tile));
+    expect(calls.fills[0]).toMatchObject({
+      x: 0,
+      y: 0,
+      w: tile.canvasWidth,
+      h: tile.canvasHeight,
+      fillStyle: "#ffffff",
+    });
+  });
+
+  it("色块的坐标取自 cellBox、颜色取自色卡（rgbCss 口径）", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    const black = cellBox(tile, 1, 1);
+    expect(fillAt(calls, black.x, black.y)).toMatchObject({
+      w: black.width,
+      h: black.height,
+      fillStyle: "rgb(0, 0, 0)",
+    });
+    const red = cellBox(tile, 0, 2);
+    expect(fillAt(calls, red.x, red.y)).toMatchObject({ fillStyle: "rgb(255, 0, 0)" });
+    const grey = cellBox(tile, 5, 5);
+    expect(fillAt(calls, grey.x, grey.y)).toMatchObject({ fillStyle: "rgb(200, 200, 210)" });
+  });
+
+  it("空格不填色（MARD 有白色豆，白 ≠ 空），只在格内画一条浅灰斜线", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    for (const [col, row] of [[2, 0], [4, 2], [4, 5]] as const) {
+      const box = cellBox(tile, col, row);
+      expect(fillAt(calls, box.x, box.y)).toBeUndefined();
+    }
+
+    const diagonal = calls.paths.find((path) => path.strokeStyle === "#cbd5e1");
+    expect(diagonal).toBeDefined();
+    expect(diagonal?.lineWidth).toBe(tile.lineWidths.thin);
+    const first = cellBox(tile, 2, 0);
+    const second = cellBox(tile, 4, 2);
+    const third = cellBox(tile, 4, 5);
+    // 三格斜线共用一次 beginPath / stroke，方向是左上 → 右下
+    expect(diagonal?.ops).toEqual([
+      { op: "moveTo", x: first.x, y: first.y },
+      { op: "lineTo", x: first.x + first.width, y: first.y + first.height },
+      { op: "moveTo", x: second.x, y: second.y },
+      { op: "lineTo", x: second.x + second.width, y: second.y + second.height },
+      { op: "moveTo", x: third.x, y: third.y },
+      { op: "lineTo", x: third.x + third.width, y: third.y + third.height },
+      { op: "stroke" },
+    ]);
+  });
+
+  it("格内色号：每格一条、字号取 labelFontPx、墨色取 labelInk、位置是 cellBox 的中心", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    expect(tile.labelFontPx).toBe(15);
+    const inGrid = textsInGrid(calls, tile);
+    expect(inGrid).toHaveLength(33); // 实心格数：空格没有色号
+    expect(inGrid.every((text) => ["A1", "A2", "A3", "A4"].includes(text.text))).toBe(true);
+
+    const white = cellBox(tile, 0, 0);
+    expect(calls.texts.find((text) => text.text === "A1")).toMatchObject({
+      x: white.x + white.width / 2,
+      y: white.y + white.height / 2,
+      font: "15px sans-serif",
+      fillStyle: "rgb(0, 0, 0)",
+      textAlign: "center",
+      textBaseline: "middle",
+    });
+    const black = cellBox(tile, 1, 1);
+    expect(calls.texts.find((text) => text.text === "A2")).toMatchObject({
+      x: black.x + black.width / 2,
+      y: black.y + black.height / 2,
+      fillStyle: "rgb(255, 255, 255)",
+    });
+  });
+
+  it("信息条两行、刻度显示全局格号 + 1、板号与页脚逐字断言（本片颗数走 countTileBeads）", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    expect(calls.texts[0]).toMatchObject({
+      text: "测试工程 · 6 × 6 格 · 成品 3.0 厘米",
+      x: SHEET_MARGIN,
+      y: SHEET_MARGIN,
+      font: "18px sans-serif", // 契约 §4b：字体字符串必须带字体族
+      fillStyle: "#0f172a",
+      textAlign: "left",
+      textBaseline: "top",
+    });
+    expect(calls.texts[1]).toMatchObject({
+      text: "测试色卡 · 全图 33 颗（4 种色）/ 本片 33 颗 · 2026-10-05 12:00 · 屏幕色仅供参考，以实物为准",
+      y: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2),
+    });
+
+    expect(tile.colTicks.map((tick) => tick.col)).toEqual([0, 5]);
+    // 上刻度带：0 列显示「1」，居中、底对齐
+    expect(calls.texts.find((text) => text.text === "1" && text.textAlign === "center")).toMatchObject({
+      x: tile.grid.x,
+      y: tile.grid.y - 8,
+      textBaseline: "bottom",
+      font: "12px sans-serif",
+    });
+    // 左刻度带：5 行显示「6」，右对齐、垂直居中
+    expect(calls.texts.find((text) => text.text === "6" && text.textBaseline === "middle")).toMatchObject({
+      x: tile.grid.x - 8,
+      y: tile.rowTicks[1]?.y,
+    });
+
+    expect(calls.texts.filter((text) => text.text === "第 1 块板")).toHaveLength(2);
+    expect(
+      calls.texts.find((text) => text.text === "第 1 块板" && text.textAlign === "center"),
+    ).toMatchObject({
+      x: tile.grid.x,
+      y: tile.grid.y - SHEET_RULER_TOP + 2,
+      textBaseline: "top",
+    });
+    expect(
+      calls.texts.find((text) => text.text === "第 1 块板" && text.textAlign === "left"),
+    ).toMatchObject({
+      x: tile.grid.x - SHEET_RULER_LEFT + 2,
+      y: tile.grid.y,
+      textBaseline: "middle",
+    });
+
+    expect(calls.texts.find((text) => text.text.startsWith("第 1/1 片"))).toMatchObject({
+      text: "第 1/1 片 · 列 1–6 · 行 1–6（含）· 本片 33 颗",
+      x: SHEET_MARGIN,
+      y: tile.grid.y + tile.grid.height + SHEET_FOOTER_H / 2,
+    });
+  });
+});
+
+describe("drawSheetTile：网格线、调用顺序与降级", () => {
+  const pattern = makePattern(6, 6, CELLS_6X6);
+  const palette = makePalette();
+  const plan = planSheets(pattern, palette);
+  const tile = plan.tiles[0] as SheetTilePlan;
+
+  it("三档网格线由细到粗、每档一次 beginPath / stroke，板边界最后画", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    // 调用顺序 = [空格斜线（浅灰、细）, thin, major, board]
+    expect(calls.paths.map((path) => path.lineWidth)).toEqual([1, 1, 2, 3]);
+    expect(calls.paths.map((path) => path.strokeStyle)).toEqual([
+      "#cbd5e1",
+      "#0f172a",
+      "#0f172a",
+      "#0f172a",
+    ]);
+
+    const gridPaths = calls.paths.filter((path) => path.strokeStyle === "#0f172a");
+    for (const kind of ["thin", "major", "board"] as const) {
+      const group = gridPaths.find((path) => path.lineWidth === tile.lineWidths[kind]);
+      expect(group).toBeDefined();
+      const lines =
+        tile.vLines.filter((line) => line.kind === kind).length +
+        tile.hLines.filter((line) => line.kind === kind).length;
+      expect(group?.ops.filter((op) => op.op !== "stroke")).toHaveLength(2 * lines);
+      expect(group?.ops.filter((op) => op.op === "stroke")).toHaveLength(1);
+    }
+
+    // 板边界在细线**之后**（顺序反了：先画粗线会被后画的细线切断，板边界不再连续）
+    const thinIndex = calls.paths.findIndex(
+      (path) => path.lineWidth === tile.lineWidths.thin && path.strokeStyle === "#0f172a",
+    );
+    const boardIndex = calls.paths.findIndex((path) => path.lineWidth === tile.lineWidths.board);
+    expect(thinIndex).toBeGreaterThanOrEqual(0);
+    expect(boardIndex).toBeGreaterThan(thinIndex);
+    expect(boardIndex).toBe(calls.paths.length - 1);
+  });
+
+  it("moveTo / lineTo 各 = 网格线条数 + 空格数，且没有游离的路径操作", () => {
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, pattern, palette, plan, tile, makeMeta());
+
+    const ops = calls.paths.flatMap((path) => path.ops);
+    const gridLines = tile.vLines.length + tile.hLines.length;
+    expect(gridLines).toBe(14);
+    expect(ops.filter((op) => op.op === "moveTo")).toHaveLength(gridLines + 3);
+    expect(ops.filter((op) => op.op === "lineTo")).toHaveLength(gridLines + 3);
+    expect(calls.strayOps).toEqual([]);
+  });
+
+  it("某一档一条线都没有时不发空 stroke（4×4 只有板边界与细线）", () => {
+    const small = makePattern(4, 4);
+    const smallPlan = planSheets(small, palette);
+    const smallTile = smallPlan.tiles[0] as SheetTilePlan;
+    expect(smallTile.vLines.filter((line) => line.kind === "major")).toHaveLength(0);
+
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, small, palette, smallPlan, smallTile, makeMeta());
+    expect(calls.paths.map((path) => path.lineWidth)).toEqual([1, 3]);
+  });
+
+  it("labels = false 时格区域内没有色号；信息条 / 刻度 / 页脚照常写字（必须按区域过滤，否则是假绿）", () => {
+    const big = makePattern(500, 500);
+    const noLabels = planSheets(big, palette, { maxEdge: 1143 });
+    expect(noLabels.labels).toBe(false);
+    const bigTile = noLabels.tiles[0] as SheetTilePlan;
+    expect(solidInTile(big, bigTile)).toBe(841); // 29×29 全实心
+
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, big, palette, noLabels, bigTile, makeMeta({ totalBeads: 250000, colorCount: 1 }));
+
+    expect(textsInGrid(calls, bigTile)).toEqual([]);
+    // 假绿陷阱的反面证据：整张图上仍然有 17 条文字（信息条 2 + 刻度 12 + 板号 2 + 页脚 1）
+    expect(calls.texts).toHaveLength(2 + 6 + 6 + 1 + 1 + 1);
+    expect(calls.texts[1]?.text).toBe(
+      "测试色卡 · 全图 250000 颗（1 种色）/ 本片 841 颗 · 2026-10-05 12:00 · 屏幕色仅供参考，以实物为准",
+    );
+    expect(calls.fills).toHaveLength(1 + 841);
+  });
+});
+
+describe("drawSheetTile / drawLegend：入口守卫", () => {
+  const palette = makePalette();
+  const pattern = makePattern(6, 6, CELLS_6X6);
+  const plan = planSheets(pattern, palette);
+  const tile = plan.tiles[0] as SheetTilePlan;
+
+  it("plan.kind 不匹配 / tile 不属于本 plan / 色卡不一致：写在任何写操作之前", () => {
+    const { target, calls } = createMockTarget();
+
+    const sharePlan = planShare(pattern);
+    expect(() =>
+      drawSheetTile(target, pattern, palette, sharePlan as unknown as SheetPlan, tile, makeMeta()),
+    ).toThrow("plan 的类型不匹配：期望 sheet，实际 share");
+    expect(calls.fills).toEqual([]);
+
+    const legendPlan = planLegend([]);
+    expect(() =>
+      drawSheetTile(target, pattern, palette, legendPlan as unknown as SheetPlan, tile, makeMeta()),
+    ).toThrow("plan 的类型不匹配：期望 sheet，实际 legend");
+    expect(calls.fills).toEqual([]);
+
+    const foreign = planSheets(makePattern(6, 6, CELLS_6X6), palette).tiles[0] as SheetTilePlan;
+    expect(() => drawSheetTile(target, pattern, palette, plan, foreign, makeMeta())).toThrow(
+      "传入的 tile 不属于这个 plan",
+    );
+    expect(calls.fills).toEqual([]);
+
+    expect(() =>
+      drawSheetTile(target, pattern, { ...palette, id: "other" }, plan, tile, makeMeta()),
+    ).toThrow("与传入的色卡 other 不一致");
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("色号下标超出色卡时响亮失败（不静默涂成另一个色）", () => {
+    const broken = makePattern(6, 6);
+    broken.cells[0] = 9;
+    const brokenPlan = planSheets(broken, palette);
+    const { target } = createMockTarget();
+    expect(() =>
+      drawSheetTile(target, broken, palette, brokenPlan, brokenPlan.tiles[0] as SheetTilePlan, makeMeta()),
+    ).toThrow("色卡里没有下标 9 的颜色");
+  });
+
+  it("drawLegend 的 plan.kind 不匹配即抛（把 sheet plan 传进去）", () => {
+    const { target, calls } = createMockTarget();
+    expect(() =>
+      drawLegend(target, palette, [], plan as unknown as LegendPlan, makeMeta()),
+    ).toThrow("plan 的类型不匹配：期望 legend，实际 sheet");
+    expect(calls.fills).toEqual([]);
+  });
+});
+
+/** 按色号表造一张色卡（用量表用例要把色号查回 rgb，所以色卡必须含这些色号）。 */
+function makePaletteOf(codes: readonly string[]): Palette {
+  return {
+    id: "test-palette",
+    name: "测试色卡",
+    source: "test",
+    accuracy: "屏幕色仅供参考，以实物为准",
+    colors: codes.map((code, index) => ({
+      code,
+      name: `色 ${index + 1}`,
+      rgb: [index * 10, index * 5, 0] as const,
+    })),
+  };
+}
+
+describe("drawLegend", () => {
+  const palette = makePalette(); // A1 白 / A2 黑 / A3 红 / A4 浅灰
+  const usages = [
+    { code: "A1", name: "白", count: 12 },
+    { code: "A2", name: "黑", count: 30 },
+  ];
+  const plan = planLegend(usages);
+
+  it("标题行 + 表头 + 每项一行 + **色块是真色** + 合计 = 各项之和 + 精度声明 + 生成时间", () => {
+    const { target, calls } = createMockTarget();
+    drawLegend(target, palette, usages, plan, makeMeta());
+
+    expect(calls.fills[0]).toMatchObject({
+      x: 0,
+      y: 0,
+      w: plan.canvasWidth,
+      h: plan.canvasHeight,
+      fillStyle: "#ffffff",
+    });
+    // 顺序：标题 → 表头三列（表头必须在任何项行之前）
+    expect(calls.texts.slice(0, 4).map((text) => text.text)).toEqual([
+      "测试工程 · 用量表",
+      "色号",
+      "名称",
+      "颗数",
+    ]);
+
+    // 每项一行：第 i 项落在第 i 列（默认上限下 itemCols = 13，两项同行不同列）
+    expect(plan.itemCols).toBe(13);
+    const cellX = (index: number) => SHEET_MARGIN + index * plan.itemWidth;
+    const centerY = plan.tableTop + plan.rowHeight / 2;
+    expect(calls.texts.find((text) => text.text === "A1")).toMatchObject({
+      x: cellX(0) + 28,
+      y: centerY,
+      textAlign: "left",
+      textBaseline: "middle",
+    });
+    expect(calls.texts.find((text) => text.text === "A2")).toMatchObject({ x: cellX(1) + 28, y: centerY });
+    expect(calls.texts.find((text) => text.text === "白")).toMatchObject({ x: cellX(0) + 88, y: centerY });
+    expect(calls.texts.find((text) => text.text === "30")).toMatchObject({
+      x: cellX(1) + plan.itemWidth - 8,
+      y: centerY,
+      textAlign: "right",
+    });
+
+    // 色块：**真是那个颜色**（2026-10-05 补 `palette` 入参后才可断言）——fillStyle 必须等于该色号的
+    // `rgbCss`，而且是一次**填充**（只描边的占位框会让这条红）。外框是压在真色之上的细框。
+    const swatchY = plan.tableTop + (plan.rowHeight - 20) / 2;
+    expect(calls.fills).toHaveLength(1 + 2);
+    expect(calls.fills[1]).toMatchObject({
+      x: cellX(0),
+      y: swatchY,
+      w: 20,
+      h: 20,
+      fillStyle: "rgb(255, 255, 255)",
+    });
+    expect(calls.fills[2]).toMatchObject({
+      x: cellX(1),
+      y: swatchY,
+      w: 20,
+      h: 20,
+      fillStyle: "rgb(0, 0, 0)",
+    });
+    expect(calls.strokeRects).toHaveLength(2);
+    expect(calls.strokeRects[0]).toMatchObject({ x: cellX(0), y: swatchY, w: 20, h: 20 });
+
+    // 合计：测试自己求和，与被测实现不同源
+    const expectedTotal = usages.reduce((sum, usage) => sum + usage.count, 0);
+    expect(expectedTotal).toBe(42);
+    expect(calls.texts.some((text) => text.text === "合计 42 颗")).toBe(true);
+    expect(calls.texts.some((text) => text.text === makeMeta().accuracy)).toBe(true);
+    expect(calls.texts.some((text) => text.text === "生成时间：2026-10-05 12:00")).toBe(true);
+    expect(calls.texts).toHaveLength(1 + 3 + 2 * 3 + 3);
+  });
+
+  it("多列布局：第 14 项换到第 2 行第 1 列", () => {
+    const codes = Array.from({ length: 14 }, (_, index) => `B${index + 1}`);
+    const manyPalette = makePaletteOf(codes);
+    const many = codes.map((code, index) => ({ code, name: `色 ${index + 1}`, count: index + 1 }));
+    const manyPlan = planLegend(many);
+    expect(manyPlan.itemCols).toBe(13);
+    expect(manyPlan.itemRows).toBe(2);
+
+    const { target, calls } = createMockTarget();
+    drawLegend(target, manyPalette, many, manyPlan, makeMeta());
+    expect(calls.texts.find((text) => text.text === "B14")).toMatchObject({
+      x: SHEET_MARGIN + 28,
+      y: manyPlan.tableTop + manyPlan.rowHeight + manyPlan.rowHeight / 2,
+    });
+    expect(calls.texts.some((text) => text.text === "合计 105 颗")).toBe(true); // 1+…+14 = 105
+    expect(calls.fills).toHaveLength(1 + 14);
+  });
+
+  it("空用量表：表格区只有标题与合计（不画表头、不画项、不画色块）", () => {
+    const emptyPlan = planLegend([]);
+    const { target, calls } = createMockTarget();
+    drawLegend(target, palette, [], emptyPlan, makeMeta({ totalBeads: 0, colorCount: 0 }));
+
+    expect(calls.texts.map((text) => text.text)).toEqual([
+      "测试工程 · 用量表",
+      "合计 0 颗",
+      "屏幕色仅供参考，以实物为准",
+      "生成时间：2026-10-05 12:00",
+    ]);
+    expect(calls.strokeRects).toEqual([]);
+    expect(calls.fills).toHaveLength(1); // 只有整张底色
+  });
+
+  it("usages 与 plan 不同源即抛，且不留下半张表（写在任何写操作之前）", () => {
+    // 14 项 ⇒ 计划是 2 行；只喂 2 项 ⇒ 应为 1 行：行数不符必须响亮失败
+    const many = Array.from({ length: 14 }, (_, index) => ({
+      code: `A${index + 1}`,
+      name: `色 ${index + 1}`,
+      count: index + 1,
+    }));
+    const manyPlan = planLegend(many);
+    expect(manyPlan.itemRows).toBe(2);
+
+    const { target, calls } = createMockTarget();
+    expect(() => drawLegend(target, palette, usages, manyPlan, makeMeta())).toThrow(
+      "用量表计划与本表不符：计划 2 行、按 2 项应为 1 行",
+    );
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("色号不在色卡里即抛，且不留下半张表（**第二项**才是坏色号，证明校验在动笔之前）", () => {
+    const stranger = [
+      { code: "A1", name: "白", count: 1 },
+      { code: "Z9", name: "不在色卡", count: 2 },
+    ];
+    const strangerPlan = planLegend(stranger);
+    const { target, calls } = createMockTarget();
+    expect(() => drawLegend(target, palette, stranger, strangerPlan, makeMeta())).toThrow(
+      "用量表里的色号不在色卡里：Z9",
+    );
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("plan 不自洽（列数与画布宽配错）即抛，且不留下半张表", () => {
+    // 伪造一个「12 列」的计划：行数仍与 usages 相符（ceil(2/12) = 1），所以只有自洽性检查拦得住它
+    const forged = { ...plan, itemCols: 12 };
+    const { target, calls } = createMockTarget();
+    expect(() => drawLegend(target, palette, usages, forged, makeMeta())).toThrow(
+      "用量表计划不自洽：12 列 × 300 px + 边距 ≠ 画布宽 3948 px",
+    );
+    expect(calls.fills).toEqual([]);
+  });
+});
+
+describe("§13.2 承重断言的渲染器侧", () => {
+  const palette = makePalette();
+
+  it("§13.2-2：同一格在单张计划与分片计划里落到同一个 fillRect（去掉 origin 偏移会红）", () => {
+    const single = makePattern(116, 116);
+    const tiled = makePattern(500, 500);
+    const singlePlan = planSheets(single, palette);
+    const tiledPlan = planSheets(tiled, palette);
+    // 前提：两次计划的格像素相同（不同就无从比较——用例自己先钉住这个前提）
+    expect(singlePlan.cellPx).toBe(33);
+    expect(tiledPlan.cellPx).toBe(33);
+
+    const singleTile = singlePlan.tiles[0] as SheetTilePlan;
+    const tiledTile = tiledPlan.tiles[0] as SheetTilePlan;
+    const singleRun = createMockTarget();
+    drawSheetTile(singleRun.target, single, palette, singlePlan, singleTile, makeMeta());
+    const tiledRun = createMockTarget();
+    drawSheetTile(tiledRun.target, tiled, palette, tiledPlan, tiledTile, makeMeta());
+
+    const boxSingle = cellBox(singleTile, 7, 13);
+    const boxTiled = cellBox(tiledTile, 7, 13);
+    expect(boxTiled).toEqual(boxSingle);
+    const fillSingle = fillAt(singleRun.calls, boxSingle.x, boxSingle.y);
+    expect(fillSingle).toBeDefined();
+    expect(fillAt(tiledRun.calls, boxTiled.x, boxTiled.y)).toEqual(fillSingle);
+  });
+
+  it("§13.2-3：底色铺满 plan 给的画布，格子区宽度 = 列数 × 格像素（与缩略图 512 上限无关）", () => {
+    const big = makePattern(500, 500);
+    const plan = planSheets(big, palette);
+    const tile = plan.tiles[0] as SheetTilePlan;
+    const { target, calls } = createMockTarget();
+    drawSheetTile(target, big, palette, plan, tile, makeMeta());
+
+    expect(calls.fills[0]).toMatchObject({ x: 0, y: 0, w: tile.canvasWidth, h: tile.canvasHeight });
+    expect(tile.canvasWidth).toBe(2 * SHEET_MARGIN + SHEET_RULER_LEFT + tile.cols * plan.cellPx);
+    expect(tile.grid.width).toBe(tile.cols * plan.cellPx);
+    // 规格 §9 第 3 条：导出不经过 renderPatternThumbnail（它的 THUMBNAIL_MAX_EDGE = 512）
+    expect(tile.grid.width).toBeGreaterThan(512);
+    expect(tile.grid.height).toBeGreaterThan(512);
+  });
+});
