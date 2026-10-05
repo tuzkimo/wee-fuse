@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick, reactive } from "vue";
+import { RouterLink } from "vue-router";
 import { fitTransform, type ViewTransform } from "@/core/crop/view";
 import { defaultCellView } from "@/core/pattern/view";
 import { EMPTY } from "@/core/pattern/types";
@@ -1422,5 +1423,68 @@ describe("端到端 ③：/edit/a → /edit/b", () => {
     // 2×1 在 800×600 里是比例 400、偏移 (0, 100)，`defaultCellView` 对小图纸不设上界——同 D2）。
     expect(editor.view).toEqual(defaultCellView({ width: 800, height: 600 }, { width: 4, height: 4 }));
     expect(editor.view).not.toEqual(savedView);
+  });
+});
+
+/**
+ * 回图纸库入口（F1）。
+ *
+ * 人工验证发现：编辑页**没有任何回库入口**——用户只能靠浏览器 / Android 系统的返回键离开，
+ * 而 Tauri 壳里没有浏览器工具栏。这里钉两件事：
+ * ① 入口存在，且是**路由链接**（`RouterLink` 渲染成 `<a>`；不用 `@click="router.push(...)"` 绕过
+ *    链接语义，主规格 §6.4）；② 它是**走守卫的正常导航**——有未保存改动时被同一条页面内确认条拦下，
+ *    没有为它新增任何第二个 dirty 标志或第二段拦截逻辑。
+ */
+describe("回图纸库入口（F1）", () => {
+  it("载入成功后顶部有回图纸库入口：指向图纸库的路由链接，且满足触控 / 字号下限", async () => {
+    const wrapper = await mountPage();
+    const entry = wrapper.get("[data-testid='back-to-library']");
+    // 只有入口没有标签、或标签写错，用户不知道这一下会发生什么
+    expect(entry.text()).toContain("回图纸库");
+    // 触控目标 ≥44px、字号 ≥16px（主规格 §6.4；与工具栏按钮同一口径的类名断言）
+    expect(entry.classes()).toContain("min-h-11"); // 2.75rem = 44px
+    expect(entry.classes()).toContain("text-base"); // 16px
+
+    // **目标**：既有 mock 里的 `RouterLink` 是 `{ template: "<a><slot /></a>" }` 且**没有声明 props**，
+    // 所以 `to` 以 fallthrough 属性的形式落在渲染出的 `<a>` 上——这是本环境里唯一能观察到
+    // 「入口声明了哪个目标」的形式。真实 `RouterLink` 会把它当 prop 消费并渲染成 `href="/"`；
+    // 「href 对不对」只有真实路由器 / 真机能验，这里不写对 mock 自身行为的断言。
+    expect(entry.attributes("to")).toBe("/");
+    // 旁路写法的判别力：`@click="router.push('/')"` 的 `<a>` / `<button>` 既没有 `to` 属性、
+    // 也没有 `RouterLink` 组件，这一条与上面那条同时红（变异实测见报告 §F1）。
+    expect(wrapper.findComponent(RouterLink).exists()).toBe(true);
+  });
+
+  it("有未保存改动时点它：不跳转、由同一条确认条接手，放弃后重放的正是入口自己的目标", async () => {
+    const wrapper = await mountPage();
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    const entry = wrapper.get("[data-testid='back-to-library']");
+
+    // ① 入口**自己不发起导航、也不绕过守卫**。真实路由器会在导航时先跑离场守卫，而这里的 `RouterLink`
+    //    是桩（不驱动路由器），所以「点完之后一次 push 都没有」正是旁路实现的红点：写成
+    //    `@click="router.push('/')"` 时 pushMock 已经被调过一次。
+    await entry.trigger("click");
+    await nextTick();
+    expect(pushMock).not.toHaveBeenCalled();
+
+    // 目标也取自入口**自己声明的那个**（不是用例里另写一个常量）：下面第 ② / ③ 步过的都是它。
+    const target = entry.attributes("to");
+    if (target === undefined) throw new Error("回图纸库入口没有声明目标（to）");
+
+    // ② 像真实路由器那样，拿**入口自己声明的目标**去过那条守卫：有未保存改动 ⇒ 取消导航 + 同一条确认条。
+    //    这一条就是「新入口接的是同一条路」；删掉 / 改坏守卫（例如放行）时它立刻红。
+    expect(getLeaveGuard()(target, { name: "editor" })).toBe(false);
+    await nextTick();
+    expect(wrapper.find("[data-testid='leave-bar']").exists()).toBe(true);
+    expect(pushMock).not.toHaveBeenCalled();
+
+    // ③ 端到端闭环：点「放弃改动」之后，重放的**正是入口声明的那个目标**——不是写死的 home、
+    //    也不是别的路由。入口 → 守卫 → 确认条 → 路由器，一条链走完。
+    await wrapper.get("[data-testid='leave-discard']").trigger("click");
+    await flushPromises();
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith(target);
   });
 });
