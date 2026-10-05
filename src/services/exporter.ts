@@ -1,4 +1,5 @@
 import { normalizeProjectName } from "./projectStore";
+import type { RenderTarget2D } from "@/core/render/types";
 
 /**
  * B4 导出的**唯一接触平台落盘 API 的文件**（规格 §3）：建画布、取 2D 上下文、`toBlob`、下载、文件名。
@@ -61,12 +62,47 @@ export function createCanvasStrict(width: number, height: number): HTMLCanvasEle
 }
 
 /**
- * 取 2D 上下文；拿不到即抛（不静默返回 `null`，让调用方在别处裸崩成 `TypeError`）。
+ * 取 2D 上下文，返回 core 渲染器要的 `RenderTarget2D`；拿不到即抛（不静默返回 `null`，
+ * 让调用方在别处裸崩成 `TypeError`）。
  *
  * **消费者**：`ExportPanel.vue` 把返回值直接传给 `core/render/sheet.ts` / `share.ts`——
- * `CanvasRenderingContext2D` 结构上满足 core 的 `RenderTarget2D`，无需转换、无需断言。
+ * 返回类型**就是** `RenderTarget2D`，所以 `drawSheetTile(requireContext2D(canvas), …)` 原样可编译，
+ * 面板里**不散落 cast**。
+ *
+ * **为什么这里必须有一次具名窄化**（2026-10-05 由任务 3 的审查用编译器实测、控制者裁定）：
+ * `CanvasRenderingContext2D` 与 `RenderTarget2D` **并不严格结构兼容**，实测**四处**不合：
+ *
+ * 1. `fillStyle`：DOM 是 `string | CanvasGradient | CanvasPattern`，core 只收 `string`；
+ * 2. `strokeStyle`：同上（也是 `string | CanvasGradient | CanvasPattern`）；
+ * 3. `textAlign`：DOM 的 `CanvasTextAlign` 多出 `"start" | "end"`；
+ * 4. `textBaseline`：DOM 的 `CanvasTextBaseline` 多出 `"alphabetic" | "hanging" | "ideographic"`。
+ *
+ * （TS 一次只报第一个不合的属性，所以 `vue-tsc` 在返回处只列 `fillStyle` + 一条 `getImageData` 不存在；
+ * 「四处」是逐字段 `Omit` 逼出来的**实测集合**——去掉这四个字段后 `ctx` 可赋值、无报错；
+ * 原文见任务 3 报告的 F1 编译证据。）
+ *
+ * **为什么不在 core 里放宽那四个字段**：DOM 的联合类型属于平台层，放宽等于把 `CanvasGradient` /
+ * `CanvasPattern` / `"start"` / `"alphabetic"` 拖进零依赖的 core——`core/render/types.ts` 存在的理由
+ * 正是隔离它们（core 不得引用 DOM 全局）；而且渲染器只会写 `rgbCss(...)` 出来的字符串与
+ * `"left" | "center" | "right"` / `"top" | "middle"`，永远不会写那些值。窄化只在**这一个具名点**发生。
  */
-export function requireContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+export function requireContext2D(canvas: HTMLCanvasElement): RenderTarget2D {
+  return requireRawContext2D(canvas) as unknown as RenderTarget2D;
+}
+
+/**
+ * 真 DOM 类型的 2D 上下文。
+ *
+ * **为什么还要一个不导出的兄弟函数**（2026-10-05 由任务 3 的实现者在 F1 修复时发现）：`assertCanvasPainted`
+ * 要调 `getImageData`，而它**不在** `RenderTarget2D` 里（渲染器用不到读像素，把它加进 core 的接口等于
+ * 让 core 引用 DOM 的 `ImageData`）。所以自检拿的是真 DOM 接口，渲染器拿的是 `RenderTarget2D`。
+ *
+ * **null 守卫只此一份**：`requireContext2D` 与 `assertCanvasPainted` 都走这里 ⇒ 「拿不到上下文」
+ * 在两条路径上是同一处判断、同一条消息，不会各自漂移。
+ *
+ * **不导出**：它不是契约 §2 的 API（导出即承诺），只服务于本文件内的两条路径。
+ */
+function requireRawContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const ctx = canvas.getContext("2d");
   if (ctx === null) {
     throw new Error("无法获取 2D 上下文");
@@ -102,6 +138,11 @@ export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
  * 真实存在的失败形态，见 `canvasToBlob`）；文件名去空白后为空即抛。顺序上**先 `click()` 后
  * `revokeObjectURL`**：反过来会在部分浏览器上让下载拿不到数据。
  *
+ * **`revokeObjectURL` 放在 `finally` 里**（2026-10-05 任务 3 审查的 F4 裁定）：`click()` 是唯一可能抛错的
+ * 一步（例如被下载拦截器 / 受限环境拒绝），而 object URL 一旦创建就必须回收——写成顺序语句
+ * （`link.click(); URL.revokeObjectURL(url);`）会让「抛错那一次」漏掉回收、在页面生命周期内泄漏一个 blob URL。
+ * `try / finally` 让回收在成功与失败两条路径上都是**恰好一次**；异常照常上抛，不吞。
+ *
  * **这个 `文件名不能为空` 守卫不是 `normalizeProjectName` 的副本**（控制者裁定 2026-10-05）：两者校验的
  * 是**不同的对象**——`normalizeProjectName` 校验「工程名」（trim、非空、≤ `PROJECT_NAME_MAX`，属调用方
  * 的命名契约，`exportFilename` 已经用过它）；本函数校验的是**最终文件名**，它是 DOM 边界的最后一站，
@@ -109,8 +150,9 @@ export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
  * 文件名（那是第二份命名逻辑）。
  *
  * **刻意不把 `<a>` 挂进 DOM**：现代浏览器对未挂载的 `<a download>` 调 `click()` 即可触发下载；
- * 挂进去就必须配一次 `remove()`，而那道清理在「`click()` 抛错」的路径上会被漏掉，DOM 里就留下
- * 一个永不回收的节点。用例用 `anchor.parentNode === null` 钉住这条决定。
+ * 挂进去就必须配一次 `remove()`，而 `remove()` 与 `click()` 之间有第二条可能抛错的路径（清不掉就留下
+ * 一个永不回收的节点）。不挂载 ⇒ 没有需要清理的节点，需要 `finally` 兜住的只剩 object URL 这一项。
+ * 用例用 `anchor.parentNode === null` 钉住这条决定。
  *
  * **消费者**：`ExportPanel.vue`（用户点「保存」后）。
  */
@@ -126,8 +168,11 @@ export function downloadBlob(blob: Blob, filename: string): void {
   const link = document.createElement("a");
   link.href = url;
   link.download = safeName;
-  link.click();
-  URL.revokeObjectURL(url);
+  try {
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /**
@@ -135,7 +180,8 @@ export function downloadBlob(blob: Blob, filename: string): void {
  * 白色即抛。
  *
  * 它挡的是「分配成功、内容全空 / 读回全 0」这一形态（规格 §16 的 B4-R2）：没有它，失败会以
- * 「一张白图」的形式成功交付。上下文获取复用 `requireContext2D`（不写第二份 `null` 检查）。
+ * 「一张白图」的形式成功交付。上下文获取复用**同一处** null 守卫 `requireRawContext2D`
+ * （不写第二份 `null` 检查——它返回真 DOM 接口，因为自检要调 `getImageData`，而它不在 `RenderTarget2D` 里）。
  * 消息里的坐标由这两个常量插值而来，所以**坐标与文案不会漂移**（改坐标会同时改掉消息与用例）。
  *
  * **采样点为什么是 (2, 2)**：见 `SELF_CHECK_X` 的注释——它在左上角边距里，始终白底、不放任何文字。
@@ -145,7 +191,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
  * **分享图不调用自检**——它按设计是透明的，没有「必定不透明」的点（控制者裁定 2026-10-05）。
  */
 export function assertCanvasPainted(canvas: HTMLCanvasElement): void {
-  const ctx = requireContext2D(canvas);
+  const ctx = requireRawContext2D(canvas);
   const { data } = ctx.getImageData(SELF_CHECK_X, SELF_CHECK_Y, 1, 1);
   const rgba = `${data[0]},${data[1]},${data[2]},${data[3]}`;
   if (data[0] !== 255 || data[1] !== 255 || data[2] !== 255 || data[3] !== 255) {
@@ -166,8 +212,10 @@ export function assertCanvasPainted(canvas: HTMLCanvasElement): void {
  *
  * 四个运行期守卫（TS 类型挡不住 `JSON.parse` / 强转 / 运行期拼接）：内容标签必须是三值之一
  * （否则会静默产出一个 `X-海报.png`）；`用量表` / `分享图` 带了 `tile` 即抛（静默忽略会让调用方
- * 以为自己传对了）；施工图必须有分片序号；序号必须是 ≥0 的整数（负数或小数会静默产出 `r0c0`
- * 或 `r1c2.5`，看起来完全正常）。
+ * 以为自己传对了）；施工图必须有分片序号；序号必须是 **≥0 的安全整数**（负数或小数会静默产出 `r0c0`
+ * 或 `r1c2.5`，看起来完全正常；判据用 `Number.isSafeInteger` 而不是 `Number.isInteger`——`1e21` 是
+ * 「≥0 的整数」但 `1e21 + 1 === 1e21`，加一之后仍是同一张片号，消息因此也逐字写「安全整数」，
+ * 2026-10-05 按任务 3 审查的 F2 更正）。
  *
  * **消费者**：`ExportPanel.vue`（生成每个产物的下载文件名）。
  */
@@ -195,7 +243,7 @@ export function exportFilename(
     !Number.isSafeInteger(tile.colIndex) ||
     tile.colIndex < 0
   ) {
-    throw new Error(`分片序号非法：${tile.rowIndex}, ${tile.colIndex}（必须是 ≥0 的整数）`);
+    throw new Error(`分片序号非法：${tile.rowIndex}, ${tile.colIndex}（必须是 ≥0 的安全整数）`);
   }
   return `${safeName}-${item}-r${tile.rowIndex + 1}c${tile.colIndex + 1}.png`;
 }

@@ -3,8 +3,16 @@
  *
  * **为什么 core 自己声明 `RenderTarget2D` 而不是用 `CanvasRenderingContext2D`**：后者在分层边界闸门
  * （`src/__tests__/coreBoundary.test.ts` 的 `FORBIDDEN_GLOBALS`）里是禁用全局——core 不得引用 DOM 全局。
- * 按 `AGENTS.md` 的口径「在 core 定义接口，在 services 注入实现」：`services/exporter.ts` 把真 ctx 传进来
- * （结构上满足本接口），测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
+ * 按 `AGENTS.md` 的口径「在 core 定义接口，在 services 注入实现」：`services/exporter.ts` 把真 ctx 传进来，
+ * 测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
+ *
+ * **真实 ctx 与它并不严格结构兼容**（2026-10-05 按任务 3 的审查实测更正；原文那句「结构上满足本接口」
+ * 是假的）。实测**四处**不合：`fillStyle` / `strokeStyle`（DOM 是 `string | CanvasGradient | CanvasPattern`）、
+ * `textAlign`（DOM 多 `"start" | "end"`）、`textBaseline`（DOM 多 `"alphabetic" | "hanging" | "ideographic"`）。
+ * 注入点 `services/exporter.ts` 的 `requireContext2D` 里做**一次具名窄化**
+ * （`as unknown as RenderTarget2D`），面板与渲染器都不需要 cast。
+ * **不**为了让两者结构兼容而把本接口的这四个字段放宽到 DOM 的联合类型——那等于把 `CanvasGradient` /
+ * `CanvasPattern` / `"start"` / `"alphabetic"` 拖进零依赖的 core，正是本文件存在的理由所要隔离的东西。
  */
 export interface PixelRect {
   readonly x: number;

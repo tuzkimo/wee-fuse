@@ -283,7 +283,8 @@ describe("downloadBlob", () => {
     const anchor = created.anchors[0]!;
     expect(anchor.getAttribute("href")).toBe(OBJECT_URL);
     expect(anchor.getAttribute("download")).toBe("图纸-施工图-r1c1.png");
-    // 实现的 JSDoc 声明「不挂进 DOM」：挂进去就必须配一次 remove()，那道清理在 click 抛错时会漏。
+    // 实现的 JSDoc 声明「不挂进 DOM」：挂进去就必须配一次 remove()，而 `remove()` 位于 `click()` 之后，
+    // 那条清理会在 click 抛错时漏掉（object URL 则由 `finally` 兜住——见本 describe 的 F4 那条用例）。
     expect(anchor.parentNode).toBeNull();
     expect(clickSpies).toHaveLength(1);
     expect(clickSpies[0]).toHaveBeenCalledTimes(1);
@@ -302,6 +303,45 @@ describe("downloadBlob", () => {
     expect(() => downloadBlob(new Blob([]), "图纸-分享图.png")).toThrow(
       "导出内容为空（blob 大小为 0）",
     );
+  });
+
+  it("click 抛错 ⇒ 异常照常上抛，但 object URL 仍被恰好回收一次（F4 的靶子）", () => {
+    const url = stubUrlApi();
+    const boom = new Error("下载被拒绝");
+    stubCreateElement(
+      () => {
+        throw new Error("downloadBlob 不该创建画布");
+      },
+      (anchor) => {
+        anchor.click = () => {
+          throw boom;
+        };
+      },
+    );
+    const png = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
+
+    // 不吞异常：失败要能被面板看见（面板把它渲染成「失败：原因」）。
+    expect(() => downloadBlob(png, "图纸-施工图-r1c1.png")).toThrow(boom);
+    // 但回收必须照做，且只做一次：写在 click 之后的顺序语句会在这一路径上漏掉回收（blob URL 泄漏）。
+    expect(url.revokeObjectURL.mock.calls).toEqual([[OBJECT_URL]]);
+  });
+
+  it("写进 download 属性的是去空白后的名字（F5 的靶子）", () => {
+    stubUrlApi();
+    const created = stubCreateElement(
+      () => {
+        throw new Error("downloadBlob 不该创建画布");
+      },
+      (anchor) => {
+        anchor.click = vi.fn();
+      },
+    );
+    const png = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
+
+    downloadBlob(png, "  图纸-施工图-r1c1.png  ");
+
+    // trim 之后的 `safeName` 才写进属性；写成未 trim 的原始实参会让下载文件名带前后空格。
+    expect(created.anchors[0]!.getAttribute("download")).toBe("图纸-施工图-r1c1.png");
   });
 });
 
@@ -417,12 +457,24 @@ describe("exportFilename：清洗与序号守卫（M13 的靶子）", () => {
     );
   });
 
-  it("分片序号必须是 ≥0 的整数 ⇒ 否则抛（负数会静默产出 r0c0）", () => {
+  it("分片序号必须是 ≥0 的安全整数 ⇒ 否则抛（负数会静默产出 r0c0）", () => {
     expect(() => exportFilename("小猫", "施工图", { rowIndex: -1, colIndex: 0 })).toThrow(
-      "分片序号非法：-1, 0（必须是 ≥0 的整数）",
+      "分片序号非法：-1, 0（必须是 ≥0 的安全整数）",
     );
     expect(() => exportFilename("小猫", "施工图", { rowIndex: 0, colIndex: 1.5 })).toThrow(
-      "分片序号非法：0, 1.5（必须是 ≥0 的整数）",
+      "分片序号非法：0, 1.5（必须是 ≥0 的安全整数）",
+    );
+  });
+
+  it("非安全整数同样抛：1e21 是「≥0 的整数」但 1e21 + 1 === 1e21（F2 的靶子）", () => {
+    // 判据是 Number.isSafeInteger（不是 isInteger）：片号加一之后必须真的变成另一个片号。
+    // 消息里的数字是 JS 自己的 String(1e21) = "1e+21"，据实断言，不美化。
+    expect(() => exportFilename("小猫", "施工图", { rowIndex: 1e21, colIndex: 0 })).toThrow(
+      "分片序号非法：1e+21, 0（必须是 ≥0 的安全整数）",
+    );
+    // 最小的非安全整数（2^53）用干净的十进制写出来，免得这条覆盖吊在指数记法上。
+    expect(() => exportFilename("小猫", "施工图", { rowIndex: 0, colIndex: 2 ** 53 })).toThrow(
+      "分片序号非法：0, 9007199254740992（必须是 ≥0 的安全整数）",
     );
   });
 
@@ -435,16 +487,20 @@ describe("exportFilename：清洗与序号守卫（M13 的靶子）", () => {
 
 describe("assertCanvasPainted：判据与守卫的接线", () => {
   it("只差一个通道也要红（半透明 / 偏色不能被当成「画过了」）", () => {
+    // 四个像素各差一个通道（A / R / G / B）：删掉判据里任何一个 `data[i] !== 255` 都必须有且只有一条红，
+    // 否则那个通道就是「只被间接覆盖」——审查实测：删 `data[1] !== 255 ||` 时 26 条全绿（F3）。
     for (const pixel of [
       [255, 255, 255, 254],
       [254, 255, 255, 255],
+      [255, 0, 255, 255],
+      [255, 255, 0, 255],
     ] as const) {
       const { canvas } = stubPainted(pixel);
       expect(() => assertCanvasPainted(canvas)).toThrow("画布内容自检失败：(2, 2) 读回");
     }
   });
 
-  it("拿不到 2D 上下文时复用 requireContext2D 的守卫（不写第二份 null 检查）", () => {
+  it("拿不到 2D 上下文时复用同一处 null 守卫（不写第二份检查）", () => {
     // 不装任何桩：happy-dom 无 canvas adapter ⇒ 真元素上 getContext("2d") 就是 null。
     const canvas = document.createElement("canvas");
     expect(() => assertCanvasPainted(canvas)).toThrow("无法获取 2D 上下文");
