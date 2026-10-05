@@ -370,3 +370,14 @@ npm run build                      # vue-tsc --noEmit && vite build
   写文件用 `[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($false)))`，
   或 `git commit --amend -F` 之后**复验首字节**——本轮的一次提交就是这样修掉的（Node 复验
   `subject.charCodeAt(0) !== 0xFEFF`）。
+
+### 11.1 人工复验（2026-10-04，人类伙伴）
+
+- **F3 的 `wheel` 通路已人工确认**：桌面浏览器里**滚轮平移**与 **`Ctrl+滚轮`（触控板捏合）以指针为锚缩放**
+  都正常，且页面不再跟着滚 —— 这条此前**只有合成事件单测**（happy-dom 的 `WheelEvent` 与浏览器形状不同，
+  见 §11 的环境事实 1），现在升级为「人工确认」。**本节之前那句「只有合成事件单测」由此作废。**
+- **既有的触摸路径未受影响**：同一轮在**手机浏览器**上确认双指缩放与拖动正常（F3 明确不动 `pointermove`
+  语义、`touch-action: none` 保留 —— 这次人工复验正好覆盖了「改动没有误伤触摸」这个风险）。
+- **仍未验证的**（不变）：① 平板真机（≥768px）的左右分栏与**平移/捏合帧时间**（§7 第 3 条仍记为未验证：
+  桌面触控板那次测的是浏览器页面滚动、手机没有控制台）；② 真机 WebView 的 `createPattern` 可用性与
+  退出/切后台的生命周期（留给引入 Tauri 壳的那一轮）。
