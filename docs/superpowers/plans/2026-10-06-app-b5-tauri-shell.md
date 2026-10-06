@@ -3801,6 +3801,27 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 变异（在已提交的树上、逐条自证替换生效、还原后确认全绿，**红数不许预估**）：
 
+> **⚠️ 2026-10-06 实测更正（本表的 V1 / V2 / V3 三行预期是错的；V5 的更正见那一行）**
+>
+> - **V1 计划预期「双红」不成立**：删掉 `const safe = requireSavableBlob(…)` **整行**后，失败原文是
+>   `but got 'safe is not defined'`（ReferenceError 发生在**调用驱动之前**）⇒「驱动被调用了」那条**根本没机会红**（实测 **1 红**）。
+>   **真形态是 V1b**：改成 `const safe = { blob, filename: filename.trim() }`（只拿掉校验、保住形状）⇒ 1 红
+>   （`promise resolved "undefined" instead of rejecting`）。
+> - **V2 计划预期红、实测 0 红**：`capturePhoto` 开头的 `if (!canCapture) throw …` 与紧随的 `if (capture === undefined) throw …`
+>   **在所有可达路径上等价** ⇒ 第一行**不承重**；**V2b**（两条都删）⇒ 1 红（`capture is not a function`），守卫**整体**承重。
+>   ⇒ 计划那句「两者是同一份事实的两个投影，一旦漂移这里响亮失败」**与代码不符**；处置：保留两条守卫（第二条承重、第一条防御），
+>   **把 JSDoc 改成如实口径**（见延后项 Task 2: minor）。
+> - **V3 计划预期 3 红、实测 2 红**：`takeSharedImage` **不走** `requireFileOrNull`（它有自己的一对消息
+>   「分享内容不是文件 / 分享内容是空文件」）⇒ 少一条受影响用例。
+> - **V5 实测 0 红**（第三个「0 红」标本）：`Uint8Array` 越界读恒为 `undefined`、与任何魔数字节都不等 ⇒
+>   删掉长度守卫后「截断字节」那条照样绿。**不是断言无效**，是**这道守卫在当前载体上不承重**（已写进 `sniffImageType.ts` 的 JSDoc）。
+>
+> **另一类更正（计划正文的实现块照抄不过，实现者最小修正 + 留注）**：`imageFileName` vs `imageNameFromUri` 命名不一致；
+> 缺 `SniffedImageType` 类型；`ShellProbeReadings` 的 `readonly` 字段撞 `reactive`（TS2540 ×10）；
+> `onBackButtonPress` 返回 `Promise<PluginListener>` 而非 `UnlistenFn`（TS2322）；探针页 E/F 用例的假平台未覆盖 `album.kind`；
+> 用例写死「12 字节」而 `PNG_HEAD` 是 **16** 字节；假驱动 `saveToAlbum` 默认返回 `void` 与 `number` 不符。
+> **计划提到的 `split_envelope` 函数在实现里不存在**（实现用内联解析）——名字是计划虚构的，读计划的人别去找它。
+
 | ID | 改哪一行 | 期望红 |
 |---|---|---|
 | V1 | `tauriPlatform.ts` 的 `album.save` 删掉 `requireSavableBlob(blob, filename);` 整行 | 「save：…两条守卫…」用例（双红：不再抛，且驱动**被调用了**） |
