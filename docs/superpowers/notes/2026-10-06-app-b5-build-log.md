@@ -66,6 +66,10 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | P11 | **`gen/android` 自带的 `.gitignore`** 忽略 `build` / `.gradle` / `local.properties` / `key.properties` / `keystore.properties` / `/.tauri` / **`/tauri.settings.gradle`**（后者是 CLI 构建期生成、把插件 gradle 工程接进来的胶水文件，忽略它是对的） | 生成工程里的 `.gitignore` + `git check-ignore -v` |
 | P12 | **debug + 四 ABI 的 universal APK ≈ 436 MB**（含调试符号）；`minSdk = 29`（由 `bundle.android.minSdkVersion` 生成，**不是手改**）；模板实际 `compileSdk/targetSdk = 37`、`JavaVersion.VERSION_1_8` / `JvmTarget.JVM_1_8`、**未 pin `ndkVersion`** | `gen/android/app/build.gradle.kts` + APK 字节数 |
 | P13 | **Tauri 的 Android 模板用 `compileSdk = 37`**（dev 分支；本机 SDK 原本只有 `android-36/36.1`）——缺的平台由 P7 的自动下载解决，**因此「降到 36」那一级从未触发** | 官方模板 + 本机实测 |
+| P14 | **`tauri android build` 每次都会重写两个「被忽略」的接线文件**：`gen/android/tauri.settings.gradle` 与 `gen/android/app/tauri.build.gradle.kts`，里面是**本机绝对路径** ⇒ 它们**必须继续被忽略**（现有规则已覆盖）。**推论**：构建会自己重新生成它们，**「换机器要先 `tauri android init`」不成立**（两次构建实测都没有改动任何**被跟踪**的 `gen/android` 文件） | 任务 2 的 §6.2 判定实测 + 控制者的 `git status --short -- src-tauri/gen` 零改动复核 |
+| P15 | **`cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android` 可用且廉价**（首次 14.9 s、缓存后 0.34 s，exit 0）——**它是唯一能在 CI/本机抓住「只在 Android target 现形」缺陷的检查**（本轮那两处 E0599/E0716 正是靠真机构建才抓到） | 任务 2 的新读数 + 控制者亲手复跑 |
+| P16 | **npm 侧依赖是运行时依赖**：`tauriDriver.ts` 动态 import 的 `@tauri-apps/api` / `plugin-dialog` / `plugin-fs` 必须放 `dependencies`（要打进产物），不是 `devDependencies`。**这是计划的硬缺口**（计划正文只提到包名、没有安装步骤）⇒ 不装则 `vue-tsc` TS2307、Vite 解析失败、**APK 根本出不来** | 任务 2 的安装结果 + `package.json` + 控制者裁决 |
+| P17 | **插件的 `permissions/**` 是 `cargo check` 期由 `tauri_plugin::Builder::build()` 写进源码树的产物**（生成路径由插件框架定死、实测确定性）⇒ **保留入库**（否则每次 `cargo check` 都会弄脏工作区）。**如实登记**：它们不是有意入库的（`git add src-tauri/plugins` 顺手带进来），保留是事后追认 | 任务 2 实测 + 控制者裁决 |
 
 ### 3.2 被推翻的结论（**本轮改掉的判断，逐条留档**）
 
@@ -80,6 +84,7 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | R7 | 「`gradlew` 的可执行位无所谓」 | **错**：`git ls-files -s` 显示 **100644**（应为 100755）；不影响本项目构建路径（走 `npm run -- tauri …`，不经 `./gradlew`），但 Unix 上手动 `./gradlew` 会 permission denied | `git update-index --chmod=+x`（提交 `24bb266`/`135fb1a`） |
 | R8 | 「`.gitattributes` 的 `* text=auto eol=lf` 会让新克隆里的 `gradlew.bat` 变 LF」 | **成立**（风险真实），实测工作副本是 CRLF、`git check-attr` 显示 `gradlew.bat → eol: crlf`（新规则生效） | 追加 `*.bat text eol=crlf` 与 `gradlew text eol=lf` |
 | R9 | 「计划里的 Rust 壳代码只要桌面 `cargo check` 过就没问题」 | **错**：`#[cfg(target_os = "android")]` 与 `RunEvent::Opened` 那段整块在桌面 target 上**根本不参与编译** ⇒ **mobile-only 代码从不被 CI 类型检查**。任务 2 实跑 `tauri android build`（编 aarch64-linux-android）时抓到两处：① `app.state::<OpenedUris>().0.lock()` 是**临时值**，语句结束即释放而 `guard` 后面还要用 ⇒ `error[E0716]`（先绑 `let state = …`）；② 插件移动端路径缺 `tauri::Manager` 引入 | 提交 `afc0ed0`；并记入下面的「未验证面」 |
+| R10 | 「脚手架（把 `/` 重定向到 `/lab/shell`）留在仓库里会被测试发现」 | **错**：S1 在位时 `npm run test` 仍是 **1193 passed / 1 failed（只有 G4）**——**没有任何用例读 `/` 的落点** ⇒ 全靠 `Select-String -Pattern "redirect"` 人工复验。**这是本计划的一处危险面**：一个「临时脚手架忘了撤」不会被 CI 拦下，而它会把整个 App 的首屏换成实验台 | 计划的任务 2 步骤里写了那条 `Select-String` 复验（本轮 `HIT_COUNT=0` ✔）；**建议**（未做，属后续项）：加一条用例断言「`/` 的名字是 `home` 且不是重定向」 |
 
 ---
 
@@ -136,7 +141,6 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 ---
 
 ## 7. 未验证面与后续优先级（截至任务 1）
-
 | # | 未验证 / 未闭环 | 现状 | 怎么闭环 | 优先级 |
 |---|---|---|---|---|
 | 1 | **六判据（F/A/B/C/D/E）全未取得真机读数** | 探针页与通路在任务 2 交付；**A–E 需要人类伙伴在手机上点** | 操作卡：`.superpowers/sdd/2026-10-06-app-b5-tauri-shell/phone-probe-instructions.md` | **最高**（它决定 pass 2 各任务的实现分支） |
@@ -147,3 +151,13 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | 5 | **`tauriDriver.ts` 在 happy-dom 下不可执行** | 信封布局 / 字节核对 / `exitApp()` 三处零 CI 断言 | 同上 | 中 |
 | 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
 | 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；但 CI **不构建 APK** ⇒ 这条链只在真机构建时被验证 | 每次真机构建顺带验证 | 低 |
+
+---
+
+## 8. 待批准的建议（**改动 CI/CD 属红线，未经批准不做**）
+
+| # | 建议 | 实测依据 | 状态 |
+|---|---|---|---|
+| 1 | 在 CI 的 `rust-check` job 里**加一步** `cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android` | P15：可用；首次 14.9 s、缓存后 0.34 s、exit 0。**它能抓住 R9 那两处「只在 Android target 现形」的缺陷**——本轮是靠真机构建才发现的，CI 当时全绿 | **待人类伙伴批准**（`.github/workflows/ci.yml` 属 CI 配置，按项目红线必须先问） |
+| 2 | 加一条用例断言「`/` 的 name 是 `home` 且不是 redirect」 | R10：S1 脚手架在位时 `npm run test` 完全无感（1193 passed / 1 failed） | 待排期（pass 2 任一次触碰 `src/router/__tests__/index.test.ts` 时顺手做） |
+
