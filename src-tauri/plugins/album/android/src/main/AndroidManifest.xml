@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 刻意为空：API 29+ 用 MediaStore 插入不需要任何权限（本插件要证明的正是这一点）。 -->
+</manifest>

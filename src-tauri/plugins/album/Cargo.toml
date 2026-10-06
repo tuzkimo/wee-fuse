@@ -1,0 +1,17 @@
+[package]
+name = "tauri-plugin-album"
+version = "0.1.0"
+description = "把 PNG 写进 Android 系统相册（MediaStore）"
+edition = "2021"
+# `links` 必须与 `name` 相同：`tauri_plugin::Builder::build()`（build.rs）会读它来生成移动端胶水，
+# 缺了它构建脚本直接退出（报错原文：「package.links field in the Cargo manifest is not set」）。
+# 计划正文的 Cargo.toml 没有这一行——2026-10-06 任务 2 实跑 cargo check 时踩到。
+links = "tauri-plugin-album"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,7 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "本轮只放真正用到的权限：应用自己的命令不需要 capability，插件命令才需要。",
+  "description": "本轮只放真正用到的权限：应用自己的命令（take_opened_uris / save_image_to_album）不需要 capability，插件命令才需要。",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "fs:allow-read-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "**" }]
+    }
+  ]
 }

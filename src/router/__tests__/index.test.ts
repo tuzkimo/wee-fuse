@@ -3,6 +3,7 @@ import { router } from "@/router";
 import CanvasLabPage from "@/views/CanvasLabPage.vue";
 import PickPage from "@/views/PickPage.vue";
 import SetupPage from "@/views/SetupPage.vue";
+import ShellProbePage from "@/views/ShellProbePage.vue";
 
 /**
  * 路由表的用例（本任务新增）。
@@ -72,5 +73,21 @@ describe("router", () => {
     expect(typeof loader).toBe("function");
     const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
     expect(mod.default).toBe(CanvasLabPage);
+  });
+
+  // 任务 2 新增（B5 spike）。`/lab/shell` 是六判据探针页，与 `/lab/canvas` 同形：
+  // `name` + `path` 两条断言挡不住「component 指错页面」——懒加载路由的 `components.default` 是一个
+  // **loader 函数**（`router.resolve` 不会调它），所以必须自己跑一次 loader 再做恒等比较。
+  // 写法取自同一文件里 `/new` 与 `/new/setup` 那两条（既有先例：不做只断 path 的弱断言）。
+  it("/lab/shell 是六判据探针页：名字 shell-lab、路径 /lab/shell、组件就是 ShellProbePage", async () => {
+    const route = router.resolve({ name: "shell-lab" });
+
+    expect(route.name).toBe("shell-lab");
+    expect(route.path).toBe("/lab/shell");
+
+    const loader = route.matched[0]?.components?.default;
+    expect(typeof loader).toBe("function");
+    const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
+    expect(mod.default).toBe(ShellProbePage);
   });
 });

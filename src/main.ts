@@ -5,7 +5,8 @@ import { router } from "./router";
 import { createIdbProjectStore } from "./services/idbProjectStore";
 import { setProjectStore } from "./services/projectStore";
 import { browserPlatform } from "./services/platform/browserPlatform";
-import { setPlatform } from "./services/platform/capabilities";
+import { isTauriRuntime, setPlatform } from "./services/platform/capabilities";
+import { createTauriPlatform } from "./services/platform/tauriPlatform";
 import "./style.css";
 
 // 存储实现只在这里注入一次：页面通过 `getProjectStore()` 取，测试注入内存实现。
@@ -41,8 +42,13 @@ async function bootstrap(): Promise<void> {
   }
   // 平台能力层：未注入时 `getPlatform()` 就是这个浏览器实现（`capabilities.ts` 的默认值），
   // 这里显式注入一次是为了让「注入早于挂载」成为结构事实（机检 = platformGate 的 G3）。
-  // 任务 2 会把它换成 `isTauriRuntime() ? createTauriPlatform() : browserPlatform`。
-  setPlatform(browserPlatform);
+  //
+  // 实现按运行时选择（规格 §4.2）：壳里用 Tauri 实现，其余一律浏览器实现。
+  // 「壳里」的判据只有一处 —— `capabilities.ts` 的 `isTauriRuntime()`（G2 要求 `isTauri` 只在
+  // capabilities.ts 里被读，所以这里读的是那个函数，不是全局标记本身）。
+  // **浏览器路径与今天逐字等价**：不传驱动时 `createTauriPlatform()` 只构造四个能力对象、
+  // 不触发任何 `import()`，而 `isTauriRuntime()` 在浏览器里为 `false` ⇒ 那一支根本不会被选中。
+  setPlatform(isTauriRuntime() ? createTauriPlatform() : browserPlatform);
   createApp(App).use(createPinia()).use(router).mount("#app");
 }
 

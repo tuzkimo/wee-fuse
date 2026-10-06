@@ -16,5 +16,9 @@ export const router = createRouter({
     // /lab/canvas 是 B4 的 canvas 上限探针页（R-7：**开发期实验台**，不进任何用户入口、页面自标「CI 不测」；
     // 真机实测结果回写 `EXPORT_MAX_EDGE`、主规格 §12 的 R2 与 B4 规格 §16 的 B4-R1）。
     { path: "/lab/canvas", name: "canvas-lab", component: () => import("@/views/CanvasLabPage.vue") },
+    // /lab/shell 是任务 2 的六判据探针页（**开发期实验台**，不进任何用户入口、页面自标；判据 A–F 的原始
+    // 读数由人类伙伴从这一页复制进 B5 spike 报告）。它**留存**为第三个实验台——与 `/lab/decode`、
+    // `/lab/canvas` 并列：换设备 / 换 Tauri 版本时还要重测。
+    { path: "/lab/shell", name: "shell-lab", component: () => import("@/views/ShellProbePage.vue") },
   ],
 });
