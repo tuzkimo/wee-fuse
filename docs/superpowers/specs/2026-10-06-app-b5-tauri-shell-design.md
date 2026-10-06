@@ -106,6 +106,7 @@ src/services/platform/
 ├── types.ts                       # 四个能力的接口（§4.1）——本轮的契约面
 ├── capabilities.ts                # isTauriRuntime() 唯一探测点 + setPlatform / getPlatform
 ├── guards.ts                      # requireSavableBlob（两实现共用的一份守卫）
+├── sniffImageType.ts              # 魔数嗅图片类型 + URI → 文件名（**两处共用一份**：dialog 备选 / 分享摄入）
 ├── browserPlatform.ts             # 浏览器实现（相册 = 页面里那个可见 input 的兄弟实现、保存 = downloadBlob、生命周期 = no-op）
 ├── tauriDriver.ts                 # ★ 全仓唯一 import @tauri-apps/* 的文件
 ├── tauriPlatform.ts               # createTauriPlatform(driver)：驱动 → 能力（纯逻辑，可注入假驱动）
