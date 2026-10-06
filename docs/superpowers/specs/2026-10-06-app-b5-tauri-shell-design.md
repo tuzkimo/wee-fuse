@@ -708,7 +708,7 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 | F | 本机能否构建出 Android APK 并装到手机 | 任务 1 已构建；本任务负责**装上并打开** |
 | A | WebView 里 `<input type="file">` 能否选图 | 探针页的裸 input：选一张真图，打印 `file.size` 与解码结果 |
 | B | `capture="environment"` 是否直接进相机 | 同上换属性 |
-| C | `ACTION_SEND` → `RunEvent::Opened` 的 URL 形态与可读性；`invoke` 原始字节体是否可用 | 从相册 App 分享一张图进壳，打印收到的 URI；存相册那条命令走的正是 raw body ⇒ 判据 D 通过即判据 C 通过 |
+| C | `ACTION_SEND` → `RunEvent::Opened` 的 URL 形态与可读性；**请求体通路是否可用（2026-10-06 更正：不是「原始字节体」——厂商源码写明 Android 上 `InvokeBody::Raw` 不被支持 ⇒ 改走 base64 JSON，见 §5.4.1 的更正块与 B5-R4）** | 从相册 App 分享一张图进壳，打印收到的 URI；存相册那条命令走的正是**同一条请求体通路** ⇒ 判据 D 通过即判据 C 通过 |
 | D | MediaStore 插入是否免权限 | 最小 Kotlin 插件插一张小图进相册，看 `Pictures/WeeFuse` 里有没有 |
 | E | Android 上 `onCloseRequested` / `ExitRequested` 是否触发 | 探针页记事件日志，按返回键与从任务切换器划掉各看一次 |
 
