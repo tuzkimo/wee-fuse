@@ -55,3 +55,15 @@ jobs:
 
       - name: Rust 类型检查
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      # 2026-10-06（B5，人类伙伴批准后加）：**桌面 cargo check 看不到 `#[cfg(target_os = "android")]` 的代码** ✗
+      # —— 本轮被这条咬过两次（`app.state()` 的临时值借用 E0716、`android_logger` 的 cfg），两次都只在
+      # `tauri android build` 编 aarch64-linux-android 时才现形。这一步把它前移到 CI。
+      # 说明：GitHub 托管的 ubuntu runner 自带 Android SDK（`ANDROID_HOME` 已设）；若某个 crate 需要 NDK 而
+      # runner 上没有，这一步会**明确报缺什么**（而不是静默跳过）—— 那时再按报错补 NDK，别用 continue-on-error
+      # 把它降级成假绿 ✗。
+      - name: 安装 Android target
+        run: rustup target add aarch64-linux-android
+
+      - name: Rust 类型检查（Android target）
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android
