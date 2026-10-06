@@ -99,7 +99,7 @@ export function useShareIntake(): ShareIntake {
    *
    * **如实登记（这道闸门的射程；含 2026-10-06 控制者读生成的 `AndroidManifest.xml` 的核实）**：
    * ① 正常分享面板上**非图片根本不会把本 App 列为目标**（生成的三个 intent-filter 只覆盖
-   * `image/png` / `image/jpeg` / `image/webp`，既没有 `image/*` 也没有 `*/*`）⇒ 这一支今天只在
+   * `image/png` / `image/jpeg` / `image/webp`，**没有**通配 MIME）⇒ 这一支今天只在
    * **显式 intent** 或被 provider 谎报 MIME 的情况下可达；真到了这里，给出的正是规格那句
    * 「只支持图片」（在此之前它会落到解码失败，文案是「图片解码失败」，草稿一样不动、一样不跳转）。
    * ② 壳里 `File.type` 是嗅探结果（`tauriPlatform.ts` 的 `fileFromUri`），而嗅探对「一段纯文本」与
