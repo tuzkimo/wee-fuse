@@ -32,7 +32,22 @@
 | 任务 5 第三轮修复后 | **71 / 1277** | F1 拒收那张也不吞自己的 `extraCount`（新增 ⑦j2）⇒ `1276 + 1 = 1277` |
 | **任务 7 完成后** | **72 / 1282** | 生命周期：新增 `useShellLifecycle.test.ts`（5 条）+ `App.vue` 装配（**文件数 +1**）⇒ `1277 + 5 = 1282` |
 | **收尾定向复审后** | **72 / 1283** | 复审抓到**关键缺陷**：返回键第二分支的目标路由名 `library` **不存在**（图纸库真名是 `home`）⇒ `vue-router` 在 matcher 里**同步抛** `MATCHER_NOT_FOUND`，而 `void router.push(...)` **吞不掉同步异常** ⇒ 异常抛穿 Tauri 事件派发 ⇒ **返回键直接死** ✗（可达：任何 `dirty ∧ canGoBack === false`）。修**实现 + 用例 + 计划（4 处）与规格（1 处）两处真源**，并补**真路由表守卫** 1 条 ⇒ `1282 + 1 = 1283` ★ **最终真值** |
+| **任务 6 完成后（收口）** | **72 / 1286** | `ExportPanel` → `getPlatform().album.save(blob, filename)`（判据 D 可用 ⇒ 走计划原文，**未引入 `dialog.save()` 降级**、`tauriPlatform.ts` 与 `capabilities/default.json` **一字未动** ✓）⇒ 新增 3 条用例（blob 恒等 `toBe` + 逐字节 + 分片文件名 + 失败不静默 + 文案分叉）⇒ `1283 + 3 = 1286` ★ **最终真值**；**G4 转绿 ⇒ `1286 passed (1286)`，0 红** ✓ |
 | 任务 8 收尾时 | 由收尾任务回原始清单重数并给闭合分解式 | 计数口径见 README 的既有段落；**分解式对不上先怀疑仪器**（B4 记过两次仪器错） |
+
+**收口时的最终读数（2026-10-06，`HEAD=0ccf386`，`dirty` 前后一致）**：
+
+```text
+npx vitest run src/__tests__/platformGate.test.ts → Tests 5 passed (5)      ← G4 转绿（B5 最后一个故意红被清掉）
+npm run test        → Test Files 72 passed (72) / Tests 1286 passed (1286)  ← 【0 红】
+TZ=UTC npm run test → 逐字一致（1286）
+npm run build       → ✓ built in 2.24s
+账目闭合：文件 71 + 1 = 72 ✓；用例 1276 + 1（F1 的 ⑦j2）+ 5（任务 7）+ 1（收尾守卫）+ 3（任务 6）= 1286 ✓
+边界：任务 6 只动 ExportPanel.vue + 其用例（授权的 2 个文件 ✓）
+```
+
+**历史读数（任务 6 之前，保留作对照）**：`1283 passed | 1 failed` —— 那 1 红是 **G4 故意**（当时的解除条件见 §6 的 B5-22；**现已解除** ✓）。
+
 
 **收尾时控制者自己跑的最终读数（2026-10-06，`HEAD=e42d7f3`，`dirty=0`）**：
 
