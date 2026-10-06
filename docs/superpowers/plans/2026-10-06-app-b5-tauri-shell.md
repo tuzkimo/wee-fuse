@@ -4633,9 +4633,9 @@ useShellLifecycle();
 
 | ID | 改哪一行 | 期望红 |
 |---|---|---|
-| **M26** | 返回键 handler 去掉 `if (info.canGoBack) { history.back(); return; }` 整段 | 「canGoBack ⇒ 调 history.back()」那条（它会掉进 dirty/exit 分支） |
-| **M27** | 同处去掉 `if (session.dirty) { …push…; return; }`（无历史时无条件 exit） | 「无历史 + dirty ⇒ 走路由」那条 |
-| **M28** | `onExitRequested(() => session.dirty)` 改成 `() => false` | 「退出请求的 handler 返回 session.dirty」那条 |
+| **M31** | 返回键 handler 去掉 `if (info.canGoBack) { history.back(); return; }` 整段 | 「canGoBack ⇒ 调 history.back()」那条（它会掉进 dirty/exit 分支） |
+| **M32** | 同处去掉 `if (session.dirty) { …push…; return; }`（无历史时无条件 exit） | 「无历史 + dirty ⇒ 走路由」那条 |
+| **M33** | `onExitRequested(() => session.dirty)` 改成 `() => false` | 「退出请求的 handler 返回 session.dirty」那条 |
 
 - [ ] **步骤 7：三跑 + Commit**
 
