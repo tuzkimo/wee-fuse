@@ -419,6 +419,19 @@ CI 里无断言，判别力在真机判据 C/D。
 
 **为什么必须走原始字节体**：一张施工图最大 ≈64 MB（B4 规格 §15）。走 JSON 参数只有两条路，都不可接受——把 `Uint8Array` 当 JSON 数组传会膨胀成 ~200 MB 的文本；base64 是 1.37×且要过两遍编码。Tauri 2 的 `invoke` 支持把 `Uint8Array` 当**原始请求体**发（Rust 侧用 `tauri::ipc::Request` 取 `InvokeBody::Raw`），这是本规格选定的通路；**它的可用性由 spike 判据 C 验证**（§13 任务 2），不成立时的退路是 base64（代价写进 §11，且必须在构建记录里说明为什么退了）。
 
+> **⛔ 2026-10-06 实测更正：这条通路在 Android 上不可用，B5-R4（base64）已正式启用。**
+> 证据是**厂商源码自己的「不支持」清单**（`tauri-2.12.1/src/ipc/mod.rs:54-56`，控制者逐字复核）：
+> `On Android, [InvokeBody::Raw] is not supported. The enum will always contain [InvokeBody::Json].`
+> 并紧接着建议：`consider passing raw bytes as a base64 String, which is still more efficient than passing them as a number array in [InvokeBody::Json]`。
+> ⇒ 上面那句「必须走原始字节体」在 Android 上**不成立**：`Uint8Array` 会被序列化成数字数组（`Array.from`），
+> `InvokeBody::Raw` **永不被填充**，`src-tauri/src/lib.rs` 的 `let Some(InvokeBody::Raw(..)) = … else { Err(...) }`
+> **必然命中** ⇒ 判据 C 的「原始字节体」与判据 D 必然失败。
+> **现设计（任务 2 的修复轮）**：`invoke` 的请求体改成**一个 JSON 对象** `{ filename, dataBase64 }`，Rust 侧用 `base64` crate 解码后
+> 走**原来那条**「落临时文件 → 交 Kotlin → 比字节数 → 删临时文件」的路径（三层核对保留，且现在才真的可达）。
+> **代价如实记**：base64 是 1.37× 膨胀 + 前端多一遍编码（大图 = 几十 MB 的字符串）；§11 的 B5-R4 就是为这一天预登记的。
+> **教训**：跨语言/跨进程的能力边界**要读厂商源码里的「不支持」清单**，不能只读 API 签名——`InvokeBody::Raw` 在 Rust 侧类型完全合法，
+> 是**运行时**在 Android 上永不填充。**发现时机**：人类伙伴尚未开始跑 A–E ⇒ 没有白跑一趟。
+
 Rust 侧先落临时文件、再把**路径**给 Kotlin，而不是把字节塞进插件调用的 JSON——插件调用的参数是 JSON，塞字节等于把刚躲开的问题搬到下一段。
 
 #### 5.4.2 Kotlin 插件
@@ -656,7 +669,7 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 | B5-R1 | 本机 Tauri Android 构建链走不通（NDK 30 与 Tauri 2.12 不兼容 / 缺 Android SDK Command-line Tools / gradle 依赖拉不下来） | spike **任务 2** 判据 F（构建在任务 1 里先跑一次）：`npx tauri android build --apk` 能否产出 APK | ① 装 SDK Command-line Tools（**动系统 SDK，先问人类伙伴**）；② 按官方推荐版本另装一个 NDK；③ 都不行 ⇒ 本轮的验收降级为「桌面壳可用 + Android 构建如实记为未完成」，并**当场重新评估本轮范围**（不许把没验过的说成验过） |
 | B5-R2 | WebView 里 `<input type="file">` / `capture` 不可用 | spike 判据 A / B | 相册 → dialog 插件（§5.1）；拍照 → Kotlin 插件（§5.2 第 2 级）；都不行 → 拍照记为未交付 |
 | B5-R3 | `RunEvent::Opened` 收到的东西不是可读的 `content://`（或 `plugin-fs` 读不了） | spike 判据 C（拿一张真图从相册 App 分享进一个最小壳） | Kotlin 侧把 URI 流复制到 cache 再交前端（多一个自定义插件）；再不行 ⇒ 分享进入记为未交付，如实写进 README |
-| B5-R4 | `invoke` 的原始字节体不可用（大 PNG 只能走 base64） | spike 判据 C 附带 | base64（1.37× 膨胀 + 两遍编码）；**必须在构建记录里写明为什么退** |
+| B5-R4 | `invoke` 的原始字节体不可用（大 PNG 只能走 base64） | **2026-10-06 已发生**（不是「由判据 C 附带验证」——厂商源码直接写明 Android 上 `InvokeBody::Raw` **恒不被填充**，见 §5.4.1 的更正块）；任务 2 的修复轮已改走 base64 | base64（1.37× 膨胀 + 两遍编码）——**已采用**；**必须在构建记录里写明为什么退**（R11 已记） |
 | B5-R5 | MediaStore 插入需要权限 / 被系统拒绝 | spike 判据 D | `dialog.save()`（D2）；README 写明「保存位置由用户选择」 |
 | B5-R6 | Android 上 `onCloseRequested` 不触发 | spike 判据 E + 清单 9 / 10 | 不构成缺陷（返回键三分支已覆盖）；如实记录 |
 | B5-R7 | Rust 的 `cargo check` 在 CI（ubuntu）装不齐前置库 | 该 job 首次运行的原始输出 | 该 job 只许**如实**降级为「记录缺口」，不许用 `continue-on-error` 掩盖 |
