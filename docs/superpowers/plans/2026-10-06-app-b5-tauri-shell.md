@@ -2544,16 +2544,23 @@ plugins {
 
 android {
     namespace = "cn.tuzkimo.weefuse.album"
-    compileSdk = 36
+    // ★★ 下面三个值**不能照抄**：AGP 要求同一工程里所有 module 的 compileSdk 与 JVM target 一致，
+    // 不一致会报「Inconsistent JVM-target compatibility」或 compileSdk 冲突。
+    // 实现时**先读生成工程的实际值**，把它们对齐（三个值都以 `gen/android/app/build.gradle.kts` 为准）：
+    //   Select-String -Path src-tauri/gen/android/app/build.gradle.kts -Pattern 'compileSdk|targetSdk|JavaVersion|JVM_|jvmTarget'
+    // 并把读到的实际值写进 spike 报告。
+    compileSdk = 36                      // ← 以 app 模块的实际值为准（Tauri 的模板可能更高）
     defaultConfig {
-        minSdk = 29
+        minSdk = 29                      // 与 tauri.conf.json 的 bundle.android.minSdkVersion 对齐（D4）
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // ← 以 app 模块的实际值为准：Tauri 的模板目前是 `JavaVersion.VERSION_1_8`，
+        //   本计划早先写的 17 会与它冲突（2026-10-06 查官方模板后更正的**预测**，实测以 spike 为准）
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "1.8"                // ← 同上，与 app 模块的 `JvmTarget.JVM_1_8` 对齐
     }
 }
 
@@ -2561,6 +2568,12 @@ dependencies {
     implementation(project(":tauri-android"))
 }
 ```
+
+> **为什么这一块必须「先读再写」而不是照抄**（2026-10-06 控制者查官方模板后的更正）：Tauri CLI 生成的
+> `gen/android/app/build.gradle.kts` 里 `compileSdk` / `targetSdk` / `sourceCompatibility` / `jvmTarget`
+> 都是**模板版本相关的**（查到的 dev 模板是 `compileSdk = 37` + `JavaVersion.VERSION_1_8` + `JVM_1_8`）。
+> 插件的 gradle 与它不一致时 AGP 会**明确报错**（不是静默），但那一轮的实现者会卡在这里查半天——所以
+> 在简报里就把「读三个值、对齐、把实际值写进报告」写成步骤。
 
 `src-tauri/plugins/album/android/src/main/AndroidManifest.xml`：
 
