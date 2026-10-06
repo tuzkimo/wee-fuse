@@ -2361,6 +2361,16 @@ import { createTauriPlatform } from "./services/platform/tauriPlatform";
 
 - [ ] **步骤 2：Rust 侧（`OpenedUris` + 取走即清的命令 + 自描述信封的原始字节体落盘）**
 
+> **⛔ 2026-10-06 重大更正：本步骤与步骤 1 的「原始字节体信封」在 Android 上不可用，已改走 base64（规格 B5-R4 / §5.4.1 的更正块）。**
+> 厂商源码 `tauri-2.12.1/src/ipc/mod.rs:54-56` 原文：**Android 上 `InvokeBody::Raw` 不被支持，枚举里恒为 `InvokeBody::Json`**，
+> 并建议改 base64 字符串。⇒ 本节下面那段 `let tauri::ipc::InvokeBody::Raw(body) = request.body() else { … }`
+> **在真机上必然命中 else 分支**（恒返回「保存失败：需要原始字节体」）⇒ 判据 C 的「原始字节体」与判据 D 必然失败。
+> **实际实现（任务 2 修复轮，提交见 git log）**：请求体改成 JSON 对象 `{ request: { filename, dataBase64 } }`；
+> Rust 侧 `SaveRequest { filename, data_base64 }`（`#[serde(rename_all = "camelCase")]`）+ `base64` crate 解码，
+> 之后**走本节原来那条**「落临时文件 → 交 Kotlin → 比字节数 → 无条件删临时文件」的路径（**三层核对保留**，且现在才真的可达）。
+> **本节的代码块保留作历史**（它记录了当时的推理），**但照抄会失败**——以规格 §5.4.1 的更正块与实现为准。
+> **教训**：跨语言/跨进程的能力边界**要读厂商源码里的「不支持」清单**，不能只读 API 签名（`InvokeBody::Raw` 在 Rust 侧类型完全合法）。
+
 `src-tauri/src/lib.rs` 全文：
 
 ```rust
