@@ -4727,7 +4727,7 @@ export function useShellLifecycle(): void {
       void router.push({ name: "library" });
       return;
     }
-    void platform.lifecycle.exit();
+    void platform.lifecycle.exit();   // ⚠️ 需要 capabilities 里的 `core:app:allow-exit`（见下方注记）
   });
 
   onUnmounted(() => {
@@ -4761,7 +4761,10 @@ useShellLifecycle();
 - [ ] **步骤 5：按判据 E 的读数处置（只影响记录与排查，不改三分支）**
 
 - **返回键触发** ⇒ 本任务完成，读数进构建记录。
-- **返回键不触发** ⇒ **是缺陷**：查 `onBackButtonPress` 的注册链（`@tauri-apps/api/app` 的 `app` 插件是否被注册、Android 侧是否可用），把排查过程与结论写进报告；**三分支实现不变**。
+- ⚠️ **`exit()` 需要 `core:app:allow-exit`，它不在 `core:app:default` 里**（2026-10-06 真机缺陷 A-FIX 4 查明）：
+  `app.exit(0)` 走 `invoke('plugin:app|exit')`，官方权限表把它排除在 `core:app:default` 之外 ⇒ **只给 `core:default` 时必被 ACL 拒绝**，
+  而**拒绝的形态可能是「点了没反应」**（错误只写进页面里你看不到的地方）。该权限**已由真机缺陷修复轮补进 `capabilities/default.json`** ✓ ⇒
+  **本任务不要删它**；若它不见了，退出会静默失效。- **返回键不触发** ⇒ **是缺陷**：查 `onBackButtonPress` 的注册链（`@tauri-apps/api/app` 的 `app` 插件是否被注册、Android 侧是否可用），把排查过程与结论写进报告；**三分支实现不变**。
 - **关闭请求不触发** ⇒ **不是缺陷**（B5-R6）：如实记进构建记录。
 - **切后台**：**不做机制**（规格 §5.5.4：Rust 无 `Paused`/`Suspended` 事件、`visibilitychange` 拦不住）⇒ 把「编辑中切后台被系统回收会丢未保存改动」写进 README 的已知限制。
 
