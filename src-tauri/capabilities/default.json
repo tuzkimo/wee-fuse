@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "本轮只放真正用到的权限：应用自己的命令（take_opened_uris / save_image_to_album）不需要 capability，插件命令才需要。",
+  "description": "本轮只放真正用到的权限：应用自己的命令（take_opened_uris / save_image_to_album）不需要 capability，插件命令才需要。core:app:allow-exit 是 2026-10-06 真机缺陷 A-FIX 4 补的——app.exit(0) 走 invoke plugin:app|exit，官方要求这条权限且它不在 core:app:default 里（探针页的「明确退出」与任务 7 的 lifecycle.exit() 都要它）。",
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:app:allow-exit",
     "dialog:allow-open",
     "fs:allow-read-file",
     {

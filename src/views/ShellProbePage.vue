@@ -49,6 +49,21 @@ export interface LifecycleProbeReading {
   readonly requested: boolean;
   readonly backPresses: readonly string[];
   readonly closeRequests: readonly string[];
+  /**
+   * 页面级「明确退出 App」按钮的**结果**（2026-10-06 真机缺陷 **A-FIX 4**）。
+   *
+   * 修复前那个按钮点了**没反应**、而且**不留任何读数**（失败原因只写进页面顶部的错误横幅，
+   * 而按钮在页面最底部，真机上根本看不到）⇒ 下次真机仍然只能得到一句「没反应」。
+   * 现在两种形态之一必然出现在读数里：`已调用（resolve）` / `调用失败：<原文>`。
+   *
+   * **`resolve` 只证明 `app.exit(0)` 这个调用回来了，不证明进程真的退了**——真机判据仍然是
+   * 「按下去 App 没了没有」。**权限链**：`app.exit(0)` = `invoke("plugin:app|exit")`，
+   * 官方 JSDoc 逐字要求 `core:app:allow-exit`，而它**不在** `core:app:default` 里
+   * （也不在 `capabilities/default.json` 现在给的 `core:default` 里）⇒ 这份配置下它**必然被 ACL 拒绝**，
+   * 读数会如实写成 `调用失败：…not allowed…`。**本轮不动权限**（不在允许动文件清单里），
+   * 结论在报告里，由控制者裁决。
+   */
+  readonly exitResult: string;
 }
 
 export interface BuildInfoProbeReading {
@@ -108,6 +123,15 @@ import { probeImageSize } from "@/services/probe";
 
 /** 判据 D 的探针图边长：64 够用（相册里那一眼要看的是**文件在不在、字节数对不对**，不是画质）。 */
 const PROBE_EDGE = 64;
+
+/**
+ * 探针图中央那块蓝色的边长（`PROBE_EDGE` 的一半）。
+ *
+ * **它必须留在中央、不许盖住 `(2, 2)`**：那个点是 `assertCanvasPainted` 的采样点（详见
+ * `renderProbePng` 的 JSDoc）。`(PROBE_EDGE - PROBE_BLOCK_EDGE) / 2 = 16` ⇒ 蓝块占 16–47，
+ * 离 `(2, 2)` 有 14 像素边距——改这两个常量前先读 `SELF_CHECK_X` / `SELF_CHECK_Y`。
+ */
+const PROBE_BLOCK_EDGE = 32;
 
 /** 兜底文案必须非空：空消息的 `Error` 要取 `name`，非 `Error` 要取 `String`。 */
 function errorText(error: unknown): string {
@@ -185,12 +209,36 @@ async function onRawInput(criterion: "A" | "B", event: Event): Promise<void> {
   }
 }
 
-/** 画一张探针图并取 PNG（C 的请求体探针与 D 共用：**同一个产物、两条不同的证据**）。 */
+/**
+ * 画一张探针图并取 PNG（C 的请求体探针与 D 共用：**同一个产物、两条不同的证据**）。
+ *
+ * **底色必须是白的、蓝块必须在中央**（2026-10-06 真机缺陷 **A-FIX 3**）。这张图要被
+ * `assertCanvasPainted` 自检，而那个帮手的契约（`src/services/exporter.ts` 的 JSDoc 逐字）是
+ * 「读回采样点 `(2, 2)` 的 1×1 像素，**不是不透明的白色即抛**」——采样点落在**白底边距**里，
+ * 它挡的是「画布分配成功但内容全空」那一形态。所以：
+ * **`(2, 2)` 是 `assertCanvasPainted` 的采样点，必须保持白。**
+ * 修复前这里把整块画布涂成 `#3366cc`（没有白底），真机读回 `(2, 2) = 51,102,204,255` 与
+ * `#3366cc` **逐位相同** ⇒ 自检**必然抛**，D 块结果永远是「画布内容自检失败」、C 块三行核对永远
+ * 跑不到。⇒ 现在是「白底全幅 + 中央 `PROBE_BLOCK_EDGE`×`PROBE_BLOCK_EDGE` 的蓝块」，
+ * 自检**保留**（它挡的那类失败仍然要挡）。
+ * 画布初始是**透明**的，所以白底那一笔不能省——省掉 `(2, 2)` 读回 `0,0,0,0`，照样抛。
+ *
+ * **已知偏差（如实登记，本项目的「断言存在 ≠ 断言有效」）**：
+ * `ShellProbePage.test.ts` 用的是**假画布**（`@/services/exporter` 整个模块被桩掉、
+ * `getImageData` 根本不存在），所以用例只能钉住「页面向画布下了哪几条绘制命令」
+ * （白底全幅 + 中央蓝块 + 蓝块不覆盖采样点）。**假画布用例钉不住真画布契约**：
+ * 「真画布上 `(2, 2)` 真的是不透明白」这件事只有**真机**（真画布）能证，判据 D 的读数就是它。
+ */
 async function renderProbePng(): Promise<Blob> {
   const canvas = createCanvasStrict(PROBE_EDGE, PROBE_EDGE);
   const ctx = requireContext2D(canvas);
-  ctx.fillStyle = "#3366cc";
+  // ① 先铺满白底：`(2, 2)` 必须落在这一层里（`assertCanvasPainted` 只认不透明白）。
+  ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, PROBE_EDGE, PROBE_EDGE);
+  // ② 蓝块留在中央（离 `(2, 2)` 14 像素），它是「画布上真的有内容」的那条可见证据。
+  const offset = (PROBE_EDGE - PROBE_BLOCK_EDGE) / 2;
+  ctx.fillStyle = "#3366cc";
+  ctx.fillRect(offset, offset, PROBE_BLOCK_EDGE, PROBE_BLOCK_EDGE);
   assertCanvasPainted(canvas);
   return canvasToBlob(canvas);
 }
@@ -288,7 +336,7 @@ function runE(): void {
         return false;
       }),
     );
-    readings.e = { requested: true, backPresses: [], closeRequests: [] };
+    readings.e = { requested: true, backPresses: [], closeRequests: [], exitResult: "（尚未点按）" };
   } catch (caught) {
     error.value = `E 块注册失败：${errorText(caught)}`;
   }
@@ -308,13 +356,31 @@ function runF(): void {
   };
 }
 
-/** 页面级的「明确退出」（E 的第三半）：单独一个按钮——按下去 App 就没了，放进 E 块读数来不及看。 */
+/**
+ * 页面级的「明确退出」（E 的第三半）：单独一个按钮——按下去 App 就没了，放进 E 块读数来不及看。
+ *
+ * **结果一律落进 `readings.e.exitResult`，并且在按钮正下方直接显示**（2026-10-06 真机缺陷 A-FIX 4）：
+ * 修复前失败原因只写进页面**顶部**的错误横幅，而按钮在页面**最底部**，真机上表现为「点了没反应」。
+ * 现在把同一句话放在**按下去的那个地方**，读数与报告里各一份。
+ *
+ * **`readings.e` 为 `null` 时也要能记**（人可以先点退出、再点「注册 E 监听」）：那时就地建一份
+ * `requested: false` 的读数——**不假装监听已注册**（`已请求注册：否` 是如实读数）。
+ */
 async function exitApp(): Promise<void> {
+  let exitResult: string;
   try {
     await getPlatform().lifecycle.exit();
+    exitResult = "已调用（resolve）";
+    error.value = "";
   } catch (caught) {
+    exitResult = `调用失败：${errorText(caught)}`;
     error.value = `明确退出失败：${errorText(caught)}`;
   }
+  const current = readings.e;
+  readings.e =
+    current === null
+      ? { requested: false, backPresses: [], closeRequests: [], exitResult }
+      : { ...current, exitResult };
 }
 
 /**
@@ -358,7 +424,7 @@ const readingD = computed(() => {
 const readingE = computed(() => {
   const e = readings.e;
   if (e === null) return "未跑：点下面那个按钮注册监听，然后按系统返回键、再从任务切换器划掉 App。";
-  return `已请求注册：是 · 返回键：${e.backPresses.length === 0 ? "（尚未触发）" : e.backPresses.join(" | ")} · 关闭请求：${e.closeRequests.length === 0 ? "（尚未触发）" : e.closeRequests.join(" | ")}`;
+  return `已请求注册：${e.requested ? "是" : "否"} · 返回键：${e.backPresses.length === 0 ? "（尚未触发）" : e.backPresses.join(" | ")} · 关闭请求：${e.closeRequests.length === 0 ? "（尚未触发）" : e.closeRequests.join(" | ")} · 明确退出：${e.exitResult}`;
 });
 const readingF = computed(() => {
   const f = readings.f;
@@ -379,6 +445,7 @@ const VERDICT_NOTES: readonly string[] = [
   "判定要点\tC\t「冷启动」或「热启动」给出文件名与字节数（URI 原文看 logcat 的两行 RunEvent::Opened：收到 {} 个 URI 与 RunEvent::Opened：URI = {url}）且「请求体形态」写 base64 JSON 字符串 + 「端到端一致（N 字节…）」⇒ 通过；写「保存失败：base64 解码失败（…）」⇒ 编码口径不一致（B5-R4 已发生：以前那条「需要原始字节体」的路在 Android 上不可达，本轮已按规格退到 base64）；「取走失败」⇒ B5-R3；logcat 里另有 save_image_to_album：收到 base64 解码后 {} 字节 一行，用来与读数里的 N 对账",
   "判定要点\tD\t「结果」写「已受理…」且相册 Pictures/WeeFuse 下出现该文件、字节数一致 ⇒ 通过；出现权限 / 拒绝 / insert 返回 null ⇒ 走 dialog.save()（B5-R5）",
   "判定要点\tE\t按返回键后「返回键」出现 canGoBack=… ⇒ 通过；划掉 App 时「关闭请求」出现条目 ⇒ 一并通过；**返回键不触发是缺陷**，**关闭请求不触发不构成缺陷**（B5-R6，如实记录）",
+  "判定要点\tE-明确退出\t点页底的「明确退出 App」：App 立刻消失 ⇒ app.exit(0) 这条路通了（它在按钮正下方与 E 块的「明确退出」字段各留一份读数）；App 还在且写「已调用（resolve）」⇒ 调用回来了但进程没退（缺陷，记录之）；写「调用失败：…」⇒ 照原文查权限链（app.exit(0) = invoke plugin:app|exit，官方要求 core:app:allow-exit，它不在 core:app:default 里）",
 ];
 
 /** 把全部读数拼成制表符分隔的文本（照 `/lab/canvas` 的口径：这是本页对人类伙伴的核心交付物）。 */
@@ -424,6 +491,9 @@ function buildReportText(state: ShellProbeReadings, stamp: string): string {
     push("E", "已请求注册", state.e.requested ? "是" : "否");
     push("E", "返回键", state.e.backPresses.length === 0 ? "（尚未触发）" : state.e.backPresses.join(" | "));
     push("E", "关闭请求", state.e.closeRequests.length === 0 ? "（尚未触发）" : state.e.closeRequests.join(" | "));
+    // 页面级「明确退出」的结果（A-FIX 4）：**它必须进报告文本**——否则人一按按钮 App 就可能没了，
+    // 屏幕上那句话再也读不到；报告是「复制走」的那一份。
+    push("E", "明确退出", state.e.exitResult);
   }
 
   if (state.f === null) push("F", "（未跑）", "点「读构建信息」");
@@ -584,6 +654,13 @@ async function copy(): Promise<void> {
       >
         明确退出 App
       </button>
+      <!--
+        A-FIX 4：结果**就显示在按钮正下方**。修复前失败原因只写进页面顶部的 `probe-error`，
+        而按钮在页面最底部 ⇒ 真机上表现为「点了没反应」。
+      -->
+      <p data-testid="probe-exit-result" class="mt-2 break-all font-mono text-xs text-slate-700">
+        明确退出：{{ readings.e === null ? "（尚未点按）" : readings.e.exitResult }}
+      </p>
     </div>
 
     <p class="mt-6 max-w-3xl text-xs text-slate-500">

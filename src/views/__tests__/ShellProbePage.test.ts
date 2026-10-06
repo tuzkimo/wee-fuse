@@ -334,3 +334,120 @@ describe("/lab/shell 探针页", () => {
     expect(unbindShare).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 2026-10-06 真机缺陷修复轮（A-FIX 3 / A-FIX 4）的两条用例。
+ *
+ * **这两条钉的是「程序给画布下了什么命令」与「结果有没有落到读数里」，不是真机行为**：
+ * 真画布的像素、真 `app.exit(0)` 的进程退出都在人工清单里（规格 §9.4 的边界不变）。
+ * 之所以还能钉住 A-FIX 3，是因为它的根因是**页面的绘制配方**（整块涂蓝 vs 白底+中央蓝块）——
+ * 配方错了真机必抛，而配方在假画布上可观察。**反过来说**：假画布不执行 `getImageData`，
+ * 所以「真画布上 (2, 2) 真的是不透明白」这一条**只有真机能证**（判据 D 的读数）。
+ */
+describe("/lab/shell 探针页 · 2026-10-06 真机修复轮（A-FIX 3 / A-FIX 4）", () => {
+  interface FillCall {
+    readonly style: unknown;
+    readonly rect: readonly number[];
+  }
+
+  /** 与页面里的 `PROBE_EDGE` / `PROBE_BLOCK_EDGE` 同值：白底契约就落在这两个矩形上。 */
+  const PROBE_EDGE = 64;
+  const PROBE_BLOCK = 32;
+  const PROBE_OFFSET = (PROBE_EDGE - PROBE_BLOCK) / 2;
+  /** `assertCanvasPainted` 的采样点（`services/exporter.ts` 的 `SELF_CHECK_X` / `SELF_CHECK_Y`）。 */
+  const SAMPLE_X = 2;
+  const SAMPLE_Y = 2;
+
+  /** 矩形是否盖住某点——把「采样点在不在蓝块里」这句话写成可执行的判据。 */
+  function covers(rect: readonly number[], x: number, y: number): boolean {
+    const [rx, ry, rw, rh] = rect;
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+  }
+
+  it("A-FIX 3：探针图是「白底 + 中央蓝块」，且每一笔都不覆盖自检采样点 (2, 2)（自检调用保留）", async () => {
+    const exporter = await import("@/services/exporter");
+    // `@/services/exporter` 被整模块桩掉 ⇒ `requireContext2D` 返回的就是**页面在用的那个共享
+    // context 对象**，换掉它的 `fillRect` 就能看到页面真的下了哪几条绘制命令。
+    const context = exporter.requireContext2D({} as unknown as HTMLCanvasElement) as unknown as {
+      fillRect: (...args: number[]) => void;
+      fillStyle: unknown;
+    };
+    const mutable = exporter as unknown as {
+      assertCanvasPainted: (canvas: unknown) => void;
+    };
+    const fills: FillCall[] = [];
+    const originalFillRect = context.fillRect;
+    const originalAssert = mutable.assertCanvasPainted;
+    let assertCalls = 0;
+    context.fillRect = (...args: number[]): void => {
+      fills.push({ style: context.fillStyle, rect: args });
+    };
+    mutable.assertCanvasPainted = (): void => {
+      assertCalls += 1;
+    };
+    try {
+      setPlatform(fakePlatform());
+      stubClipboard();
+      const wrapper = mount(ShellProbePage);
+      await wrapper.get('[data-testid="probe-run-d"]').trigger("click");
+      await flushPromises();
+
+      // 恰好两笔：**多一笔就可能把 (2, 2) 重新涂掉**（这正是修复前的形态：一笔整块蓝）
+      expect(fills.map((fill) => fill.style)).toEqual(["#ffffff", "#3366cc"]);
+      expect(fills[0]?.rect).toEqual([0, 0, PROBE_EDGE, PROBE_EDGE]);
+      expect(fills[1]?.rect).toEqual([PROBE_OFFSET, PROBE_OFFSET, PROBE_BLOCK, PROBE_BLOCK]);
+      // ★ 白底契约：采样点必须落在白底里、且**不在**蓝块里
+      //（真机读数里 (2, 2) 读回 51,102,204,255 与 #3366cc 逐位相同 ⇒ 自检必抛）
+      expect(covers(fills[0]?.rect ?? [], SAMPLE_X, SAMPLE_Y)).toBe(true);
+      expect(covers(fills[1]?.rect ?? [], SAMPLE_X, SAMPLE_Y)).toBe(false);
+      // 自检**保留**：修的是它的前提，不是把它删掉
+      expect(assertCalls).toBe(1);
+
+      wrapper.unmount();
+    } finally {
+      context.fillRect = originalFillRect;
+      mutable.assertCanvasPainted = originalAssert;
+    }
+  });
+
+  it("A-FIX 4：「明确退出」的结果必进按钮下读数、E 块读数与报告 E 行（resolve 与 reject 两种形态）", async () => {
+    const exit = vi.fn(async () => {});
+    setPlatform(fakePlatform({ lifecycle: { exit } }));
+    stubClipboard();
+    const wrapper = mount(ShellProbePage);
+
+    // 没点过「注册 E 监听」也能记：起点是 `requested: false`，**不假装监听已注册**
+    await wrapper.get('[data-testid="probe-exit"]').trigger("click");
+    await flushPromises();
+    expect(exit).toHaveBeenCalledTimes(1);
+    const exitLine = wrapper.get('[data-testid="probe-exit-result"]').text();
+    expect(exitLine).toContain("明确退出：已调用（resolve）");
+    const readingE = wrapper.get('[data-testid="reading-e"]').text();
+    expect(readingE).toContain("已请求注册：否");
+    expect(readingE).toContain("明确退出：已调用（resolve）");
+    let copied = await copiedText(wrapper);
+    expect(copied).toContain("E\t明确退出\t已调用（resolve）");
+
+    // reject：ACL 拒绝的原文必须**逐字**出现在三处（顶部错误横幅 / 按钮下读数 / 报告 E 行）。
+    // 真机的 ACL 消息形如 `app.exit not allowed. Permissions associated with this command: core:app:allow-exit`。
+    stubClipboard();
+    exit.mockRejectedValueOnce(
+      new Error("app.exit not allowed. Permissions associated with this command: core:app:allow-exit"),
+    );
+    await wrapper.get('[data-testid="probe-exit"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="probe-exit-result"]').text()).toContain(
+      "明确退出：调用失败：app.exit not allowed. Permissions associated with this command: core:app:allow-exit",
+    );
+    expect(wrapper.get('[data-testid="probe-error"]').text()).toContain(
+      "明确退出失败：app.exit not allowed",
+    );
+    expect(wrapper.get('[data-testid="reading-e"]').text()).toContain("明确退出：调用失败：");
+    copied = await copiedText(wrapper);
+    expect(copied).toContain(
+      "E\t明确退出\t调用失败：app.exit not allowed. Permissions associated with this command: core:app:allow-exit",
+    );
+
+    wrapper.unmount();
+  });
+});
