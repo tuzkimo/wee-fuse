@@ -495,9 +495,13 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 ### 6.2 Android 生成物的入库策略（裁决 6）
 
 - **入库**：`src-tauri/gen/android/` 全部（`AndroidManifest.xml`、`build.gradle.kts`、`settings.gradle.kts`、`gradle/`、`gradlew*`、`app/src/**`）。
-- **不入库**（写进 `.gitignore`）：`src-tauri/target/`、`src-tauri/gen/schemas/`（每次构建重新生成的 capability schema）、`src-tauri/gen/apple/`、`src-tauri/gen/android/**/build/`、`src-tauri/gen/android/.gradle/`、`src-tauri/gen/android/local.properties`、`src-tauri/gen/android/.idea/`、`*.apk` / `*.aab` / `*.keystore`。
+- **不入库**（写进 `.gitignore`）：`src-tauri/target/`、`src-tauri/gen/schemas/`（每次构建重新生成的 capability schema）、`src-tauri/gen/apple/`、`src-tauri/gen/android/**/build/`、`src-tauri/gen/android/.gradle/`、`src-tauri/gen/android/local.properties`、`src-tauri/gen/android/.idea/`、**`src-tauri/gen/android/.kotlin/`**（2026-10-06 由任务 1 的实现者实测补上：构建会落 `errors/errors-<时间戳>.log`，规则里没有它就会入库一个带时间戳的构建日志）、`*.apk` / `*.aab` / `*.keystore`。
+- **实测判定结论（2026-10-06，替换掉下面那条「若…则」的预判）**：`npx tauri android init` 重跑 + 两次 `npx tauri android build` 之后，`git status --short -- src-tauri/gen` **零改动**、`--untracked-files=all` **零新文件** ⇒ CLI **不改写**已入库的 Android 工程，**裁决 6 成立、维持入库**（手工改的 `app_name` 完好）。**证据见提交 `13989c8` 与账本的任务 1 段。**
 - **一处必须先改的现状（写计划时发现）**：本仓的 `.gitignore` **已经**忽略了 `src-tauri/gen/`（与 `src-tauri/target/` 一起，来自第一次提交 `3fedef3` 从 Tauri 模板抄来的两行，不是任何一次决定）。按裁决 6 实现时必须**把这一行换成上面那组更细的规则**，否则 Android 工程根本进不了版本库、`app_name` 的手改也留不下来。**不要**直接把文件删掉重写：`git log --oneline -- .gitignore` 只有一条提交，改动要能一对一说明白。
-- **判定条件（写进任务简报）**：若 spike 发现 `gen/android` 在 `npx tauri android build` 时会被 Tauri CLI **整体重写**（即手改无意义），则改为 gitignore + 在 README 写明 `npx tauri android init` 是构建前置步骤。**这个判定必须在 spike 报告里给出证据**（`git status` 在两次构建前后的输出），不许凭印象。
+- **构建前提（2026-10-06 任务 1 实测发现，spec 早先漏了）**：`package.json` 的 `scripts` 里**必须有** `"tauri": "tauri"`。
+  理由：gradle 的 `:app:rustBuild{Arm,Arm64,X86,X86_64}Debug` 任务会执行 `npm run -- tauri android android-studio-script`；
+  本仓原来没有这条 script ⇒ 四个任务全部失败（`A problem occurred starting process 'command 'npm.bat''` + `npm error Missing script: "tauri"`，
+  实测第一次 `npx tauri android build --apk --debug` 因此失败、耗时 531.9 s）。Tauri 官方模板本来就有这一条。
 
 ### 6.3 CI（新增一个 job，既有 job 一行不动）
 
