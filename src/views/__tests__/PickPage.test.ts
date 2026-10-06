@@ -324,8 +324,10 @@ describe("PickPage（native-picker 分支）", () => {
     const withCamera = mount(PickPage);
     expect(withCamera.find("[data-testid='pick-album']").exists()).toBe(true);
     expect(withCamera.find("[data-testid='pick-camera']").exists()).toBe(true);
-    // 浏览器那条老路（可见 input + 下一步）在这一支下**不该出现**
+    // 浏览器那条老路（可见 input + 下一步）在这一支下**不该出现**：两条都要否证，
+    // 只否证 `file-input` 的话，把 `v-else` 里那个「下一步」按钮渲染出来照样绿。
     expect(withCamera.find("[data-testid='file-input']").exists()).toBe(false);
+    expect(withCamera.find("[data-testid='pick-file']").exists()).toBe(false);
 
     setPlatform(fakeShellPlatform({ canCapture: false }));
     const withoutCamera = mount(PickPage);
@@ -372,6 +374,31 @@ describe("PickPage（native-picker 分支）", () => {
     expect(useDraft().source).toBeNull();
   });
 
+  /**
+   * **取消路径也必须复位 `busy`**（2026-10-06 第三轮定向复审 A）：上面那条只断「选择器被调过 /
+   * 没报错 / 没跳转 / 草稿 null」——**不读按钮状态**，所以把 `finally` 里的复位改成「只在成功路径」
+   * 它照样绿，而真机表现是「**取消一次之后按钮永久禁用**」，正是 F1 要消灭的那一类形态。
+   * 这条读按钮状态并**再点一次**：第二次仍能调起选择器。
+   */
+  it("取消之后再点一次仍能调起选择器（busy 在取消路径上被复位）", async () => {
+    stubPlatform();
+    const pickFromAlbum = vi.fn(async () => null);
+    setPlatform(fakeShellPlatform({ canCapture: false, pickFromAlbum }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    const button = wrapper.get("[data-testid='pick-album']");
+    expect((button.element as HTMLButtonElement).disabled).toBe(false);
+    expect(button.text()).toBe("从相册选一张");
+
+    await button.trigger("click");
+    await flushPromises();
+
+    expect(pickFromAlbum).toHaveBeenCalledTimes(2);
+  });
+
   it("选择器抛错 ⇒ 显示中文原因、不跳转、不留半截草稿；按钮恢复可用", async () => {
     stubPlatform();
     setPlatform(
@@ -395,6 +422,35 @@ describe("PickPage（native-picker 分支）", () => {
     expect((wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement).disabled).toBe(
       false,
     );
+  });
+
+  /**
+   * **壳分支的 `error.value = ""`**（2026-10-06 第三轮定向复审 G3）：浏览器分支有对照用例
+   * （「上一次的失败提示在下一次尝试时被清掉」读的是 `pick()` 开头那行），壳分支此前零断言。
+   * 第一次抛错 ⇒ 提示条出现；第二次成功取消 ⇒ 提示条必须消失（否则用户修好之后还看着旧错误）。
+   */
+  it("壳分支上一次的失败提示在下一次尝试时被清掉", async () => {
+    stubPlatform();
+    let attempt = 0;
+    const pickFromAlbum = vi.fn(async (): Promise<File | null> => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("图片选择器返回了非文件对象");
+      return null;
+    });
+    setPlatform(fakeShellPlatform({ canCapture: false, pickFromAlbum }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='pick-error']").text()).toContain(
+      "图片选择器返回了非文件对象",
+    );
+
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(pickFromAlbum).toHaveBeenCalledTimes(2);
+    expect(wrapper.find("[data-testid='pick-error']").exists()).toBe(false);
   });
 
   /**
@@ -459,18 +515,22 @@ describe("PickPage（native-picker 分支）", () => {
     });
     const platform = stubPlatform({ decodeGate: gate });
     const pickFromAlbum = vi.fn(async () => FILE);
-    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum }));
+    const capturePhoto = vi.fn(async () => null);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum, capturePhoto }));
 
     const wrapper = mount(PickPage);
-    // 两次派发之间没有 await：此刻 `:disabled` 还没被 patch 进 DOM，第二次点击照样会进处理器。
-    const button = wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement;
-    button.click();
-    button.click();
+    // 三次派发之间没有 await：此刻 `:disabled` 还没被 patch 进 DOM（两个按钮都还是可点的），
+    // 所以挡住第二次 / 另一边点击的只可能是 `busy` 闸门本身。
+    (wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement).click();
+    (wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement).click();
+    // 「两个按钮共用同一个 `busy`」不只是文案：相册读取**已经发起**时点相机，`capturePhoto` 一次都不该被调。
+    (wrapper.get("[data-testid='pick-camera']").element as HTMLButtonElement).click();
 
     openDecode();
     await flushPromises();
 
     expect(pickFromAlbum).toHaveBeenCalledTimes(1);
+    expect(capturePhoto).not.toHaveBeenCalled();
     expect(platform.canvases).toHaveLength(1);
     expect(push).toHaveBeenCalledTimes(1);
   });
