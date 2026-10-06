@@ -554,7 +554,7 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 
 | 对象 | 用例要点 |
 |---|---|
-| `platformContract.ts` ×2 实现 | `save` 的两条守卫（空 blob / 空名）消息逐字一致；`pickFromAlbum` 取消 → `null`；`capturePhoto` 在 `canCapture === false` 时抛、返回非 File 时抛；`takeSharedImage` **取走即清**（第二次返回 `null`）；`onBackButton` / `onExitRequested` 解绑后不再回调；`exit` 在浏览器实现里不抛 |
+| `platformContract.ts` ×2 实现 | `save` 的四条守卫（非 Blob / 空 blob / 非字符串名 / 空名）消息逐字一致，且**拒绝时没有任何副作用**（顺序证明）；合法保存把**同一颗** blob 与 trim 后的名字交给落点；`pickFromAlbum` 取消 → `null`、拿到非 `File` → 抛；`capturePhoto` 在 `canCapture === false` 时抛；`takeSharedImage` **取走即清**（第二次返回 `null`）；`onBackButton` / `onExitRequested` / `onSharedImage` 返回的解绑函数可调用且不抛；`exit` 在浏览器实现里不抛 |
 | `capabilities.ts` | 默认值就是浏览器实现（未注入不抛）；`setPlatform` 换实现后 `getPlatform` 返回新实现；`isTauriRuntime()` 在 `isTauri` 缺失 / 为 `false` / 为 `true` 三种全局下的结果 |
 | `sniffImageType.ts` | 表驱动：PNG / JPEG / WEBP / HEIC 四种魔数各一条 + 未知字节回落 + **截断字节（长度不足）不越界读** |
 | `useShareIntake.ts` | supported=false 不装配；冷启动 null 不摄入；成功 → 草稿 + 路由；失败 → 不落草稿 + 提示；**编辑器 dirty 时不 adopt 不导航** + 「继续」按钮重试成功；多图提示 |
