@@ -3791,7 +3791,13 @@ npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-预期：`npm run test` = **69 文件 / 1186 用例**（任务 1 之后 66/1163 + 本任务 3 个新测试文件 23 条：sniffImageType 10 + tauriPlatform 8 + 探针页 4 + 路由追加 1；**以实跑数字为准**），其中**只有 1 条故意红（G4）**——**G1 与 G3b 在本任务转绿**（`tauriDriver.ts` 已存在且是唯一含 `@tauri-apps/` 的文件；`main.ts` 已按 `isTauriRuntime()` 选择实现）；`npm run build` 通过；`cargo check` exit 0。
+预期：`npm run test` = **69 文件 / 1194 用例**（任务 1 之后的真值是 **66 / 1169**，加本任务 3 个新测试文件与路由追加共 **25 条**；**以实跑数字为准**），其中**只有 1 条故意红（G4）**——**G1 与 G3b 在本任务转绿**（`tauriDriver.ts` 已存在且是唯一含 `@tauri-apps/` 的文件；`main.ts` 已按 `isTauriRuntime()` 选择实现）；`npm run build` 通过；`cargo check` exit 0。
+
+> **2026-10-06 控制者实测更正**：本节原写「69 / 1186（任务 1 之后 66/1163 + 23 条）」。
+> 控制者在任务 2 的提交树上实跑：`Test Files 1 failed | 68 passed (69)` / `Tests 1 failed | 1193 passed (1194)`
+> ⇒ 真值 **69 / 1194**（1169 + 25），红的那 1 条正是 G4 ✓。
+> **这是同一类错第三次**（`exporter.test.ts` 29→30、任务 1 的 1163→1169、本次 1186→1194）：
+> **跨轮抄数字时必须回原始清单重数**——我三次都把上一轮的过期基数当成了当轮的基线。
 
 变异（在已提交的树上、逐条自证替换生效、还原后确认全绿，**红数不许预估**）：
 
