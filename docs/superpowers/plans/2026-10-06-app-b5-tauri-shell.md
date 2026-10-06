@@ -2553,6 +2553,13 @@ fn main() {
 }
 ```
 
+> **2026-10-06 新增的两条 Rust 依赖（第 2 轮修复，写在 `src-tauri/Cargo.toml` 而不是插件里）**：
+> `log = "0.4"`（通用 `[dependencies]`）与 **`android_logger = "0.15"`（放在 `[target.'cfg(target_os = "android")'.dependencies]`）**。
+> **理由**：判据 C 要的证据行（「收到的 URI」等）原先用 `println!`，而 **Android 上原生 stdout 默认不接 logcat**
+> ⇒ 加了 Android 日志后端、在 `run()` 里 cfg 到 android 地 `init_once` 一次，两行打印改走 `log::info!`（桌面不受影响）。
+> **不做这一步的后果**：操作卡让人去找的那两行**在真机上一条也不会出现**——那是本项目「让人找一个不存在的输出」
+> 这一类缺陷的**第三次**出现（前两次：`请求体不是 Raw`、`收到 1 个 URI：[…]`）。
+
 `src-tauri/plugins/album/src/lib.rs`：
 
 ```rust
