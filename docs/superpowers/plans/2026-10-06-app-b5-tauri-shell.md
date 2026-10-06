@@ -4062,6 +4062,124 @@ git commit -m "feat(app): 壳里的相册选图入口（native-picker 分支）�
 
 ---
 
+### 任务 6：保存到相册接线（`ExportPanel` 换调 `album.save`，G4 转绿）
+
+**前置**：任务 2 的 spike 已跑完，**判据 D 的读数已写进 spike 报告**；步骤 5 是按该读数的条件步骤。
+
+**交付物**：面板的三类产物都经 `getPlatform().album.save(...)` 落盘（壳里 = 系统相册、浏览器 = 仍走 `downloadBlob`）；**`platformGate` 的 G4 在本任务转绿**（5 passed / 0 failed）。
+
+**文件：**
+- 修改：`src/components/editor/ExportPanel.vue`、`src/components/editor/__tests__/ExportPanel.test.ts`（**只追加**用例）
+- **仅当判据 D 不可用**：修改 `src/services/platform/tauriPlatform.ts`、`src-tauri/capabilities/default.json`（加 `dialog:allow-save` 与 `fs:allow-write-file`）
+
+- [ ] **步骤 1：抄下判据 D 的读数与结论**
+
+把 spike 报告里 **D 块的整段读数**贴进本次任务报告的开头，写清结论：**D 可用**（相册里出现文件、无权限弹窗）还是 **D 不可用**。
+
+- [ ] **步骤 2：先核「成功文案」的既有断言（决定实现写法，不许跳过）**
+
+```powershell
+Select-String -Path src/components/editor/ExportPanel.vue -Pattern "已保存|已生成|下载" | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+Select-String -Path src/components/editor/__tests__/ExportPanel.test.ts -Pattern "已保存|已生成|下载" | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+```
+
+**把两条命令的原始输出贴进报告。** 判据：既有用例若**断言过**成功文案，那么**下载那一支的文案一个字都不能改**——只允许在 `album.kind === "album"` 时用新文案（`已保存到相册`）。这是「既有断言一行不改」在本任务的具体落法。
+
+- [ ] **步骤 3：写失败测试（走平台的接线 + 恒等实参）**
+
+在 `ExportPanel.test.ts` **末尾追加**（既有断言一字不动）。本文件已经 `vi.mock("@/services/exporter")`；本任务要断言的是「面板把**渲染出的那颗 blob** 与 `exportFilename` 的名字交给了**平台**」，所以注入假平台：
+
+```ts
+/**
+ * 承重断言（规格 §9.2-2）：「保存」必须**经平台层**落盘，且交给它的是**渲染出的那一颗** blob。
+ *
+ * **为什么必须恒等比较**：`toBe` 才能钉住「不是另建的一颗空 blob / 不是重新包一层」；
+ * 只断言 `save` 被调用过，把实参换成 `new Blob([])` 也绿。
+ * **为什么还要断言名字**：名字来自 `exportFilename(projectName, label, tile)`——分片项必须带 `r{r}c{c}`；
+ * 接线写错（漏传 `tile`）会让**分片文件名全部变成非分片**，而图本身完全正常。
+ */
+it("点某一项的「保存」⇒ 经 getPlatform().album.save 落盘，实参是那颗 blob 与带分片序号的名字", async () => {
+  const saves: Array<{ blob: Blob; filename: string }> = [];
+  const albumSave = vi.fn(async (blob: Blob, filename: string) => {
+    saves.push({ blob, filename });
+  });
+  setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
+
+  // …此处照本文件**既有的**那条成功用例的挂载 / 点击写法（同一个夹具、同一个 testid），只换断言…
+  const canvasBlob = await (await import("@/services/exporter")).canvasToBlob(
+    {} as unknown as HTMLCanvasElement,
+  );
+  expect(albumSave).toHaveBeenCalledTimes(1);
+  expect(saves[0]?.blob).toBe(canvasBlob);
+  expect(saves[0]?.filename).toBe(exportFilename("小猫", "施工图", { rowIndex: 1, colIndex: 1 }));
+
+  setPlatform(browserPlatform); // 复位，别影响本文件其余用例
+});
+
+it("平台保存失败 ⇒ 走既有的琥珀条失败路径（不静默）", async () => {
+  const albumSave = vi.fn(async () => {
+    throw new Error("MediaStore 拒绝插入（insert 返回 null）");
+  });
+  setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
+
+  // …同一个夹具点「保存」…断言：错误条出现且含驱动给的中文原因；该项状态不是「已生成」；不产生预览 URL。
+  setPlatform(browserPlatform);
+});
+```
+
+（两处注释里的「照既有写法」指本文件里**已经存在的**成功用例与失败用例的挂载 / 点击 / 断言写法：把那几条的**结构**抄过来、只换注入的平台与断言，**不改那几条本身**。）
+
+运行：`npx vitest run src/components/editor/__tests__/ExportPanel.test.ts`
+预期：**红**（新用例拿不到 `album.save` 调用——面板还在直调 `downloadBlob`）。
+
+- [ ] **步骤 4：实现（只改那一处调用 + 成功文案分叉）**
+
+`ExportPanel.vue` 的 `downloadAndPreview` 里那一处：
+
+```ts
+  // 上一版：`downloadBlob(blob, filename);`（直调平台层之外的东西）
+  // 本任务：经能力层（规格 §5.4.3）——壳里进系统相册、浏览器里仍是下载；
+  // 面板**不再知道**具体落点，也不能再自己拼第二份命名逻辑（名字走 exportFilename）。
+  await getPlatform().album.save(blob, filename);
+```
+
+成功文案按 `getPlatform().album.kind` 分叉：`"album"` ⇒ `已保存到相册`；`"download"` ⇒ **保持步骤 2 读出来的原文案不变**。
+
+运行：`npx vitest run src/components/editor/__tests__/ExportPanel.test.ts`（新 2 条 + 既有全绿）
+再跑：`npx vitest run src/__tests__/platformGate.test.ts` ⇒ **预期 5 passed / 0 failed（G4 转绿）**
+
+- [ ] **步骤 5：条件步骤——按判据 D 的读数处置**
+
+**若 D 可用** ⇒ **空操作**（`tauriPlatform.album.save` 已经写进相册）。
+
+**若 D 不可用** ⇒ 壳侧降级（规格 D2）：`tauriPlatform.ts` 的 `album.save` 改走 `dialog.save({ defaultPath: filename, filters: [{ name: "PNG", extensions: ["png"] }] })` 拿路径 → `plugin-fs` 的 `writeFile` 写入；**`ExportPanel` 一行不动**（调用点仍是 `album.save` ⇒ G4 照样该绿）；capabilities 加 `dialog:allow-save` 与 `fs:allow-write-file`（**只加用到的**）；README 写明「保存位置由用户选择，不会自动进相册」。**用户取消（`null`）与写入失败要分开**：取消静默返回，写入失败抛错。
+
+- [ ] **步骤 6：变异（红数不许预估）**
+
+| ID | 改哪一行 | 期望红 |
+|---|---|---|
+| M22 | `ExportPanel.vue` 把 `album.save(blob, filename)` 改回 `downloadBlob(blob, filename)` | **G4**（闸门）+ 新加的「经平台落盘」那条 |
+| M23 | `exportFilename` 调用里漏传 `tile`（分片项变成非分片名字） | 新用例的名字断言（`r2c2` 那半） |
+| M24 | 失败分支把 `albumSave` 的抛错吞掉（catch 后当成功） | 新加的「失败走琥珀条」那条 |
+
+- [ ] **步骤 7：三跑 + Commit**
+
+```powershell
+npm run test          # 新增 2 条；贴 Test Files / Tests 两行与新分解式
+$env:TZ="UTC"; npm run test; Remove-Item Env:\TZ
+npm run build
+npx vitest run src/__tests__/platformGate.test.ts   # 5 passed
+```
+
+```powershell
+git add src/components/editor/ExportPanel.vue src/components/editor/__tests__/ExportPanel.test.ts src/services/platform/tauriPlatform.ts src-tauri
+git commit -m "feat(exporter): 面板经能力层落盘（壳里进相册），platformGate 的 G4 转绿"
+```
+
+（步骤 5 是空操作时，`git add` 里去掉 `tauriPlatform.ts` 与 `src-tauri`。）
+
+---
+
 ### 任务 8：收尾（账目 / 构建记录 / 文档回写 / 人工清单回填）
 
 **交付物**：一份能交给下一个人接着做的仓库状态——账目对得上、构建记录写清「哪些是真验过的、哪些没有」、上游文档同步、人工清单逐条有结果。
