@@ -321,6 +321,21 @@ E	关闭请求	（尚未触发）
 - B5-11 `gen/android/app/build.gradle.kts` 未 pin `ndkVersion` ⇒ NDK 升级会静默换版本（本轮 `30.0.14904198`）；CI 不覆盖。
 - B5-12 `app-icon.png` 是图标**源图**（`scripts/make-app-icon.mjs` 生成、`npx tauri icon` 消费）⇒ 入库，但此前没有书面理由（本条即理由）。
 
+**2026-10-06 真机阶段新增（任务 2 修复轮 + 任务 3）**：
+
+- B5-13 **隐藏 input 的结算兜底有代价**：`cancel` 事件只有 Chrome 113+ 才有 ⇒ 不支持它的 WebView 上，
+  取消后要等一个宽限期（`PICKER_RETURN_GRACE_MS`）按钮才恢复；而**用户在系统相册里停很久再回来**（焦点信号早于选择）
+  仍会被判成取消。**取舍已定**：在「**永久卡死**」与「**偶尔要重来一次**」之间选了后者 ✓。
+- B5-14 **`onCloseRequested` 在 Android 上未观察到触发**（判据 E，B5-R6）：退出请求那条分支在真机上是**惰性**的；
+  「有未保存改动就别退出」这条路**由返回键三分支覆盖** ✓。**不视为缺陷**，但 README 要如实写。
+- B5-15 **两处手改落在「已入库的生成工程」里**：图标 mipmap 与 `MainActivity.kt` 的 insets 消费。
+  二者都在 `gen/android/**`（按裁决 6 入库）⇒ **重跑 `npx tauri android init` 可能把它们回退** ✗（**本轮未验**）。
+  **维护须知**：换机器 / 重建工程后**必须复验**「图标是不是我们的」与「页面顶部有没有被系统栏盖住」；
+  且**正确顺序是 `android init` → `npx tauri icon app-icon.png`**（反过来是**静默失效**：装出来是 Tauri logo）。
+- B5-16 **`exit()` 依赖 `core:app:allow-exit`，而它不在 `core:app:default` 里**：`app.exit(0)` 走
+  `invoke('plugin:app|exit')` ⇒ 只给 `core:default` 时**必被 ACL 拒绝**，而**拒绝的形态可能是「点了没反应」**
+  （错误只写进页面里看不到的地方）。**该权限已补**（真机缺陷 A-FIX 4）；**删它会让退出静默失效**。
+
 ---
 
 ## 7. 未验证面与后续优先级（截至任务 1）
