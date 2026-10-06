@@ -6,6 +6,12 @@ import { patternStats } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import * as layout from "@/core/render/layout";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
+// `exportFilename` 走 `vi.mock("@/services/exporter")` 的 `importOriginal` **真实现**（见文件头），
+// 所以这里的期望值不是手抄的字符串，而是「同一个函数」的输出——文件名的逐字格式由
+// `services/__tests__/exporter.test.ts` 负责，本文件钉的是「面板把正确的那组实参喂了进去」。
+import { exportFilename } from "@/services/exporter";
+import { setPlatform } from "@/services/platform/capabilities";
+import { browserPlatform } from "@/services/platform/browserPlatform";
 import {
   createRecordingTarget,
   createdBlobs,
@@ -776,5 +782,106 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
     expect(createdUrls).toEqual(["blob:test-1"]);
     expect(revokedUrls).toEqual(createdUrls);
     expect(wrapper.find("[data-testid='export-preview-legend']").exists()).toBe(false);
+  });
+});
+
+describe("保存经能力层落盘（任务 6：规格 §5.4.3 / §9.2-2 —— G4 闸门的行为面）", () => {
+  /*
+   * 这一组是**端到端**的：真 `ExportPanel` + 真 `core/render` 渲染链 + 真 `exportFilename`，
+   * 只把最外面的落点换成假 `AlbumSaver`。上面那些用例（默认的 `browserPlatform`）走的是完整链，
+   * 但它们断言的是 `downloadBlob` **被谁调到**——那是「浏览器那一支」的事实；这一组换成假件之后，
+   * 「面板把**哪一颗** blob 与**哪个名字**交给了平台」才成为可直接断言的对象，
+   * 也就是规格 §9.2-2 点名的靶子（两端各自正确、错在接线）。
+   */
+
+  /**
+   * **为什么用 `afterEach` 复位、而不是在用例末尾写一行 `setPlatform(browserPlatform)`**：
+   * 用例中途红会让末尾那行**不执行**，注入的假平台于是泄漏给本文件其余用例（它们断言「已生成」、
+   * 假定落点是浏览器），红因会变得与本次改动无关——排查时先怀疑仪器就晚了一轮。
+   */
+  afterEach(() => {
+    setPlatform(browserPlatform);
+  });
+
+  it("端到端：点某一项的「保存」⇒ 经 getPlatform().album.save 落盘，实参是那颗 blob（恒等 + 逐字节）与带分片序号的名字", async () => {
+    const saves: { blob: Blob; filename: string }[] = [];
+    const albumSave = vi.fn(async (blob: Blob, filename: string): Promise<void> => {
+      saves.push({ blob, filename });
+    });
+    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
+
+    // 夹具给的是**这一颗**具体的 blob，而且**逐字节认得出来**（PNG 魔数）：只断言「`save` 被调用过」
+    // 时，把实参换成 `new Blob([])` / 另包一层的实现照样绿（本项目记过账的「桩的回声」形态）。
+    const PNG_MAGIC = [137, 80, 78, 71, 13, 10, 26, 10];
+    const blob = new Blob([new Uint8Array(PNG_MAGIC)], { type: "image/png" });
+    exporter.canvasToBlob.mockImplementationOnce(async () => blob);
+
+    // 200×200 的夹具 ⇒ 4 片。**点第 4 片（r2c2）**：分片序号是不是真的递到了平台，
+    // 只有「不是第一片」的那一项判得开（r1c1 与「没传序号」的名字不同，但 r1c1 恰好最像巧合）。
+    const wrapper = mountPanel(makeLargePattern());
+    await saveAndSettle(wrapper, "tile-3");
+
+    // 恰好一次（不是 0 次，也不是连点两下各存一份）
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    const delivered = saves[0];
+    if (delivered === undefined) throw new Error("平台一次保存都没收到：接线断了（面板没走能力层）");
+
+    // ① **恒等**（规格 §9.2-2）：平台拿到的就是 `canvasToBlob` 产出的那一颗对象
+    expect(delivered.blob).toBe(blob);
+    // ② 字节数/字节内容真的递到了——读的是**平台收到的那个对象**（不是用例手上这颗的自我复述）
+    expect(delivered.blob.size).toBe(PNG_MAGIC.length);
+    expect(Array.from(new Uint8Array(await delivered.blob.arrayBuffer()))).toEqual(PNG_MAGIC);
+    // ③ 名字 = `exportFilename(工程名, 标签, tile)` 的逐字结果，且**分片序号 1 起**（⇒ r2c2）。
+    //    漏传 `tile` 会让分片文件名全变成非分片，而图本身完全正常（本任务最容易写错的一处）。
+    expect(delivered.filename).toBe(
+      exportFilename("小猫", "施工图", { rowIndex: 1, colIndex: 1 }),
+    );
+    expect(delivered.filename).toBe("小猫-施工图-r2c2.png");
+    // ④ 落点分叉：`album` ⇒ 壳里的成功文案（浏览器那一支仍是「已生成」，见下一条）
+    expect(wrapper.get("[data-testid='export-item-tile-3']").text()).toContain("已保存到相册");
+    // ⑤ 预览仍然是**递给平台的那一颗**字节（不是重新渲染 / 重新包装的第二份）
+    expect(createdBlobs[0]).toBe(blob);
+    // ⑥ 面板不再直调 `downloadBlob`（G4 的行为面：旧路径一次都不许走，哪怕它在浏览器里也能用）
+    expect(exporter.downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it("平台保存失败 ⇒ 走既有的逐项失败态（驱动给的中文原因 + 可重试），不静默、也不产生预览 URL", async () => {
+    const albumSave = vi.fn(async (): Promise<void> => {
+      throw new Error("MediaStore 拒绝插入（insert 返回 null）");
+    });
+    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
+
+    const wrapper = mountPanel(makeSmallPattern());
+    await saveAndSettle(wrapper, "tile-0");
+
+    const item = wrapper.get("[data-testid='export-item-tile-0']");
+    // 原因**原样**上到该项（不许吞成成功、不许换成一句笼统文案）
+    expect(item.text()).toContain("失败：MediaStore 拒绝插入（insert 返回 null）");
+    // 「不静默」的另外半边：任何成功文案都不许出现
+    expect(item.text()).not.toContain("已保存到相册");
+    expect(item.text()).not.toContain("已生成");
+    // 失败不产生预览：一份没落盘的字节不该有 object URL
+    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(false);
+    expect(createdUrls).toEqual([]);
+    // 失败不是终态：按钮仍可点（既有的「重试」路径没被这次改动改掉）
+    expect(wrapper.get("[data-testid='export-save-tile-0']").attributes("disabled")).toBeUndefined();
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    // 也不许悄悄回落到浏览器那一支
+    expect(exporter.downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it("成功文案按落点分叉：浏览器落点仍是既有原文案「已生成」，不冒充「已保存到相册」", async () => {
+    // 这条钉的是分叉的**另一个方向**：把文案写成恒定的「已保存到相册」时，
+    // 上面那条 album 用例照样绿（它就是 album），只有这一条会红。
+    const albumSave = vi.fn(async (): Promise<void> => undefined);
+    setPlatform({ ...browserPlatform, album: { kind: "download", save: albumSave } });
+
+    const wrapper = mountPanel(makeSmallPattern());
+    await saveAndSettle(wrapper, "legend");
+
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    const text = wrapper.get("[data-testid='export-item-legend']").text();
+    expect(text).toContain("已生成");
+    expect(text).not.toContain("已保存到相册");
   });
 });
