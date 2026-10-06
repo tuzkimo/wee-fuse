@@ -15,6 +15,10 @@ src-tauri/gen/android/.gradle/
 src-tauri/gen/android/.kotlin/
 src-tauri/gen/android/local.properties
 src-tauri/gen/android/.idea/
+# 插件自己的 android 工程在构建期会把 `tauri-api` 解到这个目录（`build/**` 里是 `.dex`、transforms 等产物）。
+# 与 `gen/android` 自带 `.gitignore` 里的 `/.tauri` 同源，但**插件目录不继承那份规则**（实跑发现）⇒
+# 不写这条，一次 `git add src-tauri` 就会把上百个构建产物扫进库。
+src-tauri/plugins/**/android/.tauri/
 *.apk
 *.aab
 *.keystore
