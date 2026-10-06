@@ -4,6 +4,8 @@ import App from "./App.vue";
 import { router } from "./router";
 import { createIdbProjectStore } from "./services/idbProjectStore";
 import { setProjectStore } from "./services/projectStore";
+import { browserPlatform } from "./services/platform/browserPlatform";
+import { setPlatform } from "./services/platform/capabilities";
 import "./style.css";
 
 // 存储实现只在这里注入一次：页面通过 `getProjectStore()` 取，测试注入内存实现。
@@ -37,6 +39,10 @@ async function bootstrap(): Promise<void> {
   } catch (error) {
     console.error("工程存储初始化失败", error);
   }
+  // 平台能力层：未注入时 `getPlatform()` 就是这个浏览器实现（`capabilities.ts` 的默认值），
+  // 这里显式注入一次是为了让「注入早于挂载」成为结构事实（机检 = platformGate 的 G3）。
+  // 任务 2 会把它换成 `isTauriRuntime() ? createTauriPlatform() : browserPlatform`。
+  setPlatform(browserPlatform);
   createApp(App).use(createPinia()).use(router).mount("#app");
 }
 
