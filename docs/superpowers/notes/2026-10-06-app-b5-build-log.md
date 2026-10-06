@@ -162,6 +162,7 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | 4 | **Rust 侧零单测**（CI 只 `cargo check`） | `take_opened_uris` 的「取走即清」、信封解析、三层核对都只有真机判别力 | §2 的判据 C/D 读数 | 中 |
 | 4b | **mobile-only 的 `cfg` 分支从不被 CI 编译** | CI 的 `cargo check` 编的是桌面 target，`#[cfg(target_os = "android")]` 整块（含 `save_with_platform` 的 Android 实现、`RunEvent::Opened` 的入队与 `emit`）与插件的移动端路径**不参与类型检查**。**实测代价（R9）**：任务 2 用真机构建才抓到 `E0716` 临时值与被遗漏的 `Manager` 引入 | 每次 `tauri android build` 顺带验证；若要把这条纳入 CI，需要加一个 Android target 的 `cargo check`（本轮不做，记为首选项） | 中 |
 | 5 | **`tauriDriver.ts` 在 happy-dom 下不可执行** | 信封布局 / 字节核对 / `exitApp()` 三处零 CI 断言 | 同上 | 中 |
+| 5b | **base64 请求体在超大图上的内存压力未验**（R11 的直接代价） | 64 MB 的施工图 ⇒ base64 约 **85 MB 的字符串**，要经 webview ↔ Kotlin 的 IPC 桥；桥对超大 JSON 串的行为（限流 / OOM / 卡顿）**未验**。探针用的是 64×64（无压力）⇒ 这条只会在大图上现形 | 人工清单 11（116×116 ≈ 64 MB）**重点记录耗时与内存表现**；若崩，按 D5 另立小轮下调 `EXPORT_MAX_EDGE`（与 B4 清单 6 的预登记规则同一条） | 中 |
 | 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
 | 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；但 CI **不构建 APK** ⇒ 这条链只在真机构建时被验证 | 每次真机构建顺带验证 | 低 |
 
