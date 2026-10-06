@@ -2,6 +2,9 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { toRaw } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { browserPlatform } from "@/services/platform/browserPlatform";
+import { setPlatform } from "@/services/platform/capabilities";
+import type { Platform } from "@/services/platform/types";
 import { useDraft } from "@/stores/draft";
 import PickPage from "@/views/PickPage.vue";
 
@@ -281,5 +284,125 @@ describe("PickPage", () => {
     // 继续入口只是跳转，绝不动草稿（选图页没有重解码的理由）。
     expect(useDraft().source?.name).toBe("上次.png");
     expect(useDraft().preview).toBeNull();
+  });
+});
+
+/**
+ * `native-picker` 分支（壳里）：两个按钮 + 复用同一条「解码 → 落草稿 → 进选区页」。
+ *
+ * **为什么这些用例必须注入假平台**：分支条件来自 `getPlatform().imagePicking.kind`（浏览器实现是
+ * `"file-input"`），所以壳那一支在默认环境下**根本不会渲染**。注入假平台是唯一能执行到它的办法，
+ * 也正是 `setPlatform` 这个注入点存在的理由（规格 §4.2）。
+ *
+ * **不测的**：真实选择器 / 相机（规格 §9.4）——那两支的判别力在人工清单与 spike 读数里。
+ */
+function fakeShellPlatform(overrides: {
+  canCapture: boolean;
+  pickFromAlbum?: () => Promise<File | null>;
+  capturePhoto?: () => Promise<File | null>;
+}): Platform {
+  return {
+    ...browserPlatform,
+    imagePicking: {
+      kind: "native-picker",
+      canCapture: overrides.canCapture,
+      pickFromAlbum: overrides.pickFromAlbum ?? (async () => null),
+      capturePhoto: overrides.capturePhoto ?? (async () => null),
+    },
+  };
+}
+
+describe("PickPage（native-picker 分支）", () => {
+  // 注入是**模块级状态**（`capabilities.ts` 的 `current`）。本组用假平台，跑完复原成浏览器实现：
+  // 今天这一组在文件末尾、不复位也不影响上面 8 条，写在这里是防止将来用例顺序一变就静默串味。
+  afterEach(() => {
+    setPlatform(browserPlatform);
+  });
+
+  it("渲染「从相册选一张」；canCapture 为真时另有「拍一张」，为假时没有", () => {
+    setPlatform(fakeShellPlatform({ canCapture: true }));
+    const withCamera = mount(PickPage);
+    expect(withCamera.find("[data-testid='pick-album']").exists()).toBe(true);
+    expect(withCamera.find("[data-testid='pick-camera']").exists()).toBe(true);
+    // 浏览器那条老路（可见 input + 下一步）在这一支下**不该出现**
+    expect(withCamera.find("[data-testid='file-input']").exists()).toBe(false);
+
+    setPlatform(fakeShellPlatform({ canCapture: false }));
+    const withoutCamera = mount(PickPage);
+    expect(withoutCamera.find("[data-testid='pick-album']").exists()).toBe(true);
+    expect(withoutCamera.find("[data-testid='pick-camera']").exists()).toBe(false);
+  });
+
+  it("点「从相册选一张」⇒ 用 pickFromAlbum 拿到的文件走完解码与落草稿，并跳选区页", async () => {
+    const platform = stubPlatform({ width: 800, height: 600 });
+    const picked = new File([new Uint8Array([1, 2, 3, 4])], "从相册.png", { type: "image/png" });
+    const pickFromAlbum = vi.fn(async () => picked);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(pickFromAlbum).toHaveBeenCalledTimes(1);
+    const draft = useDraft();
+    expect(draft.source?.name).toBe("从相册.png");
+    expect(toRaw(draft.source)?.blob).toBe(picked);
+    expect(draft.sourceSize).toEqual({ width: 800, height: 600 });
+    expect(platform.canvases).toHaveLength(1);
+    expect(draft.preview).toBe(platform.canvases[0]);
+    expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
+    expect(push).toHaveBeenCalledWith({ name: "setup" });
+  });
+
+  it("取消（返回 null）⇒ 不报错、不跳转、草稿不动", async () => {
+    stubPlatform();
+    setPlatform(fakeShellPlatform({ canCapture: false, pickFromAlbum: async () => null }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='pick-error']").exists()).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+    expect(useDraft().source).toBeNull();
+  });
+
+  it("选择器抛错 ⇒ 显示中文原因、不跳转、不留半截草稿；按钮恢复可用", async () => {
+    stubPlatform();
+    setPlatform(
+      fakeShellPlatform({
+        canCapture: false,
+        pickFromAlbum: async () => {
+          throw new Error("图片选择器返回了非文件对象");
+        },
+      }),
+    );
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='pick-error']").text()).toContain(
+      "图片选择器返回了非文件对象",
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(useDraft().source).toBeNull();
+    expect((wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("「拍一张」走 capturePhoto（**不是** pickFromAlbum）——这条钉住接线没接错", async () => {
+    stubPlatform();
+    const pickFromAlbum = vi.fn(async () => null);
+    const capturePhoto = vi.fn(async () => null);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum, capturePhoto }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-camera']").trigger("click");
+    await flushPromises();
+
+    expect(capturePhoto).toHaveBeenCalledTimes(1);
+    expect(pickFromAlbum).not.toHaveBeenCalled();
   });
 });
