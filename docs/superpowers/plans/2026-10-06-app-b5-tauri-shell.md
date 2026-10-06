@@ -4177,6 +4177,19 @@ async function pickNative(source: "album" | "camera"): Promise<void> {
 **若 A 可用**（裸 `<input>` 在壳里能选图）⇒ **四处一起改，少一处就编译或权限不一致**：
 
 1. `src/services/platform/tauriDriver.ts` 的 `pickImageFile` 换成隐藏 input（**与 `pickWithHiddenInput` 同一条路**：`capture` 传 `null`），删掉 `plugin-dialog` 的 import 与 `dialog.open(...)`；
+
+   > ⚠️ **2026-10-06 修复轮补充（任务级审查 F1 之后必须有）**：隐藏 input 方案**不能只监听 `cancel`** ——
+   > `cancel` 事件**只有 Chrome 113+ 才有**，老 WebView 上用户取消后 **promise 永不结算** ⇒ `busy` 永真 ⇒
+   > **两个按钮永久禁用、input 节点永久留在 body**（这是壳的**主链路**，只有真机能暴露）。
+   > ⇒ 实现里必须有**结算兜底**：监听 `window` 的 `blur` → `focus`，**必须先见过一次 `blur`** 才认 `focus`
+   > （有的 WebView 在**打开瞬间会补发一次 `focus`**，只认 `focus` 会把「刚打开」误判成「已取消」），
+   > 且 `focus` 后**不立刻取消**、而是起一个宽限定时器（`PICKER_RETURN_GRACE_MS`）：用户其实选了文件时
+   > `change` 会先到并赢下结算 ✓。**三个出口（`change` / `cancel` / `click` 抛错）必须共用同一个 `detach()`**
+   > （摘掉两个窗口监听 + 清定时器），否则**跨次泄漏** ✗。**已知代价如实登记**：不支持 `cancel` 的设备上
+   > 取消后要等一个宽限期按钮才恢复；用户在系统相册里停很久再回来仍会被判成取消 —— 在「**永久卡死**」
+   > 与「**偶尔要重来一次**」之间**选了后者** ✓。
+   > 依据与实测：构建记录「平台交互事实」段 + 账本同名片（**这份兜底与探针页 L693 的取舍不同**：探针页
+   > 只监听 `cancel` ✓，因为它只是实验台；**生产驱动必须自己兜底** ✓）。
    **`plugin-fs` 与 `readFileAsBytes` 保留**（分享进入那条路还要读 `content://`）。
 2. `src-tauri/Cargo.toml` 删掉 `tauri-plugin-dialog = "2"` 与那句注释。
 3. `src-tauri/src/lib.rs` 删掉 **`.plugin(tauri_plugin_dialog::init())`** 这一行——**漏了它 `cargo check` 会直接红**（依赖没了但代码还在用），这正是「删依赖」最常被漏的第二步。
