@@ -115,8 +115,8 @@ E	关闭请求	（尚未触发）
 | # | 缺陷 | 根因（已确凿） | 状态 |
 |---|---|---|---|
 | 1 | **探针页画布自检必然失败**（挡住 C 的 base64 读数与整个 D） | `renderProbePng` 把画布整块涂成 `#3366cc` 后调用 `assertCanvasPainted`，而它的契约是「读回 `(2,2)` 的 1×1 像素、**不是不透明的白色即抛**」。读数里 `(2, 2) 读回 51,102,204,255` 与 `#3366cc` **逐位相同** ⇒ **谓词误用**，不是平台问题 | 修复轮：探针图改**白底 + 中央蓝块**（(2,2) 保持白）并保留自检 |
-| 2 | **启动图标是 Tauri 默认** | `src-tauri/icons/android/` **为空**，`gen/android` 的 mipmap 是 `npx tauri android init` 写的默认图标（mtime 11:13:10）——**因为计划的图标步骤排在 `android init` 之前** | 修复轮：init 之后重跑 `npx tauri icon`（`icons/android/` → 17 文件；mipmap 13:57:00 重写；hdpi 3524 B → 6208 B）；**计划步骤顺序已更正** |
-| 3 | **顶部被系统导航栏遮挡** | Android 窗口 insets 未处理（WebView 顶到最上沿） | 修复轮：按 Android 标准处理 insets（首选 Kotlin `WindowCompat.setDecorFitsSystemWindows`），报告须写明选了哪种、依据与判据 |
+| 2 | **启动图标是 Tauri 默认** | **`tauri icon` 在 `gen/android` 尚不存在时只写 `src-tauri/icons/android/`；随后 `npx tauri android init` 把自己的默认 Tauri 图标写进 `gen/android/app/src/main/res/mipmap-*`** —— 计划的图标步骤排在 `android init` **之前**，于是默认图标赢了。（实现者核对：gen 的 `xxxhdpi/ic_launcher.png` 是黄青双环 Tauri logo，`icons/android/` 的是我们的拼豆图，**哈希不同**。**控制者原先写的「`icons/android/` 为空」是错的**——那是控制者自己的命令没加 `-Recurse` 数出来的假 0，见 §4 第 14 条。） | 修复轮：`gen/android` 存在后重跑 `npx tauri icon`（16 个 mipmap 文件哈希由默认图标变为我们的图标、mtime 11:13:10 → 13:57:00，并新建 `mipmap-anydpi-v26/ic_launcher.xml` 与 `values/ic_launcher_background.xml`）；**计划步骤顺序已更正** |
+| 3 | **顶部被系统导航栏遮挡** | **`MainActivity.kt` 已有模板自带的 `enableEdgeToEdge()`，而没人消费 insets** ⇒ 内容被系统栏盖住。**关键平台事实**：`targetSdk = 37` + Android 15 起的行为变更 ⇒ targetSdk ≥ 35 的 app **强制 edge-to-edge**，`WindowCompat.setDecorFitsSystemWindows(true)` **是 no-op**（`windowOptOutEdgeToEdgeEnforcement` 对 targetSdk ≥ 36 也失效）⇒ **唯一正确做法是消费 insets**（`ViewCompat.setOnApplyWindowInsetsListener` 把 `systemBars` + `displayCutout` 加成 padding）。控制者简报里原写「首选 Kotlin 一行 setDecorFitsSystemWindows」**是错的，以实现者的判断为准** | 修复轮：走消费 insets 的路线；报告须写明「改了哪个 view、加了哪些 inset 类型、为什么」，并如实记录不确定性（**真机「顶部不再被遮挡」是唯一判据**）。**这条平台事实对产品 UI 同样成立，已要求写进计划** |
 
 **一条过程教训**：`assertCanvasPainted` 的误用**只有真机（真画布）才现形**——探针页用例用的是**假画布**，
 永远抓不到「真画布像素不符合帮手契约」✗。**用别人的断言帮手前先读它的契约**；假画布用例**不能**代替真机验证这类契约。
@@ -202,6 +202,13 @@ E	关闭请求	（尚未触发）
    当时改动**在暂存区**，`git diff` 为空 ⇒ 我据此怀疑「一份干净的 APK 被污染」，还专门立了承重问题去问实现者。
    **教训**：判「树有没有变」的**唯一权威口径是 `git status`（或 `git diff HEAD`）**；`git diff` 与 `git diff --cached` 各只看一半。
    （同类：本项目已记过「`git status --short <目录>` 会折叠未跟踪目录、要看清单得加 `--untracked-files=all`」。）
+14. **用 `Get-ChildItem <dir> -File` 数子目录里的文件——没加 `-Recurse`，数出假 0（2026-10-06）**：
+   我据此在账本、构建记录 §2.3 与派发简报里写下「**`src-tauri/icons/android/` 是空的（0 文件）**」——**不成立**：
+   实现者用 `git ls-files` 一查，那里有 **17 个已入库文件**（在 `13989c8` 就入库了），内容就是我们的拼豆图标。
+   那些文件在 **`mipmap-*/` 子目录**里 ⇒ 不加 `-Recurse` 当然是 0 ✗。**假事实还被写进了三处文档、并据此解释了根因** ✗。
+   修法：改用 `Get-ChildItem <dir> -Recurse -File`，或**先验一个目录到底有没有内容**（`git ls-files <dir> | Measure-Object`）。
+   **教训**：**数「某个目录下有多少文件」时，先问一句「要递归吗」**；计数的命令写错时，错的不是判断、而是**事实本身**——
+   而假事实会一路渗进文档与根因分析（本条就是活例）。
 
 ---
 
