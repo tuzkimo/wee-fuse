@@ -327,6 +327,30 @@ describe("useShareIntake", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("④c 「继续」之后仍然解码失败 ⇒ 提示条给原因、不落草稿、**暂存被释放**（不留一个必然再失败的按钮）", async () => {
+    // 这条钉住 `intake` 失败路径上的 `pending.value = null`：只清提示不清暂存的话，用户会看着一个
+    // 「继续」按钮，点下去必然再失败（同一张坏图解码两次结果一样）。口径按计划：失败即释放暂存。
+    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    setPlatform(spies.platform);
+    stubDecode({ decodeError: "unsupported" });
+    routeState.name = "editor";
+    const session = useProjectSession();
+    session.markDirty();
+
+    const wrapper = mountHost();
+    await flushPromises();
+    expect(wrapper.vm.share.pending.value).toBe(FILE);
+
+    session.reset();
+    await wrapper.vm.share.retry();
+    await flushPromises();
+
+    expect(wrapper.vm.share.message.value).toContain("图片解码失败");
+    expect(useDraft().source).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+    expect(wrapper.vm.share.pending.value).toBeNull();
+  });
+
   it("⑤ 编辑器有未保存改动 ⇒ 不 adopt、不导航、暂存 + 中文原因；点「继续」后重试成功", async () => {
     const spies = inboxSpies({ supported: true, take: async () => FILE });
     setPlatform(spies.platform);
