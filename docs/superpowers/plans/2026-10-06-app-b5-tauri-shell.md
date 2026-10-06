@@ -3795,6 +3795,273 @@ git commit -m "feat(app): /lab/shell 壳能力探针页、Tauri 驱动、Rust �
 
 ---
 
+### 任务 3：相册选图接线（`PickPage` 的 `native-picker` 分支 + 判据 A 的处置）
+
+**前置**：任务 2 的 spike 已跑完，**判据 A 的读数已写进 spike 报告**。本任务的步骤 4 是**条件步骤**，按那读数走。
+
+**交付物**：壳里（`kind === "native-picker"`）的用户点了「从相册选一张」就能走完「选图 → 解码 → 落草稿 → 进选区页」；浏览器那条老路**一行不动**。
+
+**文件：**
+- 修改：`src/views/PickPage.vue`、`src/views/__tests__/PickPage.test.ts`（**只追加**用例）
+- **仅当判据 A 可用**：修改 `src/services/platform/tauriDriver.ts`（`pickImageFile` 换成隐藏 input）、`src-tauri/Cargo.toml`（删 `tauri-plugin-dialog`）、`src-tauri/src/lib.rs`（**删掉 `.plugin(tauri_plugin_dialog::init())` 那一行**）、`src-tauri/capabilities/default.json`（删 `dialog:allow-open`）
+
+- [ ] **步骤 1：抄下判据 A 的读数与结论（不许凭印象）**
+
+从 spike 报告里把 **A 块的整段读数**贴进本次任务的报告开头，并写清结论：**A 可用** 还是 **A 不可用**（判定规则见计划任务 2 的判定表：A 能唤出系统选择器且「解码」是 `宽×高` ⇒ 可用）。
+
+- [ ] **步骤 2：写 `PickPage` 的失败测试（`native-picker` 分支）**
+
+在 `src/views/__tests__/PickPage.test.ts` **末尾追加**（既有 8 条一字不动）：
+
+```ts
+/**
+ * `native-picker` 分支（壳里）：两个按钮 + 复用同一条「解码 → 落草稿 → 进选区页」。
+ *
+ * **为什么这些用例必须注入假平台**：分支条件来自 `getPlatform().imagePicking.kind`（浏览器实现是
+ * `"file-input"`），所以壳那一支在默认环境下**根本不会渲染**。注入假平台是唯一能执行到它的办法，
+ * 也正是 `setPlatform` 这个注入点存在的理由（规格 §4.2）。
+ *
+ * **不测的**：真实选择器 / 相机（规格 §9.4）——那两支的判别力在人工清单与 spike 读数里。
+ */
+function fakeShellPlatform(overrides: {
+  canCapture: boolean;
+  pickFromAlbum?: () => Promise<File | null>;
+  capturePhoto?: () => Promise<File | null>;
+}): Platform {
+  return {
+    ...browserPlatform,
+    imagePicking: {
+      kind: "native-picker",
+      canCapture: overrides.canCapture,
+      pickFromAlbum: overrides.pickFromAlbum ?? (async () => null),
+      capturePhoto: overrides.capturePhoto ?? (async () => null),
+    },
+  };
+}
+
+describe("PickPage（native-picker 分支）", () => {
+  it("渲染「从相册选一张」；canCapture 为真时另有「拍一张」，为假时没有", () => {
+    setPlatform(fakeShellPlatform({ canCapture: true }));
+    const withCamera = mount(PickPage);
+    expect(withCamera.find("[data-testid='pick-album']").exists()).toBe(true);
+    expect(withCamera.find("[data-testid='pick-camera']").exists()).toBe(true);
+    // 浏览器那条老路（可见 input + 下一步）在这一支下**不该出现**
+    expect(withCamera.find("[data-testid='file-input']").exists()).toBe(false);
+
+    setPlatform(fakeShellPlatform({ canCapture: false }));
+    const withoutCamera = mount(PickPage);
+    expect(withoutCamera.find("[data-testid='pick-album']").exists()).toBe(true);
+    expect(withoutCamera.find("[data-testid='pick-camera']").exists()).toBe(false);
+  });
+
+  it("点「从相册选一张」⇒ 用 pickFromAlbum 拿到的文件走完解码与落草稿，并跳选区页", async () => {
+    const platform = stubPlatform({ width: 800, height: 600 });
+    const picked = new File([new Uint8Array([1, 2, 3, 4])], "从相册.png", { type: "image/png" });
+    const pickFromAlbum = vi.fn(async () => picked);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(pickFromAlbum).toHaveBeenCalledTimes(1);
+    const draft = useDraft();
+    expect(draft.source?.name).toBe("从相册.png");
+    expect(toRaw(draft.source)?.blob).toBe(picked);
+    expect(draft.sourceSize).toEqual({ width: 800, height: 600 });
+    expect(platform.canvases).toHaveLength(1);
+    expect(draft.preview).toBe(platform.canvases[0]);
+    expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
+    expect(push).toHaveBeenCalledWith({ name: "setup" });
+  });
+
+  it("取消（返回 null）⇒ 不报错、不跳转、草稿不动", async () => {
+    stubPlatform();
+    setPlatform(fakeShellPlatform({ canCapture: false, pickFromAlbum: async () => null }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='pick-error']").exists()).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+    expect(useDraft().source).toBeNull();
+  });
+
+  it("选择器抛错 ⇒ 显示中文原因、不跳转、不留半截草稿；按钮恢复可用", async () => {
+    stubPlatform();
+    setPlatform(
+      fakeShellPlatform({
+        canCapture: false,
+        pickFromAlbum: async () => {
+          throw new Error("图片选择器返回了非文件对象");
+        },
+      }),
+    );
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='pick-error']").text()).toContain(
+      "图片选择器返回了非文件对象",
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(useDraft().source).toBeNull();
+    expect((wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("「拍一张」走 capturePhoto（**不是** pickFromAlbum）——这条钉住接线没接错", async () => {
+    stubPlatform();
+    const pickFromAlbum = vi.fn(async () => null);
+    const capturePhoto = vi.fn(async () => null);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum, capturePhoto }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-camera']").trigger("click");
+    await flushPromises();
+
+    expect(capturePhoto).toHaveBeenCalledTimes(1);
+    expect(pickFromAlbum).not.toHaveBeenCalled();
+  });
+});
+```
+
+（这份用例需要 `beforeEach` 里 `setPlatform(browserPlatform)` 的复位与 `afterEach` 的 `setPlatform(browserPlatform)`——**照 `src/services/platform/__tests__/browserPlatform.test.ts` 的写法**；若既有 `afterEach` 里没有复位，就在本文件里加一行，**不改既有断言**。）
+
+运行：`npx vitest run src/views/__tests__/PickPage.test.ts`
+预期：**红**（`pick-album` 找不到）。
+
+- [ ] **步骤 3：实现 `PickPage` 的 `native-picker` 分支**
+
+`src/views/PickPage.vue` 的 `<script setup>` 里加（既有 `pick()` / `resume()` 一行不动）：
+
+```ts
+import { getPlatform } from "@/services/platform/capabilities";
+
+/**
+ * 平台决定的入口形态（规格 §5.1）：浏览器 = 页面里那个可见 input（老路，一行不动）；
+ * 壳里 = 两个按钮（`native-picker`）。**判断只读一次**：`kind` / `canCapture` 都是同步字段
+ * （规格 §4.1），装配期读出来存进常量，避免模板里反复调 `getPlatform()`。
+ */
+const platform = getPlatform();
+const useNativePicker = platform.imagePicking.kind === "native-picker";
+const canCapture = platform.imagePicking.canCapture;
+
+/**
+ * 壳里的一条路：取图（相册或拍照）→ 解码 → 落草稿 → 进选区页。
+ *
+ * **与 `pick()` 共用同一条后续**（`loadImageSource` → `adoptImage` → `push setup`）：两条入口的差别
+ * 只在「怎么拿到 `File`」，**解码与草稿语义必须完全一致**——这正是本任务存在的理由。
+ * **取消是正常操作**（`null`）⇒ 静默返回，不写 `error`；**抛错才提示**，且不留半截草稿。
+ * `busy` 闸门与 `pick()` 同源（同一 tick 连点两次只处理一次）。
+ */
+async function pickNative(source: "album" | "camera"): Promise<void> {
+  if (busy.value) return;
+  error.value = "";
+
+  busy.value = true;
+  try {
+    const file =
+      source === "album"
+        ? await platform.imagePicking.pickFromAlbum()
+        : await platform.imagePicking.capturePhoto();
+    if (file === null) return;
+
+    const loaded = await loadImageSource(file);
+    draft.adoptImage({
+      source: { blob: loaded.blob, type: loaded.type, name: loaded.name },
+      sourceSize: loaded.sourceSize,
+      preview: loaded.preview,
+    });
+    await router.push({ name: "setup" });
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+```
+
+模板：在 `<section class="mt-6 space-y-6">` 内部、把现有那个 `<label>`（可见 input）与「下一步」按钮**包进 `v-if="!useNativePicker"`**，并加一支 `v-else`：
+
+```vue
+      <template v-if="useNativePicker">
+        <button
+          data-testid="pick-album"
+          class="block min-h-14 w-full rounded bg-slate-900 px-8 text-lg text-white disabled:opacity-50"
+          :disabled="busy"
+          @click="pickNative('album')"
+        >
+          {{ busy ? "正在读取…" : "从相册选一张" }}
+        </button>
+        <button
+          v-if="canCapture"
+          data-testid="pick-camera"
+          class="mt-3 block min-h-14 w-full rounded border border-slate-300 px-8 text-lg disabled:opacity-50"
+          :disabled="busy"
+          @click="pickNative('camera')"
+        >
+          拍一张
+        </button>
+      </template>
+      <template v-else>
+        <!-- 浏览器那条老路：可见 input + 下一步。**一个字都不改**（既有 8 条用例钉着它）。 -->
+        …原有 label 与按钮原样搬进来…
+      </template>
+```
+
+「继续上次的选区」按钮与错误条**两支共用**，放在 `template` 之外，位置不变。
+
+运行：`npx vitest run src/views/__tests__/PickPage.test.ts`（新 5 条 + 既有 8 条全绿）+ `npm run test` + `npm run build`
+
+- [ ] **步骤 4：条件步骤——按判据 A 的读数处置 dialog 依赖（**这一步最容易漏**）**
+
+**若 A 可用**（裸 `<input>` 在壳里能选图）⇒ **四处一起改，少一处就编译或权限不一致**：
+
+1. `src/services/platform/tauriDriver.ts` 的 `pickImageFile` 换成隐藏 input（**与 `pickWithHiddenInput` 同一条路**：`capture` 传 `null`），删掉 `plugin-dialog` 的 import 与 `dialog.open(...)`；
+   **`plugin-fs` 与 `readFileAsBytes` 保留**（分享进入那条路还要读 `content://`）。
+2. `src-tauri/Cargo.toml` 删掉 `tauri-plugin-dialog = "2"` 与那句注释。
+3. `src-tauri/src/lib.rs` 删掉 **`.plugin(tauri_plugin_dialog::init())`** 这一行——**漏了它 `cargo check` 会直接红**（依赖没了但代码还在用），这正是「删依赖」最常被漏的第二步。
+4. `src-tauri/capabilities/default.json` 删掉 `"dialog:allow-open"`。
+
+**验收（写进报告）**：
+```powershell
+Select-String -Path src-tauri -Pattern "plugin-dialog" -Recurse | ForEach-Object { $_.Path }   # 期望零命中
+Select-String -Path src-tauri -Pattern "dialog" -Recurse | ForEach-Object { $_.Path }          # 期望只剩注释/无关词
+npx vitest run src/services/platform/__tests__/tauriPlatform.test.ts                            # 期望 8 passed
+cargo check --manifest-path src-tauri/Cargo.toml                                                # 期望 exit 0
+```
+
+**若 A 不可用** ⇒ **本步骤是空操作**（当前 dialog 分支就是正确实现）；在报告里写明「B5-R2 已发生、已按 dialog 降级」，并**保留**那三处依赖与权限。
+
+- [ ] **步骤 5：变异（红数不许预估）**
+
+| ID | 改哪一行 | 期望红 |
+|---|---|---|
+| M19 | `PickPage.vue` 里把 `pickNative("album")` 接到 `capturePhoto()` | 「点『从相册选一张』…」会转而调 `pickFromAlbum` 的断言 + 「拍一张走 capturePhoto」那条 |
+| M20 | `pickNative` 删掉 `if (file === null) return;`（取消时继续往下走） | 「取消 ⇒ 不报错、不跳转、草稿不动」 |
+| M21 | `pickNative` 把 `busy.value = true` 那两行删掉 | 新增用例里若有 busy 相关断言（**本任务没写**）⇒ 如实记：**这条在本任务无靶子**，busy 闸门的判别力由既有那条「同一 tick 连点两次」用例承担 |
+
+- [ ] **步骤 6：三跑 + Commit**
+
+```powershell
+npm run test          # 贴 Test Files / Tests 两行，并给新的闭合分解式
+$env:TZ="UTC"; npm run test; Remove-Item Env:\TZ
+npm run build
+```
+
+```powershell
+git add src/views/PickPage.vue src/views/__tests__/PickPage.test.ts src/services/platform/tauriDriver.ts src-tauri
+git commit -m "feat(app): 壳里的相册选图入口（native-picker 分支）与按判据 A 的依赖处置"
+```
+
+（若步骤 4 是空操作，`git add` 里去掉 `tauriDriver.ts` 与 `src-tauri`。）
+
+---
+
 ### 任务 8：收尾（账目 / 构建记录 / 文档回写 / 人工清单回填）
 
 **交付物**：一份能交给下一个人接着做的仓库状态——账目对得上、构建记录写清「哪些是真验过的、哪些没有」、上游文档同步、人工清单逐条有结果。
