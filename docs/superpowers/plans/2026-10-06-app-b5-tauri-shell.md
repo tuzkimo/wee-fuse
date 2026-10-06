@@ -291,7 +291,15 @@ import { requireSavableBlob } from "./platform/guards";
 `URL.createObjectURL(safe.blob)`，`setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS)` 里的 `url` 不变）。
 
 运行：`npx vitest run src/services/__tests__/exporter.test.ts`
-预期：**29 passed**（与改动前逐字相同）。**这一跑就是「既有断言一行未改」的证据**：如果它不是 29 passed，先停下查清楚，不要改那份测试。
+预期：**30 passed**（与改动前逐字相同）。**这一跑就是「既有断言一行未改」的证据**：如果它不是 30 passed，先停下查清楚，不要改那份测试。
+
+> **2026-10-06 控制者实测更正（写计划时抄错了数字）**：本节原先写「预期 29 passed」，是从 B4 账本
+> **任务 3 完成时**那条记录（`- 交付：… __tests__/exporter.test.ts（29 用例）`）抄来的；B4 收尾的
+> **修复波**后来又往这个文件加了 1 条，最终是 **30**。控制者自己跑 `npx vitest run src/services/__tests__/exporter.test.ts`
+> 得 `Test Files 1 passed / Tests 30 passed`，并用 `git log 8b4fa6c..HEAD -- src/services/__tests__/exporter.test.ts`
+> 确认该文件在本轮**一次都没被改**（0 条提交）⇒ **30 是文件真值、29 是过期读数**。
+> **教训**：跨轮抄数字必须回原始清单重数——B4 账本里记 29 的那一行是**当时的证据**，不是最终值
+> （README 自己写过「978 与 987 两代读数，那是当时的证据，保留不改」）。
 
 - [ ] **步骤 5：写 `capabilities.ts` 的失败测试**
 
