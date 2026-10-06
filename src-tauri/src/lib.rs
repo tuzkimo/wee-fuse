@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::sync::Mutex;
 // `Emitter` 只在移动端的 `app.emit("opened", …)` 处用到，而 **CI 编的是桌面 target**
 // （规格 §6.3：`cargo check` 跑在 ubuntu 上）⇒ 无条件 import 会在桌面 target 上产生
@@ -30,48 +31,61 @@ fn take_opened_uris(app: tauri::AppHandle) -> Vec<String> {
     std::mem::take(&mut *guard)
 }
 
-/// 把 PNG 的**原始字节体**写进系统相册；返回**实际写入的字节数**（JS 侧拿它做端到端核对）。
+/// 前端交上来的请求体：**文件名 + base64 的图像字节**。
 ///
-/// body 是一段**自描述信封**（规格 §5.4.1 + 片段裁定 3）：
-/// `[u32 LE 文件名字节数][文件名 UTF-8][图像字节]`。
-/// 为什么不把文件名放进 `invoke` 的 `options.headers`：HTTP header 值域是 ASCII，而文件名是
-/// 中文；信封把「名字」与「字节」分成两段、可逐条校验，也不依赖任何未经核实的 API。
+/// **为什么不是原始字节体（`InvokeBody::Raw`）**——2026-10-06 任务 2 修复轮 F1，由任务级审查者引
+/// 厂商源码证实，`tauri-2.12.1/src/ipc/mod.rs:54-56` 原文：
 ///
-/// 实现顺序：**先校验信封、再落临时文件、再交给 Android 插件、最后无条件删临时文件**。
-/// 临时文件是「字节要过一段 JSON 到 Kotlin」与「不要把字节塞进 JSON」的折中：Kotlin 只收一个路径。
+/// > ### Android
+/// > On Android, [InvokeBody::Raw] is not supported. The enum will always contain [InvokeBody::Json].
+/// > When targeting Android Devices, consider passing raw bytes as a base64 String, which is still
+/// > more efficient than passing them as a number array in [InvokeBody::Json]
+///
+/// ⇒ Android 上 `Uint8Array` 的请求体走 JSON，`InvokeBody::Raw` **永远拿不到**；上一版按计划写的
+/// 「原始字节体信封」在真机上必然命中 `保存失败：需要原始字节体` 那条 Err（判据 C 与 D 必红，
+/// 三层核对在任何环境都跑不到）。厂商原文同时劝退「数字数组」（4 倍膨胀）⇒ 本仓走 **base64**
+/// （1.37 倍），这正是规格 **B5-R4 预登记的退路**，现在正式启用。
+///
+/// 字段名与前端 `tauriDriver.saveToAlbum` 的 `{ request: { filename, dataBase64 } }` 逐字对应
+/// （`camelCase`；外层 `request` 是命令参数名，内层由 serde 转）。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveRequest {
+    filename: String,
+    /// 图像字节的标准 base64（`+` / `/` 字母表、`=` 填充，与前端 `encodeBase64` 同一口径）。
+    data_base64: String,
+}
+
+/// 把 PNG 字节写进系统相册；返回**实际写入的字节数**（JS 侧拿它做端到端核对）。
+///
+/// 请求体是 `SaveRequest`（base64 + 文件名，理由见它的 JSDoc）。
+///
+/// 实现顺序：**先校验文件名、再解 base64、再落临时文件、再交给 Android 插件、最后无条件删临时文件**。
+/// 临时文件是「字节要过一段 JSON 到 Kotlin」与「不要把字节塞进那段 JSON」的折中：Kotlin 只收一个路径。
 #[tauri::command]
-fn save_image_to_album(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<usize, String> {
-    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err("保存失败：需要原始字节体".into());
-    };
-    if body.len() < 4 {
-        return Err("保存失败：信封太短（至少要有 4 字节的文件名长度）".into());
-    }
-    let name_len = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
-    // `checked_add`：`name_len` 来自报文，直接相加在 32 位设备上可能溢出后回绕成一个「合法」的小下标。
-    let bytes_start = 4usize
-        .checked_add(name_len)
-        .ok_or("保存失败：文件名字节数溢出")?;
-    if bytes_start > body.len() {
-        return Err("保存失败：文件名字节数越界".into());
-    }
-    let filename = std::str::from_utf8(&body[4..bytes_start])
-        .map_err(|_| "保存失败：文件名不是合法 UTF-8")?
-        .to_string();
+fn save_image_to_album(app: tauri::AppHandle, request: SaveRequest) -> Result<usize, String> {
+    use base64::Engine as _;
+
+    let filename = request.filename;
     if filename.trim().is_empty() {
         return Err("文件名不能为空".into());
     }
-    let image = &body[bytes_start..];
+    let image = base64::engine::general_purpose::STANDARD
+        .decode(request.data_base64.as_bytes())
+        // **中文原因**（`{error}` 是 base64 crate 的英文详情，原样附在后面，不吞）。
+        .map_err(|error| format!("保存失败：base64 解码失败（{error}）"))?;
     if image.is_empty() {
         return Err("导出内容为空（blob 大小为 0）".into());
     }
+    // **判据 C 的证据行**（`/lab/shell` 的 C 块与操作卡里逐字引用同一串；`{}` 处是真机上的实际数字）。
+    println!("save_image_to_album：收到 base64 解码后 {} 字节", image.len());
 
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let temp = std::env::temp_dir().join(format!("weefuse-{stamp}.png"));
-    std::fs::write(&temp, image).map_err(|e| format!("写临时文件失败：{e}"))?;
+    std::fs::write(&temp, &image).map_err(|e| format!("写临时文件失败：{e}"))?;
 
     let result = save_with_platform(&app, &temp, &filename);
     // **无条件删除**：成功失败都删（临时文件不该留在设备上）。
@@ -80,6 +94,7 @@ fn save_image_to_album(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) 
     // **第三层核对**（规格 §5.4.1 声称的「三层联动」在这里落地）：拿 Kotlin 报的**实际写入字节数**
     // 与本次图像长度比。Rust 自己读到的长度是 `image.len()`，若只返回它，链路上任何截断都发现不了
     // （2026-10-06 控制者核对时发现计划早先正是这么写的 ⇒ 规格那句话当时是**假的**）。
+    // 改走 base64 之后这条核对**才真的可达**：`{}` 那一层以前是 `InvokeBody::Raw` 的 else 分支。
     let written = result?;
     if written != image.len() {
         return Err(format!(
@@ -127,6 +142,10 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { urls } = event {
+                // **判据 C 的证据行**（`/lab/shell` 的 C 块与操作卡里逐字引用同一串；
+                // `{}` 处是真机上的实际数字）。它证明「分享进来的 intent 真的到了 Rust」——
+                // 探针页读到的冷启动 / 热启动文件名与字节数是它的下游。
+                println!("RunEvent::Opened：收到 {} 个 URI", urls.len());
                 // **`state` 必须先绑成 `let`**（2026-10-06 任务 2 实跑 Android target 时抓到的
                 // 计划缺陷）：`app.state::<OpenedUris>()` 返回的是一个**临时值**，直接
                 // `app.state::<OpenedUris>().0.lock()` 会在语句结束时把它释放掉，而 `guard`

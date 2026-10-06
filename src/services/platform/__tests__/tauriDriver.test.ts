@@ -1,0 +1,106 @@
+import { describe, expect, it } from "vitest";
+import { encodeBase64 } from "../tauriDriver";
+
+/**
+ * `tauriDriver.ts` 里**唯一能在 CI 里执行**的东西：纯函数 `encodeBase64`（规格 B5-R4 的退路）。
+ *
+ * **为什么单独一个文件、而不是塞进 `tauriPlatform.test.ts`**：那个文件测的是「驱动 → 能力」的适配；
+ * 而 `encodeBase64` 与 Tauri 毫无关系（它不 import 任何包），它是**整条保存链的地基**——
+ * 手写 base64 最容易在补位（`=` 的个数）与 `% 3` 边界上「看起来对、结果错」，错一个字符的后果是
+ * 「base64 解码失败」或者更糟的**静默写入错误字节**（相册里的文件大小与读数对不上）。
+ * 所以它由**已知答案向量（known-answer）**逐字节钉住，而不是「编码再解码得到原样」——
+ * 往返对**对称的错误**是瞎的（例如把 `+` 与 `/` 整体对调、或者在两端同时用错填充）。
+ *
+ * **本文件不构造任何 Tauri 对象**：`tauriDriver.ts` 的包全是动态 `import()`，静态 import 它
+ * 不会在收集阶段崩（这也是 G1 闸门只扫非测试文件的原因之一）。
+ */
+
+/** 用 UTF-8 字节建数组（`TextEncoder` 是 ECMAScript 标准内置，与实现同一条口径）。 */
+function utf8(text: string): number[] {
+  return Array.from(new TextEncoder().encode(text));
+}
+
+/** 跨块向量用的三字节图案：`[0x00, 0x10, 0x83]` ⇒ base64 恰好是 `"ABCD"`（所以期望值是**解析解**）。 */
+const ABCD_PATTERN = [0x00, 0x10, 0x83];
+
+/**
+ * 造 `length` 个字节：前 `floor(length/3)` 组是 `ABCD_PATTERN`，余下的 1–2 字节也取该图案的前缀。
+ *
+ * **不能写成 `repeatedPattern(length / 3)`**：`length` 不是 3 的倍数时它不是整数，
+ * `new Uint8Array(k * 3)` 的浮点结果与期望可能差 1，最后那次 `set` 会越界抛 `RangeError`
+ * （2026-10-06 修复轮第一次跑就踩到了；它是**测试自己的**缺陷，不是实现的）。
+ */
+function patternedBytes(length: number): Uint8Array {
+  const bytes = new Uint8Array(length);
+  for (let i = 0; i < length; i += 1) bytes[i] = ABCD_PATTERN[i % ABCD_PATTERN.length]!;
+  return bytes;
+}
+
+/** 把 `length` 个图案字节的**解析解**写出来（`% 3` 的余数决定尾巴与填充）。 */
+function expectedForLength(length: number): string {
+  const full = Math.floor(length / 3);
+  const remainder = length % 3;
+  const tail = remainder === 0 ? "" : remainder === 1 ? "AA==" : "ABA=";
+  return "ABCD".repeat(full) + tail;
+}
+
+/**
+ * 已知答案向量：**固定输入 → 固定期望输出**（期望值由 `Buffer.from(…).toString("base64")` 离线算出后
+ * 逐字写死在这里——`Buffer` **不参与本文件**，它不是实现也不是运行期判据）。
+ */
+const KNOWN_ANSWERS: readonly { readonly note: string; readonly bytes: number[]; readonly expected: string }[] = [
+  { note: "Man（3 字节整除 ⇒ 无填充）", bytes: utf8("Man"), expected: "TWFu" },
+  { note: "Ma（3n+2 ⇒ 一个 =）", bytes: utf8("Ma"), expected: "TWE=" },
+  { note: "M（3n+1 ⇒ 两个 ==）", bytes: utf8("M"), expected: "TQ==" },
+  { note: "空数组 ⇒ 空串", bytes: [], expected: "" },
+  { note: "0x00 单字节 ⇒ 两个 =", bytes: [0x00], expected: "AA==" },
+  { note: "0xff 单字节（确认不是当字符串处理）", bytes: [0xff], expected: "/w==" },
+  { note: "0x00 0xff（一个 =）", bytes: [0x00, 0xff], expected: "AP8=" },
+  { note: "0x00 0x10（3n+2 且含控制字符）", bytes: [0x00, 0x10], expected: "ABA=" },
+  {
+    note: "24 字节 ASCII（覆盖内部循环不只在首块正确，且无填充）",
+    bytes: utf8("012345678901234567890123"),
+    expected: "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIz",
+  },
+];
+
+describe("encodeBase64（已知答案向量）", () => {
+  for (const testCase of KNOWN_ANSWERS) {
+    it(`${testCase.note} ⇒ ${testCase.expected === "" ? "（空串）" : testCase.expected}`, () => {
+      expect(encodeBase64(new Uint8Array(testCase.bytes))).toBe(testCase.expected);
+    });
+  }
+
+  /**
+   * **跨块边界**（规格要求：有分块逻辑就必须测边界）。
+   *
+   * `encodeBase64` 的块大小是 32768 字节；下面每一档的期望值都是**解析解**
+   * （图案每 3 字节 ⇒ `"ABCD"`，余 0 / 1 / 2 字节分别 ⇒ 无填充 / `"AA=="` / `"ABA="`），
+   * 所以它同时钉住了「块没被丢」「块没被重复」「块顺序没被打乱」——全零向量做不到最后这一条。
+   */
+  const CHUNK = 32768;
+  const boundaries: readonly { readonly note: string; readonly bytes: number }[] = [
+    { note: "恰好一个块（32768 = 3×10922 + 2）", bytes: CHUNK },
+    { note: "块 + 1（32769 = 3×10923）", bytes: CHUNK + 1 },
+    { note: "块 + 2（32770 = 3×10923 + 1）", bytes: CHUNK + 2 },
+    { note: "块 + 3（32771 = 3×10923 + 2）", bytes: CHUNK + 3 },
+    { note: "块 + 4（32772 = 3×10924）", bytes: CHUNK + 4 },
+    { note: "块 − 2（32766 = 3×10922，最后一个完整块内）", bytes: CHUNK - 2 },
+  ];
+
+  for (const testCase of boundaries) {
+    it(`跨块边界：${testCase.note}`, () => {
+      const expected = expectedForLength(testCase.bytes);
+      const encoded = encodeBase64(patternedBytes(testCase.bytes));
+      expect(encoded).toBe(expected);
+      // 长度单独断言：失败时一眼看出是「截断」还是「内容错位」。
+      expect(encoded.length).toBe(expected.length);
+    });
+  }
+
+  it("3×1024±1 的 % 3 边界（同一套图案，逐档对上解析解）", () => {
+    for (const length of [3 * 1024 - 1, 3 * 1024, 3 * 1024 + 1]) {
+      expect(encodeBase64(patternedBytes(length))).toBe(expectedForLength(length));
+    }
+  });
+});

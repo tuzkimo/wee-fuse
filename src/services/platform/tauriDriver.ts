@@ -79,6 +79,43 @@ let pending: Promise<TauriDriver> | null = null;
 export const CAPTURE_SUPPORTED = true;
 
 /**
+ * 把字节编成标准 base64（`+` / `/` 字母表、`=` 填充）——**全仓唯一一份 base64 口径**。
+ *
+ * **为什么不用 `Array.from(bytes)` 直接交给 `invoke`**：Tauri 2 在 Android 上不支持
+ * `InvokeBody::Raw`（厂商原文逐字见下方 `saveToAlbum` 的注释），字节只能走 JSON；而「数字数组」
+ * 是 **4 倍**膨胀（`[137,80,78,71,…]`），base64 是 **1.37 倍** —— 厂商原文也明确劝退数字数组。
+ *
+ * **为什么分块**：一张施工图最大 ≈64 MB（B4 规格 §15）。一次性 `String.fromCharCode(...bytes)`
+ * 会把六千多万个实参压进调用栈（`RangeError: Maximum call stack size exceeded`）。
+ * 这里每块 `CHUNK_BYTES` 个字节取一次 `String.fromCharCode`，最后对拼起来的二进制串做**一次**
+ * `btoa`（`btoa` 本身不展开参数，可以吃下整串）。
+ *
+ * **消费者**：本文件的 `createDriver().saveToAlbum`（唯一生产消费者）与
+ * `views/ShellProbePage.vue` 的 C 块读数——后者要如实报出「请求体是 base64 字符串、长度 N」，
+ * 而**不许在页面里写第二份编码公式**（本项目记账过的形态：同名不同义的量各自算一遍）。
+ *
+ * **字母表与填充（与 Rust 侧逐字同口径）**：标准字母表 `A–Z a–z 0–9 + /`、填充 `=`（不用
+ * URL-safe 的 `-` / `_`、不省略填充），与 `src-tauri/src/lib.rs` 的
+ * `base64::engine::general_purpose::STANDARD` 一致。`btoa` 的语义正好是这一套（`btoa` 的入参是
+ * 「每字符一字节」的二进制串，所以上面先把字节铺成 `String.fromCharCode` 的串）。
+ *
+ * **为什么不用 `Uint8Array.prototype.toBase64`**：它是 TC39 的 stage-3 提案
+ * （`Uint8Array.fromBase64` / `toBase64`），**本仓 TypeScript 的 lib（`ES2022` + `DOM`）里没有这个
+ * 方法** ⇒ 直接写会 `vue-tsc` 报 TS2339；而目标 Android WebView 上到底有没有这个 API
+ * **本轮未验**（未验证面已登记）。两条理由叠加 ⇒ 手写，并由
+ * `__tests__/tauriDriver.test.ts` 的**已知答案向量**逐字节钉住（含补位与 `% 3` 边界、
+ * 以及 32768 字节分块边界前后的 6 档）。
+ */
+export function encodeBase64(bytes: Uint8Array): string {
+  const CHUNK_BYTES = 32768;
+  const parts: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
+    parts.push(String.fromCharCode(...bytes.subarray(offset, offset + CHUNK_BYTES)));
+  }
+  return btoa(parts.join(""));
+}
+
+/**
  * 用隐藏 `<input type=file>` 取图；`capture` 非空时带上 `capture` 属性（拍照那一条路）。
  *
  * **取消 = `null`**（正常操作，不许抛错）。**「一直没有 change」不当作失败**：若真机上取消后按钮永久
@@ -182,21 +219,30 @@ async function createDriver(): Promise<TauriDriver> {
       return fs.readFile(uri);
     },
     async saveToAlbum(bytes, filename) {
-      // **自描述信封**（片段裁定 3）：body = `[u32 LE 文件名字节数][文件名 UTF-8][图像字节]`。
+      // **请求体形态 = JSON 对象 `{ filename, dataBase64 }`**（不是原始字节体）。
       //
-      // **为什么不把文件名放进 `invoke` 的 `options.headers`**：HTTP header 的值域是 ASCII，
-      // 而 `exportFilename()` 产出的是中文名（「小猫-施工图-r1c1.png」）；即便 `encodeURIComponent`
-      // 能把它绕成 ASCII，也等于把「文件名的编码」塞进 header 解析里，还要赌 `invoke` 的第三个
-      // 参数支持 `headers`。信封把两件事分开、可逐条校验，且**不依赖任何未经核实的 API**。
-      const nameBytes = new TextEncoder().encode(filename);
-      const body = new Uint8Array(4 + nameBytes.length + bytes.length);
-      new DataView(body.buffer).setUint32(0, nameBytes.length, true);
-      body.set(nameBytes, 4);
-      body.set(bytes, 4 + nameBytes.length);
-
-      const written = await core.invoke<number>("save_image_to_album", body);
+      // **为什么不是 `InvokeBody::Raw`**（2026-10-06 任务 2 修复轮 F1，审查者引厂商源码证实；
+      // `tauri-2.12.1/src/ipc/mod.rs:54-56` 原文）：
+      //
+      // > ### Android
+      // > On Android, [InvokeBody::Raw] is not supported. The enum will always contain [InvokeBody::Json].
+      // > When targeting Android Devices, consider passing raw bytes as a base64 String, which is still
+      // > more efficient than passing them as a number array in [InvokeBody::Json]
+      //
+      // ⇒ Android 上 `Uint8Array` 的请求体走 JSON，`InvokeBody::Raw` **永远拿不到**：上一版按计划写的
+      // 「自描述信封」（`[u32 LE 名字长度][名字][字节]`）在真机上必然命中 Rust 的
+      // `保存失败：需要原始字节体` 那条 Err ⇒ 判据 C 的「原始字节体」与判据 D 必红，三层字节核对
+      // 在任何环境都跑不到。这正是规格 **B5-R4 预登记的退路（base64）**，现在正式启用。
+      // 厂商原文同时劝退「数字数组」（4 倍膨胀）⇒ 走 base64（1.37 倍，分块编码见 `encodeBase64`）。
+      //
+      // 字段名与 Rust 侧 `SaveRequest { filename, data_base64 }`（`rename_all = "camelCase"`）逐字对应；
+      // 外层 `request` 是命令的参数名。
+      const written = await core.invoke<number>("save_image_to_album", {
+        request: { filename, dataBase64: encodeBase64(bytes) },
+      });
       // **端到端字节核对**：Rust 返回它真正交给相册的字节数，不等即抛。这是这条桥唯一能在真机上
       // 证明自己没被截断的手段（判据 C/D 的读数里那句「端到端一致（N 字节）」就是它）。
+      // **改走 base64 之后它才真的可达**——以前那一层根本没走到。
       if (written !== bytes.length) {
         throw new Error(`相册写入字节数不一致：期望 ${bytes.length}，实际 ${written}`);
       }

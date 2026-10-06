@@ -234,7 +234,11 @@ describe("/lab/shell 探针页", () => {
     expect(save).toHaveBeenCalledTimes(1);
     const readingC = wrapper.get('[data-testid="reading-c"]').text();
     expect(readingC).toContain(`冷启动：相册图片.png / ${PNG_HEAD.length} 字节 / image/png`);
-    expect(readingC).toContain("原始字节体：端到端一致（4 字节，探针图）");
+    // ★ 请求体形态（2026-10-06 修复轮 F1）：字段名从 `rawBody` 改成 `requestBody`，读数如实写
+    // 「图像 N 字节 → base64 M 字符」。4 字节（`89 50 4E 47`）的 base64 是 **8** 个字符
+    // （`iVBORw==`，一个 `=`）——这是补位口径在页面读数上的唯一一道可见证据，所以写死数字。
+    expect(readingC).toContain("请求体：base64 JSON 字符串（图像 4 字节 → base64 8 字符）");
+    expect(readingC).toContain("端到端一致（4 字节，探针图）");
 
     await wrapper.get('[data-testid="probe-run-d"]').trigger("click");
     await flushPromises();
@@ -245,7 +249,7 @@ describe("/lab/shell 探针页", () => {
     );
     expect(save.mock.calls[1]?.[0]).toBe(canvasBlob);
     expect(save.mock.calls[1]?.[1]).toBe("weefuse-probe-album.png");
-    expect(save.mock.calls[0]?.[1]).toBe("weefuse-c-raw-body.png");
+    expect(save.mock.calls[0]?.[1]).toBe("weefuse-c-base64-body.png");
     const readingD = wrapper.get('[data-testid="reading-d"]').text();
     expect(readingD).toContain("落点：album");
     expect(readingD).toContain("文件名：weefuse-probe-album.png");

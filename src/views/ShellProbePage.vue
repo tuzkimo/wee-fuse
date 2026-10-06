@@ -29,7 +29,13 @@ export interface FileInputProbeReading {
 export interface ShareProbeReading {
   readonly coldStart: string;
   readonly hotStart: string;
-  readonly rawBody: string;
+  /**
+   * 请求体的**形态与长度**。原名 `rawBody`（「原始字节体」）在 2026-10-06 修复轮 F1 之后**不实**：
+   * Android 上 `InvokeBody::Raw` 不可达（厂商原文逐字见 `tauriDriver.ts` 的 `saveToAlbum`），
+   * 请求体现在是 **base64 JSON 字符串**（规格 B5-R4 的退路，已正式启用）⇒ 字段名跟着改，
+   * 读数里如实写「图像 N 字节 → base64 字符串 M 字符」。
+   */
+  readonly requestBody: string;
 }
 
 export interface AlbumProbeReading {
@@ -83,6 +89,9 @@ import {
 } from "@/services/exporter";
 import { getPlatform, isTauriRuntime } from "@/services/platform/capabilities";
 import { sniffImageType } from "@/services/platform/sniffImageType";
+// 只用它的 `encodeBase64`（C 块要如实报出 base64 串长）。**这不引入任何 `@tauri-apps/*` 的静态
+// import**——那个文件里的包全是动态 `import()`，而 C 块仍然走 `getPlatform()`（判据的定义没被换掉）。
+import { encodeBase64 } from "@/services/platform/tauriDriver";
 import { probeImageSize } from "@/services/probe";
 
 /**
@@ -176,7 +185,7 @@ async function onRawInput(criterion: "A" | "B", event: Event): Promise<void> {
   }
 }
 
-/** 画一张探针图并取 PNG（C 的原始字节体探针与 D 共用：**同一个产物、两条不同的证据**）。 */
+/** 画一张探针图并取 PNG（C 的请求体探针与 D 共用：**同一个产物、两条不同的证据**）。 */
 async function renderProbePng(): Promise<Blob> {
   const canvas = createCanvasStrict(PROBE_EDGE, PROBE_EDGE);
   const ctx = requireContext2D(canvas);
@@ -187,11 +196,15 @@ async function renderProbePng(): Promise<Blob> {
 }
 
 /**
- * C 块：**冷启动取走 + 原始字节体探针**。
+ * C 块：**冷启动取走 + 请求体形态探针**。
  *
  * 两半**刻意用不同的载荷**：冷启动那一半证明 URI 可读（字节数就是证据，URI 原文在 `adb logcat` 的
- * `RunEvent::Opened` 行里）；原始字节体那一半用**探针图**走完整保存链。把分享进来那张图再存一次相册
- * 对判据没有增量，却会在相册里留下一个用 `.png` 名字的 JPEG。
+ * `RunEvent::Opened：收到 {} 个 URI` 行里）；请求体那一半用**探针图**走完整保存链，并把
+ * 「图像 N 字节 → base64 字符串 M 字符」如实报出来。把分享进来那张图再存一次相册对判据没有增量，
+ * 却会在相册里留下一个用 `.png` 名字的 JPEG。
+ *
+ * **M 由 `encodeBase64` 现算**（不是写死的公式）：页面**不许**自己实现第二份 base64 口径，
+ * 否则「页面报的 M」与「真正发出去的串」可以各自漂移而没人发现。
  */
 async function runC(): Promise<void> {
   busy.value = "C";
@@ -207,19 +220,20 @@ async function runC(): Promise<void> {
     coldStart = `取走失败：${errorText(caught)}`;
   }
 
-  let rawBody: string;
+  let requestBody: string;
   try {
     const probe = await renderProbePng();
-    await platform.album.save(probe, "weefuse-c-raw-body.png");
-    rawBody = `端到端一致（${probe.size} 字节，探针图）`;
+    await platform.album.save(probe, "weefuse-c-base64-body.png");
+    const encoded = encodeBase64(new Uint8Array(await probe.arrayBuffer())).length;
+    requestBody = `base64 JSON 字符串（图像 ${probe.size} 字节 → base64 ${encoded} 字符）· 端到端一致（${probe.size} 字节，探针图）`;
   } catch (caught) {
-    rawBody = `失败：${errorText(caught)}`;
+    requestBody = `失败：${errorText(caught)}`;
   }
 
   readings.c = {
     coldStart,
     hotStart: readings.c?.hotStart ?? "（尚未收到）",
-    rawBody,
+    requestBody,
   };
   busy.value = "";
 }
@@ -314,7 +328,7 @@ onMounted(() => {
         readings.c = {
           coldStart: current?.coldStart ?? "（未跑，未取走冷启动分享）",
           hotStart: `${file.name} / ${file.size} 字节 / ${file.type === "" ? "（空 MIME）" : file.type}`,
-          rawBody: current?.rawBody ?? "（未跑）",
+          requestBody: current?.requestBody ?? "（未跑）",
         };
       }),
     );
@@ -333,7 +347,7 @@ const readingB = computed(() => lineFileInput(readings.b));
 const readingC = computed(() => {
   const c = readings.c;
   if (c === null) return "未跑：点下面那个按钮取走冷启动分享；热启动已订阅。";
-  return `冷启动：${c.coldStart} · 热启动：${c.hotStart} · 原始字节体：${c.rawBody}`;
+  return `冷启动：${c.coldStart} · 热启动：${c.hotStart} · 请求体：${c.requestBody}`;
 });
 const readingD = computed(() => {
   const d = readings.d;
@@ -361,7 +375,7 @@ const VERDICT_NOTES: readonly string[] = [
   "判定要点\tF\tAPK 装得上 + 首屏是图纸库 + 本行 tauriRuntime=true ⇒ 通过；false ⇒ 壳里跑的是浏览器实现（B5-R1）",
   "判定要点\tA\tA 能唤出系统选择器且「解码」是宽×高 ⇒ 通过（任务 3 把 pickImageFile 换成隐藏 input，并删掉 dialog 依赖与 dialog:allow-open 权限）；唤不出 / 解码失败 ⇒ 不通过（当前实现已是 dialog+fs 分支，无需改代码，B5-R2 记为已发生）",
   "判定要点\tB\t点按**直接进相机**且「解码」是宽×高 ⇒ 第 1 级成立；只出文件选择器 ⇒ 任务 4 走第 2 级（Kotlin capture 插件）；第 2 级也不通 ⇒ CAPTURE_SUPPORTED=false（不留半截入口）",
-  "判定要点\tC\t「冷启动」或「热启动」给出文件名与字节数（URI 原文看 logcat 的 RunEvent::Opened 行）且「原始字节体」写「端到端一致（N 字节…）」⇒ 通过；写「请求体不是 Raw」⇒ B5-R4（退 base64 并写明原因）；「取走失败」⇒ B5-R3",
+  "判定要点\tC\t「冷启动」或「热启动」给出文件名与字节数（URI 原文看 logcat 的 RunEvent::Opened：收到 {} 个 URI 行）且「请求体形态」写 base64 JSON 字符串 + 「端到端一致（N 字节…）」⇒ 通过；写「保存失败：base64 解码失败（…）」⇒ 编码口径不一致（B5-R4 已发生：以前那条「需要原始字节体」的路在 Android 上不可达，本轮已按规格退到 base64）；「取走失败」⇒ B5-R3；logcat 里另有 save_image_to_album：收到 base64 解码后 {} 字节 一行，用来与读数里的 N 对账",
   "判定要点\tD\t「结果」写「已受理…」且相册 Pictures/WeeFuse 下出现该文件、字节数一致 ⇒ 通过；出现权限 / 拒绝 / insert 返回 null ⇒ 走 dialog.save()（B5-R5）",
   "判定要点\tE\t按返回键后「返回键」出现 canGoBack=… ⇒ 通过；划掉 App 时「关闭请求」出现条目 ⇒ 一并通过；**返回键不触发是缺陷**，**关闭请求不触发不构成缺陷**（B5-R6，如实记录）",
 ];
@@ -393,7 +407,7 @@ function buildReportText(state: ShellProbeReadings, stamp: string): string {
   else {
     push("C", "冷启动分享", state.c.coldStart);
     push("C", "热启动分享", state.c.hotStart);
-    push("C", "原始字节体", state.c.rawBody);
+    push("C", "请求体形态", state.c.requestBody);
   }
 
   if (state.d === null) push("D", "（未跑）", "点「存到相册」");
@@ -497,9 +511,13 @@ async function copy(): Promise<void> {
     </section>
 
     <section class="mt-6 max-w-5xl rounded bg-white p-4 shadow">
-      <h2 class="text-sm font-semibold text-slate-800">C · 分享进入 + 原始字节体（走能力层）</h2>
+      <h2 class="text-sm font-semibold text-slate-800">C · 分享进入 + base64 请求体（走能力层）</h2>
       <p class="mt-1 text-xs text-slate-500">
-        热启动订阅已在本页挂载时注册。URI 原文看 <code>adb logcat</code> 里的 <code>RunEvent::Opened</code> 行。
+        热启动订阅已在本页挂载时注册。URI 原文看 <code>adb logcat</code> 里的
+        <code>RunEvent::Opened：收到 {} 个 URI</code> 行（<code>{}</code> 处是真机上的实际数字）；
+        落盘那一步看 <code>save_image_to_album：收到 base64 解码后 {} 字节</code> 与
+        <code>AlbumPlugin::save 落到 content://…</code>。请求体是 base64 JSON 字符串（Android 上
+        <code>InvokeBody::Raw</code> 不可达，规格 B5-R4 的退路已启用）。
       </p>
       <button
         data-testid="probe-run-c"
@@ -507,7 +525,7 @@ async function copy(): Promise<void> {
         :disabled="busy !== ''"
         @click="runC"
       >
-        {{ busy === "C" ? "跑 C 中…" : "跑 C：取走冷启动分享 + 发一次原始字节体" }}
+        {{ busy === "C" ? "跑 C 中…" : "跑 C：取走冷启动分享 + 发一次 base64 请求体" }}
       </button>
       <p data-testid="reading-c" class="mt-2 break-all font-mono text-xs text-slate-700">{{ readingC }}</p>
     </section>

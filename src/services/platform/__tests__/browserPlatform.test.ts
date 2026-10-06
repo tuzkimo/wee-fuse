@@ -156,3 +156,20 @@ describe("harness 的诊断通道", () => {
     expect(() => h.finishPick(null)).toThrowError("没有等待中的文件输入");
   });
 });
+
+/**
+ * 落点的**同一性**（2026-10-06 任务 2 修复轮 F4）。
+ *
+ * 共用契约里原来那条 `expect(h.saves[0]?.blob).toBe(blob)` **只有浏览器实现可能满足**（壳实现跨 IPC
+ * 只拿得到字节），所以契约被放宽成「字节内容相同」——放宽一处就必须在能断言强性质的地方**补回来**，
+ * 否则 F4 是净损失。浏览器实现把 `safe.blob` **原样**交给 `downloadBlob`，同一性在这里是真的。
+ */
+describe("浏览器实现的落点同一性", () => {
+  it("save 把调用方给的**那一颗** Blob 原样交给 downloadBlob", async () => {
+    const h = makeHarness();
+    const blob = new Blob([new Uint8Array([1, 2, 3])]);
+    await h.platform.album.save(blob, "小猫.png");
+    expect(h.saves).toHaveLength(1);
+    expect(h.saves[0]?.blob).toBe(blob);
+  });
+});

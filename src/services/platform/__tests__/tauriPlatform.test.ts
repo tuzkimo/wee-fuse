@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CAPTURE_SUPPORTED, type TauriDriver } from "@/services/platform/tauriDriver";
 import { createTauriPlatform } from "@/services/platform/tauriPlatform";
+import { runPlatformContract, type PlatformHarness } from "./platformContract";
 
 /**
  * 壳侧能力实现的假驱动用例（规格 §9.1 的「两份实现共用契约」里的壳那一份）。
@@ -56,6 +57,91 @@ function makeDriver(options: DriverOptions = {}) {
   };
   return { driver, exitApp };
 }
+
+/**
+ * 一个**可以提前建好、随时结算**的 promise。
+ *
+ * **为什么必须提前建**（2026-10-06 任务 2 修复轮 F4 实跑踩到的）：`tauriPlatform.pickFromAlbum` 是
+ * `await (await requireDriver()).pickImageFile()` —— 驱动**不是同步**被调的（中间隔了两个微任务）。
+ * 而契约的 `finishPick` / `finishCapture` 是**同步**签名（`(value) => void`），调用点紧跟在
+ * `pickFromAlbum()` 之后、早于那个微任务 ⇒ 「在 `pickImageFile` 的 executor 里记 `resolve`」这种写法
+ * 根本来不及。处置：池子提前建好，`pickImageFile` 只是按顺序把池子里的下一颗交出去，
+ * 于是 `finishPick(...)` 在任何时刻结算都是有效的。
+ */
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let settle!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve;
+  });
+  return { promise, resolve: (value: T) => settle(value) };
+}
+
+/**
+ * 壳实现的 harness —— **规格 §9.1 要求两份实现共跑同一份契约**（`platformContract.ts` 的 JSDoc 自称
+ * 「由 `browserPlatform.test.ts` 与 `tauriPlatform.test.ts` 各自调用一次」，而 2026-10-06 任务级审查
+ * 核实**全仓唯一调用点是 `browserPlatform.test.ts`** ⇒ 契约里属于壳侧的分支（`supported === true` 的
+ * `takeSharedImage`、`canCapture === true` 的两条 `capturePhoto`）**从未执行**）。
+ *
+ * **与 `makeDriver`（下面那个）刻意不同**：`makeDriver` 的假驱动是「调用即拿到值」的，而契约需要的是
+ * **可编程结算**——`finishPick` / `finishCapture` 才决定那两颗 promise 什么时候、以什么值结束。
+ *
+ * `canCapture: true` 是**独立声明**（不读平台自述）：契约会拿它与 `platform.imagePicking.canCapture`
+ * 对账，声明为真时那两条分支才真的往 `finishCapture` 里驱动。
+ */
+function makeShellHarness(): PlatformHarness {
+  const saves: { blob: Blob; filename: string }[] = [];
+  // 每个 `it` 都会新建 harness；池子比单个用例里的最大调用次数（2）多留一颗，取空即抛。
+  const picks = [deferred<File | null>(), deferred<File | null>(), deferred<File | null>()];
+  const captures = [deferred<File | null>(), deferred<File | null>(), deferred<File | null>()];
+  let nextPick = 0;
+  let nextCapture = 0;
+  // 契约要求 `takeSharedImage` **取走即清**：第一次给一个 URI，第二次必须为空。
+  const openedUris: string[] = ["content://media/external/images/media/contract-1"];
+
+  const takeNext = <T>(pool: { readonly promise: Promise<T> }[], index: number, what: string): Promise<T> => {
+    const slot = pool[index];
+    if (slot === undefined) throw new Error(`${what}：harness 的 promise 池用尽了`);
+    return slot.promise;
+  };
+
+  const driver: TauriDriver = {
+    pickImageFile: () => takeNext(picks, nextPick++, "pickImageFile"),
+    captureImageFile: () => takeNext(captures, nextCapture++, "captureImageFile"),
+    takeOpenedUris: async () => openedUris.splice(0, openedUris.length),
+    listenOpened: async () => () => {},
+    readFileAsBytes: async () => PNG_HEAD,
+    saveToAlbum: async (bytes, filename) => {
+      // 契约的 `saves[].blob` 是「落点收到的那些字节」的载体：壳侧只能拿到 `Uint8Array`，
+      // 载回成 Blob（契约因此断言**字节内容**，同一性只在浏览器侧成立）。
+      saves.push({ blob: new Blob([bytes]), filename });
+      return bytes.length;
+    },
+    onBackButtonPress: async () => () => {},
+    onCloseRequested: async () => () => {},
+    exitApp: async () => {},
+  };
+
+  return {
+    platform: createTauriPlatform(driver),
+    canCapture: true,
+    saves,
+    finishPick(file) {
+      // 结算的是**下一颗将被消费**的 promise（`pickImageFile` 还没被调到，所以下标就是它）。
+      const slot = picks[nextPick];
+      if (slot === undefined) throw new Error("没有等待中的选图（契约应当先发起一次 pickFromAlbum）");
+      slot.resolve(file);
+    },
+    finishCapture(value) {
+      const slot = captures[nextCapture];
+      if (slot === undefined) throw new Error("没有等待中的拍照（契约应当先发起一次 capturePhoto）");
+      // `unknown` → `File | null` 的**故意强转**：契约用非 `File` 的非空值注入一次契约违反，
+      // 而驱动接口的签名只允许 `File | null`；强转让被测代码自己去做那条运行期守卫。
+      slot.resolve(value as File | null);
+    },
+  };
+}
+
+runPlatformContract("壳实现（假驱动）", makeShellHarness);
 
 describe("createTauriPlatform（假驱动）", () => {
   it("pickFromAlbum：拿到 File 原样返回；取消返回 null；非 File（含 undefined）一律抛「图片选择器返回了非文件对象」", async () => {

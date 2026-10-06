@@ -40,7 +40,14 @@ export interface PlatformHarness {
    * `canCapture === false` 的实现可以抛错——那种 harness 声明 `canCapture: false`，契约不会调它。
    */
   finishCapture(value: unknown): void;
-  /** 成功保存时收到的实参。**守卫拦下的那两次调用不许出现在这里**（这是顺序证明）。 */
+  /**
+   * 成功保存时收到的实参。**守卫拦下的那两次调用不许出现在这里**（这是顺序证明）。
+   *
+   * **`blob` 是「落点收到的那些字节」的载体，不承诺是调用方那一颗**：浏览器实现拿到的是同一颗
+   * （`downloadBlob(safe.blob, …)`），壳实现只能拿到 `Uint8Array`（跨 IPC 边界）⇒ 壳 harness 用
+   * `new Blob([bytes])` 把它载回来。契约因此断言**字节内容**；同一性只在浏览器侧成立，那条更强的
+   * 断言留在 `browserPlatform.test.ts`（理由见那里）。
+   */
   readonly saves: { readonly blob: Blob; readonly filename: string }[];
 }
 
@@ -68,8 +75,16 @@ export function runPlatformContract(label: string, makeHarness: () => PlatformHa
       // （修复轮 F9 实测：`resolves.toBeUndefined()` 是唯一会红的那条）。
       await expect(h.platform.album.save(blob, "  小猫-分享图.png \n")).resolves.toBeUndefined();
       expect(h.saves).toHaveLength(1);
-      expect(h.saves[0]?.blob).toBe(blob);
-      expect(h.saves[0]?.filename).toBe("小猫-分享图.png");
+      // **`Blob` 的字节内容，不是对象同一性**（2026-10-06 任务 2 修复轮 F4）。
+      // 原来这里是 `expect(h.saves[0]?.blob).toBe(blob)`，那条断言**只有浏览器实现可能满足**：
+      // 壳实现的落点是驱动，而字节要跨 IPC 边界（`tauriPlatform.album.save` 先 `arrayBuffer()`），
+      // 同一性在那一层**不可保留**——要求 `toBe` 等于要求壳实现把 `Blob` 对象本身送过去。
+      // 契约是**两条实现共用的语义**，所以它只能断言「落点拿到的字节与原 blob 相同」。
+      // 浏览器侧那条更强的**同一性**断言没有丢：它在 `browserPlatform.test.ts` 末尾的
+      // 「浏览器实现的落点同一性」里（放宽一处、补回一处，不是净损失）。
+      const saved = h.saves[0]!;
+      expect(Array.from(new Uint8Array(await saved.blob.arrayBuffer()))).toEqual([1, 2, 3]);
+      expect(saved.filename).toBe("小猫-分享图.png");
     });
 
     it("pickFromAlbum：取消返回 null（不是抛错）", async () => {
