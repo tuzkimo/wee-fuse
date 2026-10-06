@@ -1737,6 +1737,12 @@ async function createDriver(): Promise<TauriDriver> {
 
 > **本文件在 CI 里没有可执行用例**（上面那条 import 期行为就是原因），如实登记：信封布局、字节核对、
 > `app.exit()` 的判别力都在真机判据 C/D/E 的读数里。本层的「测试」是 `npm run build` 的类型检查。
+>
+> **⚠️ 2026-10-06 更正（这句过粗，任务 2 第 1 轮修复后发现）**：**「整个文件不可测」不成立**——正因为驱动**全部走动态 `import()`**，
+> 模块本身在 happy-dom 里**可以被 import**，所以它的**纯函数部分可测**：`encodeBase64` 已单独建
+> `src/services/platform/__tests__/tauriDriver.test.ts`（已知答案向量 + 跨块边界）。**真正零 CI 断言的只有「与平台交互的那几处」**
+> （`invoke` / `listen` / `exitApp`），它们的判别力才落在真机判据 C/D/E。另：`sniffImageType` 本来就是纯函数、
+> 有自己的用例（步骤 1b）。⇒ 现状是 **70 文件 / 1222 用例**里的 `tauriDriver.test.ts` 那 16 条 + `sniffImageType.test.ts` 那 12 条都在 CI 里跑。
 
 - [ ] **步骤 1b：写 `sniffImageType.ts`（两处共用的那份实现）与它的用例**
 
