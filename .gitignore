@@ -23,9 +23,11 @@ src-tauri/plugins/**/android/.tauri/
 # ⇒ 构建产物必须逐类显式忽略。实跑时 `plugins/album/android/build/` 里已积了 109 个文件 / 0.5 MB。
 # 与 `gen/android` 那四条同口径：源码与手写工程文件（`build.gradle.kts` / `AndroidManifest.xml` / `src/**`）入库。
 src-tauri/plugins/**/android/build/
-src-tauri/plugins/**/android/.gradle/
+# 下面两条**故意不带尾斜杠**（带尾斜杠是「只匹配目录」，而 git 对**尚不存在**的路径无法判定目录性，
+# `git check-ignore` 会假阴性；这两处不存在同名的正常文件，不带斜杠没有碰撞风险）。
+src-tauri/plugins/**/android/.gradle
 src-tauri/plugins/**/android/local.properties
-src-tauri/plugins/**/android/.idea/
+src-tauri/plugins/**/android/.idea
 *.apk
 *.aab
 *.keystore
