@@ -71,14 +71,15 @@
 > | **C** | **分享进入通了**：冷启动 ✓ 热启动 ✓（都给文件名 + 字节数 + MIME）；**B5-R3 未发生**、URI 可读 ✓。**但「请求体形态」被探针页自身 bug 挡住**（见下） | **任务 5 的步骤 5 不触发**（不需要 Kotlin「把 URI 流复制到 app cache」）。⚠️ **base64 通路与三层核对仍待复验**：探针页那处误用修好后需重跑 C |
 > | **D** | **被同一个探针页 bug 挡住**（`字节数 0` + 自检失败 ⇒ 相册无文件） | **任务 6 的步骤 5（D2 dialog 降级）待定**：D 的真机读数要重跑后才知道；**在没有 D 的读数之前不许先写降级** |
 > | **E** | **通过**：`返回键 = canGoBack=false`（真实值）；`关闭请求 = 尚未触发` ⇒ **按规则不构成缺陷**（B5-R6） | **任务 7 照计划实现**（三分支 + 退出请求）；`onCloseRequested` 不触发这一条如实写进构建记录，不必再查 |
-> | **F①** | 装机 ✓ / 打开 ✓ / **首屏图纸库** ✓；**图标是 Tauri 默认** ✗；**顶部被导航栏遮挡** ✗ | 两项缺陷已派修复（图标：`android init` **之后**重跑 `npx tauri icon`；遮挡：窗口 insets）。**计划的图标步骤顺序要更正**：图标必须在 `android init` **之后**（否则被 init 的默认图标覆盖）。**人工清单第 1 条的「图标是自己的」在修复前记为未通过** |
+> | **F①** | 装机 ✓ / 打开 ✓ / **首屏图纸库** ✓；**图标是 Tauri 默认** ✗；**顶部被导航栏遮挡** ✗ | 两项缺陷已派修复（图标：`gen/android` 存在**之后**重跑 `npx tauri icon`；遮挡：消费窗口 insets）。**计划的图标步骤顺序要更正**：见任务 1 步骤 6 后的「顺序更正」。**人工清单第 1 条的「图标是自己的」在修复前记为未通过** |
 > | **F②** | **通过**（探针版直接进探针页） | 顺带证实「AE 包确实带脚手架」 |
 > | 页面级「明确退出」 | 点了**没反应** ✗ | 已派修复：把结果写进 E 块读数（下次真机是读数而不是「没反应」）；`app.exit(0)` 的权限/插件链一并查 |
 >
 > **三条真缺陷的根因**（都已定位，修复轮已派）：
 > 1. **探针页误用 `assertCanvasPainted`**（`renderProbePng` 把画布涂成 `#3366cc`，而那个帮手的契约是「(2,2) 必须是不透明的白色」）⇒ **挡住 C 的 base64 读数与整个 D**；
-> 2. **启动图标是 Tauri 默认**（`src-tauri/icons/android/` 为空 + init 覆盖）；
-> 3. **顶部被导航栏遮挡**（窗口 insets 未处理）。
+> 2. **启动图标是 Tauri 默认**：`tauri icon` 在 `gen/android` 还**不存在**时只写 `src-tauri/icons/android/`（它有 17 个文件、内容是我们的拼豆图标——**不是**空的），随后 `tauri android init` 把**它自己的默认 Tauri 图标**写进 `gen/android/app/src/main/res/mipmap-*` ⇒ 装机用的是默认图标。实测修法：`gen/android` 存在后重跑 `npx tauri icon app-icon.png`，**它会直接写 gen 的 mipmap**（16 个文件的哈希从默认图标变为我们的图标，并新建 `mipmap-anydpi-v26/ic_launcher.xml` 与 `values/ic_launcher_background.xml`）；
+> 3. **顶部被导航栏遮挡**：模板自带的 `enableEdgeToEdge()` 让窗口 edge-to-edge，而**没有人消费 insets**。
+>    **平台事实（对产品 UI 同样成立，2026-10-06 核实）**：本项目 `targetSdk = 37`，而从 Android 15（API 35）起，**targetSdk ≥ 35 的应用被强制 edge-to-edge**——`WindowCompat.setDecorFitsSystemWindows(window, true)` 对这类应用**已被平台忽略**，临时退路 `windowOptOutEdgeToEdgeEnforcement` 对 targetSdk ≥ 36 也已失效。⇒ **不能靠「退出 edge-to-edge」解决**，必须自己消费 insets（`ViewCompat.setOnApplyWindowInsetsListener` 取 `systemBars() or displayCutout()` 加成内容区 padding）。**判据只有一条：真机上「顶部不再被遮挡」**（静态推理不算）。
 >
 > **一条本计划的过程缺陷（教训）**：`assertCanvasPainted` 的误用**只有真机（真画布）才现形**——探针页的用例用的是假画布，
 > 永远抓不到「真画布的像素不符合帮手契约」✗。**用别人的断言帮手前先读它的契约**；假画布用例**不能**代替真机验证这类契约。
@@ -1153,6 +1154,19 @@ git status --ignored --short src-tauri/gen | Select-Object -First 20 | Out-Strin
 
 预期：`src-tauri/gen/android/**` 被创建。
 **必须记录**上面三条命令的**原始输出**。注意第二条**大概率是空的**——因为此刻 `.gitignore` 还把整个 `src-tauri/gen/` 忽略掉（模板遗留），所以第三条（`--ignored`）才看得到文件确实生成了。这一段与步骤 9 的第二段合起来，就是规格 §6.2 要的证据。
+
+> ### ⚠️ 顺序更正（2026-10-06 真机缺陷 A-FIX 1，**本计划的错**）
+>
+> 原计划把**步骤 5（跑 `npx tauri icon`）排在步骤 6（`npx tauri android init`）之前**——**这是错的**，后果是真机上启动图标是 Tauri 默认图标。
+>
+> **实测事实（不是推断）**：`tauri icon` 写**两个**位置，其中 `gen/android/.../mipmap-*` 那个只在**目录已存在**时才写。
+> - `gen/android` **不存在**时：只写 `src-tauri/icons/**`（含 `icons/android/` 的 17 个文件，内容是 `app-icon.png` 的拼豆图标）。
+> - 随后 `tauri android init` 创建 `gen/android`，并把它**自己的默认 Tauri 图标**（黄青双环 logo）写进 `gen/android/app/src/main/res/mipmap-*`。
+> - `gen/android` **已存在**时重跑 `npx tauri icon app-icon.png`：**直接写 gen 的 mipmap**（5 档 × 3 个 PNG 的哈希全部从默认图标变为我们的图标；并新建 `mipmap-anydpi-v26/ic_launcher.xml` 与 `values/ic_launcher_background.xml`——`@mipmap/ic_launcher` 从此解析到自适应图标）。
+>
+> **⇒ 正确顺序：步骤 6（`android init`）在前，步骤 5 的 `npx tauri icon` 在其后（或在 `gen/android` 已存在时至少重跑一次）。**
+> 核证据用**哈希 + mtime**，不要用文件大小（`icons/android` 与 gen 的同名 PNG 尺寸不同是正常的，缩放口径不同）。
+> 反过来说：**`tauri icon` 在 `android init` 之前跑也不报错**——这是一个**静默失效**的形态，只能靠真机看图标发现。
 
 - [ ] **步骤 7：把启动器显示名改成中文，并核对 minSdk**
 
