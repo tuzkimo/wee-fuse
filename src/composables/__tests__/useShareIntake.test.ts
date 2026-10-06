@@ -3,13 +3,14 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { defineComponent, toRaw } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NavigationFailureType } from "vue-router";
 import App from "@/App.vue";
 import { useShareIntake } from "@/composables/useShareIntake";
 import { browserPlatform } from "@/services/platform/browserPlatform";
 import { setPlatform } from "@/services/platform/capabilities";
 import type { TauriDriver } from "@/services/platform/tauriDriver";
 import { createTauriPlatform } from "@/services/platform/tauriPlatform";
-import type { Platform, ShareInbox } from "@/services/platform/types";
+import type { Platform, SharedImageTake, ShareInbox } from "@/services/platform/types";
 import { useDraft } from "@/stores/draft";
 import { useProjectSession } from "@/stores/project";
 
@@ -44,18 +45,31 @@ import { useProjectSession } from "@/stores/project";
  * **热启动不做去重**：一次事件 = 用户的一次新分享，去重会静默吞掉用户真的想转换的第二张图；
  * 「不重复摄入」在热路径上的含义是**同一份事件只被摄入一次**（订阅面只有一处，见 App.vue 那条
  * 「恰好订阅一次」的断言）。
+ *
+ * **修复轮（2026-10-06 任务级审查 K1/K2/K3/I1/I2/I3）新增的用例在下面各条标题里带 K/I 前缀**：
+ * K1 = 非图片闸门（含「octet-stream 必须放行」的正例）；K2 = 多图只取第一张 + 告知；
+ * K3 = 热路径处理完排空 state（不然下次 setup 会再摄一遍）；I1 = `push` 被取消时回滚（且
+ * `duplicated` **不**回滚）；I2 = `retry` 先消费再 await（连点两次只摄入一次）；I3 = 「编辑器页 ∧ 非 dirty」。
  */
 
-const push = vi.hoisted(() => vi.fn(async () => {}));
+const push = vi.hoisted(() => vi.fn(async (): Promise<unknown> => undefined));
 const routeState = vi.hoisted(() => ({ name: "pick" as string | null }));
 
 /**
- * 路由替身只给 `useRouter`（composable 只用 `push` 与 `currentRoute.value.name` 两处）。
+ * 路由替身只换 `useRouter`（composable 用 `push` 与 `currentRoute.value.name` 两处），
+ * 其余（`NavigationFailureType` 这些**真值**）从真模块透传——判「取消 / 已在目标页」用的就是它的枚举，
+ * 写死 `4` / `16` 会让用例与库的实现各说各话。
  * `RouterView` 由挂载时的 `stubs` 提供——`App.vue` 的模板不 import 它，走的是 `resolveComponent`。
  */
-vi.mock("vue-router", () => ({
-  useRouter: () => ({ push, currentRoute: { value: routeState } }),
-}));
+vi.mock("vue-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("vue-router")>();
+  return { ...actual, useRouter: () => ({ push, currentRoute: { value: routeState } }) };
+});
+
+/** 造一个「被守卫拦下 / 已在目标页」的导航结果（`push` resolve 的就是它）。 */
+function navigationFailure(type: NavigationFailureType): Error {
+  return Object.assign(new Error("导航未完成"), { type });
+}
 
 const PNG_HEAD = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
@@ -86,7 +100,7 @@ class FakeCanvas {
  * 桩只落在平台边界（`<img>` 解不出像素），与 `PickPage.test.ts` 同一条口径。
  */
 function stubDecode(
-  options: { width?: number; height?: number; decodeError?: string } = {},
+  options: { width?: number; height?: number; decodeError?: string; decodeGate?: Promise<void> } = {},
 ): { canvases: FakeCanvas[]; createObjectURL: ReturnType<typeof vi.fn> } {
   const width = options.width ?? 800;
   const height = options.height ?? 600;
@@ -95,6 +109,8 @@ function stubDecode(
     readonly naturalHeight = height;
     src = "";
     readonly decode = vi.fn(async (): Promise<void> => {
+      // 闸门：让「解码进行中」这一瞬可以被用例停住（I2 的连点两次就发生在这一瞬）。
+      if (options.decodeGate !== undefined) await options.decodeGate;
       if (options.decodeError !== undefined) throw new Error(options.decodeError);
     });
   }
@@ -127,6 +143,16 @@ function stubDecode(
 
 const FILE = new File([new Uint8Array([1, 2, 3, 4])], "小猫照片.png", { type: "image/png" });
 const FILE2 = new File([new Uint8Array([5, 6, 7, 8])], "第二张.png", { type: "image/png" });
+/** 同一条 URI 被**第二次**读出来的样子：另一个对象、同一份指纹（名字 / 字节数 / MIME 全同）。 */
+const FILE_AGAIN = new File([FILE], FILE.name, { type: FILE.type });
+/** 非图片（真机那条链上只可能由平台层自带 MIME 时出现，见 K1 用例的说明）。 */
+const TEXT_FILE = new File([new TextEncoder().encode("这不是图片")], "笔记.txt", {
+  type: "text/plain",
+});
+/** 嗅探认不出、但**可能**本来就能解码的格式（GIF / BMP / AVIF 全都回落到它）——必须放行。 */
+const OCTET_FILE = new File([new Uint8Array([0x47, 0x49, 0x46, 0x38])], "相册图片.bin", {
+  type: "application/octet-stream",
+});
 
 interface InboxSpies {
   readonly platform: Platform;
@@ -138,15 +164,20 @@ interface InboxSpies {
 
 /**
  * 只换 `shareInbox` 的假平台（其余能力照抄浏览器实现——本任务不碰它们）。
- * `take` / `subscribe` 默认是「什么都没发生」，逐条用例再给值。
+ * 冷启动那一份由 `file` / `extraCount` 描述（缺省 = 空），`subscribe` 默认只登记 handler。
  */
 function inboxSpies(options: {
   supported: boolean;
-  take?: () => Promise<File | null>;
+  file?: File | null;
+  extraCount?: number;
 }): InboxSpies {
   const handlers: ((file: File) => void)[] = [];
   const unbind = vi.fn();
-  const take = vi.fn(options.take ?? (async () => null));
+  const held = options.file ?? null;
+  const take = vi.fn(
+    async (): Promise<SharedImageTake | null> =>
+      held === null ? null : { file: held, extraCount: options.extraCount ?? 0 },
+  );
   const subscribe = vi.fn((handler: (file: File) => void) => {
     handlers.push(handler);
     return unbind;
@@ -167,6 +198,11 @@ interface ShareDriverHandle {
   readonly listen: ReturnType<typeof vi.fn>;
   readonly readBytes: ReturnType<typeof vi.fn>;
   readonly unbind: ReturnType<typeof vi.fn>;
+  /**
+   * 模拟 Rust 侧的**一次分享**：既 push 进 `OpenedUris`（`lib.rs` 那段），**又** `emit("opened", …)`
+   * —— 双道，正是 K2/K3 两个缺口的来源。同一条 URI 因此可能既被冷取拿到、又作为事件到达。
+   */
+  simulateShare(uri: string): void;
 }
 
 /**
@@ -203,7 +239,18 @@ function makeShareDriver(
     onCloseRequested: async () => () => {},
     exitApp: async () => {},
   };
-  return { driver, opened, takeUris, listen, readBytes, unbind };
+  return {
+    driver,
+    opened,
+    takeUris,
+    listen,
+    readBytes,
+    unbind,
+    simulateShare(uri: string): void {
+      pendingUris.push(uri);
+      for (const handler of opened) handler(uri);
+    },
+  };
 }
 
 /** 内联宿主：**直持 `useShareIntake()` 的返回值**（模板刻意是空的，DOM 那一半由 App.vue 那组钉）。 */
@@ -225,6 +272,10 @@ function mountApp() {
 
 beforeEach(() => {
   setActivePinia(createPinia());
+  // `mockResolvedValueOnce` 的一次性返回值会跨用例泄漏（`mockClear` 只清调用记录、不清实现）⇒
+  // 每个用例前重铺默认实现（`push` 成功时 resolve `undefined`，与 vue-router 一致）。
+  push.mockReset();
+  push.mockImplementation(async (): Promise<unknown> => undefined);
 });
 
 afterEach(() => {
@@ -256,7 +307,7 @@ describe("useShareIntake", () => {
   });
 
   it("② 冷启动取到文件 ⇒ 解码、落草稿（含预览位图与居中正方选区）、进选区页", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     const decode = stubDecode({ width: 800, height: 600 });
 
@@ -280,7 +331,7 @@ describe("useShareIntake", () => {
   });
 
   it("③ 冷启动是空的 ⇒ 什么都不做（不报错、不跳转、不落草稿、不显示提示条）", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => null });
+    const spies = inboxSpies({ supported: true });
     setPlatform(spies.platform);
     stubDecode();
 
@@ -294,7 +345,7 @@ describe("useShareIntake", () => {
   });
 
   it("④ 解码失败 ⇒ 提示条给中文原因，且**不落任何草稿**、不跳转、暂存被释放", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     stubDecode({ decodeError: "unsupported" });
 
@@ -330,7 +381,7 @@ describe("useShareIntake", () => {
   it("④c 「继续」之后仍然解码失败 ⇒ 提示条给原因、不落草稿、**暂存被释放**（不留一个必然再失败的按钮）", async () => {
     // 这条钉住 `intake` 失败路径上的 `pending.value = null`：只清提示不清暂存的话，用户会看着一个
     // 「继续」按钮，点下去必然再失败（同一张坏图解码两次结果一样）。口径按计划：失败即释放暂存。
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     stubDecode({ decodeError: "unsupported" });
     routeState.name = "editor";
@@ -351,8 +402,43 @@ describe("useShareIntake", () => {
     expect(wrapper.vm.share.pending.value).toBeNull();
   });
 
+  it("④d K1：非图片（`text/plain`）⇒ 提示条「只支持图片」、草稿不动、不跳转、暂存释放、**连解码都不发起**", async () => {
+    // 规格 §5.3.4 第 3 行 + §7.2「提示条写明只支持图片」+ 人工清单 6。
+    const spies = inboxSpies({ supported: true, file: TEXT_FILE });
+    setPlatform(spies.platform);
+    const decode = stubDecode();
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    expect(wrapper.vm.share.message.value).toBe("只支持图片");
+    expect(useDraft().source).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+    expect(wrapper.vm.share.pending.value).toBeNull();
+    // 闸门必须在 `loadImageSource` **之前**：一次解码尝试都不该有（否则「非图片」会被解码失败那句
+    // 文案顶掉——真机那条链上正是如此，见 `useShareIntake.ts` 里 `isClearlyNotImage` 的射程登记）。
+    expect(decode.createObjectURL).not.toHaveBeenCalled();
+    expect(decode.canvases).toHaveLength(0);
+  });
+
+  it("④e K1：`application/octet-stream` **必须放行**（GIF / BMP / AVIF 的回落值）⇒ 照常解码落草稿", async () => {
+    // 这是 K1 那道闸门的**正例**：把闸门写成「非 `image/` 一律拒」时这条立刻红
+    //（嗅探表只认 PNG/JPEG/WEBP/HEIC ⇒ 那样会把能解码的 GIF/BMP 误判成「不是图片」）。
+    const spies = inboxSpies({ supported: true, file: OCTET_FILE });
+    setPlatform(spies.platform);
+    const decode = stubDecode({ width: 320, height: 240 });
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    expect(decode.canvases).toHaveLength(1);
+    expect(toRaw(useDraft().source)?.blob).toBe(OCTET_FILE);
+    expect(push).toHaveBeenCalledWith({ name: "setup" });
+    expect(wrapper.vm.share.message.value).toBe("");
+  });
+
   it("⑤ 编辑器有未保存改动 ⇒ 不 adopt、不导航、暂存 + 中文原因；点「继续」后重试成功", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     const decode = stubDecode({ width: 800, height: 600 });
     routeState.name = "editor";
@@ -389,7 +475,7 @@ describe("useShareIntake", () => {
   });
 
   it("⑤b 编辑器脏但不在编辑器页 ⇒ 照常摄入（判据两半都要有，缺一半就是恒不 adopt）", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     stubDecode();
     routeState.name = "pick";
@@ -403,8 +489,26 @@ describe("useShareIntake", () => {
     expect(wrapper.vm.share.message.value).toBe("");
   });
 
+  it("⑤c I3：在编辑器页但**没有**未保存改动 ⇒ 照常摄入（这一格此前是盲区）", async () => {
+    // 「在编辑器页 ∧ ¬dirty」这一格此前没有任何断言读过：把条件写成 `route.name === "editor"`
+    //（去掉 `&& session.dirty`）时，原来那 18 条全绿。现在去掉合取项 ⇒ 这条红。
+    const spies = inboxSpies({ supported: true, file: FILE });
+    setPlatform(spies.platform);
+    stubDecode();
+    routeState.name = "editor";
+    // 刻意**不** markDirty
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    expect(useDraft().source).not.toBeNull();
+    expect(push).toHaveBeenCalledWith({ name: "setup" });
+    expect(wrapper.vm.share.message.value).toBe("");
+    expect(wrapper.vm.share.pending.value).toBeNull();
+  });
+
   it("⑥ 点「知道了」⇒ 提示清空且**暂存被释放**（之后的 retry 什么都不做）", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     stubDecode();
     routeState.name = "editor";
@@ -430,8 +534,40 @@ describe("useShareIntake", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("⑥b I2：「继续」连点两次 ⇒ 只摄入一次（先消费 `pending` 再 await）", async () => {
+    // 可重入的实现（清 `pending` 写在 await 之后）在这里会解码两遍、跳转两次。
+    const spies = inboxSpies({ supported: true, file: FILE });
+    setPlatform(spies.platform);
+    let openDecode!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openDecode = resolve;
+    });
+    const decode = stubDecode({ width: 800, height: 600, decodeGate: gate });
+    routeState.name = "editor";
+    const session = useProjectSession();
+    session.markDirty();
+
+    const wrapper = mountHost();
+    await flushPromises();
+    expect(wrapper.vm.share.pending.value).toBe(FILE);
+
+    session.reset();
+    // 第一次解码**还没结算**就再点一次：第二次必须什么都不做（pending 已经被消费）
+    const first = wrapper.vm.share.retry();
+    const second = wrapper.vm.share.retry();
+    openDecode();
+    await Promise.all([first, second]);
+    await flushPromises();
+
+    expect(decode.canvases).toHaveLength(1);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(useDraft().source).not.toBeNull();
+    expect(wrapper.vm.share.pending.value).toBeNull();
+    wrapper.unmount();
+  });
+
   it("⑦ 热启动（onSharedImage 触发的文件）走同一条链；两次分享 = 两次摄入", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => null });
+    const spies = inboxSpies({ supported: true });
     setPlatform(spies.platform);
     const decode = stubDecode({ width: 800, height: 600 });
 
@@ -462,6 +598,99 @@ describe("useShareIntake", () => {
     expect(push).toHaveBeenCalledTimes(2);
 
     wrapper.unmount();
+  });
+
+  it("⑦b K2：同一 tick 内两次事件（一次分享多张）⇒ 只摄入第一张 + 提示条告知", async () => {
+    // Rust 对**每个** URI 各 emit 一次 ⇒ 逐个摄入会「N 次 adopt + N 次跳转、停在最后一张」✗。
+    const spies = inboxSpies({ supported: true });
+    setPlatform(spies.platform);
+    const decode = stubDecode({ width: 800, height: 600 });
+
+    const wrapper = mountHost();
+    await flushPromises();
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+
+    // 两次派发之间**没有 await**：同一次 `ACTION_SEND_MULTIPLE` 的 N 条 emit 就是这样到达的。
+    fire(FILE);
+    fire(FILE2);
+    await flushPromises();
+
+    expect(decode.canvases).toHaveLength(1);
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(wrapper.vm.share.message.value).toContain("已取第一张");
+    expect(wrapper.vm.share.message.value).toContain("1 张没有处理");
+    wrapper.unmount();
+  });
+
+  it("⑦c K2/K3：冷取的那一份与同 tick 的热事件是同一条 URI ⇒ 只摄入一次、也不误报「多图」", async () => {
+    // Rust 侧「双道」：同一次 intent 既 push 进 `OpenedUris`（冷取会拿到）又 emit（热事件也会拿到）。
+    // 两条道各自 new 一个 File ⇒ 身份不同、指纹相同，归一到一起之后只能摄入一次。
+    const spies = inboxSpies({ supported: true, file: FILE });
+    setPlatform(spies.platform);
+    const decode = stubDecode({ width: 800, height: 600 });
+
+    const wrapper = mountHost();
+    // 冷取还在飞：同一条 URI 的第二条道在同一 tick 内到达（`FILE_AGAIN` 是另一个对象、同一指纹）
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+    fire(FILE_AGAIN);
+    await flushPromises();
+
+    expect(decode.canvases).toHaveLength(1);
+    expect(useDraft().source).not.toBeNull();
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE_AGAIN);
+    expect(push).toHaveBeenCalledTimes(1);
+    // 同一条 URI 不是「多图」：不许出现「已取第一张」那句（那会让用户以为丢了几张）
+    expect(wrapper.vm.share.message.value).toBe("");
+    wrapper.unmount();
+  });
+
+  it("⑦d K2：冷取带回 `extraCount = 2`（平台层数出来的多图）⇒ 只摄入第一张 + 提示条告知", async () => {
+    const spies = inboxSpies({ supported: true, file: FILE, extraCount: 2 });
+    setPlatform(spies.platform);
+    const decode = stubDecode({ width: 800, height: 600 });
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    expect(decode.canvases).toHaveLength(1);
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(wrapper.vm.share.message.value).toContain("已取第一张");
+    expect(wrapper.vm.share.message.value).toContain("2 张没有处理");
+  });
+
+  it("⑦e K3：热启动摄入之后 state 被排空 ⇒ 下一次 setup 取到 null、不再摄一遍", async () => {
+    // 不排空的话，热分享过的 URI 会一直留在 `OpenedUris` 里，下一次 setup（WebView 重载 /
+    // Activity 重建 / 热重载）把它当冷启动**再摄一遍** —— 正是规格 §5.3.2 要消灭的形态。
+    const handle = makeShareDriver();
+    setPlatform(createTauriPlatform(handle.driver));
+    const decode = stubDecode({ width: 800, height: 600 });
+
+    const first = mountHost();
+    await flushPromises();
+    expect(useDraft().source).toBeNull();
+    expect(handle.takeUris).toHaveBeenCalledTimes(1);
+
+    handle.simulateShare(SHARE_URI);
+    await flushPromises();
+
+    expect(toRaw(useDraft().source)?.blob).toBeInstanceOf(File);
+    expect(useDraft().preview).toBe(decode.canvases[0]);
+    expect(push).toHaveBeenCalledTimes(1);
+    // 排空这次调用就是「顺手 takeSharedImage」：它把 state 取空了（第 2 次调用）
+    expect(handle.takeUris).toHaveBeenCalledTimes(2);
+    first.unmount();
+
+    // 下一次 setup：state 已空 ⇒ 什么都不做
+    const second = mountHost();
+    await flushPromises();
+    expect(handle.takeUris).toHaveBeenCalledTimes(3);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(decode.canvases).toHaveLength(1);
+    second.unmount();
   });
 
   it("⑧ 卸载 ⇒ 解绑热启动监听（不留悬挂订阅）", async () => {
@@ -503,6 +732,49 @@ describe("useShareIntake", () => {
     expect(useDraft().preview).toBe(decode.canvases[0]);
     expect(decode.canvases).toHaveLength(1);
     second.unmount();
+  });
+
+  it("⑩ I1：`push` 被守卫取消（aborted）⇒ 回滚草稿 + 暂存 + 提示条（不留「有图没跳」的半截态）", async () => {
+    // dirty 判定发生在数秒解码**之前** ⇒ 解码期间用户可能刚把编辑器改脏，导航仍会被守卫拦下。
+    const spies = inboxSpies({ supported: true, file: FILE });
+    setPlatform(spies.platform);
+    stubDecode({ width: 800, height: 600 });
+    push.mockResolvedValueOnce(navigationFailure(NavigationFailureType.aborted));
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    // ★ 半截态的两个面都要否证：草稿里不能留着这张图，也不能「什么都不说」
+    expect(useDraft().source).toBeNull();
+    expect(useDraft().preview).toBeNull();
+    expect(wrapper.vm.share.pending.value).toBe(FILE);
+    expect(wrapper.vm.share.message.value).toContain("没能进入选区页");
+    expect(push).toHaveBeenCalledTimes(1);
+
+    // 用户处理完编辑器的改动，点「继续」：这次 push 正常 ⇒ 真的进选区页
+    await wrapper.vm.share.retry();
+    await flushPromises();
+
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE);
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(wrapper.vm.share.message.value).toBe("");
+  });
+
+  it("⑩b I1：`push` 返回 duplicated（用户**已经**在选区页上）⇒ **不**回滚、不提示", async () => {
+    // `duplicated` 不是失败：人在 `/new/setup` 上又分享一张，草稿要照改、页面不用动。
+    // 把它一起当成「被取消」会把刚落的草稿又 reset 掉（这条就是那个方向的判别力）。
+    const spies = inboxSpies({ supported: true, file: FILE });
+    setPlatform(spies.platform);
+    stubDecode({ width: 800, height: 600 });
+    push.mockResolvedValueOnce(navigationFailure(NavigationFailureType.duplicated));
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE);
+    expect(useDraft().preview).not.toBeNull();
+    expect(wrapper.vm.share.pending.value).toBeNull();
+    expect(wrapper.vm.share.message.value).toBe("");
   });
 });
 
@@ -571,7 +843,7 @@ describe("App.vue 的分享装配", () => {
   });
 
   it("编辑器有未保存改动：真 App.vue 上出现提示条与「继续」，点它之后才落草稿并跳转", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     const decode = stubDecode({ width: 800, height: 600 });
     routeState.name = "editor";
@@ -605,7 +877,7 @@ describe("App.vue 的分享装配", () => {
   });
 
   it("点「知道了」⇒ 提示条消失（模板侧的按钮接线）", async () => {
-    const spies = inboxSpies({ supported: true, take: async () => FILE });
+    const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
     stubDecode();
     routeState.name = "editor";
