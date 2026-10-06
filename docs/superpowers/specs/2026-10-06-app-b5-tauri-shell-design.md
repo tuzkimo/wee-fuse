@@ -57,7 +57,7 @@ npm run build   vue-tsc --noEmit + vite build 通过
 
 ### 1.3 与主规格 / B4 规格的偏离（逐条列出）
 
-- **D1（来源入口的实现选型）**：主规格只说「相册、拍照、系统分享进入（三选一入口）」。本规格的实现选型是——分享进入走 Tauri 官方 `bundle.fileAssociations` 自动生成的 `ACTION_SEND` intent filter + `RunEvent::Opened`（**不自己写 Kotlin 收 intent**）；相册/拍照走平台能力层。若 spike（§13 任务 0）证明 WebView 的 `<input type="file">` 与 `capture` 可用，则壳里的相册与拍照都退化成「隐藏 input + click」，**不写任何 Kotlin 相机代码**（§5.1 / §5.2 的判据）。
+- **D1（来源入口的实现选型）**：主规格只说「相册、拍照、系统分享进入（三选一入口）」。本规格的实现选型是——分享进入走 Tauri 官方 `bundle.fileAssociations` 自动生成的 `ACTION_SEND` intent filter + `RunEvent::Opened`（**不自己写 Kotlin 收 intent**）；相册/拍照走平台能力层。若 spike（§13 的**任务 2**）证明 WebView 的 `<input type="file">` 与 `capture` 可用，则壳里的相册与拍照都退化成「隐藏 input + click」，**不写任何 Kotlin 相机代码**（§5.1 / §5.2 的判据）。
 - **D2（保存到相册的降级）**：主规格 §7.4 的降级是「App 私有目录 + 系统分享面板」。**本规格改判**：降级用 `tauri-plugin-dialog` 的 `save()` 让用户选一个位置（Android 上返回 `content://`，由 `tauri-plugin-fs` 写入）。理由：①「App 私有目录」里的文件用户在文件管理器里找不到，等于没存；② 系统分享面板是**出口**能力，需要再写一个 Kotlin intent 出口插件，而它已在 §2 被列为不做项；③ `save()` 是官方插件、零自定义代码，且语义（用户明确选定保存位置）比私有目录更接近「保存」。
 - **D3（返回键的行为）**：Tauri 的 `onBackButtonPress` 一旦被注册，**它自带的默认导航（`webView.goBack()`）会被完全抑制**（`AppPlugin.kt` 里 `hasListener(BACK_BUTTON_EVENT)` 为真时只 `trigger` 事件、不导航；见 [PR #14133](https://github.com/tauri-apps/tauri/pull/14133)）。所以本规格显式定义了返回键的三个分支（§5.5.1），把导航交回给前端路由。
 - **D4（`minSdkVersion` 抬到 29）**：为了免掉 API 28 及以下那条 `WRITE_EXTERNAL_STORAGE` 运行期权限分支，`bundle.android.minSdkVersion` 定为 **29**（Android 10，2019 年）。代价如实记录：放弃了 Android 9 及以下设备（Tauri 模板默认 minSdk 24）。理由：本 App 的正式目标是**平板**，而现存 Android 9 及以下的平板比例可忽略；换掉的是一整条需要真机验证的 legacy 权限分支。
@@ -257,11 +257,22 @@ setPlatform(isTauriRuntime() ? createTauriPlatform() : browserPlatform);
 ```ts
 export interface TauriDriver {
   pickImageFile(): Promise<File | null>;            // §5.1：dialog 或隐藏 input（spike 定）
-  captureImageFile(): Promise<File | null>;         // §5.2
+  /**
+   * §5.2 拍照。**可选成员**（2026-10-06 写计划时改）：`Platform.imagePicking.canCapture` 是**同步字段**，
+   * 而驱动是异步加载的；「本平台不支持拍照」在驱动形态上的表达就是**不提供这个方法**——§5.2 第 3 级
+   * （`canCapture = false`、UI 不渲染入口）因此不需要任何 `xxxForTests` 导出就能被假驱动判别。
+   */
+  captureImageFile?(): Promise<File | null>;        // §5.2
   takeOpenedUris(): Promise<string[]>;              // §5.3.2：invoke("take_opened_uris")，取走即清
   listenOpened(handler: (uri: string) => void): Promise<() => void>;  // §5.3.3
   readFileAsBytes(uri: string): Promise<Uint8Array>;                  // §5.3.5 / §5.1：plugin-fs
-  saveToAlbum(bytes: Uint8Array, filename: string): Promise<void>;    // §5.4
+  /**
+   * §5.4 存相册。**返回实际写入相册的字节数**（2026-10-06 写计划时改）：驱动拿它与 `bytes.length` 比对，
+   * 不等即抛——这是「原始字节体这条桥有没有被截断 / 被降级成 JSON」唯一能在前端发现的地方，
+   * 也是真机判据 C/D 读数里「端到端一致（N 字节）」那句的来源。三层联动：前端算信封总长 →
+   * Rust 校验信封并返回 Kotlin 写入的字节数 → Kotlin 自校验 `copied == source.length()`。
+   */
+  saveToAlbum(bytes: Uint8Array, filename: string): Promise<number>;  // §5.4
   onBackButtonPress(handler: (info: { canGoBack: boolean }) => void): Promise<() => void>;
   onCloseRequested(handler: () => boolean): Promise<() => void>;
   exitApp(): Promise<void>;
@@ -290,7 +301,7 @@ export interface TauriDriver {
 ### 5.1 相册选图
 
 - 浏览器：`kind = "file-input"`，`PickPage` 走今天那条老路（可见 input + 下一步），**一行不动**。`browserPlatform.pickFromAlbum` 仍然实现（程序化建一个隐藏 input、click、等 `change` 或 `cancel`），JSDoc 写明「浏览器路径下零生产消费者」。
-- 壳：`kind = "native-picker"`，`PickPage` 渲染「从相册选一张」按钮 → `pickFromAlbum()`。壳里的实现由 **spike 判定**（§13 任务 0 的判据 A）：
+- 壳：`kind = "native-picker"`，`PickPage` 渲染「从相册选一张」按钮 → `pickFromAlbum()`。壳里的实现由 **spike 判定**（§13 **任务 2** 的判据 A）：
 
 | spike 判据 A | 壳里 `pickFromAlbum` 的实现 |
 |---|---|
@@ -305,7 +316,7 @@ export interface TauriDriver {
 
 ### 5.2 拍照（三级降级，逐级写明判据）
 
-| 级 | 实现 | 判据（spike 任务 0 同时测） | 失败时 |
+| 级 | 实现 | 判据（spike **任务 2** 同时测） | 失败时 |
 |---|---|---|---|
 | 1 | 壳里 `<input type="file" accept="image/*" capture="environment">` | 点按后**直接进相机**（而不是文件选择器），拍完能拿到可解码的 `File` | 降到 2 |
 | 2 | 自定义 Kotlin 移动插件的 `capture` 命令：`ACTION_IMAGE_CAPTURE` + `FileProvider`，结果写进 App cache，回调返回路径 | 相机能起、拍完 cache 里有文件、字节可读 | 降到 3 |
@@ -385,15 +396,28 @@ fn take_opened_uris(app: tauri::AppHandle) -> Vec<String> {
 ```
 ExportPanel（真画布 → canvasToBlob → Blob）
   └─ album.save(blob, filename)
-       ├─ requireSavableBlob(blob, filename)        ← 守卫，两实现共用
+       ├─ requireSavableBlob(blob, filename)        ← 守卫，两实现共用（写在任何写操作之前）
        ├─ blob.arrayBuffer() → Uint8Array
        └─ driver.saveToAlbum(bytes, filename)
-            └─ invoke("save_image_to_album", bytes)  ← ★ 原始字节体（不是 base64、不是数字数组）
-                 └─ Rust：写 $TMP/weefuse-<uuid>.png → PluginHandle::run_mobile_plugin("save", {path, filename})
-                      └─ Kotlin AlbumPlugin：MediaStore.Images.Media 插入 → 复制字节 → 删临时文件
+            └─ invoke("save_image_to_album", 信封)   ← ★ 原始字节体：`[u32 LE 名字长度][名字 UTF-8][图像字节]`
+                 └─ Rust：校验信封（checked_add 防溢出）→ 写 $TMP/weefuse-<pid>-<纳秒>-<计数>.png
+                      → PluginHandle::run_mobile_plugin("save", {path, filename})
+                      → 无论成败删临时文件 → **返回实际写入字节数**
+                      └─ Kotlin AlbumPlugin：MediaStore 插入 → 复制字节 → 自校验 copied == source.length()
+                           → 返回 { uri, bytes }
 ```
 
-**为什么必须走原始字节体**：一张施工图最大 ≈64 MB（B4 规格 §15）。走 JSON 参数只有两条路，都不可接受——把 `Uint8Array` 当 JSON 数组传会膨胀成 ~200 MB 的文本；base64 是 1.37×且要过两遍编码。Tauri 2 的 `invoke` 支持把 `Uint8Array` 当**原始请求体**发（Rust 侧用 `tauri::ipc::Request` 取 `InvokeBody::Raw`），这是本规格选定的通路；**它的可用性由 spike 判据 C 验证**（§13 任务 0），不成立时的退路是 base64（代价写进 §11，且必须在构建记录里说明为什么退了）。
+**为什么文件名在 body 里、不在 header 里**（2026-10-06 写计划时定）：`invoke` 的参数能带 HTTP header，但
+header 的值域是 **ASCII**，而文件名来自 `exportFilename()`（`<中文工程名>-施工图-r1c1.png`）。信封只有一条
+约束、自带长度前缀、不需要任何编码转换，也**不依赖 `invoke` 是否支持 `options.headers`** 这个未经核实的 API。
+两侧的字面量各持一份（前端 `tauriDriver.ts`、Rust `split_envelope`），**必须逐字一致**——这条跨语言协议在
+CI 里无断言，判别力在真机判据 C/D。
+
+**为什么要三层字节核对**：前端算信封总长 → Rust 返回 Kotlin 实际写入的字节数 → Kotlin 自校验
+`copied == source.length()`。任一层截断都会以「相册写入字节数不一致」的形式**响亮失败**，而不是产出一张
+半张图。`AlbumPlugin.save` 返回的 `bytes` 就是 Rust 那个返回值的来源。
+
+**为什么必须走原始字节体**：一张施工图最大 ≈64 MB（B4 规格 §15）。走 JSON 参数只有两条路，都不可接受——把 `Uint8Array` 当 JSON 数组传会膨胀成 ~200 MB 的文本；base64 是 1.37×且要过两遍编码。Tauri 2 的 `invoke` 支持把 `Uint8Array` 当**原始请求体**发（Rust 侧用 `tauri::ipc::Request` 取 `InvokeBody::Raw`），这是本规格选定的通路；**它的可用性由 spike 判据 C 验证**（§13 任务 2），不成立时的退路是 base64（代价写进 §11，且必须在构建记录里说明为什么退了）。
 
 Rust 侧先落临时文件、再把**路径**给 Kotlin，而不是把字节塞进插件调用的 JSON——插件调用的参数是 JSON，塞字节等于把刚躲开的问题搬到下一段。
 
@@ -625,7 +649,7 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 
 | # | 风险 | 验证方式 | 降级 |
 |---|---|---|---|
-| B5-R1 | 本机 Tauri Android 构建链走不通（NDK 30 与 Tauri 2.12 不兼容 / 缺 Android SDK Command-line Tools / gradle 依赖拉不下来） | spike 任务 0 判据 F：`npx tauri android build --apk` 能否产出 APK | ① 装 SDK Command-line Tools（**动系统 SDK，先问人类伙伴**）；② 按官方推荐版本另装一个 NDK；③ 都不行 ⇒ 本轮的验收降级为「桌面壳可用 + Android 构建如实记为未完成」，并**当场重新评估本轮范围**（不许把没验过的说成验过） |
+| B5-R1 | 本机 Tauri Android 构建链走不通（NDK 30 与 Tauri 2.12 不兼容 / 缺 Android SDK Command-line Tools / gradle 依赖拉不下来） | spike **任务 2** 判据 F（构建在任务 1 里先跑一次）：`npx tauri android build --apk` 能否产出 APK | ① 装 SDK Command-line Tools（**动系统 SDK，先问人类伙伴**）；② 按官方推荐版本另装一个 NDK；③ 都不行 ⇒ 本轮的验收降级为「桌面壳可用 + Android 构建如实记为未完成」，并**当场重新评估本轮范围**（不许把没验过的说成验过） |
 | B5-R2 | WebView 里 `<input type="file">` / `capture` 不可用 | spike 判据 A / B | 相册 → dialog 插件（§5.1）；拍照 → Kotlin 插件（§5.2 第 2 级）；都不行 → 拍照记为未交付 |
 | B5-R3 | `RunEvent::Opened` 收到的东西不是可读的 `content://`（或 `plugin-fs` 读不了） | spike 判据 C（拿一张真图从相册 App 分享进一个最小壳） | Kotlin 侧把 URI 流复制到 cache 再交前端（多一个自定义插件）；再不行 ⇒ 分享进入记为未交付，如实写进 README |
 | B5-R4 | `invoke` 的原始字节体不可用（大 PNG 只能走 base64） | spike 判据 C 附带 | base64（1.37× 膨胀 + 两遍编码）；**必须在构建记录里写明为什么退** |
