@@ -15,18 +15,21 @@
  * （`tauriPlatform.ts`）与它共用同一份驱动。
  *
  * **零判别力（如实登记，不许含糊）**：本文件在 happy-dom 下**不可执行**——它 `import` 的每个包
- * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它**只剩两处**能被断言
- * （都在 `__tests__/tauriDriver.test.ts`，都与 Tauri 无关）：纯函数 `encodeBase64`，以及
- * `pickWithHiddenInput` 的**四个出口**（`change` / `cancel` / 结算兜底 / `click()` 抛错）。
+ * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它**能断言的是**
+ * （都在 `__tests__/tauriDriver.test.ts`，都与 Tauri 无关）：纯函数 `encodeBase64`、
+ * `pickWithHiddenInput` 的**四个出口**（`change` / `cancel` / 结算兜底 / `click()` 抛错），
+ * 以及它的**属性装配**（`type` / `accept` / `capture` / `display:none` 四行——DOM 属性，CI 真的读得到）。
  * `createDriver()` 内部其余的一切收集不到用例。它其余的机器化保障是 `npm run build` 的类型检查
  * （`vue-tsc`）与 `platformGate` 的 G1 结构断言（「只有这个文件含 `@tauri-apps/`」）。
- * 下列**四处**的判别力**全部在真机读数**：
+ * 下列**五处**的判别力**全部在真机读数**（跨语言 / 跨进程，CI 连编译都盖不住）：
  * - **base64 请求体的编码口径**（`{ filename, dataBase64 }`；Android 上 `InvokeBody::Raw` 不可达，
  *   理由见 `saveToAlbum` 的注释）⇒ 判据 C 的「请求体形态 = base64 JSON 字符串」那一行
  *   （**编码器本身**有 CI 已知答案向量；**这条链有没有通**只能真机看）；
  * - **端到端字节核对**（`written !== bytes.length` 即抛）⇒ 判据 C / D 读数的「端到端一致（N 字节）」；
- * - **隐藏 input 的装配**（`type=file` / `accept` / `capture` 属性、挂进 body 再 `click()`）⇒ 判据 A / B
- *   的读数（那是「选择器 / 相机真的被唤出来」这件事本身）；
+ * - **「选择器 / 相机真的被唤出来」这件事本身**（属性装配在 CI 里可断言，唤出不可）⇒ 判据 A / B 的读数；
+ * - **三处跨语言名字**：命令名 `take_opened_uris` / `save_image_to_album` 与事件名 `"opened"`
+ *   （JS 侧字符串 ↔ Rust 侧 `generate_handler!` / `app.emit`）——名字对不上时 CI 全绿、真机报
+ *   「command not found」或事件永不触发（本项目 B4 记过同族：跨语言类型/名字对不上是静默形态）；
  * - **`exitApp()`**（`app.exit(0)`）⇒ 判据 E 的「明确退出 App」按钮。
  */
 export interface TauriDriver {
@@ -140,9 +143,9 @@ export function encodeBase64(bytes: Uint8Array): string {
  * ⇒ 把用户刚选好的文件静默丢掉。
  *
  * **为什么公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：生产消费者只有本文件的
- * `pickWithHiddenInput`；`__tests__/tauriDriver.test.ts` 需要它来**恰好推进一个宽限期**、
- * 并断言「推进之前仍未结算」——测试里写死 `1000` 就是本项目记账过的「第二份字面量」形态
- * （改实现后用例仍压在旧值上，边界用例悄悄退化成非边界用例）。同 `BASE64_CHUNK_BYTES` 的理由。
+ * `pickWithHiddenInput`；`__tests__/tauriDriver.test.ts` 需要它来断言**排上去的延迟就是它**
+ * （测试里写死 `1000` 就是本项目记账过的「第二份字面量」形态——改实现后用例仍压在旧值上，
+ * 边界用例悄悄退化成非边界用例）。同 `BASE64_CHUNK_BYTES` 的理由。
  */
 export const PICKER_RETURN_GRACE_MS = 1000;
 
@@ -167,10 +170,11 @@ export const PICKER_RETURN_GRACE_MS = 1000;
  *   「偶尔要重来一次」之间选了后者。
  *
  * **为什么公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：生产消费者在本文件内
- * （`pickImageFile` 传 `null`、`captureImageFile` 传 `"environment"`）；公开是为了让**结算兜底**在 CI 里
- * 可判别——上面那四个出口在 happy-dom 下都能用手工派发的事件与假定时器跑到
- * （`__tests__/tauriDriver.test.ts`）。它是一个真的 DOM 机制，不是 `xxxForTests` 那种测试钩子：
- * 真机上的判别力（选择器 / 相机真的被唤出）仍不在 CI 里，见文件头的四条。
+ * （`pickImageFile` 传 `null`、`captureImageFile` 传 `"environment"`）；公开是为了让**结算兜底**与
+ * **属性装配**在 CI 里可判别——四个出口与 `type` / `accept` / `capture` 都能在 happy-dom 下读到
+ * （`__tests__/tauriDriver.test.ts`：手工派发事件 + 把 `setTimeout` 换成只记录不等待的桩、再手工触发）。
+ * 它是一个真的 DOM 机制，不是 `xxxForTests` 那种测试钩子：真机上才有的判别力（选择器 / 相机真的被唤出）
+ * 仍不在 CI 里，见文件头的五处。
  */
 export function pickWithHiddenInput(capture: "environment" | null): Promise<File | null> {
   return new Promise<File | null>((resolve, reject) => {
