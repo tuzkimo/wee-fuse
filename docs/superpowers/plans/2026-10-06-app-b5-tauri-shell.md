@@ -4323,6 +4323,7 @@ git add src/composables/useShareIntake.ts src/composables/__tests__/useShareInta
 git commit -m "feat(app): 系统分享进入的摄入链（冷/热启动同一条路，编辑器有未保存改动时不带走用户）"
 ```
 
+（步骤 5 是空操作时，`git add` 里去掉 `src-tauri` 与 `tauriDriver.ts`。）
 ---
 
 ### 任务 6：保存到相册接线（`ExportPanel` 换调 `album.save`，G4 转绿）
@@ -4440,7 +4441,6 @@ git commit -m "feat(exporter): 面板经能力层落盘（壳里进相册），p
 ```
 
 （步骤 5 是空操作时，`git add` 里去掉 `tauriPlatform.ts` 与 `src-tauri`。）
-（步骤 5 是空操作时，`git add` 里去掉 `src-tauri` 与 `tauriDriver.ts`。）
 
 ---
 
