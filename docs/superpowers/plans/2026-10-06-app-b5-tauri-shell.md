@@ -2409,7 +2409,13 @@ pub fn run() {
                     guard.push(url.to_string());
                 }
                 drop(guard);
-                let _ = app.emit("opened", urls.iter().map(|u| u.to_string()).collect::<Vec<_>>());
+                // **一个 URI 一条事件、payload 是字符串**（不是数组）：驱动的 `listen<string>("opened")`
+                // 收到的就是单个 `content://…`。发数组会让 `payload.payload` 变成 `string[]`，
+                // 而 `fileFromUri` 走的是 `typeof first !== "string"` 那条守卫 ⇒ 每次热启动分享都报
+                // 「分享内容不是文件」。跨语言边界上的类型对不上是**静默形态**，所以这里逐条写清楚。
+                for url in urls {
+                    let _ = app.emit("opened", url.to_string());
+                }
             }
             #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
             {
@@ -3257,16 +3263,32 @@ async function copy(): Promise<void> {
 `src/router/index.ts` 追加一条（与 `/lab/canvas` 同构）：
 
 ```ts
+  // /lab/shell 是任务 2 的六判据探针页（**开发期实验台**，不进任何用户入口、页面自标；判据 A–F 的原始
+  // 读数由人类伙伴从这一页复制进 B5 spike 报告）。它**留存**为第三个实验台——与 `/lab/decode`、
+  // `/lab/canvas` 并列：换设备 / 换 Tauri 版本时还要重测。
   { path: "/lab/shell", name: "shell-lab", component: () => import("@/views/ShellProbePage.vue") },
 ```
 
-`src/router/__tests__/index.test.ts` **追加**一条恒等断言（既有 4 条一字不动）：
+`src/router/__tests__/index.test.ts`：顶部加一行 import（追加用例的必然结果），并在 `describe` 内**末尾追加**一条（既有 4 条一字不动）：
 
 ```ts
-  it("/lab/shell 指的是壳能力探针页（组件恒等）", async () => {
-    const resolved = router.resolve({ name: "shell-lab" });
-    const ShellProbePage = (await import("@/views/ShellProbePage.vue")).default;
-    expect(resolved.matched[0]?.components?.default).toBe(ShellProbePage);
+import ShellProbePage from "@/views/ShellProbePage.vue";
+```
+
+```ts
+  // `name` + `path` 两条断言挡不住「component 指错页面」：懒加载路由的 `components.default` 是一个
+  // **loader 函数**（`router.resolve` 不会调它），所以必须自己跑一次 loader 再做恒等比较。
+  // 写法取自同一文件里 `/new` 与 `/new/setup` 那两条（既有先例：不做只断 path 的弱断言）。
+  it("/lab/shell 是六判据探针页：名字 shell-lab、路径 /lab/shell、组件就是 ShellProbePage", async () => {
+    const route = router.resolve({ name: "shell-lab" });
+
+    expect(route.name).toBe("shell-lab");
+    expect(route.path).toBe("/lab/shell");
+
+    const loader = route.matched[0]?.components?.default;
+    expect(typeof loader).toBe("function");
+    const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
+    expect(mod.default).toBe(ShellProbePage);
   });
 ```
 
