@@ -97,14 +97,18 @@ export function useShareIntake(): ShareIntake {
    * （`services/platform/sniffImageType.ts` 的签名表）——拒了就是把能用的图判成「不是图片」；
    * 空 type 同理（无信息 ≠ 不是图片）。
    *
-   * **如实登记（这道闸门的射程；含 2026-10-06 控制者读生成的 `AndroidManifest.xml` 的核实）**：
-   * ① 正常分享面板上**非图片根本不会把本 App 列为目标**（生成的三个 intent-filter 只覆盖
-   * `image/png` / `image/jpeg` / `image/webp`，**没有**通配 MIME）⇒ 这一支今天只在
-   * **显式 intent** 或被 provider 谎报 MIME 的情况下可达；真到了这里，给出的正是规格那句
-   * 「只支持图片」（在此之前它会落到解码失败，文案是「图片解码失败」，草稿一样不动、一样不跳转）。
-   * ② 壳里 `File.type` 是嗅探结果（`tauriPlatform.ts` 的 `fileFromUri`），而嗅探对「一段纯文本」与
-   * 「一张 GIF」给出**同一个**回落值 `application/octet-stream` ⇒ 若某条路把纯文本以 null-MIME 递进来，
-   * 这里按上面的口径放行、由解码那一步失败并给出中文原因。
+   * **如实登记（这道闸门的射程；2026-10-06 定向复审 D 更正）**：**今天它没有生产路径** ——
+   * ① 正常分享面板不会把非图片分享到本 App（生成的三个 intent-filter 只覆盖 `image/png` /
+   * `image/jpeg` / `image/webp`，**没有**通配 MIME）；② 即使有别的路把非图片塞进来，壳里的 `File.type`
+   * **一律**来自 `fileFromUri` → `sniffImageType`，纯文本也只会回落成 `application/octet-stream`，
+   * 而上面那条口径**放行**它 ⇒ 闸门恒 `false`，随后由解码失败给出「图片解码失败」（草稿不动、不跳转）。
+   * **一条事实，不再自相矛盾**（上一版同时写了「会放行」与「真到了这里给出的正是『只支持图片』」✗）。
+   *
+   * **那为什么保留它**：规格 §5.3.4 的「非图片 ⇒ 提示条写明『只支持图片』」要有个落点，而它的成立条件
+   * 很具体——**平台层将来若原样透传真实 MIME**（不再重新嗅探 / 或把 MIME 一起带上来），这条闸门就是
+   * 那一行的实现，且今天已由用例 ④d 钉住行为、④e 钉住「不许误伤 octet-stream」。**人工清单 #6
+   * （分享一段文字 ⇒ 提示「只支持图片」）今天执行不了**（分享面板里选不到本 App）——按 P20 如实登记，
+   * 别把它当成「已验」。
    */
   function isClearlyNotImage(type: string): boolean {
     if (type === "" || type === "application/octet-stream") return false;
@@ -146,6 +150,8 @@ export function useShareIntake(): ShareIntake {
   let batchExtra = 0;
   let batchFromHot = false;
   let scheduled = false;
+  /** 批次串行链（见 `enqueue` 里的说明）：**同一时刻只有一个 `flushBatch` 在跑**。 */
+  let inFlight: Promise<void> = Promise.resolve();
 
   function enqueue(file: File, extraCount: number, fromHot: boolean): void {
     batchExtra += extraCount;
@@ -155,14 +161,37 @@ export function useShareIntake(): ShareIntake {
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      void flushBatch();
+      // **批次必须串行**（定向复审 C）：解码会悬住数秒，若让后一批与它并发，两批会交错——
+      // 两批各自 `adoptImage` + `push`，**先发的后结算就把草稿换成较旧那张**；而 I1 的回滚
+      // `draft.reset()` 更是**破坏性**动作，跨批生效会擦掉另一批刚落的草稿。排到前一批之后即可：
+      // 后批仍会被处理（跨 tick 的两次分享 = 两次摄入，口径不变），只是按到达顺序结算。
+      inFlight = inFlight.then(
+        () => flushBatch(),
+        () => flushBatch(),
+      );
     });
+  }
+
+  /**
+   * 把「还有 N 张没有处理」写进提示条（规格 §5.3.4 的多图告知）。
+   *
+   * **已有提示时不覆盖**：冷取的 `extraCount` 与排空带回来的 `extraCount` 可能先后到达
+   * （定向复审 A），而任何一个都不是「可以把另一个悄悄丢掉」的理由 ⇒ 追加一句。
+   */
+  function reportDropped(count: number): void {
+    if (count <= 0) return;
+    const notice = `已取第一张；这次分享里还有 ${count} 张没有处理。`;
+    message.value = message.value === "" ? notice : `${message.value} 另有 ${count} 张没有处理。`;
   }
 
   async function flushBatch(): Promise<void> {
     const files = batch.splice(0, batch.length);
     const fromHot = batchFromHot;
-    const dropped = batchExtra + Math.max(0, files.length - 1);
+    // **张数不许重复计数**（定向复审 B）：冷取带 `extraCount = N-1`，而同一批的 N 条事件又各带一张
+    // ⇒ 相加会得到 `(N-1) + (N-1)`。两个来源说的是**同一件事**（同一次分享的其余张数），取较大者才是
+    // 真值：只有冷取时 `files` 里的重复项已被指纹去重（=1）⇒ 取 `extraCount`；只有热路径时
+    // `extraCount` 为 0 ⇒ 取 `files.length - 1`；两条道都在时两者都等于 N-1 ⇒ 取谁都对。
+    const dropped = Math.max(batchExtra, Math.max(0, files.length - 1));
     batchExtra = 0;
     batchFromHot = false;
     const first = files[0];
@@ -171,7 +200,7 @@ export function useShareIntake(): ShareIntake {
     // **K3：热路径处理完顺手把 state 排空。** Rust 对**每次** `RunEvent::Opened`（含热启动）都 push 进
     // `OpenedUris`，而本文件只在 setup 取一次 ⇒ 不排空的话，下一次 setup（WebView 重载 / Activity
     // 重建 / 热重载）会把它当冷启动**再摄一遍**，正是规格 §5.3.2 要消灭的「莫名其妙回到选区页」。
-    // 排空拿到的通常就是刚处理过的那一张（同一条 URI 的第二条道）⇒ 按指纹跳过；不是同一张
+    // 排空拿到的通常就是刚处理过的那一张（同一条 URI 的第二条道）⇒ 不重复摄入；不是同一张
     // （更早的一次分享还压在 state 里）⇒ 它才该被摄入。
     if (fromHot) await drainSharedState(files);
   }
@@ -180,7 +209,13 @@ export function useShareIntake(): ShareIntake {
     try {
       const taken = await platform.shareInbox.takeSharedImage();
       if (taken === null) return;
-      if (handled.some((file) => isSameImage(file, taken.file))) return;
+      if (handled.some((file) => isSameImage(file, taken.file))) {
+        // **指纹相同 ⇒ 不重复摄入那一张，但它带的 `extraCount` 不能跟着消失**（定向复审 A）：
+        // `takeSharedImage` 已经把整个 URI 数组消费掉了，这里 `return` 掉就等于把
+        // 「同指纹的旧 URI 之外还压着 N 张」这件事静默丢掉（无提示、无日志）。
+        reportDropped(taken.extraCount);
+        return;
+      }
       await intakeOrPark(taken.file, taken.extraCount);
     } catch (error) {
       message.value = `分享的图片没能读取：${errorText(error)}`;
@@ -215,10 +250,8 @@ export function useShareIntake(): ShareIntake {
         message.value = "分享的图片没能进入选区页（当前编辑还有未保存的改动）；草稿已还原，处理完再点「继续」。";
         return;
       }
-      if (extraCount > 0) {
-        // 规格 §5.3.4 第 2 行：多图**只取第一张**，且**告知**（其余不摄入、也不静默丢）。
-        message.value = `已取第一张；这次分享里还有 ${extraCount} 张没有处理。`;
-      }
+      // 规格 §5.3.4 第 2 行：多图**只取第一张**，且**告知**（其余不摄入、也不静默丢）。
+      reportDropped(extraCount);
     } catch (error) {
       // **不落草稿**：失败时草稿必须与「什么都没发生过」一致。
       message.value = `分享的图片没能处理：${errorText(error)}`;
@@ -228,6 +261,13 @@ export function useShareIntake(): ShareIntake {
   /** 摄入前先看「编辑器里有没有未保存的改动」——有就暂存，别把用户带走。 */
   async function intakeOrPark(file: File, extraCount: number): Promise<void> {
     if (router.currentRoute.value.name === "editor" && session.dirty) {
+      if (pending.value !== null) {
+        // **E2（定向复审）：已经压着一张没处理完的分享时不覆盖它。** 覆盖 = 第一张静默消失
+        // （无提示、无法找回），与「不静默丢」的口径直接冲突。口径写明：**保留第一张**，
+        // 提示条追加一句说明又收到了一张；用户处理完编辑器的改动后点「继续」摄入的仍是第一张。
+        message.value = "又收到一张分享的图片；先处理上一张，处理完再点「继续」。";
+        return;
+      }
       pending.value = file;
       pendingExtra = extraCount;
       message.value = "收到一张分享的图片；当前编辑还没保存，处理完再点「继续」。";

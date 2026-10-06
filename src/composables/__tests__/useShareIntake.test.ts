@@ -100,17 +100,29 @@ class FakeCanvas {
  * 桩只落在平台边界（`<img>` 解不出像素），与 `PickPage.test.ts` 同一条口径。
  */
 function stubDecode(
-  options: { width?: number; height?: number; decodeError?: string; decodeGate?: Promise<void> } = {},
+  options: {
+    width?: number;
+    height?: number;
+    decodeError?: string;
+    decodeGate?: Promise<void>;
+    /** 逐次解码的闸门（第 n 次解码等第 n 个）：定向复审 C 用它把**后一批**放行到**前一批**之前。 */
+    decodeGates?: readonly Promise<void>[];
+  } = {},
 ): { canvases: FakeCanvas[]; createObjectURL: ReturnType<typeof vi.fn> } {
   const width = options.width ?? 800;
   const height = options.height ?? 600;
+  let decodeSeq = 0;
   class FakeImage {
     readonly naturalWidth = width;
     readonly naturalHeight = height;
     src = "";
+    /** **在构造时**定位自己的闸门（`loadImageSource` 每次摄入建一张 `Image`）。 */
+    readonly seq = decodeSeq++;
     readonly decode = vi.fn(async (): Promise<void> => {
-      // 闸门：让「解码进行中」这一瞬可以被用例停住（I2 的连点两次就发生在这一瞬）。
-      if (options.decodeGate !== undefined) await options.decodeGate;
+      // 闸门：让「解码进行中」这一瞬可以被用例停住（I2 的连点两次、C 的两批交错都在这一瞬）。
+      const perCall = options.decodeGates?.[this.seq];
+      if (perCall !== undefined) await perCall;
+      else if (options.decodeGate !== undefined) await options.decodeGate;
       if (options.decodeError !== undefined) throw new Error(options.decodeError);
     });
   }
@@ -143,6 +155,7 @@ function stubDecode(
 
 const FILE = new File([new Uint8Array([1, 2, 3, 4])], "小猫照片.png", { type: "image/png" });
 const FILE2 = new File([new Uint8Array([5, 6, 7, 8])], "第二张.png", { type: "image/png" });
+const FILE3 = new File([new Uint8Array([9, 10])], "第三张.png", { type: "image/png" });
 /** 同一条 URI 被**第二次**读出来的样子：另一个对象、同一份指纹（名字 / 字节数 / MIME 全同）。 */
 const FILE_AGAIN = new File([FILE], FILE.name, { type: FILE.type });
 /** 非图片（真机那条链上只可能由平台层自带 MIME 时出现，见 K1 用例的说明）。 */
@@ -165,19 +178,27 @@ interface InboxSpies {
 /**
  * 只换 `shareInbox` 的假平台（其余能力照抄浏览器实现——本任务不碰它们）。
  * 冷启动那一份由 `file` / `extraCount` 描述（缺省 = 空），`subscribe` 默认只登记 handler。
+ * `takeSequence` 让「冷取为空、排空时才拿到」这类**逐次不同**的返回可表达（A 的用例）；
+ * `takeError` 抛出的东西**原样**抛出（可以是字符串，用来钉 `String(error)` 回退口径）。
  */
 function inboxSpies(options: {
   supported: boolean;
   file?: File | null;
   extraCount?: number;
+  takeSequence?: readonly (SharedImageTake | null)[];
+  takeError?: unknown;
 }): InboxSpies {
   const handlers: ((file: File) => void)[] = [];
   const unbind = vi.fn();
   const held = options.file ?? null;
-  const take = vi.fn(
-    async (): Promise<SharedImageTake | null> =>
-      held === null ? null : { file: held, extraCount: options.extraCount ?? 0 },
-  );
+  let calls = 0;
+  const take = vi.fn(async (): Promise<SharedImageTake | null> => {
+    if (options.takeError !== undefined) throw options.takeError;
+    const index = calls;
+    calls += 1;
+    if (options.takeSequence !== undefined) return options.takeSequence[index] ?? null;
+    return held === null ? null : { file: held, extraCount: options.extraCount ?? 0 };
+  });
   const subscribe = vi.fn((handler: (file: File) => void) => {
     handlers.push(handler);
     return unbind;
@@ -437,6 +458,21 @@ describe("useShareIntake", () => {
     expect(wrapper.vm.share.message.value).toBe("");
   });
 
+  it("④b2 E1：`takeSharedImage` reject 一个**字符串** ⇒ 提示条回退到 `String(error)` 的原样文本", async () => {
+    // `errorText` 的 `String(error)` 那一支此前没有断言读过（真链上抛的都是 `Error`）。
+    const spies = inboxSpies({ supported: true, takeError: "读不出这行字节" });
+    setPlatform(spies.platform);
+    stubDecode();
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    expect(wrapper.vm.share.message.value).toContain("分享的图片没能读取");
+    expect(wrapper.vm.share.message.value).toContain("读不出这行字节");
+    expect(useDraft().source).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("⑤ 编辑器有未保存改动 ⇒ 不 adopt、不导航、暂存 + 中文原因；点「继续」后重试成功", async () => {
     const spies = inboxSpies({ supported: true, file: FILE });
     setPlatform(spies.platform);
@@ -692,6 +728,145 @@ describe("useShareIntake", () => {
     expect(push).toHaveBeenCalledTimes(1);
     expect(decode.canvases).toHaveLength(1);
     second.unmount();
+  });
+
+  it("⑦f A：排空回来的那份**指纹相同** ⇒ 不重复摄入，但它带的 `extraCount` 必须报出来", async () => {
+    // `takeSharedImage` 已经把整个 URI 数组消费掉：指纹相同就 `return` 等于把「同一条 URI 之外
+    // 还压着 1 张」静默丢掉 ✗。
+    const spies = inboxSpies({
+      supported: true,
+      // 第 1 次（冷启动）为空；第 2 次（热路径处理完的排空）拿到「同一条 URI + 另有一张」
+      takeSequence: [null, { file: FILE_AGAIN, extraCount: 1 }],
+    });
+    setPlatform(spies.platform);
+    const decode = stubDecode({ width: 800, height: 600 });
+
+    const wrapper = mountHost();
+    await flushPromises();
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+
+    fire(FILE);
+    await flushPromises();
+
+    expect(decode.canvases).toHaveLength(1);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(spies.take).toHaveBeenCalledTimes(2);
+    expect(wrapper.vm.share.message.value).toContain("还有 1 张没有处理");
+    wrapper.unmount();
+  });
+
+  it("⑦g B：冷取 `extraCount=2` 且同 tick 又来 3 条事件（双道）⇒ 张数不重复计数（报 2，不报 4）", async () => {
+    // Rust 既 push 又逐 URI emit ⇒ 同一批里 `batchExtra`（2）与 `files.length - 1`（2）说的是**同一件事**。
+    const spies = inboxSpies({ supported: true, file: FILE, extraCount: 2 });
+    setPlatform(spies.platform);
+    stubDecode({ width: 800, height: 600 });
+
+    const wrapper = mountHost();
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+    // 三条事件与冷取在同一 tick 到达（第一条与冷取同指纹 ⇒ 去重）
+    fire(FILE);
+    fire(FILE2);
+    fire(FILE3);
+    await flushPromises();
+
+    expect(useDraft().source?.name).toBe("小猫照片.png");
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(wrapper.vm.share.message.value).toContain("还有 2 张没有处理");
+    expect(wrapper.vm.share.message.value).not.toContain("4 张");
+    wrapper.unmount();
+  });
+
+  it("⑦h C：两批可交错 ⇒ 批次串行化（后一批先结算也不许把草稿换成较旧那张）", async () => {
+    // 第一批的解码悬在闸门上时发起第二批；先放**第二批**。
+    // 不串行化时：第二批先 adopt+push，第一批随后把草稿覆盖成**较旧**那张 ✗。
+    const spies = inboxSpies({ supported: true });
+    setPlatform(spies.platform);
+    let openFirst!: () => void;
+    let openSecond!: () => void;
+    const gateFirst = new Promise<void>((resolve) => {
+      openFirst = resolve;
+    });
+    const gateSecond = new Promise<void>((resolve) => {
+      openSecond = resolve;
+    });
+    const decode = stubDecode({ width: 800, height: 600, decodeGates: [gateFirst, gateSecond] });
+
+    const wrapper = mountHost();
+    await flushPromises();
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+
+    fire(FILE);
+    await flushPromises(); // 第一批进入 flush，悬在 gateFirst 上
+    fire(FILE2);
+    await flushPromises(); // 第二批排队（串行化后还没开始解码）
+
+    openSecond(); // 后一批先结算
+    await flushPromises();
+    openFirst();
+    await flushPromises();
+
+    // 串行化 ⇒ 顺序结算：第一张先落、第二张后落；两次摄入各一次，草稿停在**较新**那张
+    expect(decode.canvases).toHaveLength(2);
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(useDraft().source?.name).toBe("第二张.png");
+    wrapper.unmount();
+  });
+
+  it("⑦i E3：热路径读字节失败 ⇒ 平台层契约没有错误出口，唯一可观测的是那条 `console.error`", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const handle = makeShareDriver({ readError: "读不出字节" });
+    setPlatform(createTauriPlatform(handle.driver));
+    stubDecode();
+
+    const wrapper = mountHost();
+    await flushPromises();
+
+    handle.simulateShare(SHARE_URI);
+    await flushPromises();
+
+    expect(handle.readBytes).toHaveBeenCalledWith(SHARE_URI);
+    // 如实登记：`ShareInbox.onSharedImage` 的 handler 只给 `File`，读失败没有第二个出口
+    // （要把它变成提示条就得改契约，不在本轮边界内）⇒ 这条日志就是「至少有一条可观测的东西」。
+    expect(consoleError).toHaveBeenCalledWith("分享内容读取失败", expect.any(Error));
+    expect(useDraft().source).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+    expect(wrapper.vm.share.message.value).toBe("");
+    wrapper.unmount();
+  });
+
+  it("⑦j E2：暂存里已经有一张时又收到一张 ⇒ **不覆盖第一张**，提示条说明", async () => {
+    const spies = inboxSpies({ supported: true });
+    setPlatform(spies.platform);
+    stubDecode();
+    routeState.name = "editor";
+    const session = useProjectSession();
+    session.markDirty();
+
+    const wrapper = mountHost();
+    await flushPromises();
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+
+    fire(FILE);
+    await flushPromises();
+    expect(wrapper.vm.share.pending.value).toBe(FILE);
+
+    fire(FILE2); // 跨 tick 的第二张：第一张还没被处理
+    await flushPromises();
+
+    expect(wrapper.vm.share.pending.value).toBe(FILE); // ★ 第一张没被覆盖
+    expect(wrapper.vm.share.message.value).toContain("又收到一张");
+
+    session.reset();
+    await wrapper.vm.share.retry();
+    await flushPromises();
+
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE); // 摄入的是第一张
+    expect(push).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
   });
 
   it("⑧ 卸载 ⇒ 解绑热启动监听（不留悬挂订阅）", async () => {
