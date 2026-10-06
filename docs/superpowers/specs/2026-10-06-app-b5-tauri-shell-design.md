@@ -111,9 +111,10 @@ src/services/platform/
 ├── tauriPlatform.ts               # createTauriPlatform(driver)：驱动 → 能力（纯逻辑，可注入假驱动）
 └── __tests__/
     ├── platformContract.ts        # 两实现共用的一份契约用例（不是 .test.ts，不被 vitest 收集）
+    ├── guards.test.ts             # 守卫的直接用例（纯函数，与实现无关，故不放进契约）
     ├── browserPlatform.test.ts
-    ├── tauriPlatform.test.ts
-    └── capabilities.test.ts
+    ├── capabilities.test.ts
+    └── tauriPlatform.test.ts     # 由任务 2 创建
 
 src/composables/
 ├── useShareIntake.ts              # §5.3 的摄入链（App 级）
@@ -192,7 +193,6 @@ export interface AlbumSaver {
 }
 
 export interface AppLifecycle {
-  readonly kind: "browser" | "shell";
   /**
    * 退出 / 关闭请求。handler 返回 true = 阻止这次退出。返回解绑函数。
    * 浏览器实现是**刻意的 no-op**（理由见 §5.5.3）。
@@ -223,6 +223,8 @@ export interface Platform {
 | `shareInbox.supported` / `takeSharedImage` / `onSharedImage` | `useShareIntake.ts` | 浏览器实现 `supported === false`，三个成员在浏览器里都不被调用 |
 | `album.save` / `album.kind` | `ExportPanel.vue` | 两平台都有生产消费者 |
 | `lifecycle.onBackButton` / `onExitRequested` / `exit` | `useShellLifecycle.ts` | 浏览器实现三个都是 no-op，但 `useShellLifecycle` 照样注册（解绑函数在两平台都返回） |
+
+> **2026-10-06 删掉一个字段（写计划时改）**：`AppLifecycle` 原有一个 `kind: "browser" | "shell"`，**本规格把它删掉了**——写计划时逐条核对消费者，发现它**没有任何读取者**：`useShellLifecycle` 在两平台都注册（浏览器的 no-op 因此是被消费的），而 UI 不需要按它分叉。留一个零消费者的字段只会在 `AGENTS.md` 的「公开 API ≠ 被使用的 API」清单里多挂一条。`ImagePicking.kind`（UI 分支）与 `AlbumSaver.kind`（成功文案分叉）都有真实消费者，保留。
 
 ### 4.2 注入与默认值（与 `projectStore` 的差异及理由）
 
@@ -269,11 +271,12 @@ export interface TauriDriver {
 
 | 公开入口 | 守卫 | 消息 |
 |---|---|---|
-| `requireSavableBlob(blob, filename)`（`guards.ts`，两实现共用） | `blob` 必须是 `Blob` 且 `size > 0`；`filename.trim()` 非空 | 逐字沿用既有两条：`导出内容为空（blob 大小为 0）` / `文件名不能为空` |
+| `requireSavableBlob(blob, filename)`（`guards.ts`，两实现共用） | `blob` 必须是 `Blob` 且 `size > 0`；`filename` 必须是字符串且 `trim()` 非空 | 前两条**逐字沿用既有**：`导出内容为空（blob 大小为 0）` / `文件名不能为空`；**另两条是本次新增**（入参类型是 `unknown`，非 Blob / 非字符串不能落成裸 `TypeError`）：`导出内容必须是 Blob` / `文件名必须是字符串`。**判序固定**：先内容、后文件名 |
 | `tauriPlatform.pickFromAlbum` | 驱动返回值非 `File` 且非 `null` ⇒ 抛 | `图片选择器返回了非文件对象` |
 | `tauriPlatform.capturePhoto` | `canCapture === false` 时先抛；返回值同上 | `本平台不支持拍照` |
 | `tauriPlatform.takeSharedImage` | 驱动返回值同上 | `分享内容不是文件` |
 | `tauriPlatform.onBackButton` / `onExitRequested` | handler 必须是函数 | `回调必须是函数` |
+| `capabilities.setPlatform` | 入参必须是对象（`undefined` / `null` 会把实现置空，之后每一处 `getPlatform().xxx` 都落成裸 `TypeError`） | `平台实现必须是对象` |
 | `tauriPlatform.exit` | 无入参 | — |
 | `useShareIntake` 的摄入 | 非 `File` ⇒ 走失败提示，不 adopt | 复用 `loadImageSource` 抛出的中文消息 |
 
@@ -467,7 +470,8 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 ### 6.2 Android 生成物的入库策略（裁决 6）
 
 - **入库**：`src-tauri/gen/android/` 全部（`AndroidManifest.xml`、`build.gradle.kts`、`settings.gradle.kts`、`gradle/`、`gradlew*`、`app/src/**`）。
-- **不入库**（写进 `.gitignore`）：`src-tauri/target/`、`src-tauri/gen/android/**/build/`、`src-tauri/gen/android/.gradle/`、`src-tauri/gen/android/local.properties`、`*.apk` / `*.aab` / `*.keystore`。
+- **不入库**（写进 `.gitignore`）：`src-tauri/target/`、`src-tauri/gen/schemas/`（每次构建重新生成的 capability schema）、`src-tauri/gen/apple/`、`src-tauri/gen/android/**/build/`、`src-tauri/gen/android/.gradle/`、`src-tauri/gen/android/local.properties`、`src-tauri/gen/android/.idea/`、`*.apk` / `*.aab` / `*.keystore`。
+- **一处必须先改的现状（写计划时发现）**：本仓的 `.gitignore` **已经**忽略了 `src-tauri/gen/`（与 `src-tauri/target/` 一起，来自第一次提交 `3fedef3` 从 Tauri 模板抄来的两行，不是任何一次决定）。按裁决 6 实现时必须**把这一行换成上面那组更细的规则**，否则 Android 工程根本进不了版本库、`app_name` 的手改也留不下来。**不要**直接把文件删掉重写：`git log --oneline -- .gitignore` 只有一条提交，改动要能一对一说明白。
 - **判定条件（写进任务简报）**：若 spike 发现 `gen/android` 在 `npx tauri android build` 时会被 Tauri CLI **整体重写**（即手改无意义），则改为 gitignore + 在 README 写明 `npx tauri android init` 是构建前置步骤。**这个判定必须在 spike 报告里给出证据**（`git status` 在两次构建前后的输出），不许凭印象。
 
 ### 6.3 CI（新增一个 job，既有 job 一行不动）
@@ -648,29 +652,33 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 
 ---
 
-## 13. 实现顺序建议（交给 `writing-plans` 细化）
+## 13. 实现顺序（交给 `writing-plans` 细化）
 
-**任务 0 = 探路（spike）**。产出是**答案**，不是要留下的代码（照 `brainstorming` 技能的探路路径：临时脚手架明确标注一次性、收尾时删除或留在仓库外）。六个判据逐条给原始读数：
+> **2026-10-06 顺序更正（写计划时发现，本节原顺序已作废）**：本节原先写的是「任务 0 = spike → 任务 1 壳骨架 → 任务 2 能力层」。实际写计划时发现一个**结构冲突**：探针页要在真机上验六件事，其中四件（原始字节体 IPC / 收相册 / 返回键 / 关闭请求）必须碰 `@tauri-apps/*`，而 §3.2 的 G1 规定全仓只有 `tauriDriver.ts` 能碰它——若先做 spike，就得为探针页再开一个「探针专用 Tauri 接触点」的闸门例外。
+> **改为：能力层先落地，探针页做它的消费者**。这样闸门不需要例外，探针页也不再是一次性脚手架（它成为第三个开发期实验台 `/lab/shell`，换设备时还能重测——`/lab/canvas` 就是这么留下来的）。**代价如实记录**：`tauriDriver.ts` 的方法在 spike 期间才逐个写出来（它们的实现形态本来就取决于读数，这不是投机，是探路的定义）。
+
+**任务 0｜平台能力层**：`types.ts` / `guards.ts` / `capabilities.ts` / `browserPlatform.ts` + 契约测试 + `main.ts` 挂载前注入。**此时浏览器行为与今天逐字等价**，`ExportPanel` 与 `PickPage` 还没换成能力调用。
+**任务 1｜壳骨架**：`src-tauri/` 全部文件 + 图标 + `gen/android` 入库（含 `.gitignore` 的模板遗留修正）+ CI 的 `rust-check` job + G1–G4 四条闸门（G1 / G3b / G4 此时**故意红**，各写明转绿时点）。
+**任务 2｜spike 探路**：`/lab/shell` 探针页 + `tauriDriver.ts` + `tauriPlatform.ts` + `lib.rs` 的命令 + 最小 Kotlin `AlbumPlugin`，在手机上跑出六份原始读数，并**据此定下 pass 2 各任务的实现分支**。产出的判定见下表。
 
 | 判据 | 问题 | 怎么测 |
 |---|---|---|
-| F | 本机能否构建出 Android APK 并装到手机 | `npx tauri android init` → `build --apk` → 安装 → 首屏出现 |
-| A | WebView 里 `<input type="file">` 能否选图 | 临时壳页放一个 input，点按选一张真图，打印 `file.size` 与解码结果 |
+| F | 本机能否构建出 Android APK 并装到手机 | 任务 1 已构建；本任务负责**装上并打开** |
+| A | WebView 里 `<input type="file">` 能否选图 | 探针页的裸 input：选一张真图，打印 `file.size` 与解码结果 |
 | B | `capture="environment"` 是否直接进相机 | 同上换属性 |
-| C | `ACTION_SEND` → `RunEvent::Opened` 的 URL 形态、可读性，以及 `invoke` 原始字节体是否可用 | 配好 `fileAssociations`，从相册 App 分享一张图进壳，打印收到的 URI；另跑一条 raw-body 命令打印字节长度 |
-| D | MediaStore 插入是否免权限 | 最小 Kotlin 插件插一个字节数组进相册，看相册里有没有 |
-| E | Android 上 `onCloseRequested` / `ExitRequested` 是否触发 | 壳里打日志，按返回键与从任务切换器划掉，各看一次 |
+| C | `ACTION_SEND` → `RunEvent::Opened` 的 URL 形态与可读性；`invoke` 原始字节体是否可用 | 从相册 App 分享一张图进壳，打印收到的 URI；存相册那条命令走的正是 raw body ⇒ 判据 D 通过即判据 C 通过 |
+| D | MediaStore 插入是否免权限 | 最小 Kotlin 插件插一张小图进相册，看 `Pictures/WeeFuse` 里有没有 |
+| E | Android 上 `onCloseRequested` / `ExitRequested` 是否触发 | 探针页记事件日志，按返回键与从任务切换器划掉各看一次 |
 
-**任务 1** 壳骨架：`src-tauri/` 全部文件 + 图标 + `gen/android` 入库 + `.gitignore` + G1–G3 闸门 + CI 的 `rust-check` job + README 的开发命令段。
-**任务 2** 能力层：`types.ts` / `capabilities.ts` / `guards.ts` / `browserPlatform.ts` + 契约测试 + `main.ts` 注入（`ExportPanel` 与 `PickPage` 此时还没换成能力调用）。
-**任务 3** 相册选图：`tauriDriver` 的 `pickImageFile` + `tauriPlatform` + `sniffImageType` + `PickPage` 的 `native-picker` 分支（按 spike 判定 A）。
-**任务 4** 拍照：按 spike 判定 B 走第 1 / 第 2 / 第 3 级；第 2 级含 Kotlin 插件。
-**任务 5** 分享进入：`fileAssociations` + Rust 的 `OpenedUris` / `take_opened_uris` / `emit` + `takeSharedImage` / `onSharedImage` + `useShareIntake` + `App.vue` 装配。
-**任务 6** 保存到相册：Kotlin `AlbumPlugin` + Rust 命令（raw body）+ `saveToAlbum` + `ExportPanel` 换调用（G4 转绿）+ 契约测试补 `save` 两条。
-**任务 7** 生命周期：`onBackButtonPress` / `onCloseRequested` / `exitApp` + `useShellLifecycle` + 三条承重断言。
+**任务 3** 相册选图接线：`PickPage` 的 `native-picker` 分支（按判据 A）；`sniffImageType.ts` + 文件名规则。
+**任务 4** 拍照接线：按判据 B 走第 1 / 第 2 / 第 3 级；第 2 级才写 Kotlin 相机插件（此时才有读数支撑，所以它的逐字代码**在 pass 2 写**）。
+**任务 5** 分享进入：`useShareIntake` + `App.vue` 装配（按判据 C 的 URL 形态）。
+**任务 6** 保存到相册：`ExportPanel` 换调用（G4 转绿）+ 正式化 Kotlin `AlbumPlugin`（按判据 D）。
+**任务 7** 生命周期：`useShellLifecycle` + 三条承重断言（按判据 E）。
 **任务 8** 收尾：账目回原始清单重数 + 闭合校验、构建记录、AGENTS/CLAUDE 镜像、主规格注记、README、人工清单执行与回填、§11 的最终状态。
 
-**任务 2 先于 3–7**：能力层是后面四件事的骨架，先落地它才能让「壳实现」在 CI 里被假驱动测到。**任务 6 依赖任务 3/5 的驱动形态**（同一个 `tauriDriver.ts`），所以它排在分享进入之后。
+**为什么能力层排在最前**：它是后面六件事的骨架，先落地才能让「壳实现」在 CI 里被**假驱动**测到；而 `tauriDriver.ts` 的方法清单（§4.3）是按能力层定义的，所以顺序只能是能力层 → 驱动。
+**为什么保存到相册排在分享进入之后**：两者共用同一个 `tauriDriver`，而分享进入只需 `listen` + `invoke`，不牵动 Kotlin 插件；先做它能让驱动形态先稳定下来。
 
 ---
 
