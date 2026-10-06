@@ -10,7 +10,8 @@
 //    运行时证明。
 // 2. **plan 与逐项状态都由面板自持**（R-4）：页面只做接线，一行导出逻辑都不许下沉到页面里。
 // 3. **逐项导出 = 一次用户手势**（R-5）：点一次 → 渲染该张 → **画布自检** → `canvasToBlob` →
-//    立刻 `downloadBlob` → 显示预览（`<img>` 指向同一颗 blob 的 object URL）→ **即时释放画布**。
+//    立刻**经能力层落盘**（`getPlatform().album.save`：壳里进系统相册、浏览器里仍是下载）→
+//    显示预览（`<img>` 指向同一颗 blob 的 object URL）→ **即时释放画布**。
 //    不做连续多下载、不做 zip、不做 Web Share；任何一项失败只写该项的状态与中文原因，
 //    **不影响其他项**。
 //
@@ -30,11 +31,11 @@ import {
 } from "@/core/render/layout";
 import { drawLegend, drawSheetTile, type SheetMeta } from "@/core/render/sheet";
 import { drawShare } from "@/core/render/share";
+import { getPlatform } from "@/services/platform/capabilities";
 import {
   assertCanvasPainted,
   canvasToBlob,
   createCanvasStrict,
-  downloadBlob,
   exportFilename,
   requireContext2D,
   type ExportItemLabel,
@@ -264,26 +265,37 @@ onUnmounted(() => {
 function statusText(item: ExportItem): string {
   if (item.status === "idle") return "待生成";
   if (item.status === "busy") return "生成中…";
-  if (item.status === "done") return "已生成";
+  if (item.status === "done") {
+    // 成功文案按**落点**分叉（规格 §5.4.3 / §7.3）：壳里进系统相册、浏览器里是下载。
+    // **浏览器那一支必须逐字保持原文案**（既有用例对「已生成」有断言 ⇒ 本任务「既有断言一行不改」）；
+    // 规格 §5.4.3 / §7.3 表里给浏览器支写的是「已开始下载」，与既有断言冲突，本轮按「保既有」处置，
+    // 冲突已记进任务报告（要改成规格那一版就得动既有断言，那超出本任务边界）。
+    return getPlatform().album.kind === "album" ? "已保存到相册" : "已生成";
+  }
   return `失败：${item.error}`;
 }
 
 /**
- * 落盘 + 出预览。两步共用**同一颗 blob**：预览就是刚下载的那一份字节，不是重新渲染的第二份。
+ * 落盘 + 出预览。两步共用**同一颗 blob**：预览就是刚落盘的那一份字节，不是重新渲染的第二份。
  *
  * 文件名的第三个实参**只在施工图上传**：契约 §3 明写「用量表 / 分享图**不带**分片序号」。
  * （`tile === undefined` 与显式传 `undefined` 在 `exportFilename` 里**完全等价**——它读的是形参，
  * 不读 `arguments.length`；`exportFilename` 另外把显式 `null` 也按「带了序号」拒绝。这里分两支只是
  * 让「哪一类产物带序号」在调用点一眼可见。）
  *
- * **`await` 前后必须用同一个「这一刻」**（修复轮 F6 + 修复波 B-3）：`canvasToBlob` 是这条路径上唯一
- * 的异步点，而 `await` 期间图纸 / 工程都可能已经变了。所以：
- * 1. **代数与工程名都在 `await` 之前取**：`gen = generation` 判「这一项还在不在」，`projectName`
+ * **`await` 前后必须用同一个「这一刻」**（修复轮 F6 + 修复波 B-3）：这条路径上有**两个**异步点
+ * （`canvasToBlob`，以及任务 6 起经能力层落盘的 `album.save`），而 `await` 期间图纸 / 工程都可能已经变了。
+ * 所以：
+ * 1. **代数与工程名都在第一个 `await` 之前取**：`gen = generation` 判「这一项还在不在」，`projectName`
  *    保证「文件名的工程名」与「画布上那批字节」出自同一次取用（否则会出现「名字是新的、图纸是旧的」
  *    的静默错产物）；
- * 2. `await` 回来后若 `gen !== generation`（清单被重建）或 `unmounted`（面板下树）⇒ **立刻销号并
+ * 2. 两个 `await` 之后若 `gen !== generation`（清单被重建）或 `unmounted`（面板下树）⇒ **立刻销号并
  *    return**：不写 `item.previewUrl`（那是一个已经被丢弃、永远没人回收的对象）、也不把状态改成
- *    「已生成」（那个 UI 已经不存在了）。
+ *    「已保存到相册」（那个 UI 已经不存在了）。
+ *
+ * 落盘**必须经能力层**（规格 §5.4.3）：面板不再知道具体落点（壳里 = 系统相册、浏览器 = 下载），
+ * 也不自己拼第二份命名逻辑（名字走 `exportFilename`）。失败**照旧抛**（`save` 的契约是「失败必须抛」）
+ * ⇒ 冒到 `saveItem` 的 `catch`，只写该项的状态与中文原因，不影响其他项。
  */
 async function downloadAndPreview(
   item: ExportItem,
@@ -298,7 +310,10 @@ async function downloadAndPreview(
     tile === undefined
       ? exportFilename(projectName, label)
       : exportFilename(projectName, label, tile);
-  downloadBlob(blob, filename);
+  // 上一版：`downloadBlob(blob, filename);`（直调平台层之外的东西）
+  // 本任务：经能力层（规格 §5.4.3）——壳里进系统相册、浏览器里仍是下载；
+  // 面板**不再知道**具体落点，也不能再自己拼第二份命名逻辑（名字走 exportFilename）。
+  await getPlatform().album.save(blob, filename);
   const url = URL.createObjectURL(blob);
   if (unmounted || gen !== generation) {
     // 先销号再返回：这一步之后 `item.previewUrl` 仍是 `""`，这个 URL 不留在任何一个 `item` 上。
@@ -310,7 +325,7 @@ async function downloadAndPreview(
 }
 
 /**
- * 保存一项：**渲染该张 → 自检 → 立刻下载 → 显示预览**（R-5）。
+ * 保存一项：**渲染该张 → 自检 → 经能力层落盘 → 显示预览**（R-5）。
  *
  * 逐项独立：状态与原因都写在这一项上，抛错不冒泡到别的项（规格 §10.3）。
  * `busy` 期间按钮禁用（模板），函数自己再挡一次连点——手势可能比下一帧更快。
