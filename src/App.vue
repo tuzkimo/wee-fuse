@@ -3,9 +3,13 @@
 // **必须在 setup 顶层调用**：`useShareIntake` 内部用 `onUnmounted` 登记解绑
 //（`onUnmounted` 只在 setup 的同步执行期被当前实例收集，挪进回调就再也不会跑）。
 // 任务 7 的生命周期装配（`useShellLifecycle()`）加在这两行旁边。
+import { useShellLifecycle } from "@/composables/useShellLifecycle";
 import { useShareIntake } from "@/composables/useShareIntake";
 
 const share = useShareIntake();
+// 壳里的生命周期（规格 §5.5.1 / §5.5.2：返回键三分支 + 退出请求）。**同样必须在 setup 顶层调用**：
+// `useShellLifecycle` 内部用 `onUnmounted` 登记解绑，挪进回调那两处解绑就再也登记不到。
+useShellLifecycle();
 </script>
 
 <template>
