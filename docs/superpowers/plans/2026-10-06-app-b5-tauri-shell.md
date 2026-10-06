@@ -842,6 +842,17 @@ npx tauri --version
 预期：装完 `package.json` 多出 `@tauri-apps/cli`，`npx tauri --version` 打印 `tauri-cli 2.12.x`。
 （`AGENTS.md` 记的 npm arborist bug 只在**没有 lockfile** 的干净环境里触发；本仓 `package-lock.json` 在库，直接 `npm install` 即可。**不要**加 `.npmrc`。）
 
+**同一批还要给 `package.json` 的 `scripts` 加一条**（2026-10-06 由任务 1 的实现者实测发现，**这是我的计划缺口**）：
+
+```json
+    "tauri": "tauri"
+```
+
+**为什么必须有它**：`npx tauri android build` 里 gradle 的 `:app:rustBuild{Arm,Arm64,X86,X86_64}Debug` 任务会执行
+`npm run -- tauri android android-studio-script`；本仓原来没有 `tauri` script ⇒ 四个任务全部失败，报
+`A problem occurred starting process 'command 'npm.bat''` + `npm error Missing script: "tauri"`（实测：第一次 `build` 失败、耗时 531.9 s）。
+Tauri 官方模板本来就有这一条，本仓当初没建 `src-tauri/` 所以一直没有。**它不是可选项**：没有它 APK 必然出不来。
+
 - [ ] **步骤 2：写 Rust 工程的最小四件套**
 
 `src-tauri/Cargo.toml`：
@@ -970,6 +981,12 @@ pub fn run() {
 
 运行：`cargo check --manifest-path src-tauri/Cargo.toml`
 预期：`Finished` / exit 0。
+
+> **⚠️ 顺序更正（2026-10-06 由任务 1 的实现者实测，是我的计划错）**：本步骤在 **Windows 上必须排在步骤 5（生成图标）之后**。
+> `tauri-build` 生成 Windows 资源文件时要读 `src-tauri/icons/icon.ico`，而它由 `npx tauri icon` 产出 ⇒ 先跑本步骤**必然失败**：
+> 实测报 `` `…\src-tauri\icons/icon.ico` not found; required for generating a Windows Resource file during tauri-build ``
+> 与 `package.metadata does not exist`。**要么按「步骤 3 的配置文件 → 步骤 5 的图标 → 再回来跑本步骤」的顺序执行，
+> 要么把 `cargo check` 挪到图标之后一次性跑。** 这不是可选优化：先跑就是红。
 
 - [ ] **步骤 5：写图标生成脚本（零依赖）**
 
@@ -1151,6 +1168,7 @@ src-tauri/gen/android/**/build/
 src-tauri/gen/android/.gradle/
 src-tauri/gen/android/local.properties
 src-tauri/gen/android/.idea/
+src-tauri/gen/android/.kotlin/
 *.apk
 *.aab
 *.keystore
@@ -1431,7 +1449,13 @@ npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-预期：`npm run test` = **66 文件 / 1163 用例**（任务 0 之后的 65/1158 加上本任务的 1 个新测试文件 / 5 条闸门用例；**以实跑数字为准**），其中 **3 条故意红**（G1 / G3b / G4）；`npm run build` 通过（`vue-tsc` 不报错）；`cargo check` exit 0。
+预期：`npm run test` = **66 文件 / 1169 用例**（任务 0 修完之后是 **65 / 1164**，加上本任务的 1 个新测试文件 / 5 条闸门用例；**以实跑数字为准**），其中 **3 条故意红**（G1 / G3b / G4）；`npm run build` 通过（`vue-tsc` 不报错）；`cargo check` exit 0。
+
+> **2026-10-06 控制者实测更正（两处过期数字）**：本节原写「66 文件 / 1163 用例（任务 0 之后 65/1158）」。
+> 实测：任务 0 修完之后的真值是 **65 / 1164**（修复轮 +6 条：契约 3 + browserPlatform 2 + guards 1），
+> 所以本任务结束时是 **66 / 1169**；实现者实跑得 `Test Files 1 failed | 65 passed (66)` / `Tests 3 failed | 1166 passed (1169)`
+> ——失败恰为 G1 / G3b / G4 ✓。**1158 这个数在任务 0 的修复轮之后就过期了**（与 `exporter.test.ts` 那个 29→30 是同一类错误：
+> 跨轮抄数字没回原始清单重数）。
 
 - [ ] **步骤 13：Commit**
 
