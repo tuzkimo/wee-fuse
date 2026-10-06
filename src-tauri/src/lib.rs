@@ -145,7 +145,6 @@ pub fn run() {
     );
     tauri::Builder::default()
         .plugin(tauri_plugin_album::init())
-        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(OpenedUris::default())
         .invoke_handler(tauri::generate_handler![take_opened_uris, save_image_to_album])

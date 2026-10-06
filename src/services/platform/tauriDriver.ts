@@ -26,15 +26,14 @@
  * - **端到端字节核对**（`written !== bytes.length` 即抛）⇒ 判据 C / D 读数的「端到端一致（N 字节）」；
  * - **`exitApp()`**（`app.exit(0)`）⇒ 判据 E 的「明确退出 App」按钮。
  */
-import { imageFileName, sniffImageType } from "./sniffImageType";
-
 export interface TauriDriver {
   /**
-   * 相册选图（**当前实现 = dialog + fs**，规格 §5.1 表格的 B 面）。
+   * 相册选图（**当前实现 = 隐藏 `<input type=file>`**，规格 §5.1 表格的 A 面）。
    *
-   * 唯一的消费者是 `tauriPlatform.pickFromAlbum`；pass 2 若判据 A 通过，`createDriver()` 会把实现换成
-   * 隐藏 `<input type=file>`（零新增依赖），并连同 `@tauri-apps/plugin-dialog` /
-   * `@tauri-apps/plugin-fs` 与 `dialog:allow-open` 权限一起删。
+   * 唯一的消费者是 `tauriPlatform.pickFromAlbum`。2026-10-06 真机判据 A 通过（裸 `<input>` 在
+   * WebView 里能唤出系统选择器、选出 `File` 能解码）⇒ 由 `dialog.open` + `fs.readFile` 换成这条
+   * **零新增依赖**的路，`@tauri-apps/plugin-dialog` / `dialog:allow-open` / `.plugin(dialog::init())`
+   * 四处一起删掉。**`@tauri-apps/plugin-fs` 保留**：`readFileAsBytes` 读分享进来的 `content://` 还要它。
    */
   pickImageFile(): Promise<File | null>;
   /** 取走启动时进来的分享 URI（Android 的 `ACTION_SEND`）。**取走即清**：第二次调用返回空数组。 */
@@ -135,7 +134,8 @@ export function encodeBase64(bytes: Uint8Array): string {
  *
  * **取消 = `null`**（正常操作，不许抛错）。**「一直没有 change」不当作失败**：若真机上取消后按钮永久
  * 卡在「读取中」，说明 WebView 不支持 `cancel` 事件（Chrome 113+ 才有）——那是**判据 B 的读数**，
- * 记进报告，处置在任务 3/4 的 busy 闸门（加超时或改走 dialog 分支），不在这里偷偷加超时。
+ * 记进报告，处置在 busy 闸门（加超时）。**判据 A 通过后 dialog 分支已删**（规格 §5.1 只保留 spike 选中
+ * 的那一条），所以「改走 dialog 分支」不再是一条现成的退路——真要走它得先把依赖与权限加回来。
  */
 function pickWithHiddenInput(capture: "environment" | null): Promise<File | null> {
   return new Promise<File | null>((resolve, reject) => {
@@ -180,37 +180,25 @@ export function loadTauriDriver(): Promise<TauriDriver> {
 }
 
 async function createDriver(): Promise<TauriDriver> {
-  const [core, event, app, window, dialog, fs] = await Promise.all([
+  const [core, event, app, window, fs] = await Promise.all([
     import("@tauri-apps/api/core"),
     import("@tauri-apps/api/event"),
     import("@tauri-apps/api/app"),
     import("@tauri-apps/api/window"),
-    import("@tauri-apps/plugin-dialog"),
     import("@tauri-apps/plugin-fs"),
   ]);
 
   /**
-   * 相册选图（**当前实现 = dialog + fs**，规格 §5.1 表格的 B 面）。
+   * 相册选图（**当前实现 = 隐藏 `<input type=file>`**，规格 §5.1 表格的 A 面）。
    *
-   * `plugin-dialog` 在 Android 上返回 **`content://` URI**，`plugin-fs` 的 `readFile` 读它的字节
-   * （官方口径：filesystem 插件对任何路径格式开箱可用）⇒ 这里自己拼 `File`，并**复用
-   * `sniffImageType.ts`** 定名字与 MIME（§5.3.5：这条规则只有一份）。
+   * 与拍照**同一个机制**（`capture` 传 `null` 就是「不带 capture 属性的那一种」）：两条入口的差别
+   * 只在属性上，所以这里直接复用 `pickWithHiddenInput`，不写第二份 input 装配。
    *
-   * **运行期守卫**：`multiple: false` 时官方类型是 `string | null`，但 `invoke` 的返回值过 JSON 边界，
-   * 拿到的不是字符串就**响亮失败**，不把数组 / 对象当路径传下去。
+   * **为什么不再是 dialog + fs**：判据 A 通过 ⇒ 规格 §5.1 只保留 spike 选中的那一条，另一条登记为
+   * 未采用的备选（连带 `plugin-fs` 读 `content://` 的字节这一步只在分享摄入那条路上还用得到）。
    */
   async function pickImageFile(): Promise<File | null> {
-    const selected = await dialog.open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }],
-    });
-    if (selected === null) return null;
-    if (typeof selected !== "string") {
-      throw new Error(`图片选择器返回了非路径对象：${typeof selected}`);
-    }
-    const bytes = await fs.readFile(selected);
-    return new File([bytes], imageFileName(selected, bytes), { type: sniffImageType(bytes) });
+    return pickWithHiddenInput(null);
   }
 
   async function captureImageFile(): Promise<File | null> {

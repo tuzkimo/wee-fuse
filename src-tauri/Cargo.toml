@@ -24,7 +24,6 @@ base64 = "0.22"
 # Android 那一段由下面的 `android_logger` 接管。
 log = "0.4"
 tauri-plugin-album = { path = "plugins/album" }
-tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 
 # Android 专属日志后端（判据 C 的证据通道）。
