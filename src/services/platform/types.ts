@@ -7,10 +7,10 @@
  * （`capabilities.ts`，机检 G2）。
  *
  * **名字是契约面**：这五个接口与它们的字段名被 `tauriPlatform.ts`、`PickPage.vue`（`native-picker`
- * 分支）、`ExportPanel.vue`（计划改走 `album.save`）、两个 composable
+ * 分支）、`ExportPanel.vue`（已经能力层 `album.save` 落盘）、两个 composable
  * （`useShareIntake.ts` / `useShellLifecycle.ts`）与契约测试同时引用，改名会一次打红多处。
- * **今天的事实（2026-10-06，B5 任务 3 落地后）**：`tauriPlatform.ts` 已存在；两个 composable 与
- * `ExportPanel` 的接线还没做。真 import 本文件的共 8 处：三条实现的类型标注
+ * **今天的事实（2026-10-06，B5 任务 6 落地后）**：`tauriPlatform.ts` 已存在；两个 composable 与
+ * `ExportPanel` 的接线**都已完成**（`ExportPanel.vue` 经 `getPlatform().album.save(...)` 落盘）。真 import 本文件的共 8 处：三条实现的类型标注
  * （`browserPlatform.ts` / `capabilities.ts` / `tauriPlatform.ts`）、共用的契约 harness
  * `__tests__/platformContract.ts`（**自身不是 `.test.ts`、不被 vitest 收集**）与用例文件
  * `__tests__/capabilities.test.ts`、探针页 `views/ShellProbePage.vue`（只取两个 `kind` 别名）与它的
@@ -105,15 +105,15 @@ export type AlbumSaveKind = "download" | "album";
 
 export interface AlbumSaver {
   /**
-   * 决定成功提示文案。**消费者 = `components/editor/ExportPanel.vue`** —— **任务 6 未交付**（判据 D 的真机读数未到手）⇒ **今天仍是零生产消费者**。
+   * 决定成功提示文案。**消费者 = `components/editor/ExportPanel.vue`**（任务 6 已落地：`album` ⇒「已保存到相册」/ `download` ⇒ 既有「已生成」）。
    */
   readonly kind: AlbumSaveKind;
   /**
    * 保存一张产物。**失败必须抛**（不静默——用户会以为自己存过了）。
    *
-   * **消费者 = `components/editor/ExportPanel.vue`**（每个产物的「保存」）—— **任务 6 未交付**（判据 D 未到手）⇒ **今天仍是零生产消费者**。
-   * ——面板仍然直调 `services/exporter.ts` 的 `downloadBlob`（`ExportPanel.vue:301`），
-   * 全仓没有任何文件调用 `album.save`。
+   * **消费者 = `components/editor/ExportPanel.vue`**（每个产物的「保存」）—— 任务 6 已落地：
+   * `ExportPanel.vue` 的 `await getPlatform().album.save(blob, filename)` 就是唯一调用点，
+   * 名字来自 `exportFilename`（面板不再自己拼第二份命名逻辑），`downloadBlob` 只在浏览器实现里被调。
    */
   save(blob: Blob, filename: string): Promise<void>;
 }

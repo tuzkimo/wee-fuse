@@ -23,9 +23,8 @@ let current: Platform = browserPlatform;
  * 的收集阶段就去 import Tauri 的包（`AGENTS.md` 的 G1 也禁止）。Tauri 自己设的是
  * `globalThis.isTauri = true`，读它就够了。**只认布尔 `true`**：`"yes"` 之类的真值不算。
  *
- * **如实记录：本任务内零生产消费者**——`main.ts` 在本任务里无条件注入 `browserPlatform`，
- * 真正接上它的是任务 2（`setPlatform(isTauriRuntime() ? createTauriPlatform() : browserPlatform)`）；
- * 今天只有 `capabilities.test.ts` 读它。保留公开的理由就是那个接线点
+ * **消费者 = `main.ts`**（任务 2 已落地）：`setPlatform(isTauriRuntime() ? createTauriPlatform() : browserPlatform)`
+ * —— 它是「注入 → 取出」这条链的**唯一生产入口**；`capabilities.test.ts` 也读它。
  * （`AGENTS.md`「公开 API ≠ 被使用的 API」：零消费者要在 JSDoc 里如实写明）。
  */
 export function isTauriRuntime(): boolean {
@@ -48,7 +47,7 @@ export function setPlatform(platform: Platform): void {
 /**
  * 取当前实现。**不会抛**：未注入时是浏览器实现（见 `current` 的 JSDoc）。
  *
- * **如实记录：本任务内零生产消费者**——`ExportPanel.vue` 改走 `getPlatform().album.save(...)`、
+ * **消费者已就位**（任务 6 落地）：`ExportPanel.vue` 经 `getPlatform().album.save(blob, filename)` 落盘；
  * 两个 composable 的装配都在 `src/App.vue` 的 setup 顶层（`useShareIntake` 任务 5、`useShellLifecycle` 任务 7，均已落地）；`capabilities.test.ts` 读它（`browserPlatform.test.ts`
  * 直接拿 `browserPlatform` 常量）。保留公开的理由：它是平台实现的唯一出口，
  * 而「注入 → 取出」这条链本身由契约测试与 `capabilities.test.ts` 守着。
