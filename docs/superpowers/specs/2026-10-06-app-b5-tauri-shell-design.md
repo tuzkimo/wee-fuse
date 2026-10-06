@@ -286,7 +286,7 @@ export interface TauriDriver {
 | `requireSavableBlob(blob, filename)`（`guards.ts`，两实现共用） | `blob` 必须是 `Blob` 且 `size > 0`；`filename` 必须是字符串且 `trim()` 非空 | 前两条**逐字沿用既有**：`导出内容为空（blob 大小为 0）` / `文件名不能为空`；**另两条是本次新增**（入参类型是 `unknown`，非 Blob / 非字符串不能落成裸 `TypeError`）：`导出内容必须是 Blob` / `文件名必须是字符串`。**判序固定**：先内容、后文件名 |
 | `tauriPlatform.pickFromAlbum` | 驱动返回值非 `File` 且非 `null` ⇒ 抛 | `图片选择器返回了非文件对象` |
 | `tauriPlatform.capturePhoto` | `canCapture === false` 时先抛；返回值同上 | `本平台不支持拍照` |
-| `tauriPlatform.takeSharedImage` | 驱动返回值同上 | `分享内容不是文件` |
+| `tauriPlatform.takeSharedImage` | 驱动返回值同上；**读回的字节长度为 0** 也有自己的消息（2026-10-06 补登记：实现里有这条、消息表当初漏了它） | `分享内容不是文件` / `分享内容是空文件` |
 | `tauriPlatform.onBackButton` / `onExitRequested` | handler 必须是函数 | `回调必须是函数` |
 | `capabilities.setPlatform` | 入参必须是对象（`undefined` / `null` 会把实现置空，之后每一处 `getPlatform().xxx` 都落成裸 `TypeError`） | `平台实现必须是对象` |
 | `tauriPlatform.exit` | 无入参 | — |
