@@ -1,4 +1,5 @@
 import { normalizeProjectName } from "./projectStore";
+import { requireSavableBlob } from "./platform/guards";
 import type { RenderTarget2D } from "@/core/render/types";
 
 /**
@@ -175,17 +176,13 @@ const REVOKE_DELAY_MS = 1000;
  * **消费者**：`ExportPanel.vue`（用户点「保存」后）。
  */
 export function downloadBlob(blob: Blob, filename: string): void {
-  if (blob.size === 0) {
-    throw new Error("导出内容为空（blob 大小为 0）");
-  }
-  const safeName = filename.trim();
-  if (safeName === "") {
-    throw new Error("文件名不能为空");
-  }
-  const url = URL.createObjectURL(blob);
+  // 两条守卫收敛到 `services/platform/guards.ts` 的 `requireSavableBlob`（规格 §3.1）：
+  // 壳里的相册实现要判同样两件事，各写一份必然漂移。**消息逐字未变**，既有用例读的就是它们。
+  const safe = requireSavableBlob(blob, filename);
+  const url = URL.createObjectURL(safe.blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = safeName;
+  link.download = safe.filename;
   try {
     link.click();
   } finally {
