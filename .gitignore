@@ -19,6 +19,13 @@ src-tauri/gen/android/.idea/
 # 与 `gen/android` 自带 `.gitignore` 里的 `/.tauri` 同源，但**插件目录不继承那份规则**（实跑发现）⇒
 # 不写这条，一次 `git add src-tauri` 就会把上百个构建产物扫进库。
 src-tauri/plugins/**/android/.tauri/
+# 同一条通则的另一半：**插件的 android 工程自带没有 `.gitignore`**（`gen/android` 有，插件目录没有）
+# ⇒ 构建产物必须逐类显式忽略。实跑时 `plugins/album/android/build/` 里已积了 109 个文件 / 0.5 MB。
+# 与 `gen/android` 那四条同口径：源码与手写工程文件（`build.gradle.kts` / `AndroidManifest.xml` / `src/**`）入库。
+src-tauri/plugins/**/android/build/
+src-tauri/plugins/**/android/.gradle/
+src-tauri/plugins/**/android/local.properties
+src-tauri/plugins/**/android/.idea/
 *.apk
 *.aab
 *.keystore
