@@ -105,13 +105,13 @@ export type AlbumSaveKind = "download" | "album";
 
 export interface AlbumSaver {
   /**
-   * 决定成功提示文案。**消费者 = 后续接线任务的 `components/editor/ExportPanel.vue`；今天零消费者**。
+   * 决定成功提示文案。**消费者 = `components/editor/ExportPanel.vue`** —— **任务 6 未交付**（判据 D 的真机读数未到手）⇒ **今天仍是零生产消费者**。
    */
   readonly kind: AlbumSaveKind;
   /**
    * 保存一张产物。**失败必须抛**（不静默——用户会以为自己存过了）。
    *
-   * **消费者 = 后续接线任务的 `components/editor/ExportPanel.vue`（每个产物的「保存」）；今天零消费者**
+   * **消费者 = `components/editor/ExportPanel.vue`**（每个产物的「保存」）—— **任务 6 未交付**（判据 D 未到手）⇒ **今天仍是零生产消费者**。
    * ——面板仍然直调 `services/exporter.ts` 的 `downloadBlob`（`ExportPanel.vue:301`），
    * 全仓没有任何文件调用 `album.save`。
    */
@@ -122,7 +122,7 @@ export interface AppLifecycle {
   /**
    * 退出 / 关闭请求。handler 返回 `true` = 阻止这次退出。返回解绑函数。
    *
-   * **消费者 = 后续接线任务的 `composables/useShellLifecycle.ts`；今天零消费者**（该文件尚不存在）。
+   * **消费者 = `composables/useShellLifecycle.ts`**（任务 7 已落地：壳里注册返回键与退出请求）。
    * **浏览器实现是刻意的 no-op**：浏览器阶段的退出拦截由 `views/EditorPage.vue` 自己的
    * `beforeunload` 承担，本层不接管（接管就要把那段逻辑搬进 `browserPlatform`，而
    * 「既有断言一行不改」是本轮的硬约束）。代价：桌面 Tauri 下会有两次 `preventDefault`，
@@ -131,13 +131,13 @@ export interface AppLifecycle {
   onExitRequested(handler: () => boolean): () => void;
   /**
    * Android 返回键。返回解绑函数。
-   * **消费者 = 后续接线任务的 `composables/useShellLifecycle.ts`；今天零消费者**（该文件尚不存在）。
+   * **消费者 = `composables/useShellLifecycle.ts`**（任务 7 已落地：壳里注册返回键与退出请求）。
    * 浏览器实现是刻意的 no-op（没有返回键这个概念）。
    */
   onBackButton(handler: (info: { readonly canGoBack: boolean }) => void): () => void;
   /**
    * 明确退出 App。浏览器实现是刻意的 no-op。
-   * **消费者 = 后续接线任务的 `composables/useShellLifecycle.ts`；今天零消费者**（该文件尚不存在）。
+   * **消费者 = `composables/useShellLifecycle.ts`**（任务 7 已落地：壳里注册返回键与退出请求）。
    */
   exit(): Promise<void>;
 }

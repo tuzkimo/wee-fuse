@@ -49,7 +49,7 @@ export function setPlatform(platform: Platform): void {
  * 取当前实现。**不会抛**：未注入时是浏览器实现（见 `current` 的 JSDoc）。
  *
  * **如实记录：本任务内零生产消费者**——`ExportPanel.vue` 改走 `getPlatform().album.save(...)`、
- * 两个 composable 的装配都在后续任务；今天只有 `capabilities.test.ts` 读它（`browserPlatform.test.ts`
+ * 两个 composable 的装配都在 `src/App.vue` 的 setup 顶层（`useShareIntake` 任务 5、`useShellLifecycle` 任务 7，均已落地）；`capabilities.test.ts` 读它（`browserPlatform.test.ts`
  * 直接拿 `browserPlatform` 常量）。保留公开的理由：它是平台实现的唯一出口，
  * 而「注入 → 取出」这条链本身由契约测试与 `capabilities.test.ts` 守着。
  */
