@@ -15,11 +15,14 @@
  * （`tauriPlatform.ts`）与它共用同一份驱动。
  *
  * **零判别力（如实登记，不许含糊）**：本文件在 happy-dom 下**不可执行**——它 `import` 的每个包
- * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它有**零条**
- * 可执行断言，`npm run test` 收集不到它的任何用例。它唯一的机器化保障是 `npm run build` 的
- * 类型检查（`vue-tsc`）与 `platformGate` 的 G1 结构断言（「只有这个文件含 `@tauri-apps/`」）。
+ * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它**只剩
+ * `encodeBase64` 这一处纯函数**能被断言（`__tests__/tauriDriver.test.ts`，与 Tauri 无关），
+ * `createDriver()` 内部的一切收集不到用例。它其余的机器化保障是 `npm run build` 的类型检查
+ * （`vue-tsc`）与 `platformGate` 的 G1 结构断言（「只有这个文件含 `@tauri-apps/`」）。
  * 下列三处的判别力**全部在真机读数**：
- * - **信封布局** `[u32 LE 名字长度][名字 UTF-8][图像字节]` ⇒ 判据 C 的「原始字节体」那一行；
+ * - **base64 请求体的编码口径**（`{ filename, dataBase64 }`；Android 上 `InvokeBody::Raw` 不可达，
+ *   理由见 `saveToAlbum` 的注释）⇒ 判据 C 的「请求体形态 = base64 JSON 字符串」那一行
+ *   （**编码器本身**有 CI 已知答案向量；**这条链有没有通**只能真机看）；
  * - **端到端字节核对**（`written !== bytes.length` 即抛）⇒ 判据 C / D 读数的「端到端一致（N 字节）」；
  * - **`exitApp()`**（`app.exit(0)`）⇒ 判据 E 的「明确退出 App」按钮。
  */
@@ -79,6 +82,19 @@ let pending: Promise<TauriDriver> | null = null;
 export const CAPTURE_SUPPORTED = true;
 
 /**
+ * `encodeBase64` 每块喂给 `String.fromCharCode` 的字节数。
+ *
+ * **为什么公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：消费者有两个——本文件的 `encodeBase64`，
+ * 以及 `__tests__/tauriDriver.test.ts` 的**跨块边界**用例。那个用例**必须**拿这个常量算边界长度
+ * （而不是自己写一份 `32768`）：写死字面量的话，哪天这里调大 / 调小，用例仍然压在**旧的**边界上，
+ * 于是「边界用例」会在没人察觉的情况下变成「块内用例」——本项目记账过的形态（第二份字面量）。
+ *
+ * 取值理由：`String.fromCharCode(...chunk)` 的实参个数上限在各 JS 引擎上远高于 32768
+ * （V8 约 12 万），32768 留了足够余量；而更小的块只是多几次调用。
+ */
+export const BASE64_CHUNK_BYTES = 32768;
+
+/**
  * 把字节编成标准 base64（`+` / `/` 字母表、`=` 填充）——**全仓唯一一份 base64 口径**。
  *
  * **为什么不用 `Array.from(bytes)` 直接交给 `invoke`**：Tauri 2 在 Android 上不支持
@@ -87,7 +103,7 @@ export const CAPTURE_SUPPORTED = true;
  *
  * **为什么分块**：一张施工图最大 ≈64 MB（B4 规格 §15）。一次性 `String.fromCharCode(...bytes)`
  * 会把六千多万个实参压进调用栈（`RangeError: Maximum call stack size exceeded`）。
- * 这里每块 `CHUNK_BYTES` 个字节取一次 `String.fromCharCode`，最后对拼起来的二进制串做**一次**
+ * 这里每块 `BASE64_CHUNK_BYTES` 个字节取一次 `String.fromCharCode`，最后对拼起来的二进制串做**一次**
  * `btoa`（`btoa` 本身不展开参数，可以吃下整串）。
  *
  * **消费者**：本文件的 `createDriver().saveToAlbum`（唯一生产消费者）与
@@ -104,13 +120,12 @@ export const CAPTURE_SUPPORTED = true;
  * 方法** ⇒ 直接写会 `vue-tsc` 报 TS2339；而目标 Android WebView 上到底有没有这个 API
  * **本轮未验**（未验证面已登记）。两条理由叠加 ⇒ 手写，并由
  * `__tests__/tauriDriver.test.ts` 的**已知答案向量**逐字节钉住（含补位与 `% 3` 边界、
- * 以及 32768 字节分块边界前后的 6 档）。
+ * 标准表第 62 / 63 字符、以及 `BASE64_CHUNK_BYTES` 边界前后的 6 档）。
  */
 export function encodeBase64(bytes: Uint8Array): string {
-  const CHUNK_BYTES = 32768;
   const parts: string[] = [];
-  for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
-    parts.push(String.fromCharCode(...bytes.subarray(offset, offset + CHUNK_BYTES)));
+  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_BYTES) {
+    parts.push(String.fromCharCode(...bytes.subarray(offset, offset + BASE64_CHUNK_BYTES)));
   }
   return btoa(parts.join(""));
 }

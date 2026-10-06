@@ -199,7 +199,8 @@ async function renderProbePng(): Promise<Blob> {
  * C 块：**冷启动取走 + 请求体形态探针**。
  *
  * 两半**刻意用不同的载荷**：冷启动那一半证明 URI 可读（字节数就是证据，URI 原文在 `adb logcat` 的
- * `RunEvent::Opened：收到 {} 个 URI` 行里）；请求体那一半用**探针图**走完整保存链，并把
+ * `RunEvent::Opened：收到 {} 个 URI` 与 `RunEvent::Opened：URI = {url}` 两行里，后者逐条打）；
+ * 请求体那一半用**探针图**走完整保存链，并把
  * 「图像 N 字节 → base64 字符串 M 字符」如实报出来。把分享进来那张图再存一次相册对判据没有增量，
  * 却会在相册里留下一个用 `.png` 名字的 JPEG。
  *
@@ -375,7 +376,7 @@ const VERDICT_NOTES: readonly string[] = [
   "判定要点\tF\tAPK 装得上 + 首屏是图纸库 + 本行 tauriRuntime=true ⇒ 通过；false ⇒ 壳里跑的是浏览器实现（B5-R1）",
   "判定要点\tA\tA 能唤出系统选择器且「解码」是宽×高 ⇒ 通过（任务 3 把 pickImageFile 换成隐藏 input，并删掉 dialog 依赖与 dialog:allow-open 权限）；唤不出 / 解码失败 ⇒ 不通过（当前实现已是 dialog+fs 分支，无需改代码，B5-R2 记为已发生）",
   "判定要点\tB\t点按**直接进相机**且「解码」是宽×高 ⇒ 第 1 级成立；只出文件选择器 ⇒ 任务 4 走第 2 级（Kotlin capture 插件）；第 2 级也不通 ⇒ CAPTURE_SUPPORTED=false（不留半截入口）",
-  "判定要点\tC\t「冷启动」或「热启动」给出文件名与字节数（URI 原文看 logcat 的 RunEvent::Opened：收到 {} 个 URI 行）且「请求体形态」写 base64 JSON 字符串 + 「端到端一致（N 字节…）」⇒ 通过；写「保存失败：base64 解码失败（…）」⇒ 编码口径不一致（B5-R4 已发生：以前那条「需要原始字节体」的路在 Android 上不可达，本轮已按规格退到 base64）；「取走失败」⇒ B5-R3；logcat 里另有 save_image_to_album：收到 base64 解码后 {} 字节 一行，用来与读数里的 N 对账",
+  "判定要点\tC\t「冷启动」或「热启动」给出文件名与字节数（URI 原文看 logcat 的两行 RunEvent::Opened：收到 {} 个 URI 与 RunEvent::Opened：URI = {url}）且「请求体形态」写 base64 JSON 字符串 + 「端到端一致（N 字节…）」⇒ 通过；写「保存失败：base64 解码失败（…）」⇒ 编码口径不一致（B5-R4 已发生：以前那条「需要原始字节体」的路在 Android 上不可达，本轮已按规格退到 base64）；「取走失败」⇒ B5-R3；logcat 里另有 save_image_to_album：收到 base64 解码后 {} 字节 一行，用来与读数里的 N 对账",
   "判定要点\tD\t「结果」写「已受理…」且相册 Pictures/WeeFuse 下出现该文件、字节数一致 ⇒ 通过；出现权限 / 拒绝 / insert 返回 null ⇒ 走 dialog.save()（B5-R5）",
   "判定要点\tE\t按返回键后「返回键」出现 canGoBack=… ⇒ 通过；划掉 App 时「关闭请求」出现条目 ⇒ 一并通过；**返回键不触发是缺陷**，**关闭请求不触发不构成缺陷**（B5-R6，如实记录）",
 ];
@@ -513,11 +514,13 @@ async function copy(): Promise<void> {
     <section class="mt-6 max-w-5xl rounded bg-white p-4 shadow">
       <h2 class="text-sm font-semibold text-slate-800">C · 分享进入 + base64 请求体（走能力层）</h2>
       <p class="mt-1 text-xs text-slate-500">
-        热启动订阅已在本页挂载时注册。URI 原文看 <code>adb logcat</code> 里的
-        <code>RunEvent::Opened：收到 {} 个 URI</code> 行（<code>{}</code> 处是真机上的实际数字）；
+        热启动订阅已在本页挂载时注册。URI 原文看 <code>adb logcat</code> 里的两行：
+        <code>RunEvent::Opened：收到 {} 个 URI</code> 与每个 URI 一行的
+        <code>RunEvent::Opened：URI = {url}</code>（<code>{}</code> / <code>{url}</code> 处是真机上的实际值）。
         落盘那一步看 <code>save_image_to_album：收到 base64 解码后 {} 字节</code> 与
-        <code>AlbumPlugin::save 落到 content://…</code>。请求体是 base64 JSON 字符串（Android 上
-        <code>InvokeBody::Raw</code> 不可达，规格 B5-R4 的退路已启用）。
+        <code>AlbumPlugin::save 落到 content://…</code>（后者由 Kotlin 侧打印，仍是
+        <code>println!</code> ⇒ **它可能在真机 logcat 里不出现**，见操作卡；判据 D 的结论不依赖它）。
+        请求体是 base64 JSON 字符串（Android 上 <code>InvokeBody::Raw</code> 不可达，规格 B5-R4 的退路已启用）。
       </p>
       <button
         data-testid="probe-run-c"

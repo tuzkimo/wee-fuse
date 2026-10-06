@@ -20,6 +20,22 @@ serde_json = "1"
 # base64：Android 上 `InvokeBody::Raw` 不可达（见 `src/lib.rs` 的 `SaveRequest` JSDoc），
 # 图像字节只能走 base64 字符串请求体。
 base64 = "0.22"
+# `log` 在**所有** target 上都编（没装后端时 `log::info!` 是廉价 no-op）：桌面 target 不装后端，
+# Android 那一段由下面的 `android_logger` 接管。
+log = "0.4"
 tauri-plugin-album = { path = "plugins/album" }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+
+# Android 专属日志后端（判据 C 的证据通道）。
+#
+# **为什么必须有它**（2026-10-06 定向复审 G2）：Android 上原生 `println!` 走 stdout，而 App 进程的
+# stdout **默认不接 logcat** ⇒「让人类伙伴去 logcat 里捞那几行」这句话本身可能是**空指引**，
+# 而那正是本轮 F2 要修的那一类缺陷（让人去找一行不存在的输出）。`android_logger` 走
+# `__android_log_print`，写的就是 `adb logcat` 读的同一个 buffer。
+#
+# **只在 Android 上编**（`cfg(target_os = "android")`）：桌面 `cargo check` 不受影响，
+# 也不需要为桌面挑一个日志后端。**它是否真的出现在真机 logcat 里仍是未验证面**（无法机器侧验证），
+# 但「有一个走 __android_log_print 的后端」比「赌 stdout 会被接上」强得多。
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"

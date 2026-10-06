@@ -78,7 +78,9 @@ fn save_image_to_album(app: tauri::AppHandle, request: SaveRequest) -> Result<us
         return Err("导出内容为空（blob 大小为 0）".into());
     }
     // **判据 C 的证据行**（`/lab/shell` 的 C 块与操作卡里逐字引用同一串；`{}` 处是真机上的实际数字）。
-    println!("save_image_to_album：收到 base64 解码后 {} 字节", image.len());
+    // 走 `log::info!` 而不是 `println!`：Android 上原生 stdout 默认不接 logcat（理由见 `Cargo.toml`
+    // 的 `android_logger` 段与 `run()` 里的 `init_once`）。
+    log::info!("save_image_to_album：收到 base64 解码后 {} 字节", image.len());
 
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -131,6 +133,16 @@ fn save_with_platform(
 /// 应用入口。桌面端由 `main.rs` 调用，移动端由 `#[tauri::mobile_entry_point]` 生成的胶水调用。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // **Android 上先把日志后端装上**：原生 `println!` 走 stdout，而 App 进程的 stdout 默认不接
+    // logcat ⇒ 不装后端的话下面那几行「证据」在真机上可能一行都看不到（2026-10-06 定向复审 G2）。
+    // `init_once` 幂等；桌面 / iOS 不需要它（桌面 `cargo check` 里这段整个不编）。
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            // 日志级别与 tag：`adb logcat` 里按 tag 过滤时用 `WeeFuse`。
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("WeeFuse"),
+    );
     tauri::Builder::default()
         .plugin(tauri_plugin_album::init())
         .plugin(tauri_plugin_dialog::init())
@@ -142,10 +154,17 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { urls } = event {
-                // **判据 C 的证据行**（`/lab/shell` 的 C 块与操作卡里逐字引用同一串；
+                // **判据 C 的证据行之一**（`/lab/shell` 的 C 块与操作卡里逐字引用同一串；
                 // `{}` 处是真机上的实际数字）。它证明「分享进来的 intent 真的到了 Rust」——
                 // 探针页读到的冷启动 / 热启动文件名与字节数是它的下游。
-                println!("RunEvent::Opened：收到 {} 个 URI", urls.len());
+                log::info!("RunEvent::Opened：收到 {} 个 URI", urls.len());
+                // **判据 C 的「URI 原文」那一行**（规格 §13 判据 C 明写「打印收到的 URI」；
+                // 2026-10-06 定向复审 G1 发现原来只打了**个数**，而操作卡/探针页三处都让人
+                // 「去 logcat 看 URI 原文」⇒ 会让人找一行不存在的输出）。**逐条打**，
+                // 格式固定为 `RunEvent::Opened：URI = {url}`，与探针页提示、操作卡逐字一致。
+                for url in &urls {
+                    log::info!("RunEvent::Opened：URI = {url}");
+                }
                 // **`state` 必须先绑成 `let`**（2026-10-06 任务 2 实跑 Android target 时抓到的
                 // 计划缺陷）：`app.state::<OpenedUris>()` 返回的是一个**临时值**，直接
                 // `app.state::<OpenedUris>().0.lock()` 会在语句结束时把它释放掉，而 `guard`

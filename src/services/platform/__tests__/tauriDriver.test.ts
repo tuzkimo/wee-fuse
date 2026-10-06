@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeBase64 } from "../tauriDriver";
+import { BASE64_CHUNK_BYTES, encodeBase64 } from "../tauriDriver";
 
 /**
  * `tauriDriver.ts` 里**唯一能在 CI 里执行**的东西：纯函数 `encodeBase64`（规格 B5-R4 的退路）。
@@ -58,6 +58,14 @@ const KNOWN_ANSWERS: readonly { readonly note: string; readonly bytes: number[];
   { note: "0x00 0xff（一个 =）", bytes: [0x00, 0xff], expected: "AP8=" },
   { note: "0x00 0x10（3n+2 且含控制字符）", bytes: [0x00, 0x10], expected: "ABA=" },
   {
+    // **标准字母表第 62 字符 `+`**（2026-10-06 定向复审 G3 补的向量）：第 63 字符 `/` 已被
+    // `[0xff] → /w==` 钉住，而 `+` 在此之前**一个向量都没有** ⇒ 把表里 `+` 写成 URL-safe 的 `-`
+    // （最常见的真实笔误）今天会全绿。这一条是唯一会红的那条（变异实测：只有它红）。
+    note: "0xfb 0xff 0xff ⇒ 第 62 字符 +（URL-safe 的 - 会在这里露馅）",
+    bytes: [0xfb, 0xff, 0xff],
+    expected: "+///",
+  },
+  {
     note: "24 字节 ASCII（覆盖内部循环不只在首块正确，且无填充）",
     bytes: utf8("012345678901234567890123"),
     expected: "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIz",
@@ -74,27 +82,30 @@ describe("encodeBase64（已知答案向量）", () => {
   /**
    * **跨块边界**（规格要求：有分块逻辑就必须测边界）。
    *
-   * `encodeBase64` 的块大小是 32768 字节；下面每一档的期望值都是**解析解**
-   * （图案每 3 字节 ⇒ `"ABCD"`，余 0 / 1 / 2 字节分别 ⇒ 无填充 / `"AA=="` / `"ABA="`），
-   * 所以它同时钉住了「块没被丢」「块没被重复」「块顺序没被打乱」——全零向量做不到最后这一条。
+   * 块大小**取自实现导出的 `BASE64_CHUNK_BYTES`**（2026-10-06 定向复审 G4），不是本地字面量：
+   * 写死 `32768` 的话，哪天实现把块调大 / 调小，这些用例仍然压在**旧的**边界上，
+   * 「边界用例」就会在没人察觉的情况下退化成「块内用例」。用同一个常量 ⇒ 改实现后仍然压边界。
+   *
+   * 每一档的期望值都是**解析解**（图案每 3 字节 ⇒ `"ABCD"`，余 0 / 1 / 2 字节分别 ⇒ 无填充 /
+   * `"AA=="` / `"ABA="`），所以它同时钉住了「块没被丢」「块没被重复」「块顺序没被打乱」——
+   * 全零向量做不到最后这一条。
    */
-  const CHUNK = 32768;
+  const CHUNK = BASE64_CHUNK_BYTES;
   const boundaries: readonly { readonly note: string; readonly bytes: number }[] = [
-    { note: "恰好一个块（32768 = 3×10922 + 2）", bytes: CHUNK },
-    { note: "块 + 1（32769 = 3×10923）", bytes: CHUNK + 1 },
-    { note: "块 + 2（32770 = 3×10923 + 1）", bytes: CHUNK + 2 },
-    { note: "块 + 3（32771 = 3×10923 + 2）", bytes: CHUNK + 3 },
-    { note: "块 + 4（32772 = 3×10924）", bytes: CHUNK + 4 },
-    { note: "块 − 2（32766 = 3×10922，最后一个完整块内）", bytes: CHUNK - 2 },
+    { note: `恰好一个块（${CHUNK} = 3×10922 + 2）`, bytes: CHUNK },
+    { note: `块 + 1（${CHUNK + 1} = 3×10923）`, bytes: CHUNK + 1 },
+    { note: `块 + 2（${CHUNK + 2} = 3×10923 + 1）`, bytes: CHUNK + 2 },
+    { note: `块 + 3（${CHUNK + 3} = 3×10923 + 2）`, bytes: CHUNK + 3 },
+    { note: `块 + 4（${CHUNK + 4} = 3×10924）`, bytes: CHUNK + 4 },
+    { note: `块 − 2（${CHUNK - 2} = 3×10922，最后一个完整块内）`, bytes: CHUNK - 2 },
   ];
 
   for (const testCase of boundaries) {
     it(`跨块边界：${testCase.note}`, () => {
-      const expected = expectedForLength(testCase.bytes);
-      const encoded = encodeBase64(patternedBytes(testCase.bytes));
-      expect(encoded).toBe(expected);
-      // 长度单独断言：失败时一眼看出是「截断」还是「内容错位」。
-      expect(encoded.length).toBe(expected.length);
+      // 只留这一条断言（2026-10-06 定向复审 G5）：原来紧跟一条 `expect(encoded.length).toBe(...)`，
+      // 它被 `toBe(expected)` **完全蕴含**（两个等长字符串才可能相等）⇒ 单独零判别力，
+      // 而本项目不为「看起来更严」留零判别力的行。失败时 `toBe` 自己就会把长度差异显示出来。
+      expect(encodeBase64(patternedBytes(testCase.bytes))).toBe(expectedForLength(testCase.bytes));
     });
   }
 
