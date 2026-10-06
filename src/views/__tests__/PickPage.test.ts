@@ -354,14 +354,19 @@ describe("PickPage（native-picker 分支）", () => {
     expect(push).toHaveBeenCalledWith({ name: "setup" });
   });
 
-  it("取消（返回 null）⇒ 不报错、不跳转、草稿不动", async () => {
+  it("取消（返回 null）⇒ 选择器被调过一次、不报错、不跳转、草稿不动", async () => {
     stubPlatform();
-    setPlatform(fakeShellPlatform({ canCapture: false, pickFromAlbum: async () => null }));
+    const pickFromAlbum = vi.fn(async () => null);
+    setPlatform(fakeShellPlatform({ canCapture: false, pickFromAlbum }));
 
     const wrapper = mount(PickPage);
     await wrapper.get("[data-testid='pick-album']").trigger("click");
     await flushPromises();
 
+    // **正向断言**（2026-10-06 任务级审查 F2）：原来三条全是「没有 / 不是」，把相册按钮改成
+    // 空操作它照样绿。这一条钉住「取消」确实是**选择器真的被调过、返回了 null**，
+    // 而不是「按钮根本没接上能力」。
+    expect(pickFromAlbum).toHaveBeenCalledTimes(1);
     expect(wrapper.find("[data-testid='pick-error']").exists()).toBe(false);
     expect(push).not.toHaveBeenCalled();
     expect(useDraft().source).toBeNull();
@@ -392,7 +397,13 @@ describe("PickPage（native-picker 分支）", () => {
     );
   });
 
-  it("「拍一张」走 capturePhoto（**不是** pickFromAlbum）——这条钉住接线没接错", async () => {
+  /**
+   * **只钉一个方向**（2026-10-06 任务级审查 F3 更正标题）：它证明「拍一张」不会误接成相册，
+   * **不**证明「从相册选一张」不会误接成拍照——那个方向由上面「点『从相册选一张』…」与
+   * 「选择器抛错…」两条钉住（变异 M19 实测：把相册按钮接到 `capturePhoto` 时，这一条**不红**，
+   * 那两条红）。
+   */
+  it("「拍一张」走 capturePhoto，且不碰 pickFromAlbum", async () => {
     stubPlatform();
     const pickFromAlbum = vi.fn(async () => null);
     const capturePhoto = vi.fn(async () => null);
@@ -404,5 +415,63 @@ describe("PickPage（native-picker 分支）", () => {
 
     expect(capturePhoto).toHaveBeenCalledTimes(1);
     expect(pickFromAlbum).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 壳路径的 `busy` 闸门（2026-10-06 任务级审查 F6）：浏览器那条路有两条用例钉它
+   * （「读取期间按钮禁用并显示『正在读取…』，读完恢复」与「同一 tick 内连点两次只解码一次」），
+   * 壳那条路此前一条都没有——而它才是 App 的主路径：选择器 / 相机是外部界面，用户可能在里头
+   * 停留很久，重入的代价是解码两遍 + 跳转两次。
+   */
+  it("壳路径读取期间：相册按钮禁用并显示「正在读取…」，读完恢复", async () => {
+    let openDecode!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openDecode = resolve;
+    });
+    stubPlatform({ decodeGate: gate });
+    const pickFromAlbum = vi.fn(async () => FILE);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum }));
+
+    const wrapper = mount(PickPage);
+    await wrapper.get("[data-testid='pick-album']").trigger("click");
+
+    const button = wrapper.get("[data-testid='pick-album']");
+    expect((button.element as HTMLButtonElement).disabled).toBe(true);
+    expect(button.text()).toBe("正在读取…");
+    // 两个按钮共用同一个 `busy` ⇒ 「拍一张」也必须同时禁用（否则同一 tick 里能从另一边重入）。
+    expect(
+      (wrapper.get("[data-testid='pick-camera']").element as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(push).not.toHaveBeenCalled();
+
+    openDecode();
+    await flushPromises();
+
+    expect((button.element as HTMLButtonElement).disabled).toBe(false);
+    expect(button.text()).toBe("从相册选一张");
+    expect(push).toHaveBeenCalledWith({ name: "setup" });
+  });
+
+  it("壳路径同一 tick 内连点两次只解码一次、只跳一次、只取一次图", async () => {
+    let openDecode!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openDecode = resolve;
+    });
+    const platform = stubPlatform({ decodeGate: gate });
+    const pickFromAlbum = vi.fn(async () => FILE);
+    setPlatform(fakeShellPlatform({ canCapture: true, pickFromAlbum }));
+
+    const wrapper = mount(PickPage);
+    // 两次派发之间没有 await：此刻 `:disabled` 还没被 patch 进 DOM，第二次点击照样会进处理器。
+    const button = wrapper.get("[data-testid='pick-album']").element as HTMLButtonElement;
+    button.click();
+    button.click();
+
+    openDecode();
+    await flushPromises();
+
+    expect(pickFromAlbum).toHaveBeenCalledTimes(1);
+    expect(platform.canvases).toHaveLength(1);
+    expect(push).toHaveBeenCalledTimes(1);
   });
 });
