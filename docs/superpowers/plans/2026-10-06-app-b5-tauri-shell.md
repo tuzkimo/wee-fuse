@@ -1489,13 +1489,26 @@ git commit -m "feat(app): Tauri 壳骨架（Android 工程 / 图标 / CI rust-ch
 
 **文件：**
 - 创建：`src/services/platform/tauriDriver.ts`、`src/services/platform/sniffImageType.ts`、`src/views/ShellProbePage.vue`、`src/views/__tests__/ShellProbePage.test.ts`、`src/services/platform/__tests__/sniffImageType.test.ts`
+- **修改：`package.json` / `package-lock.json`（装三个运行时依赖）**——见下面的「步骤 0」。**这是计划早先漏掉的一步**（2026-10-06 由任务 2 的实现者实测发现）。
 - 修改：`src/router/index.ts`（+1 条路由 `name: "shell-lab"`）、`src/router/__tests__/index.test.ts`（**只追加**一条恒等断言）
 - 修改：`src-tauri/Cargo.toml`（+ `tauri-plugin-dialog` / `tauri-plugin-fs` / 本地插件 path 依赖）
 - 修改：`src-tauri/capabilities/default.json`（+ `dialog:allow-open` + `fs` 读文件权限）
 - 修改：`src-tauri/src/lib.rs`（`OpenedUris` + `take_opened_uris` + `RunEvent::Opened` 的 emit + `save_image_to_album`）
-- 创建：`src-tauri/plugins/album/**`（最小移动插件：`Cargo.toml` / `build.rs` / `src/lib.rs` / `src/mobile.rs` / `src/desktop.rs` / `android/build.gradle.kts` / `android/src/main/AndroidManifest.xml` / `android/src/main/java/cn/tuzkimo/weefuse/album/AlbumPlugin.kt`）
+- 创建：`src-tauri/plugins/album/**`（最小移动插件：`Cargo.toml` / `build.rs` / `src/lib.rs` / `src/mobile.rs` / `android/build.gradle.kts` / `android/src/main/AndroidManifest.xml` / `android/src/main/java/cn/tuzkimo/weefuse/album/AlbumPlugin.kt`；**`src/desktop.rs` 不建**——计划早先列了它但没有任何代码与消费者）
 - **一次性脚手架（必须删）**：`src/router/index.ts` 顶部临时加一行 `redirect`（步骤 8 用，步骤 12 前删掉）
 - 报告（**不入库**）：`.superpowers/sdd/2026-10-06-app-b5-spike/report.md`
+
+- [ ] **步骤 0：装 JS 侧的三个运行时依赖（**漏了这一步 APK 根本出不来**）**
+
+```powershell
+npm install --save "@tauri-apps/api@^2" "@tauri-apps/plugin-dialog@^2" "@tauri-apps/plugin-fs@^2"
+```
+
+**为什么是 `dependencies` 而不是 `devDependencies`**：`tauriDriver.ts` 用**动态 `import()`** 在运行时加载它们
+（G1 只允许那一个文件接触 `@tauri-apps/*`），所以它们要**打进产物**；放 `devDependencies` 会在打包时丢掉。
+**实测版本**（2026-10-06）：`@tauri-apps/api@2.12.1` / `plugin-dialog@2.8.1` / `plugin-fs@2.6.0`（Rust 侧 crate 的主版本必须与之一致 = `2`）。
+**为什么不能用环境声明糊过去**：写 `declare module "@tauri-apps/api/core"` 能骗过 `vue-tsc`，但 **Vite 解析不到、真机也加载不到** ⇒
+`npm run build` 或 APK 构建仍会失败。**这是计划的硬缺口**（早先正文只在代码里提到这些包名，没有安装步骤）。
 
 **为什么 `sniffImageType.ts` 在本任务建（片段裁定 1）**：规格 §5.3.5 定的是「末段扩展名 / 魔数嗅探 / `相册图片.<ext>`」这套规则**两处共用一份实现**，而两处正是本任务的 `pickImageFile`（dialog 分支：`content://` → 字节 → `File`）与 pass 2 的分享摄入。不在本任务建它就必然出现两份。**pass 2 的任务 3/5 只许消费它，不许再写第二份。**
 
