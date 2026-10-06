@@ -78,6 +78,7 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | R6 | 「`sniffImageType.ts` 的『长度不足』守卫删掉会让『截断字节』那条用例转红」（计划 V5） | **错（实测 0 红）**：`Uint8Array` 越界读恒为 `undefined`，与任何魔数字节都不相等 ⇒ 循环自己收敛。**这不是断言无效**，是这道守卫在当前载体上不承重 | 计划更正 V5；JSDoc 写明保留理由（显式判据 + 换载体时行为不变） |
 | R7 | 「`gradlew` 的可执行位无所谓」 | **错**：`git ls-files -s` 显示 **100644**（应为 100755）；不影响本项目构建路径（走 `npm run -- tauri …`，不经 `./gradlew`），但 Unix 上手动 `./gradlew` 会 permission denied | `git update-index --chmod=+x`（提交 `24bb266`/`135fb1a`） |
 | R8 | 「`.gitattributes` 的 `* text=auto eol=lf` 会让新克隆里的 `gradlew.bat` 变 LF」 | **成立**（风险真实），实测工作副本是 CRLF、`git check-attr` 显示 `gradlew.bat → eol: crlf`（新规则生效） | 追加 `*.bat text eol=crlf` 与 `gradlew text eol=lf` |
+| R9 | 「计划里的 Rust 壳代码只要桌面 `cargo check` 过就没问题」 | **错**：`#[cfg(target_os = "android")]` 与 `RunEvent::Opened` 那段整块在桌面 target 上**根本不参与编译** ⇒ **mobile-only 代码从不被 CI 类型检查**。任务 2 实跑 `tauri android build`（编 aarch64-linux-android）时抓到两处：① `app.state::<OpenedUris>().0.lock()` 是**临时值**，语句结束即释放而 `guard` 后面还要用 ⇒ `error[E0716]`（先绑 `let state = …`）；② 插件移动端路径缺 `tauri::Manager` 引入 | 提交 `afc0ed0`；并记入下面的「未验证面」 |
 
 ---
 
@@ -141,6 +142,7 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | 2 | **平板未验** | 本轮验收设备是**手机**（裁决 4） | 将来有平板时重跑 `/lab/shell` 与人工清单 | 中 |
 | 3 | **release 签名 / 上架未做** | 只交付 debug APK（debug keystore 由 CLI 生成） | 需 keystore 与账号（敏感配置，红线） | 低（本阶段不要求） |
 | 4 | **Rust 侧零单测**（CI 只 `cargo check`） | `take_opened_uris` 的「取走即清」、信封解析、三层核对都只有真机判别力 | §2 的判据 C/D 读数 | 中 |
+| 4b | **mobile-only 的 `cfg` 分支从不被 CI 编译** | CI 的 `cargo check` 编的是桌面 target，`#[cfg(target_os = "android")]` 整块（含 `save_with_platform` 的 Android 实现、`RunEvent::Opened` 的入队与 `emit`）与插件的移动端路径**不参与类型检查**。**实测代价（R9）**：任务 2 用真机构建才抓到 `E0716` 临时值与被遗漏的 `Manager` 引入 | 每次 `tauri android build` 顺带验证；若要把这条纳入 CI，需要加一个 Android target 的 `cargo check`（本轮不做，记为首选项） | 中 |
 | 5 | **`tauriDriver.ts` 在 happy-dom 下不可执行** | 信封布局 / 字节核对 / `exitApp()` 三处零 CI 断言 | 同上 | 中 |
 | 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
 | 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；但 CI **不构建 APK** ⇒ 这条链只在真机构建时被验证 | 每次真机构建顺带验证 | 低 |
