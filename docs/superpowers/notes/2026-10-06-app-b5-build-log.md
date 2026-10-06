@@ -503,10 +503,10 @@ E	关闭请求	（尚未触发）
 
 ---
 
-## 8. 待批准的建议（**改动 CI/CD 属红线，未经批准不做**）
+## 8. 建议的处置（**改动 CI/CD 属红线**：第 1 条已经人类伙伴**明确批准**后落地；第 2 条待排期）
 
 | # | 建议 | 实测依据 | 状态 |
 |---|---|---|---|
-| 1 | 在 CI 的 `rust-check` job 里**加一步** `cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android` | P15：可用；首次 14.9 s、缓存后 0.34 s、exit 0。**它能抓住 R9 那两处「只在 Android target 现形」的缺陷**——本轮是靠真机构建才发现的，CI 当时全绿 | **待人类伙伴批准**（`.github/workflows/ci.yml` 属 CI 配置，按项目红线必须先问） |
-| 2 | 加一条用例断言「`/` 的 name 是 `home` 且不是 redirect」 | R10：S1 脚手架在位时 `npm run test` 完全无感（1193 passed / 1 failed） | 待排期（pass 2 任一次触碰 `src/router/__tests__/index.test.ts` 时顺手做） |
+| 1 | 在 CI 的 `rust-check` job 里**加一步** `cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android` | P15：可用；首次 14.9 s、缓存后 0.34 s、exit 0。**它能抓住 R9 那两处「只在 Android target 现形」的缺陷**——本轮是靠真机构建才发现的，CI 当时全绿 | ✅ **已批准并落地**（2026-10-06，提交 `a07864a`）：`ci.yml` 加 `rustup target add aarch64-linux-android` + `cargo check … --target aarch64-linux-android`，并写死「**不许退化成 `continue-on-error`**」✗。落地前本机实跑一次通过（`Finished dev profile … in 0.35s`）；**CI 环境差异**（runner 的 NDK/SDK）若报缺什么，按报错补，别静默跳过 ✓ |
+| 2 | 加一条用例断言「`/` 的 name 是 `home` 且不是 redirect」 | R10：S1 脚手架在位时 `npm run test` 完全无感（1193 passed / 1 failed） | **部分已做**：收尾为返回键缺陷补的「**真路由表守卫**」已断言 `home` 存在且 `library` 不存在（提交 `34dd4ce`/`e42d7f3` 一带）；**「不是 redirect」**那半仍未加 ⇒ 待排期（pass 2 任一次触碰 `src/router/__tests__/index.test.ts` 时顺手做） |
 
