@@ -176,7 +176,7 @@ const REVOKE_DELAY_MS = 1000;
  * **消费者**：`ExportPanel.vue`（用户点「保存」后）。
  */
 export function downloadBlob(blob: Blob, filename: string): void {
-  // 两条守卫收敛到 `services/platform/guards.ts` 的 `requireSavableBlob`（规格 §3.1）：
+  // 两条守卫收敛到 `services/platform/guards.ts` 的 `requireSavableBlob`（规格 §4.4「守卫」）：
   // 壳里的相册实现要判同样两件事，各写一份必然漂移。**消息逐字未变**，既有用例读的就是它们。
   const safe = requireSavableBlob(blob, filename);
   const url = URL.createObjectURL(safe.blob);
