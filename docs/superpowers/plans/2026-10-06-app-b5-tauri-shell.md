@@ -4457,6 +4457,7 @@ it("平台保存失败 ⇒ 走既有的琥珀条失败路径（不静默）", as
 | M22 | `ExportPanel.vue` 把 `album.save(blob, filename)` 改回 `downloadBlob(blob, filename)` | **G4**（闸门）+ 新加的「经平台落盘」那条 |
 | M23 | `exportFilename` 调用里漏传 `tile`（分片项变成非分片名字） | 新用例的名字断言（`r2c2` 那半） |
 | M24 | 失败分支把 `albumSave` 的抛错吞掉（catch 后当成功） | 新加的「失败走琥珀条」那条 |
+| **M25** | 把 `album.save(blob, filename)` 改成**别名的调用形态**（例如先 `const saver = getPlatform().album;` 再 `saver.save(...)`）——**不再出现 `album.save(` 这个字面量**，但行为完全正确 | **G4 的正向半段**（`toContain("album.save(")`）——这条变异是**为 G4 的正向半段补的靶子**：2026-10-06 的任务 1 审查指出「M7/M13/M14 分别打 G1/G2/G3，**没有一条打 G4 的正向半段**」。**它同时暴露该闸门的真实代价**：合法的等价写法会被它判红 ⇒ 修正写法（保留 `album.save(` 字面量）比放宽闸门便宜，所以**闸门不动**，把这条变异与代价一起记进构建记录 |
 
 - [ ] **步骤 7：三跑 + Commit**
 
@@ -4632,9 +4633,9 @@ useShellLifecycle();
 
 | ID | 改哪一行 | 期望红 |
 |---|---|---|
-| M25 | 返回键 handler 去掉 `if (info.canGoBack) { history.back(); return; }` 整段 | 「canGoBack ⇒ 调 history.back()」那条（它会掉进 dirty/exit 分支） |
-| M26 | 同处去掉 `if (session.dirty) { …push…; return; }`（无历史时无条件 exit） | 「无历史 + dirty ⇒ 走路由」那条 |
-| M27 | `onExitRequested(() => session.dirty)` 改成 `() => false` | 「退出请求的 handler 返回 session.dirty」那条 |
+| **M26** | 返回键 handler 去掉 `if (info.canGoBack) { history.back(); return; }` 整段 | 「canGoBack ⇒ 调 history.back()」那条（它会掉进 dirty/exit 分支） |
+| **M27** | 同处去掉 `if (session.dirty) { …push…; return; }`（无历史时无条件 exit） | 「无历史 + dirty ⇒ 走路由」那条 |
+| **M28** | `onExitRequested(() => session.dirty)` 改成 `() => false` | 「退出请求的 handler 返回 session.dirty」那条 |
 
 - [ ] **步骤 7：三跑 + Commit**
 
