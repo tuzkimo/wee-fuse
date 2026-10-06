@@ -159,7 +159,7 @@ describe("useShellLifecycle", () => {
     wrapper.unmount();
   });
 
-  it("无历史 + dirty ⇒ 走路由去 library（**不 exit**）", () => {
+  it("无历史 + dirty ⇒ 走路由去图纸库 `home`（**不 exit**）", () => {
     const spies = lifecycleSpies();
     setPlatform(spies.platform);
     useProjectSession().markDirty();
@@ -169,7 +169,7 @@ describe("useShellLifecycle", () => {
 
     // 守卫（`EditorPage` 的 `onBeforeRouteLeave`）会拦下这次导航并弹出**同一条**确认条；
     // 走到「图纸库」是**发起一次导航**、把决策交给既有机制，绝不是替用户决定丢弃。
-    expect(push).toHaveBeenCalledWith({ name: "library" });
+    expect(push).toHaveBeenCalledWith({ name: "home" });
     expect(push).toHaveBeenCalledTimes(1);
     expect(spies.exit).not.toHaveBeenCalled();
     wrapper.unmount();
@@ -218,5 +218,21 @@ describe("useShellLifecycle", () => {
     wrapper.unmount();
     expect(spies.offBack).toHaveBeenCalledTimes(1);
     expect(spies.offExit).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * **关键 2 的守卫（2026-10-06 任务级审查发现）**：本文件的 5 条用例把 `useRouter` 换成了只带 `push` 的替身 ⇒
+ * 导航目标**名字对不对**在这一层恒绿 ✗ —— 实测 `{ name: "library" }`（图纸库的真名是 `home`）能全绿通过，
+ * 而真机上 `vue-router` 会在 matcher 里**同步抛** `MATCHER_NOT_FOUND`、`void router.push(...)` 吞不掉 ⇒
+ * 返回键直接死 ✗。所以这里**拿真路由表**核一次目标名：它属于「A 的输出喂给 B」那条纪律的最小形态
+ * （替身换掉了真接线 ⇒ 必须另有一条真件在环）。
+ */
+describe("useShellLifecycle：导航目标必须在真路由表里存在", () => {
+  it("图纸库的 name 是 home（不是 library）", async () => {
+    const { router } = await import("@/router");
+    const names = router.getRoutes().map((route) => route.name);
+    expect(names).toContain("home");
+    expect(names).not.toContain("library");
   });
 });

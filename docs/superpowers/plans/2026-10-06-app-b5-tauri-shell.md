@@ -4654,10 +4654,10 @@ describe("useShellLifecycle", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it("无历史 + dirty ⇒ 走路由去 library（**不 exit**）", async () => {
+  it("无历史 + dirty ⇒ 走路由去图纸库 `home`（**不 exit**）", async () => {
     // session.dirty 置脏：用 store 的既有方式（`adopt` 或 `markDirty`，后者幂等）
     backHandler({ canGoBack: false });
-    expect(push).toHaveBeenCalledWith({ name: "library" });
+    expect(push).toHaveBeenCalledWith({ name: "home" });
     expect(exit).not.toHaveBeenCalled();
   });
 
@@ -4700,7 +4700,7 @@ import { useProjectSession } from "@/stores/project";
  * **为什么三个分支这么分**（不是随手写的）：
  * ① `canGoBack` ⇒ `history.back()`：**让既有机制原样生效**——Vue Router 的 popstate → `EditorPage` 的
  *    `onBeforeRouteLeave` → 有未保存改动就取消导航并弹出**同一条**页面内确认条。这里**绝不新增第二套确认 UI**。
- * ② 无历史且有未保存改动 ⇒ `router.push({ name: "library" })`：主动走到图纸库，守卫照常拦下。
+ * ② 无历史且有未保存改动 ⇒ `router.push({ name: "home" })`：主动走到图纸库，守卫照常拦下。
  *    **绝不 `exit()`** —— 那正是「静默丢稿」，也是本任务存在的唯一理由。
  * ③ 无历史且干净 ⇒ 正常退出。
  *
@@ -4724,7 +4724,7 @@ export function useShellLifecycle(): void {
       return;
     }
     if (session.dirty) {
-      void router.push({ name: "library" });
+      void router.push({ name: "home" });
       return;
     }
     void platform.lifecycle.exit();   // ⚠️ 需要 capabilities 里的 `core:app:allow-exit`（见下方注记）

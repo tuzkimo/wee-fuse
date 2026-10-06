@@ -461,7 +461,7 @@ spike 判据 D 若证明 MediaStore 插入在本机走不通（要权限、被�
 | 条件 | 行为 | 为什么 |
 |---|---|---|
 | `canGoBack === true` | `history.back()` | **让既有机制原样生效**：Vue Router 的 popstate → `EditorPage` 的 `onBeforeRouteLeave` → 有未保存改动就取消导航并弹出同一条确认条。不新增第二套确认 UI |
-| `canGoBack === false` 且 `session.dirty === true` | `router.push({ name: "library" })` | 无历史可退时，主动走到图纸库：路由守卫照常拦下 ⇒ 同一张确认条出现。**绝不直接 `exit()`** —— 那正是「静默丢稿」 |
+| `canGoBack === false` 且 `session.dirty === true` | `router.push({ name: "home" })` | 无历史可退时，主动走到图纸库：路由守卫照常拦下 ⇒ 同一张确认条出现。**绝不直接 `exit()`** —— 那正是「静默丢稿」 |
 | `canGoBack === false` 且干净 | `driver.exitApp()` | 正常退出 |
 
 **注册 `onBackButtonPress` 会抑制 Tauri 自带的默认导航**（D3），所以这三个分支**就是**返回键的全部行为，没有第二份默认逻辑兜底。
