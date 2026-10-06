@@ -3757,5 +3757,81 @@ git commit -m "feat(app): /lab/shell 壳能力探针页、Tauri 驱动、Rust �
 
 （`.superpowers/**` 被 gitignore，报告不进这个提交。）
 
+> **任务 2 到此结束。计划第二遍**（任务 3–7：相册接线 / 拍照 / 分享进入 / 保存到相册 / 生命周期）在 spike
+> 读数到手后**插在任务 2 与任务 8 之间**——它们的分支由六判据决定，**没有读数就写不出可执行的逐字代码**
+> （全局约束 18）。**任务 8 是为数不多与读数无关的一块，故先写**：它无论如何都要做、不会被任何读数推翻。
+
+---
+
+### 任务 8：收尾（账目 / 构建记录 / 文档回写 / 人工清单回填）
+
+**交付物**：一份能交给下一个人接着做的仓库状态——账目对得上、构建记录写清「哪些是真验过的、哪些没有」、上游文档同步、人工清单逐条有结果。
+
+**文件：**
+- 创建：`docs/superpowers/notes/2026-10-06-app-b5-build-log.md`
+- 修改：`README.md`、`AGENTS.md` 与 `CLAUDE.md`（**逐字相同的镜像**）、主规格 `docs/superpowers/specs/2026-09-30-image-to-pattern-design.md`（**只加更正注记**）、B5 规格（实现相对规格有偏离时逐条回填）、本计划（执行中改过口径时同步）
+
+- [ ] **步骤 1：账目回原始清单重数（不许引用任何汇总行）**
+
+```powershell
+npm run test           # 贴原始输出的 Test Files / Tests 两行
+$env:TZ="UTC"; npm run test; Remove-Item Env:\TZ     # 与 CI 同环境，数字必须一致
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+**计数口径**（照 README 既有那段，别自创）：`src/**/*.test.ts` 按路径递归枚举数文件；`describe(` 按**行首**计数；`it(` 按 **`\bit\(` 全局**计数；`it.each` **逐表展开**；`services/__tests__/projectStoreContract.ts` 的条数被内存 / IndexedDB 两个实现各跑一遍；`decoders.test.ts` 的两元素数据循环多跑 1 条。
+**必须给出闭合分解式并与运行期总数逐位相等**。**对不上就先怀疑仪器**（B4 账本记过两次仪器错：`it.each` 的括号平衡、`CASES` 的类型标注里有 `[`）。
+
+- [ ] **步骤 2：新建构建记录**
+
+`docs/superpowers/notes/2026-10-06-app-b5-build-log.md`，骨架照 B4（`2026-10-05-app-b4-build-log.md`），**必含七节**：
+1. 交付物与账目（含计数方法与原始输出）；
+2. **spike 六判据的原始读数整段**（F/A/B/C/D/E，不许摘要）+ `adb logcat` 三行原文；
+3. **被推翻的结论与平台事实**（`capture="environment"` 有没有被 WebView 尊重、`content://` 的实际形态、`plugin-fs` 读它时 scope 有没有拦、MediaStore 是否免权限、`onCloseRequested` 在划掉 App 时是否触发、`gen/android` 两次构建前后 `git status` 的差异）；
+4. 控制者自己的错误清单（本轮已有三处仪器错误 + 一处记账错误 + 一处对片段的误读，**逐条如实写**）；
+5. 人工清单 1–15 的逐条结果（**未执行的写「未执行」**，不许用推测填空）；
+6. 正式接受的限制与延后项（一行一条，编号 `B5-1…`，供 README 引用）；
+7. 未验证面与后续优先级（**最后一行永远留给「哪一件事最可能在下一次真机使用中咬人」**）。
+
+**构建记录里不许残留任何 `〔`**（B4 的骨架用 `〔…〕` 当填写指令；落进仓库的那份必须全部填实或删掉）——写完用 `Select-String -Pattern '〔'` 自查零命中并把输出贴进报告。
+
+- [ ] **步骤 3：README 回写**
+
+四处：
+1. **当前进度**：B5 交付了什么、`npm run dev` 下怎么用（`/lab/shell` 是开发期实验台、**不进用户入口**）、保存到相册的实际落点与降级、分享进入怎么触发；
+2. **目录结构**：`src-tauri/`（Rust + Android 生成工程 + 本地移动插件）、`src/services/platform/`（能力层与**唯一**的 Tauri 接触点）、两个 composable、`/lab/shell` 那一行；
+3. **开发命令**：`npx tauri android dev` / `npx tauri android build --apk --debug`；并写明**桌面壳（`npx tauri dev`）仅开发调试、不作验收依据**；
+4. **已知限制与延后项**：切后台被系统回收会丢未保存改动、拍照的最终状态（交付了 / 未交付及原因）、**平板未验**（本轮验收设备是手机）、release 签名与上架未做、图纸库落在 WebView 的 IndexedDB 上（**卸载 App 会连图纸一起没**）、`onSharedImage` 与读字节失败只有 `console.error` 没有 UI 出口。
+
+- [ ] **步骤 4：AGENTS.md 与 CLAUDE.md 的逐字镜像**
+
+四类内容（**两份必须逐字相同、同时改**）：
+1. **分层边界**段：**`@tauri-apps/*` 只许出现在 `src/services/platform/tauriDriver.ts`**（机检 = `platformGate.test.ts` 的 G1）；`isTauri` 只许在 `capabilities.ts` 里读（G2）。
+2. **关键常量**段：`identifier = cn.tuzkimo.weefuse`（**不许改**）、`bundle.android.minSdkVersion = 29`、相册落点 `Pictures/WeeFuse`、Android 显示名 `一起拼豆`、`CAPTURE_SUPPORTED` 的最终值。
+3. **「公开 API ≠ 被使用的 API」**段：平台能力层的公开面与消费者逐条（含 `pickFromAlbum` / `capturePhoto` / `shareInbox` 三成员在浏览器实现下零消费者这一条如实说明）。
+4. **开发流程**段：补一句「spike 的六判据与降级链」，指向 B5 规格 §13 与构建记录。
+
+自检：两份文件的差异集合必须**恰好等于那一行自指**（各自写对方文件名）——`Compare-Object` 的输出应是 1–2 行。
+
+- [ ] **步骤 5：主规格只加更正注记（不改历史正文）**
+
+照 B3/B4 的先例逐处加注记，每处写清「原正文怎么写 → 本轮实际怎么做 → 为什么」：§2.1「图片来源」行、§7.4「保存到相册」、§9「真机清单」（补壳内结果）、§12 的 **R3** 与 **R4** **回填结论**（「验证结论回写本节的项」是主规格自己写的既有要求）。
+
+- [ ] **步骤 6：人工清单 1–15 逐条回填**
+
+B5 规格 §10 的 15 条：1–8 决定「壳能不能用」、9–10 决定生命周期、11–13 是 B4 的欠账（116×116 的 64 MB、空图纸、横竖屏）、14 是「切后台会丢」的确认、15 是壳内复测 `/lab/canvas`。**每条都要有结果**；未执行的如实写「未执行」并说明缺的是**装置**还是**时间**。清单 11 若显示 116×116 会崩，**按 B4 构建记录 §12 的预登记规则另立独立小轮**，本轮只记读数。
+
+- [ ] **步骤 7：按规格 §14 的九条完成标准逐条打勾**
+
+逐条给**证据**（命令 + 原始输出片段），不许只写「已完成」。任何一条不成立的，写清为什么不成立、以及它对后续哪一轮有影响。
+
+- [ ] **步骤 8：Commit**
+
+```powershell
+git add README.md AGENTS.md CLAUDE.md docs
+git commit -m "docs(b5): 收尾（构建记录 / README / AGENTS+CLAUDE 镜像 / 主规格注记 / 人工清单回填）"
+```
+
 ---
 
