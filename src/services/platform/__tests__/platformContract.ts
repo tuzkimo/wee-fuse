@@ -109,6 +109,9 @@ export function runPlatformContract(label: string, makeHarness: () => PlatformHa
       expect(second).toBeNull();
       if (h.platform.shareInbox.supported) {
         expect(first).not.toBeNull();
+        // 单图分享 ⇒ 「没有处理的那几张」为 0（K2 的契约面：多图只取第一张 + 报出其余张数）。
+        expect(first?.extraCount).toBe(0);
+        expect(first?.file.size).toBeGreaterThan(0);
       } else {
         expect(first).toBeNull();
       }

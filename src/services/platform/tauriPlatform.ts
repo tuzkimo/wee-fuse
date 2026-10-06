@@ -1,7 +1,7 @@
 import { requireSavableBlob } from "./guards";
 import { imageFileName, sniffImageType } from "./sniffImageType";
 import { CAPTURE_SUPPORTED, loadTauriDriver, type TauriDriver } from "./tauriDriver";
-import type { AlbumSaver, AppLifecycle, ImagePicking, Platform, ShareInbox } from "./types";
+import type { AlbumSaver, AppLifecycle, ImagePicking, Platform, ShareInbox, SharedImageTake } from "./types";
 
 /**
  * 把 `TauriDriver`（唯一接触 `@tauri-apps/*` 的那一层）适配成 `Platform`（规格 §4.3 / §4.4）。
@@ -111,7 +111,7 @@ export function createTauriPlatform(driver?: TauriDriver): Platform {
 
   const shareInbox: ShareInbox = {
     supported: true,
-    async takeSharedImage(): Promise<File | null> {
+    async takeSharedImage(): Promise<SharedImageTake | null> {
       const source = await requireDriver();
       const uris = await source.takeOpenedUris();
       // `invoke` 的返回值过 JSON 边界：不是数组、元素不是非空字符串都算「分享内容不是文件」（§4.4）。
@@ -119,7 +119,9 @@ export function createTauriPlatform(driver?: TauriDriver): Platform {
       if (uris.length === 0) return null;
       const first: unknown = uris[0];
       if (typeof first !== "string" || first.trim() === "") throw new Error("分享内容不是文件");
-      return fileFromUri(source, first);
+      // **多图只取第一张**（规格 §5.3.4）：其余张数如实报上去，接线层的提示条据此写「已取第一张」。
+      // 不为其余 URI 读字节——那既慢（N 次 IPC + N 次 fs）又白读（它们不会被摄入）。
+      return { file: await fileFromUri(source, first), extraCount: uris.length - 1 };
     },
     onSharedImage(handler: (file: File) => void): () => void {
       if (typeof handler !== "function") throw new Error("回调必须是函数");

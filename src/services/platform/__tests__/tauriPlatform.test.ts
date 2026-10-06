@@ -198,12 +198,14 @@ describe("createTauriPlatform（假驱动）", () => {
     });
     const platform = createTauriPlatform(source.driver);
     expect(platform.shareInbox.supported).toBe(true);
-    const file = await platform.shareInbox.takeSharedImage();
+    const taken = await platform.shareInbox.takeSharedImage();
     expect(read).toEqual(["content://media/external/images/media/image%3A1234"]);
     // ★ 接线断言：URI 末段不可用 ⇒ 名字取自嗅探结果；`type` 也来自嗅探而不是 URI。
-    expect(file?.name).toBe("相册图片.png");
-    expect(file?.type).toBe("image/png");
-    expect(file?.size).toBe(PNG_HEAD.length);
+    expect(taken?.file.name).toBe("相册图片.png");
+    expect(taken?.file.type).toBe("image/png");
+    expect(taken?.file.size).toBe(PNG_HEAD.length);
+    // 单条 URI ⇒ 没有别的张（K2）；多条 URI 那一支见下面那条独立用例。
+    expect(taken?.extraCount).toBe(0);
 
     for (const bad of [42, null, ""] as const) {
       const broken = makeDriver({ uris: async () => [bad as unknown as string] });
@@ -227,6 +229,26 @@ describe("createTauriPlatform（假驱动）", () => {
     await expect(
       createTauriPlatform(emptyBytes.driver).shareInbox.takeSharedImage(),
     ).rejects.toThrow("分享内容是空文件");
+  });
+
+  /**
+   * K2 的**平台层那一半**（2026-10-06 任务 5 修复轮）：`ACTION_SEND_MULTIPLE` 一次分享多张时，
+   * `takeSharedImage` 只读**第一张**的字节（其余连读都不读），并把其余张数如实报出来。
+   * 判别力：`extraCount` 写成常数 `0` 时这条红；把 `uris[0]` 改成 `uris.at(-1)` 时名字/字节断言红。
+   */
+  it("takeSharedImage：多条 URI ⇒ 只读第一张，extraCount 数出其余张数", async () => {
+    const read: string[] = [];
+    const source = makeDriver({
+      uris: async () => ["content://media/1", "content://media/2", "content://media/3"],
+      bytes: async (uri) => {
+        read.push(uri);
+        return PNG_HEAD;
+      },
+    });
+    const taken = await createTauriPlatform(source.driver).shareInbox.takeSharedImage();
+    expect(read).toEqual(["content://media/1"]);
+    expect(taken?.file.size).toBe(PNG_HEAD.length);
+    expect(taken?.extraCount).toBe(2);
   });
 
   it("save：空 blob / 空文件名两条守卫逐字复用且**在任何写操作之前**；正常路径把字节与清洗后的名字交给驱动", async () => {

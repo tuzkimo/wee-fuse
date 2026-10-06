@@ -217,7 +217,7 @@ describe("/lab/shell 探针页", () => {
 
   it("C / D 走能力层：C 取走冷启动分享 + 探针图走保存链；D 保存的是 canvasToBlob 产出的那颗 blob（恒等）", async () => {
     const shared = new File([PNG_HEAD], "相册图片.png", { type: "image/png" });
-    const takeSharedImage = vi.fn(async () => shared);
+    const takeSharedImage = vi.fn(async () => ({ file: shared, extraCount: 0 }));
     const save = vi.fn(async (_blob: Blob, _filename: string) => {});
     setPlatform(
       fakePlatform({

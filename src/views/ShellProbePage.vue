@@ -261,7 +261,7 @@ async function runC(): Promise<void> {
   const platform = getPlatform();
   let coldStart = "无待处理分享（把 App 从任务切换器划掉，再从相册 App 分享一张图进来）";
   try {
-    const file = await platform.shareInbox.takeSharedImage();
+    const file = (await platform.shareInbox.takeSharedImage())?.file ?? null;
     if (file !== null) {
       coldStart = `${file.name} / ${file.size} 字节 / ${file.type === "" ? "（空 MIME）" : file.type}`;
     }

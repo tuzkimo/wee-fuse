@@ -56,21 +56,39 @@ export interface ImagePicking {
   capturePhoto(): Promise<File | null>;
 }
 
+/**
+ * 冷启动取回的那一份分享。
+ *
+ * **为什么不是直接返回 `File`**（2026-10-06 任务 5 修复轮 K2）：`ACTION_SEND_MULTIPLE` 一次分享多张时
+ * 规格 §5.3.4 要求「**只取第一张** + 提示条告知」，而「还有几张」这个事实只有平台层拿得到
+ * （Rust 的 `take_opened_uris` 交回整个 URI 数组）⇒ 让它随 `file` 一起上来，接线层不必自己数一遍。
+ */
+export interface SharedImageTake {
+  /** 第一张（多图时**只**是它；其余不摄入）。 */
+  readonly file: File;
+  /** 同一次分享里**没有处理**的那几张的数量（`0` = 就只有这一张）。 */
+  readonly extraCount: number;
+}
+
 export interface ShareInbox {
   /**
-   * 是否支持「从别的 App 分享进来」。false ⇒ 后续接线任务里的 `composables/useShareIntake.ts`
-   * 不装配摄入链。**今天零消费者**：该 composable 尚不存在。
+   * 是否支持「从别的 App 分享进来」。false ⇒ `composables/useShareIntake.ts` **不装配**摄入链
+   * （浏览器实现是 `false`，所以浏览器里这一整条路是死的）。
+   * **消费者 = `composables/useShareIntake.ts`**（`if (platform.shareInbox.supported)`）。
    */
   readonly supported: boolean;
   /**
    * 冷启动那一份分享（就是启动 App 的那次 intent）。**取走即清**：再次调用返回 `null`。
    * 为什么必须清：摄入链有副作用（改草稿、跳路由），重复摄取会让用户莫名其妙地回到选区页。
-   * **消费者 = 后续接线任务的 `composables/useShareIntake.ts`；今天零消费者**（该文件尚不存在）。
+   * **多图只取第一张**，`extraCount` 报出其余张数（提示条告知用，规格 §5.3.4）。
+   * **消费者 = `composables/useShareIntake.ts`**：setup 里取一次；热启动处理完还会再调一次，把 state
+   * 排空（Rust 侧对**每次** `RunEvent::Opened`——含热启动——都往 state 里 push）。
    */
-  takeSharedImage(): Promise<File | null>;
+  takeSharedImage(): Promise<SharedImageTake | null>;
   /**
    * 热启动（App 已在运行时收到新的分享）。返回解绑函数。
-   * **消费者 = 后续接线任务的 `composables/useShareIntake.ts`；今天零消费者**（该文件尚不存在）。
+   * **一次分享多张时 Rust 对每个 URI 各 emit 一次** ⇒ 接线层按「同一 tick 归一」处理（只摄入第一张）。
+   * **消费者 = `composables/useShareIntake.ts`**。
    */
   onSharedImage(handler: (file: File) => void): () => void;
 }
