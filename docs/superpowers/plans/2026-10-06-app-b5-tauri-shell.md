@@ -4180,6 +4180,181 @@ git commit -m "feat(exporter): 面板经能力层落盘（壳里进相册），p
 
 ---
 
+### 任务 7：生命周期（返回键三分支 + 退出请求；`App.vue` 装配）
+
+**前置**：任务 2 的 spike 已跑完，**判据 E 的读数已写进 spike 报告**（它只影响本任务的**记录与排查路径**，不影响三分支的实现——见步骤 5）。
+
+**交付物**：`/edit/:id` 里有未保存改动时，Android 返回键**不会**把 App 直接退掉（走已有的页面内确认条）；退出请求在 dirty 时被拦一次；**切后台不做机制**（规格 §5.5.4，如实写进文档）。
+
+**文件：**
+- 创建：`src/composables/useShellLifecycle.ts`、`src/composables/__tests__/useShellLifecycle.test.ts`
+- 修改：`src/App.vue`（加两行装配；任务 5 会再加一个 composable）
+
+- [ ] **步骤 1：抄下判据 E 的读数与结论**
+
+把 spike 报告里 **E 块的整段读数**（返回键 / 关闭请求两行 + logcat 原文）贴进本次任务报告的开头。
+
+- [ ] **步骤 2：写失败测试**
+
+`src/composables/__tests__/useShellLifecycle.test.ts`（**挂载一个空测试组件来跑 composable**——照本仓 `src/composables/__tests__/useCanvasSurface.test.ts` 的既有写法，别自创 helper）：
+
+```ts
+/**
+ * 返回键的三个分支（规格 §5.5.1）——**必须互不遮蔽**：
+ * ① `canGoBack` ⇒ `history.back()`，让既有的路由守卫与确认条原样生效（**不新增第二套确认 UI**）；
+ * ② 无历史 + 有未保存改动 ⇒ 走到图纸库（守卫会拦下并弹同一条确认条）——**绝不直接 exit**；
+ * ③ 无历史 + 干净 ⇒ 正常退出。
+ *
+ * **为什么三条要分开钉**：写成一个「dirty 就拦、否则退出」的函数在 ① 上会静默丢掉「回上一页」的行为
+ * （用户按返回键会从编辑器直接退出 App），而三支挤在一起时，把 ① 接成 ③ 只会让一条红。
+ * `history.back` 在 happy-dom 里没有导航语义 ⇒ 用 spy 钉调用，**不假装测到了真导航**。
+ */
+describe("useShellLifecycle", () => {
+  it("canGoBack ⇒ 调 history.back()，既不 push 也不 exit", async () => {
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    // …注入假 router（`vi.mock("vue-router")`，照 `views/__tests__/PickPage.test.ts` 的既有写法）…
+    // …注入假平台（`setPlatform(fakePlatform)`），它的 `onBackButton` 把 handler 存下来供本用例触发…
+    // …挂测试组件…
+    backHandler({ canGoBack: true });
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("无历史 + dirty ⇒ 走路由去 library（**不 exit**）", async () => {
+    // session.dirty 置脏：用 store 的既有方式（`adopt` 或 `markDirty`，后者幂等）
+    backHandler({ canGoBack: false });
+    expect(push).toHaveBeenCalledWith({ name: "library" });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("无历史 + 干净 ⇒ exit() 恰好一次，且不 push", async () => {
+    backHandler({ canGoBack: false });
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("退出请求的 handler 返回 session.dirty（干净 ⇒ false，dirty ⇒ true）", async () => {
+    expect(exitRequestHandler()).toBe(false);
+    // …置 dirty…
+    expect(exitRequestHandler()).toBe(true);
+  });
+
+  it("卸载 ⇒ 两个解绑函数各被调用一次（不泄漏监听）", async () => {
+    // …挂载后卸载…
+    expect(unbindBack).toHaveBeenCalledTimes(1);
+    expect(unbindExit).toHaveBeenCalledTimes(1);
+  });
+});
+```
+
+运行：`npx vitest run src/composables/__tests__/useShellLifecycle.test.ts`
+预期：**红**（`useShellLifecycle` 不存在）。
+
+- [ ] **步骤 3：实现**
+
+`src/composables/useShellLifecycle.ts`：
+
+```ts
+import { onUnmounted } from "vue";
+import { useRouter } from "vue-router";
+import { getPlatform } from "@/services/platform/capabilities";
+import { useProjectSession } from "@/stores/project";
+
+/**
+ * 壳里的退出 / 返回键装配（规格 §5.5.1 / §5.5.2）。**在 `App.vue` 的 setup 顶层调用一次。**
+ *
+ * **为什么三个分支这么分**（不是随手写的）：
+ * ① `canGoBack` ⇒ `history.back()`：**让既有机制原样生效**——Vue Router 的 popstate → `EditorPage` 的
+ *    `onBeforeRouteLeave` → 有未保存改动就取消导航并弹出**同一条**页面内确认条。这里**绝不新增第二套确认 UI**。
+ * ② 无历史且有未保存改动 ⇒ `router.push({ name: "library" })`：主动走到图纸库，守卫照常拦下。
+ *    **绝不 `exit()`** —— 那正是「静默丢稿」，也是本任务存在的唯一理由。
+ * ③ 无历史且干净 ⇒ 正常退出。
+ *
+ * **为什么 `onExitRequested` 只返回 `session.dirty`**（不弹任何东西）：此时用户看到的是「App 还在」，
+ * 下一步他自己会点返回键或保存。返 `true` 即阻止这次退出（`onCloseRequested` 的 `preventDefault`）。
+ *
+ * **注册返回键会抑制 Tauri 自带的默认导航**（规格 D3）⇒ 这三个分支**就是**返回键的全部行为，没有兜底。
+ */
+export function useShellLifecycle(): void {
+  const router = useRouter();
+  const session = useProjectSession();
+  const platform = getPlatform();
+
+  // 退出请求：dirty 时拦一次。Android 上「关闭请求」是否真被触发见构建记录；**不触发也不构成缺陷**。
+  const offExit = platform.lifecycle.onExitRequested(() => session.dirty);
+
+  // 返回键：三个分支互不遮蔽。
+  const offBack = platform.lifecycle.onBackButton((info) => {
+    if (info.canGoBack) {
+      history.back();
+      return;
+    }
+    if (session.dirty) {
+      void router.push({ name: "library" });
+      return;
+    }
+    void platform.lifecycle.exit();
+  });
+
+  onUnmounted(() => {
+    offExit();
+    offBack();
+  });
+}
+```
+
+- [ ] **步骤 4：装配进 `App.vue`**
+
+`src/App.vue` 现在是 5 行空壳（`<script setup lang="ts"></script>` + `<RouterView />`）。**逻辑一律留在 composable 里，页面保持极薄**：
+
+```vue
+<script setup lang="ts">
+// 壳里的生命周期装配（规格 §5.5.1 / §5.5.2）。任务 5 会在这里再加一个 `useShareIntake()`。
+// **两个 composable 都必须在 setup 顶层调用**：它们各自用 `onUnmounted` 登记解绑，放进条件分支或事件
+// 回调里会让解绑登记不到（Vue 的生命周期钩子只在 setup 同步执行期被收集）。
+import { useShellLifecycle } from "@/composables/useShellLifecycle";
+
+useShellLifecycle();
+</script>
+
+<template>
+  <RouterView />
+</template>
+```
+
+运行：`npx vitest run src/composables/__tests__/useShellLifecycle.test.ts`（5 条全绿）+ `npm run test` + `npm run build`
+
+- [ ] **步骤 5：按判据 E 的读数处置（只影响记录与排查，不改三分支）**
+
+- **返回键触发** ⇒ 本任务完成，读数进构建记录。
+- **返回键不触发** ⇒ **是缺陷**：查 `onBackButtonPress` 的注册链（`@tauri-apps/api/app` 的 `app` 插件是否被注册、Android 侧是否可用），把排查过程与结论写进报告；**三分支实现不变**。
+- **关闭请求不触发** ⇒ **不是缺陷**（B5-R6）：如实记进构建记录。
+- **切后台**：**不做机制**（规格 §5.5.4：Rust 无 `Paused`/`Suspended` 事件、`visibilitychange` 拦不住）⇒ 把「编辑中切后台被系统回收会丢未保存改动」写进 README 的已知限制。
+
+- [ ] **步骤 6：变异（红数不许预估）**
+
+| ID | 改哪一行 | 期望红 |
+|---|---|---|
+| M25 | 返回键 handler 去掉 `if (info.canGoBack) { history.back(); return; }` 整段 | 「canGoBack ⇒ 调 history.back()」那条（它会掉进 dirty/exit 分支） |
+| M26 | 同处去掉 `if (session.dirty) { …push…; return; }`（无历史时无条件 exit） | 「无历史 + dirty ⇒ 走路由」那条 |
+| M27 | `onExitRequested(() => session.dirty)` 改成 `() => false` | 「退出请求的 handler 返回 session.dirty」那条 |
+
+- [ ] **步骤 7：三跑 + Commit**
+
+```powershell
+npm run test          # 新增 5 条；贴 Test Files / Tests 两行与新分解式
+$env:TZ="UTC"; npm run test; Remove-Item Env:\TZ
+npm run build
+```
+
+```powershell
+git add src/composables/useShellLifecycle.ts src/composables/__tests__/useShellLifecycle.test.ts src/App.vue
+git commit -m "feat(app): 壳里的返回键三分支与退出请求装配（有未保存改动不静默退出）"
+```
+
+---
+
 ### 任务 8：收尾（账目 / 构建记录 / 文档回写 / 人工清单回填）
 
 **交付物**：一份能交给下一个人接着做的仓库状态——账目对得上、构建记录写清「哪些是真验过的、哪些没有」、上游文档同步、人工清单逐条有结果。
