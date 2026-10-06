@@ -4184,8 +4184,8 @@ async function pickNative(source: "album" | "camera"): Promise<void> {
 
 **验收（写进报告）**：
 ```powershell
-Select-String -Path src-tauri -Pattern "plugin-dialog" -Recurse | ForEach-Object { $_.Path }   # 期望零命中
-Select-String -Path src-tauri -Pattern "dialog" -Recurse | ForEach-Object { $_.Path }          # 期望只剩注释/无关词
+git grep -n "plugin-dialog" -- src-tauri      # 期望 exit 1 且无输出（exit 1 = 查了没有，与「命令失败」可区分）
+git grep -ni "dialog" -- src-tauri           # 期望只剩说明性注释与产物目录（CLI 产物不许手删）
 npx vitest run src/services/platform/__tests__/tauriPlatform.test.ts                            # 期望 8 passed
 cargo check --manifest-path src-tauri/Cargo.toml                                                # 期望 exit 0
 ```
