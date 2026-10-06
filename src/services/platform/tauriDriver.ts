@@ -14,14 +14,19 @@
  * **消费者**：`views/ShellProbePage.vue`（开发期探针，本任务）；pass 2 的壳侧能力实现
  * （`tauriPlatform.ts`）与它共用同一份驱动。
  *
- * **零判别力（如实登记，不许含糊）**：本文件在 happy-dom 下**不可执行**——它 `import` 的每个包
- * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它**能断言的是**
+ * **零判别力（如实登记，不许含糊）**：本文件里 **`createDriver()` 那五个动态 `import()`** 在
+ * happy-dom 下**不可执行**——那些包在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有
+ * （**本文件其余部分照常可执行**：它只在 `loadTauriDriver()` 被调用时才 `import()`，静态 import 本文件
+ * 不会崩）。所以 CI 里对它**能断言的是**
  * （都在 `__tests__/tauriDriver.test.ts`，都与 Tauri 无关）：纯函数 `encodeBase64`、
  * `pickWithHiddenInput` 的**四个出口**（`change` / `cancel` / 结算兜底 / `click()` 抛错），
  * 以及它的**属性装配**（`type` / `accept` / `capture` / `display:none` 四行——DOM 属性，CI 真的读得到）。
  * `createDriver()` 内部其余的一切收集不到用例。它其余的机器化保障是 `npm run build` 的类型检查
  * （`vue-tsc`）与 `platformGate` 的 G1 结构断言（「只有这个文件含 `@tauri-apps/`」）。
- * 下列**五处**的判别力**全部在真机读数**（跨语言 / 跨进程，CI 连编译都盖不住）：
+ * 下列**五处**的判别力**全部在真机读数**（跨语言 / 跨进程）：**CI 目前零判别力；词法闸门可行，但语料库
+ * 不含 `src-tauri/`**（`src/__tests__/platformGate.test.ts` 的 glob + `?raw` + `stripComments` 这套现成机制
+ * 只扫 `src/**`，所以「JS 侧字符串 ↔ Rust 侧命令名 / 事件名」这类跨语言名字今天没有任何机检——
+ * 要做就得先按 `AGENTS.md` 的口径改那个 glob 的射程）：
  * - **base64 请求体的编码口径**（`{ filename, dataBase64 }`；Android 上 `InvokeBody::Raw` 不可达，
  *   理由见 `saveToAlbum` 的注释）⇒ 判据 C 的「请求体形态 = base64 JSON 字符串」那一行
  *   （**编码器本身**有 CI 已知答案向量；**这条链有没有通**只能真机看）；
@@ -171,7 +176,8 @@ export const PICKER_RETURN_GRACE_MS = 1000;
  *
  * **为什么公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：生产消费者在本文件内
  * （`pickImageFile` 传 `null`、`captureImageFile` 传 `"environment"`）；公开是为了让**结算兜底**与
- * **属性装配**在 CI 里可判别——四个出口与 `type` / `accept` / `capture` 都能在 happy-dom 下读到
+ * **属性装配**在 CI 里可判别——四个出口与 `type` / `accept` / `capture` / `display:none` 四行属性
+ * 都能在 happy-dom 下读到
  * （`__tests__/tauriDriver.test.ts`：手工派发事件 + 把 `setTimeout` 换成只记录不等待的桩、再手工触发）。
  * 它是一个真的 DOM 机制，不是 `xxxForTests` 那种测试钩子：真机上才有的判别力（选择器 / 相机真的被唤出）
  * 仍不在 CI 里，见文件头的五处。

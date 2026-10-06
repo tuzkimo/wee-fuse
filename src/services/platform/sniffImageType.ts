@@ -3,8 +3,11 @@
  *
  * **为什么要有这一层**（规格 §5.3.5）：Android 交回来的 `content://…` 不带 MIME、末段常常没有
  * 扩展名（形如 `image%3A1234`），而它最终会经 `defaultProjectName` 变成**默认工程名**——
- * 不允许出现「image:1234」这种工程名。规则必须只有一份：dialog 备选（本任务）与分享摄入
- * （pass 2 任务 5）共用。
+ * 不允许出现「image:1234」这种工程名。规则必须只有一份：分享摄入那条链
+ * （`tauriPlatform.fileFromUri`，任务 5 的 `useShareIntake` 用的就是它建出来的 `File`）是**唯一**
+ * 生产消费者。**2026-10-06 任务 3 的更正**：驱动侧的 dialog 分支已随
+ * `@tauri-apps/plugin-dialog` 一起删除（判据 A 通过 ⇒ 相册选图改走隐藏 `<input type=file>`，
+ * 那条路拿到的是真 `File`、不经本文件）——本段此前把那个已删分支写成共用方。
  *
  * **为什么用魔数而不是信任调用方给的 MIME**：解码路径根本不看 `File.type`
  * （`decodeImageElement` 走 object URL + `<img>.decode()`，由 WebView 嗅探真实字节），`type`
@@ -54,8 +57,11 @@ const WEBP_TAG = [0x57, 0x45, 0x42, 0x50]; // "WEBP"
  * 而 JS 的 `Uint8Array` 不提供那种语义。保留它的理由：它把「长度必须够」写成显式判据（读者不必
  * 自己推 `undefined` 的比较结果），且换载体（`ArrayBuffer` 视图切片、WASM 侧）时行为不会变。
  *
- * **消费者**：`tauriDriver.ts`（决定 `File.type`）、`tauriPlatform.ts`、`views/ShellProbePage.vue`
- * （判据 A / B 的读数）、以及本文件的 `imageFileName`。
+ * **消费者**（2026-10-06 任务 3 后核实）：`tauriPlatform.ts`（`fileFromUri` 决定 `File.type` 与名字
+ * ——分享摄入那条链，任务 5 的 `useShareIntake` 就吃这条链建出来的 `File`）、
+ * `views/ShellProbePage.vue`（判据 A / B 的读数）、以及本文件的 `imageFileName`。
+ * **旧的 `tauriDriver.ts`（dialog 分支）已不是消费者**：那个分支随 `@tauri-apps/plugin-dialog` 删除，
+ * 隐藏 `<input type=file>` 交回的是真 `File`、不经本文件。
  */
 export function sniffImageType(bytes: Uint8Array): SniffedImageType {
   for (const signature of SIGNATURES) {
@@ -123,9 +129,11 @@ export function imageNameFromUri(uri: string, sniffedType: string): string {
 }
 
 /**
- * 「URI + 它的字节 ⇒ 文件名」——**两个调用点真正用的那一个**（`tauriDriver.pickImageFile` 的
- * dialog 分支与 `tauriPlatform.fileFromUri`）。它只是把 `sniffImageType` 与 `imageNameFromUri`
- * 接起来，**不写第二份规则**。
+ * 「URI + 它的字节 ⇒ 文件名」——**唯一生产调用点真正用的那一个**（`tauriPlatform.fileFromUri`）。
+ * 它只是把 `sniffImageType` 与 `imageNameFromUri` 接起来，**不写第二份规则**。
+ *
+ * （2026-10-06 任务 3 更正：此处原先还列着 `tauriDriver.pickImageFile` 的 **dialog 分支**，
+ * 那个分支已随 `@tauri-apps/plugin-dialog` 删除 ⇒ 调用点从两个变成一个。）
  *
  * **为什么它必须存在**（2026-10-06 任务 2 实跑发现的计划缺口，如实登记）：计划正文里
  * `tauriDriver.ts` 与 `tauriPlatform.ts` 两处都写的是 `imageFileName(uri, bytes)`（两参：URI + 字节），
@@ -134,7 +142,8 @@ export function imageNameFromUri(uri: string, sniffedType: string): string {
  * 逐字断言的就是它），`imageFileName` 是同一份规则的便捷入口。**没有第二份命名逻辑**：
  * 本函数体只有一行转发。
  *
- * **消费者**：`tauriDriver.ts`（dialog 分支）、`tauriPlatform.ts`（分享摄入那条链）。
+ * **消费者**：`tauriPlatform.ts`（分享摄入那条链；任务 5 的 `useShareIntake` 通过它拿到带名字与
+ * MIME 的 `File`）。`tauriDriver.ts` 已不再是消费者（见上）。
  */
 export function imageFileName(uri: string, bytes: Uint8Array): string {
   return imageNameFromUri(uri, sniffImageType(bytes));
