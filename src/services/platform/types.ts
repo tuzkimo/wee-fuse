@@ -11,21 +11,23 @@
  * （`useShareIntake.ts` / `useShellLifecycle.ts`）与契约测试同时引用，改名会一次打红多处。
  * **今天的事实（2026-10-06，B5 任务 3 落地后）**：`tauriPlatform.ts` 已存在；两个 composable 与
  * `ExportPanel` 的接线还没做。真 import 本文件的共 8 处：三条实现的类型标注
- * （`browserPlatform.ts` / `capabilities.ts` / `tauriPlatform.ts`）、平台层的两个用例
- * （`__tests__/platformContract.ts` / `__tests__/capabilities.test.ts`）、探针页
- * `views/ShellProbePage.vue`（只取两个 `kind` 别名）与它的用例、以及
- * `__tests__/PickPage.test.ts` 的假平台桩。`PickPage.vue` 按 `imagePicking` 的字段分叉，但它
+ * （`browserPlatform.ts` / `capabilities.ts` / `tauriPlatform.ts`）、共用的契约 harness
+ * `__tests__/platformContract.ts`（**自身不是 `.test.ts`、不被 vitest 收集**）与用例文件
+ * `__tests__/capabilities.test.ts`、探针页 `views/ShellProbePage.vue`（只取两个 `kind` 别名）与它的
+ * 用例、以及 `__tests__/PickPage.test.ts` 的假平台桩。`PickPage.vue` 按 `imagePicking` 的字段分叉，但它
  * **不 import 本文件**（走 `capabilities.getPlatform()`）。改之前先读规格 §4.1。
  */
 
 /**
  * 相册入口的形态。`"file-input"`：页面里那个可见的 `<input type=file>` 就是入口；`"native-picker"`：由按钮唤出。
  *
- * **如实记录：零断言**——没有任何用例读过这个**类型别名本身**（本文件内它只出现在本行声明与
- * `ImagePicking.kind` 的字段类型两处）。真 import 它的只有探针页 `views/ShellProbePage.vue`
- * （把「入口形态」记进读数），而探针页不按这个别名做任何产品分支。留着的理由：字段类型必须有具名
- * 别名，且它是「入口是哪条分支」这件事的唯一词表（`views/PickPage.vue` 的分支判断按 `kind` 的取值写，
- * 但不引用这个别名）。
+ * **如实记录：别名本身零断言**——没有任何用例对这个**类型别名本身**做穷尽 / 集合级断言（本文件内它只
+ * 出现在本行声明与 `ImagePicking.kind` 的字段类型两处）。**取值**被探针页的 F 读数用例间接钉住
+ * （`views/__tests__/ShellProbePage.test.ts:321` 断言读数是 `相册选图形态=native-picker`），
+ * 那是「读数文本」级别的覆盖，不是对这个别名的断言。真 import 它的只有探针页
+ * `views/ShellProbePage.vue`（把「入口形态」记进读数），而探针页不按这个别名做任何产品分支。
+ * 留着的理由：字段类型必须有具名别名，且它是「入口是哪条分支」这件事的唯一词表
+ * （`views/PickPage.vue` 的分支判断按 `kind` 的取值写，但不引用这个别名）。
  */
 export type ImagePickingKind = "file-input" | "native-picker";
 
@@ -76,9 +78,10 @@ export interface ShareInbox {
 /**
  * 保存落点：浏览器 = 下载到默认下载目录；壳 = 系统相册。
  *
- * **如实记录：零断言**——没有任何用例读过这个**类型别名本身**（本文件内它只出现在本行声明与
- * `AlbumSaver.kind` 的字段类型两处）。真 import 它的只有探针页 `views/ShellProbePage.vue`
- * （把保存落点记进读数）。留着的理由同 `ImagePickingKind`：成功文案要按它分叉。
+ * **如实记录：别名本身零断言**——没有任何用例对这个**类型别名本身**做穷尽 / 集合级断言（本文件内它只
+ * 出现在本行声明与 `AlbumSaver.kind` 的字段类型两处）。**取值**被探针页的 F 读数用例间接钉住
+ * （`views/__tests__/ShellProbePage.test.ts:324` 断言读数是 `保存落点=album`）。真 import 它的只有探针页
+ * `views/ShellProbePage.vue`（把保存落点记进读数）。留着的理由同 `ImagePickingKind`：成功文案要按它分叉。
  */
 export type AlbumSaveKind = "download" | "album";
 
