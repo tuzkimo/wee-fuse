@@ -131,12 +131,38 @@ describe("encodeBase64（已知答案向量）", () => {
  * （`tauriDriver.ts` 文件头的四条）。
  *
  * **2026-10-06 任务级审查 F1 的靶子**：`cancel` 事件只有 Chrome 113+ 才有 ⇒ 老 WebView 上
- * 「用户取消」没有任何事件，promise 永不结算、按钮永久禁用。下面第二条就是那条兜底的判别者
- * （去掉兜底它必红：宽限期推进之后 `settled` 仍是 false）。
+ * 「用户取消」没有任何事件，promise 永不结算、按钮永久禁用。下面「兜底出口」那条就是那条兜底的判别者
+ * （去掉兜底它必红）。
+ *
+ * **这组用例不依赖任何时间**（2026-10-06 修复轮，控制者三次跑出不一致读数）：第一版用
+ * `vi.useFakeTimers()` + `advanceTimersByTimeAsync` 把结算押在「假时钟推进」上，同一份代码会偶发地
+ * 整条挂在 `await expect(promise).resolves` 上（控制者实测一次 `20008 ms` 失败、一次 573 ms 通过）。
+ * 现在改成 `spyOnSetTimeout()`：**只记录**兜底定时器被排上的延迟与回调，再**手工触发**它——
+ * 「排上定时器之前不结算」与「触发之后结算为 null」两半都断言到，且没有任何真实 / 假时间参与。
+ * 不确定的用例比没有用例更坏（红绿随机翻转），所以这里不接受「偶发靠时间窗口」的写法。
  */
 describe("pickWithHiddenInput（四个出口）", () => {
+  /**
+   * 把 `setTimeout` 换成**只记录、不等待**的桩，返回「取到当前被排上的定时器」的读法。
+   *
+   * `clearTimeout` 不桩：驱动在结算时会 `clearTimeout(0)`（桩返回的假 id），真实的 `clearTimeout`
+   * 对不存在的 id 是 no-op，不影响断言。
+   */
+  function spyOnSetTimeout(): {
+    readonly scheduled: () => { readonly delay: number; readonly fire: () => void } | null;
+  } {
+    let pending: { delay: number; fire: () => void } | null = null;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      delay?: number,
+    ) => {
+      pending = { delay: delay ?? 0, fire: handler };
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    return { scheduled: () => pending };
+  }
+
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
     // 没结算的用例会把节点留在 body 里，下一条的 `querySelector` 就会拿到两个 ⇒ 手工清干净。
     for (const node of Array.from(document.querySelectorAll("input[type='file']"))) node.remove();
@@ -166,8 +192,8 @@ describe("pickWithHiddenInput（四个出口）", () => {
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
-  it("兜底出口：不支持 cancel 时，blur → focus 后**满一个宽限期**才判取消（F1 的判别者）", async () => {
-    vi.useFakeTimers();
+  it("兜底出口：blur → focus **排上**宽限期定时器；期内不结算、触发后才结算 null（F1 的判别者）", async () => {
+    const timer = spyOnSetTimeout();
     const promise = pickWithHiddenInput(null);
     let settled = false;
     void promise.then(() => {
@@ -176,26 +202,30 @@ describe("pickWithHiddenInput（四个出口）", () => {
 
     window.dispatchEvent(new Event("blur"));
     window.dispatchEvent(new Event("focus"));
-    // 宽限期差 1 ms 未满：此刻还不能判取消（否则「焦点先回来、change 后到」会把用户选的图丢掉）。
-    await vi.advanceTimersByTimeAsync(PICKER_RETURN_GRACE_MS - 1);
+
+    const pending = timer.scheduled();
+    // **「不可能挂死」的前提**：定时器没排上就在这里以**失败**收场，绝不走到 `await` 一个永不结算的
+    // promise（挂死与断言失败是两种信号，本项目要后者）。
+    if (pending === null) throw new Error("兜底定时器没有被排上");
+    expect(pending.delay).toBe(PICKER_RETURN_GRACE_MS);
+
+    // **前半**：只排上了定时器 ⇒ 此刻还没结算（不能一有焦点信号就判取消）。
+    await Promise.resolve();
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1);
+    // **后半**：定时器触发 ⇒ 结算为 null、节点摘掉（手工触发，不等真实 / 假时间）。
+    pending.fire();
     await expect(promise).resolves.toBeNull();
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
-  it("兜底的**前提**：只发 focus（没见过 blur）不算取消——打开瞬间的补发不能被误判", async () => {
-    vi.useFakeTimers();
+  it("兜底的**前提**：只发 focus（没见过 blur）⇒ 一个定时器都不排、不判取消", async () => {
+    const timer = spyOnSetTimeout();
     const promise = pickWithHiddenInput(null);
-    let settled = false;
-    void promise.then(() => {
-      settled = true;
-    });
 
     window.dispatchEvent(new Event("focus"));
-    await vi.advanceTimersByTimeAsync(PICKER_RETURN_GRACE_MS * 10);
-    expect(settled).toBe(false);
+
+    expect(timer.scheduled()).toBeNull();
 
     // 收尾：这一条自己造出来的悬挂 promise 必须结算掉，否则节点与监听会漏给下一条用例。
     (document.querySelector("input[type='file']") as HTMLInputElement).dispatchEvent(
@@ -204,8 +234,8 @@ describe("pickWithHiddenInput（四个出口）", () => {
     await expect(promise).resolves.toBeNull();
   });
 
-  it("change 抢在兜底之前 ⇒ 用文件结算，不被判成取消", async () => {
-    vi.useFakeTimers();
+  it("change 抢在兜底之前 ⇒ 用文件结算；兜底定时器随后触发也改不了结果", async () => {
+    const timer = spyOnSetTimeout();
     const promise = pickWithHiddenInput(null);
     const input = document.querySelector("input[type='file']") as HTMLInputElement;
     const picked = new File([new Uint8Array([9])], "先选后到.png", { type: "image/png" });
@@ -216,9 +246,16 @@ describe("pickWithHiddenInput（四个出口）", () => {
     window.dispatchEvent(new Event("blur"));
     window.dispatchEvent(new Event("focus"));
     input.dispatchEvent(new Event("change"));
-    await vi.advanceTimersByTimeAsync(PICKER_RETURN_GRACE_MS * 2);
 
     await expect(promise).resolves.toBe(picked);
+
+    // 宽限期存在的理由就是这一段：焦点先回来、`change` 后到。定时器即使随后触发也必须无效
+    // （`finish` 的 `settled` 闸门）。手工触发 ⇒ 不需要等任何时间。
+    const pending = timer.scheduled();
+    if (pending === null) throw new Error("兜底定时器没有被排上");
+    pending.fire();
+    await expect(promise).resolves.toBe(picked);
+    expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
   it("click() 抛错出口：拒绝并摘掉节点（不留悬挂的 input）", async () => {
