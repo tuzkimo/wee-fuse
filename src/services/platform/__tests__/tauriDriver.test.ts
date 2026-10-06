@@ -78,6 +78,59 @@ const KNOWN_ANSWERS: readonly { readonly note: string; readonly bytes: number[];
   },
 ];
 
+/**
+ * 结算读法：**不 `await` 被测 promise**，而是把它的结局记下来，刷够微任务后读。
+ *
+ * **为什么必须这样**（2026-10-06 第三轮定向复审 C）：`await expect(promise).resolves…` 在
+ * 「监听被删」「`resolve` 被删」这类变异下会**永远等下去**，vitest 用 20 s 超时收场——那是**挂死**，
+ * 不是我们要的**变红**。这里 promise 若始终不结算，`status` 就停在 `"pending"` ⇒ 断言**以失败收场**。
+ * 本文件的固定自问：「**如果那个信号永远不来，这条会红还是会挂？**」⇒ 一律要红。
+ */
+interface Settlement {
+  readonly status: "pending" | "fulfilled" | "rejected";
+  readonly value: unknown;
+}
+
+function trackSettlement(promise: Promise<unknown>): { readonly read: () => Settlement } {
+  let outcome: Settlement = { status: "pending", value: undefined };
+  void promise.then(
+    (value) => {
+      outcome = { status: "fulfilled", value };
+    },
+    (reason: unknown) => {
+      outcome = { status: "rejected", value: reason };
+    },
+  );
+  return { read: () => outcome };
+}
+
+/** 刷够微任务（`resolve` → `then` 回调）——与 `tauriPlatform.test.ts` 的 `settle()` 同一口径。 */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
+
+/**
+ * **文件级** `afterEach`（2026-10-06 第三轮定向复审 F）：原来它在 picker 那个 describe 内部
+ * ⇒ 管不到本文件其它 describe。三件事：
+ *
+ * 1. `vi.useRealTimers()`（幂等、零成本）——`restoreAllMocks` **不碰假时钟**；将来有人在同文件里用
+ *    `useFakeTimers()` 就会漏给后续用例，而那种失败形态又是**挂死**；
+ * 2. `restoreAllMocks()`；
+ * 3. 把遗留的 input **先用 `cancel` 结算掉**再摘节点。顺序重要：直接 `node.remove()` 不摘窗口监听，
+ *    上一条 throw 时漏下的闭包会在下一条的 `blur`/`focus` 里跑、写进下一条 `setTimeout` 桩的槽位
+ *    （把 1 红放大成多红）。派发 `cancel` 会走驱动的 `finish` ⇒ `detach()` 摘掉窗口监听 + 摘节点。
+ *    （驱动自己的四个出口全都 `detach()`；漏监听只可能来自「用例抛错、promise 被丢下」这一种情形，
+ *    所以清理必须在这一层做，而不是改驱动的行为。）
+ */
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  for (const node of Array.from(document.querySelectorAll("input[type='file']"))) {
+    node.dispatchEvent(new Event("cancel"));
+    node.remove();
+  }
+});
+
 describe("encodeBase64（已知答案向量）", () => {
   for (const testCase of KNOWN_ANSWERS) {
     it(`${testCase.note} ⇒ ${testCase.expected === "" ? "（空串）" : testCase.expected}`, () => {
@@ -123,25 +176,24 @@ describe("encodeBase64（已知答案向量）", () => {
 });
 
 /**
- * 隐藏 input 取图的**四个出口**（`change` / `cancel` / 焦点结算兜底 / `click()` 抛错）。
+ * 隐藏 input 取图的**属性装配 + 四个出口**（`change` / `cancel` / 焦点结算兜底 / `click()` 抛错）。
  *
  * **为什么这些能在 CI 里跑、而驱动其余部分不能**：这里只用到 DOM（`input` / 窗口事件 / 定时器），
- * 不碰任何 `@tauri-apps/*`。判别力覆盖的是**结算语义**（会不会永久挂住、会不会误判取消、
- * 会不会把用户选好的文件丢掉、节点有没有摘掉）；「选择器 / 相机真的被唤出来」仍只有真机读数
- * （`tauriDriver.ts` 文件头的四条）。
+ * 不碰任何 `@tauri-apps/*`。判别力覆盖的是**属性装配**（`type` / `accept` / `capture` / 隐藏）
+ * 与**结算语义**（会不会永久挂住、会不会误判取消、会不会把用户选好的文件丢掉、节点有没有摘掉）；
+ * 真机才有的那一条是「**选择器 / 相机真的被唤出来**」本身（`tauriDriver.ts` 文件头的五处）。
  *
  * **2026-10-06 任务级审查 F1 的靶子**：`cancel` 事件只有 Chrome 113+ 才有 ⇒ 老 WebView 上
  * 「用户取消」没有任何事件，promise 永不结算、按钮永久禁用。下面「兜底出口」那条就是那条兜底的判别者
  * （去掉兜底它必红）。
  *
- * **这组用例不依赖任何时间**（2026-10-06 修复轮，控制者三次跑出不一致读数）：第一版用
- * `vi.useFakeTimers()` + `advanceTimersByTimeAsync` 把结算押在「假时钟推进」上，同一份代码会偶发地
- * 整条挂在 `await expect(promise).resolves` 上（控制者实测一次 `20008 ms` 失败、一次 573 ms 通过）。
- * 现在改成 `spyOnSetTimeout()`：**只记录**兜底定时器被排上的延迟与回调，再**手工触发**它——
- * 「排上定时器之前不结算」与「触发之后结算为 null」两半都断言到，且没有任何真实 / 假时间参与。
+ * **这组用例不依赖任何时间**：第一版用 `vi.useFakeTimers()` + `advanceTimersByTimeAsync` 把结算押在
+ * 「假时钟推进」上，同一份代码会偶发地整条挂在 `await expect(promise).resolves` 上（控制者实测一次
+ * `20008 ms` 失败、一次 573 ms 通过）。现在：结算一律走 `trackSettlement`（**不 await**）、
+ * 兜底定时器由 `spyOnSetTimeout()` 捕获后**手工触发**——没有任何真实 / 假时间参与。
  * 不确定的用例比没有用例更坏（红绿随机翻转），所以这里不接受「偶发靠时间窗口」的写法。
  */
-describe("pickWithHiddenInput（四个出口）", () => {
+describe("pickWithHiddenInput（属性装配 + 四个出口）", () => {
   /**
    * 把 `setTimeout` 换成**只记录、不等待**的桩，返回「取到当前被排上的定时器」的读法。
    *
@@ -162,14 +214,37 @@ describe("pickWithHiddenInput（四个出口）", () => {
     return { scheduled: () => pending };
   }
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    // 没结算的用例会把节点留在 body 里，下一条的 `querySelector` 就会拿到两个 ⇒ 手工清干净。
-    for (const node of Array.from(document.querySelectorAll("input[type='file']"))) node.remove();
+  it("属性装配：相册（null）不带 capture；拍照（environment）带上它；两者都是隐藏的 image input", async () => {
+    // **不 `await` 这个 promise**（它只有 change / cancel 才会结算）：装配在 executor 里同步完成，
+    // 刷一次微任务只为让读法稳定，随后读挂进 body 的那个节点。
+    const album = trackSettlement(pickWithHiddenInput(null));
+    await flushMicrotasks();
+
+    const albumInput = document.querySelector("input[type='file']") as HTMLInputElement;
+    expect(albumInput.type).toBe("file");
+    expect(albumInput.accept).toBe("image/*");
+    expect(albumInput.style.display).toBe("none");
+    // 相册那条路**绝不能**带上 capture：带上就变成直接进相机（规格 §5.1 / §5.2 的分工）。
+    expect(albumInput.getAttribute("capture")).toBeNull();
+
+    albumInput.dispatchEvent(new Event("cancel"));
+    await flushMicrotasks();
+    expect(album.read()).toEqual({ status: "fulfilled", value: null });
+
+    const camera = trackSettlement(pickWithHiddenInput("environment"));
+    await flushMicrotasks();
+
+    const cameraInput = document.querySelector("input[type='file']") as HTMLInputElement;
+    expect(cameraInput.getAttribute("capture")).toBe("environment");
+    expect(cameraInput.accept).toBe("image/*");
+
+    cameraInput.dispatchEvent(new Event("cancel"));
+    await flushMicrotasks();
+    expect(camera.read()).toEqual({ status: "fulfilled", value: null });
   });
 
   it("change 出口：选中文件 ⇒ 用 `input.files[0]` 结算（恒等），节点摘掉", async () => {
-    const promise = pickWithHiddenInput(null);
+    const outcome = trackSettlement(pickWithHiddenInput(null));
     const input = document.querySelector("input[type='file']") as HTMLInputElement;
     expect(input).not.toBeNull();
     const picked = new File([new Uint8Array([1, 2, 3])], "相册.png", { type: "image/png" });
@@ -179,64 +254,68 @@ describe("pickWithHiddenInput（四个出口）", () => {
 
     input.dispatchEvent(new Event("change"));
 
-    await expect(promise).resolves.toBe(picked);
+    await flushMicrotasks();
+    const settlement = outcome.read();
+    expect(settlement.status).toBe("fulfilled");
+    expect(settlement.value).toBe(picked);
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
   it("cancel 出口：支持 `cancel` 的 WebView 派发 cancel ⇒ 立刻 resolve(null)，节点摘掉", async () => {
-    const promise = pickWithHiddenInput(null);
+    const outcome = trackSettlement(pickWithHiddenInput(null));
     const input = document.querySelector("input[type='file']") as HTMLInputElement;
     input.dispatchEvent(new Event("cancel"));
 
-    await expect(promise).resolves.toBeNull();
+    await flushMicrotasks();
+    expect(outcome.read()).toEqual({ status: "fulfilled", value: null });
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
   it("兜底出口：blur → focus **排上**宽限期定时器；期内不结算、触发后才结算 null（F1 的判别者）", async () => {
     const timer = spyOnSetTimeout();
-    const promise = pickWithHiddenInput(null);
-    let settled = false;
-    void promise.then(() => {
-      settled = true;
-    });
+    const outcome = trackSettlement(pickWithHiddenInput(null));
 
     window.dispatchEvent(new Event("blur"));
     window.dispatchEvent(new Event("focus"));
 
     const pending = timer.scheduled();
-    // **「不可能挂死」的前提**：定时器没排上就在这里以**失败**收场，绝不走到 `await` 一个永不结算的
-    // promise（挂死与断言失败是两种信号，本项目要后者）。
+    // **「不可能挂死」的前提**：定时器没排上就在这里以**失败**收场（挂死与断言失败是两种信号，
+    // 本项目要后者）。
     if (pending === null) throw new Error("兜底定时器没有被排上");
     expect(pending.delay).toBe(PICKER_RETURN_GRACE_MS);
 
     // **前半**：只排上了定时器 ⇒ 此刻还没结算（不能一有焦点信号就判取消）。
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    await flushMicrotasks();
+    expect(outcome.read().status).toBe("pending");
 
     // **后半**：定时器触发 ⇒ 结算为 null、节点摘掉（手工触发，不等真实 / 假时间）。
     pending.fire();
-    await expect(promise).resolves.toBeNull();
+    await flushMicrotasks();
+    expect(outcome.read()).toEqual({ status: "fulfilled", value: null });
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
   it("兜底的**前提**：只发 focus（没见过 blur）⇒ 一个定时器都不排、不判取消", async () => {
     const timer = spyOnSetTimeout();
-    const promise = pickWithHiddenInput(null);
+    const outcome = trackSettlement(pickWithHiddenInput(null));
 
     window.dispatchEvent(new Event("focus"));
 
     expect(timer.scheduled()).toBeNull();
+    await flushMicrotasks();
+    expect(outcome.read().status).toBe("pending");
 
-    // 收尾：这一条自己造出来的悬挂 promise 必须结算掉，否则节点与监听会漏给下一条用例。
+    // 收尾：把这一条自己造出来的悬挂 promise 结算掉（否则节点与窗口监听会漏给下一条）。
     (document.querySelector("input[type='file']") as HTMLInputElement).dispatchEvent(
       new Event("cancel"),
     );
-    await expect(promise).resolves.toBeNull();
+    await flushMicrotasks();
+    expect(outcome.read()).toEqual({ status: "fulfilled", value: null });
   });
 
-  it("change 抢在兜底之前 ⇒ 用文件结算；兜底定时器随后触发也改不了结果", async () => {
+  it("change 抢在兜底之前 ⇒ 用文件结算（焦点先回、change 后到时不许把文件丢掉）", async () => {
     const timer = spyOnSetTimeout();
-    const promise = pickWithHiddenInput(null);
+    const outcome = trackSettlement(pickWithHiddenInput(null));
     const input = document.querySelector("input[type='file']") as HTMLInputElement;
     const picked = new File([new Uint8Array([9])], "先选后到.png", { type: "image/png" });
     const list = new FileList() as unknown as File[];
@@ -247,14 +326,14 @@ describe("pickWithHiddenInput（四个出口）", () => {
     window.dispatchEvent(new Event("focus"));
     input.dispatchEvent(new Event("change"));
 
-    await expect(promise).resolves.toBe(picked);
+    // **前提**（不是重复上一条的 `delay` 断言）：焦点路径确实排上了兜底定时器，
+    // 「change 抢在兜底之前」这句话才有对象。用桩 ⇒ 环境里不会留下一个真实的 1 s 定时器。
+    if (timer.scheduled() === null) throw new Error("兜底定时器没有被排上");
 
-    // 宽限期存在的理由就是这一段：焦点先回来、`change` 后到。定时器即使随后触发也必须无效
-    // （`finish` 的 `settled` 闸门）。手工触发 ⇒ 不需要等任何时间。
-    const pending = timer.scheduled();
-    if (pending === null) throw new Error("兜底定时器没有被排上");
-    pending.fire();
-    await expect(promise).resolves.toBe(picked);
+    await flushMicrotasks();
+    const settlement = outcome.read();
+    expect(settlement.status).toBe("fulfilled");
+    expect(settlement.value).toBe(picked);
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 
@@ -262,8 +341,12 @@ describe("pickWithHiddenInput（四个出口）", () => {
     vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {
       throw new Error("click 失败");
     });
+    const outcome = trackSettlement(pickWithHiddenInput(null));
 
-    await expect(pickWithHiddenInput(null)).rejects.toThrow("click 失败");
+    await flushMicrotasks();
+    const settlement = outcome.read();
+    expect(settlement.status).toBe("rejected");
+    expect((settlement.value as Error).message).toBe("click 失败");
     expect(document.querySelector("input[type='file']")).toBeNull();
   });
 });
