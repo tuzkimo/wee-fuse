@@ -4739,7 +4739,7 @@ export function useShellLifecycle(): void {
 
 - [ ] **步骤 4：装配进 `App.vue`**
 
-`src/App.vue` 现在是 5 行空壳（`<script setup lang="ts"></script>` + `<RouterView />`）。**逻辑一律留在 composable 里，页面保持极薄**：
+`src/App.vue` **在任务 5 落地后已经不是空壳了**（它已加分享摄入的装配与提示条）⇒ **你只在它的装配旁边加自己的两行，不要重写整个文件**（任务 5 的注释里也给你留了位置：`// 任务 7 的生命周期装配（useShellLifecycle()）加在这两行旁边。`）。**逻辑一律留在 composable 里**（下面给出逐字代码）。
 
 ```vue
 <script setup lang="ts">
