@@ -4797,7 +4797,7 @@ git commit -m "feat(app): 壳里的返回键三分支与退出请求装配（有
 **交付物**：一份能交给下一个人接着做的仓库状态——账目对得上、构建记录写清「哪些是真验过的、哪些没有」、上游文档同步、人工清单逐条有结果。
 
 **文件：**
-- 创建：`docs/superpowers/notes/2026-10-06-app-b5-build-log.md`
+- **补齐并定稿**：`docs/superpowers/notes/2026-10-06-app-b5-build-log.md`（**已存在** ✓ —— 执行期已写入 §1–§8；收尾是**填实与收口**，不是从零创建）
 - 修改：`README.md`、`AGENTS.md` 与 `CLAUDE.md`（**逐字相同的镜像**）、主规格 `docs/superpowers/specs/2026-09-30-image-to-pattern-design.md`（**只加更正注记**）、B5 规格（实现相对规格有偏离时逐条回填）、本计划（执行中改过口径时同步）
 
 - [ ] **步骤 1：账目回原始清单重数（不许引用任何汇总行）**
@@ -4809,12 +4809,12 @@ npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-**计数口径**（照 README 既有那段，别自创）：`src/**/*.test.ts` 按路径递归枚举数文件；`describe(` 按**行首**计数；`it(` 按 **`\bit\(` 全局**计数；`it.each` **逐表展开**；`services/__tests__/projectStoreContract.ts` 的条数被内存 / IndexedDB 两个实现各跑一遍；`decoders.test.ts` 的两元素数据循环多跑 1 条。
+**计数口径**（照 README 既有那段，别自创）：`src/**/*.test.ts` 按路径递归枚举数文件；`describe(` 按**行首**计数；`it(` 按 **`\bit\(` 全局**计数；`it.each` **逐表展开**；`services/__tests__/projectStoreContract.ts` 的条数被内存 / IndexedDB 两个实现各跑一遍；`decoders.test.ts` 的两元素数据循环多跑 1 条。 ⚠️ **2026-10-06 更正**：**用例数以 vitest 的运行时输出为准** ✓；上面的源码计数是**审计工具**（查「只追加、没删改」✓），**它不能跨重构比较**（`it.each` / 表驱动会让源码条目数远小于运行时用例数 ✗ —— 本仓实测过 3 vs 23、10 vs 24）。
 **必须给出闭合分解式并与运行期总数逐位相等**。**对不上就先怀疑仪器**（B4 账本记过两次仪器错：`it.each` 的括号平衡、`CASES` 的类型标注里有 `[`）。
 
 - [ ] **步骤 2：新建构建记录**
 
-`docs/superpowers/notes/2026-10-06-app-b5-build-log.md`，骨架照 B4（`2026-10-05-app-b4-build-log.md`），**必含七节**：
+`docs/superpowers/notes/2026-10-06-app-b5-build-log.md`，骨架照 B4（`2026-10-05-app-b4-build-log.md`），**必含**八**节（执行期已建 §1–§8：多出「§8 待批准」，即待人类伙伴裁决的 CI 提案）**：
 1. 交付物与账目（含计数方法与原始输出）；
 2. **spike 六判据的原始读数整段**（F/A/B/C/D/E，不许摘要）+ `adb logcat` 三行原文；
 3. **被推翻的结论与平台事实**（`capture="environment"` 有没有被 WebView 尊重、`content://` 的实际形态、`plugin-fs` 读它时 scope 有没有拦、MediaStore 是否免权限、`onCloseRequested` 在划掉 App 时是否触发、`gen/android` 两次构建前后 `git status` 的差异）；
@@ -4827,7 +4827,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 - [ ] **步骤 3：README 回写**
 
-四处：
+**五**处（执行期控制者又补了第 5 处「维护须知」）：
 1. **当前进度**：B5 交付了什么、`npm run dev` 下怎么用（`/lab/shell` 是开发期实验台、**不进用户入口**）、保存到相册的实际落点与降级、分享进入怎么触发；
 2. **目录结构**：`src-tauri/`（Rust + Android 生成工程 + 本地移动插件）、`src/services/platform/`（能力层与**唯一**的 Tauri 接触点）、两个 composable、`/lab/shell` 那一行；
 3. **开发命令**：`npx tauri android dev` / `npx tauri android build --apk --debug`；并写明**桌面壳（`npx tauri dev`）仅开发调试、不作验收依据**；
