@@ -3,6 +3,14 @@ use tauri::{
     Runtime,
 };
 
+// `app.manage(...)` 要 `Manager` 在作用域内；而它只在 `#[cfg(target_os = "android")]` 的那段 setup 里
+// 用到 ⇒ **按 target 引入**：桌面上无条件 import 会得到 unused import 警告。
+// **这条缺陷只在 Android target 上编译时才现形**（2026-10-06 任务 2 实跑：桌面 `cargo check` 全绿，
+// `npx tauri android build` 报 `no method named manage found for &AppHandle`，E0599）——
+// 计划正文的 lib.rs 少了这一行，是「`cargo check` 只覆盖桌面 target」的又一个实例。
+#[cfg(target_os = "android")]
+use tauri::Manager;
+
 #[cfg(target_os = "android")]
 mod mobile;
 

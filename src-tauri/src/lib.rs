@@ -127,7 +127,14 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { urls } = event {
-                let mut guard = app.state::<OpenedUris>().0.lock().expect("OpenedUris 锁中毒");
+                // **`state` 必须先绑成 `let`**（2026-10-06 任务 2 实跑 Android target 时抓到的
+                // 计划缺陷）：`app.state::<OpenedUris>()` 返回的是一个**临时值**，直接
+                // `app.state::<OpenedUris>().0.lock()` 会在语句结束时把它释放掉，而 `guard`
+                // 还要在后面几行里用 ⇒ `error[E0716]: temporary value dropped while borrowed`。
+                // 桌面 `cargo check` 看不到它（整段是 cfg 到移动端的），只有 `tauri android build`
+                // 编 aarch64-linux-android 时才会现形。
+                let state = app.state::<OpenedUris>();
+                let mut guard = state.0.lock().expect("OpenedUris 锁中毒");
                 for url in &urls {
                     guard.push(url.to_string());
                 }
