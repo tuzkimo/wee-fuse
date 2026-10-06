@@ -15,6 +15,8 @@ import { describe, expect, it } from "vitest";
  *
  * **已知偏差（刻意接受、不许放宽规则）**：把包名拼成 `"@tauri-apps/" + name` 能绕过 G1；
  * `globalThis["is" + "Tauri"]` 能绕过 G2。两条都要求作者**主动规避**，代价大于收益。
+ * **测试文件整体不在 G1 的扫描范围内**（`__tests__` 路径段 / `.test.ts` / `.spec.ts` 结尾；
+ * 理由见 `isTestFile` 的注释：那里的包名是数据，而且测试里静态 import 它会在收集阶段就崩）。
  * **本文件自身不在 G1 / G2 的扫描范围内**（否则它用来描述禁令的那几个字符串与正则字面量会把
  * 自己判违规）。**另一条要注意的偏差**：`stripComments` 不认识正则字面量——`/@tauri-apps\//`
  * 这种写法里的 `\//` 会被它当成行注释的开头，把该行剩余部分吞掉（方向是漏报）。
@@ -121,11 +123,32 @@ function textOf(path: string): string {
   return source;
 }
 
-/** 逐文件扫「剥注释、保留字符串」的文本（import 的包名就在字符串里，不能剥）。 */
+/**
+ * 是否**测试文件**：路径里含 `__tests__` 路径段，或文件名以 `.test.ts` / `.spec.ts` 结尾。
+ *
+ * **为什么 G1 要排除它们（2026-10-06 修复轮 F1，实测踩出来的）**：
+ * `src/__tests__/coreBoundary.test.ts` 把 `"@tauri-apps/api/core"` 当**数据**用（B1 的断言字符串），
+ * 而 G1 的基线是「剥注释、**保留字符串**」（import 的包名就在字符串里，不能剥）⇒ 它必然命中，
+ * G1 于是会因为一个与平台接线无关的原因红，任务 2 只创建 `tauriDriver.ts` 也不会转绿。
+ * 这正是 `coreBoundary.test.ts` 对 core 扫描的**同一个处置**（该文件头部注释：core 的
+ * `__tests__` 文件不在扫描范围内、整文件不扫）。**不是放宽规则**：测试文件里静态 import
+ * `@tauri-apps/*` 会在 vitest 的**收集阶段**就崩（本仓记账过这条），它不需要这道闸门也有自证。
+ * （偏差如实登记：测试文件里把包名拼进字符串不再被 G1 拦——那是数据，不是接线。）
+ */
+function isTestFile(path: string): boolean {
+  return path.split("/").includes("__tests__") || /\.(test|spec)\.ts$/.test(path);
+}
+
+/**
+ * 逐文件扫「剥注释、保留字符串」的文本（import 的包名就在字符串里，不能剥）。
+ * **扫描对象是非测试文件**（见 `isTestFile`）。`GATE_FILE` 那条显式排除是冗余的（闸门自己就是
+ * 测试文件），保留是因为它的注释解释了「闸门要能描述它禁的东西」。
+ */
 function filesWithKeptStrings(pattern: RegExp): string[] {
   const hits: string[] = [];
   for (const [path, source] of Object.entries(SOURCES)) {
     if (path === GATE_FILE) continue;
+    if (isTestFile(path)) continue;
     if (pattern.test(stripComments(source))) hits.push(path);
   }
   return hits.sort();

@@ -3,3 +3,6 @@
 *.jpg binary
 *.webp binary
 *.ico binary
+# Windows 批处理必须 CRLF：`* text=auto eol=lf` 的默认会让新克隆里的 gradlew.bat 变成 LF，cmd 解析会出问题。
+*.bat text eol=crlf
+gradlew text eol=lf
