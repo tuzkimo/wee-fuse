@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { BASE64_CHUNK_BYTES, encodeBase64 } from "../tauriDriver";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  BASE64_CHUNK_BYTES,
+  PICKER_RETURN_GRACE_MS,
+  encodeBase64,
+  pickWithHiddenInput,
+} from "../tauriDriver";
 
 /**
- * `tauriDriver.ts` 里**唯一能在 CI 里执行**的东西：纯函数 `encodeBase64`（规格 B5-R4 的退路）。
+ * `tauriDriver.ts` 里**能在 CI 里执行**的两样东西（都与 Tauri 无关）：纯函数 `encodeBase64`
+ * （规格 B5-R4 的退路）与隐藏 input 取图那四个出口（判据 A 的主链路）。
  *
  * **为什么单独一个文件、而不是塞进 `tauriPlatform.test.ts`**：那个文件测的是「驱动 → 能力」的适配；
  * 而 `encodeBase64` 与 Tauri 毫无关系（它不 import 任何包），它是**整条保存链的地基**——
@@ -113,5 +119,114 @@ describe("encodeBase64（已知答案向量）", () => {
     for (const length of [3 * 1024 - 1, 3 * 1024, 3 * 1024 + 1]) {
       expect(encodeBase64(patternedBytes(length))).toBe(expectedForLength(length));
     }
+  });
+});
+
+/**
+ * 隐藏 input 取图的**四个出口**（`change` / `cancel` / 焦点结算兜底 / `click()` 抛错）。
+ *
+ * **为什么这些能在 CI 里跑、而驱动其余部分不能**：这里只用到 DOM（`input` / 窗口事件 / 定时器），
+ * 不碰任何 `@tauri-apps/*`。判别力覆盖的是**结算语义**（会不会永久挂住、会不会误判取消、
+ * 会不会把用户选好的文件丢掉、节点有没有摘掉）；「选择器 / 相机真的被唤出来」仍只有真机读数
+ * （`tauriDriver.ts` 文件头的四条）。
+ *
+ * **2026-10-06 任务级审查 F1 的靶子**：`cancel` 事件只有 Chrome 113+ 才有 ⇒ 老 WebView 上
+ * 「用户取消」没有任何事件，promise 永不结算、按钮永久禁用。下面第二条就是那条兜底的判别者
+ * （去掉兜底它必红：宽限期推进之后 `settled` 仍是 false）。
+ */
+describe("pickWithHiddenInput（四个出口）", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    // 没结算的用例会把节点留在 body 里，下一条的 `querySelector` 就会拿到两个 ⇒ 手工清干净。
+    for (const node of Array.from(document.querySelectorAll("input[type='file']"))) node.remove();
+  });
+
+  it("change 出口：选中文件 ⇒ 用 `input.files[0]` 结算（恒等），节点摘掉", async () => {
+    const promise = pickWithHiddenInput(null);
+    const input = document.querySelector("input[type='file']") as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const picked = new File([new Uint8Array([1, 2, 3])], "相册.png", { type: "image/png" });
+    const list = new FileList() as unknown as File[];
+    list.push(picked);
+    input.files = list as unknown as FileList;
+
+    input.dispatchEvent(new Event("change"));
+
+    await expect(promise).resolves.toBe(picked);
+    expect(document.querySelector("input[type='file']")).toBeNull();
+  });
+
+  it("cancel 出口：支持 `cancel` 的 WebView 派发 cancel ⇒ 立刻 resolve(null)，节点摘掉", async () => {
+    const promise = pickWithHiddenInput(null);
+    const input = document.querySelector("input[type='file']") as HTMLInputElement;
+    input.dispatchEvent(new Event("cancel"));
+
+    await expect(promise).resolves.toBeNull();
+    expect(document.querySelector("input[type='file']")).toBeNull();
+  });
+
+  it("兜底出口：不支持 cancel 时，blur → focus 后**满一个宽限期**才判取消（F1 的判别者）", async () => {
+    vi.useFakeTimers();
+    const promise = pickWithHiddenInput(null);
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    // 宽限期差 1 ms 未满：此刻还不能判取消（否则「焦点先回来、change 后到」会把用户选的图丢掉）。
+    await vi.advanceTimersByTimeAsync(PICKER_RETURN_GRACE_MS - 1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(promise).resolves.toBeNull();
+    expect(document.querySelector("input[type='file']")).toBeNull();
+  });
+
+  it("兜底的**前提**：只发 focus（没见过 blur）不算取消——打开瞬间的补发不能被误判", async () => {
+    vi.useFakeTimers();
+    const promise = pickWithHiddenInput(null);
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(PICKER_RETURN_GRACE_MS * 10);
+    expect(settled).toBe(false);
+
+    // 收尾：这一条自己造出来的悬挂 promise 必须结算掉，否则节点与监听会漏给下一条用例。
+    (document.querySelector("input[type='file']") as HTMLInputElement).dispatchEvent(
+      new Event("cancel"),
+    );
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it("change 抢在兜底之前 ⇒ 用文件结算，不被判成取消", async () => {
+    vi.useFakeTimers();
+    const promise = pickWithHiddenInput(null);
+    const input = document.querySelector("input[type='file']") as HTMLInputElement;
+    const picked = new File([new Uint8Array([9])], "先选后到.png", { type: "image/png" });
+    const list = new FileList() as unknown as File[];
+    list.push(picked);
+    input.files = list as unknown as FileList;
+
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    input.dispatchEvent(new Event("change"));
+    await vi.advanceTimersByTimeAsync(PICKER_RETURN_GRACE_MS * 2);
+
+    await expect(promise).resolves.toBe(picked);
+  });
+
+  it("click() 抛错出口：拒绝并摘掉节点（不留悬挂的 input）", async () => {
+    vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {
+      throw new Error("click 失败");
+    });
+
+    await expect(pickWithHiddenInput(null)).rejects.toThrow("click 失败");
+    expect(document.querySelector("input[type='file']")).toBeNull();
   });
 });

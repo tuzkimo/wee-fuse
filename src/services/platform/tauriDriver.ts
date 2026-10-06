@@ -15,15 +15,18 @@
  * （`tauriPlatform.ts`）与它共用同一份驱动。
  *
  * **零判别力（如实登记，不许含糊）**：本文件在 happy-dom 下**不可执行**——它 `import` 的每个包
- * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它**只剩
- * `encodeBase64` 这一处纯函数**能被断言（`__tests__/tauriDriver.test.ts`，与 Tauri 无关），
- * `createDriver()` 内部的一切收集不到用例。它其余的机器化保障是 `npm run build` 的类型检查
+ * 在 import 期都读 `window.__TAURI_INTERNALS__`，而 happy-dom 没有。所以 CI 里对它**只剩两处**能被断言
+ * （都在 `__tests__/tauriDriver.test.ts`，都与 Tauri 无关）：纯函数 `encodeBase64`，以及
+ * `pickWithHiddenInput` 的**四个出口**（`change` / `cancel` / 结算兜底 / `click()` 抛错）。
+ * `createDriver()` 内部其余的一切收集不到用例。它其余的机器化保障是 `npm run build` 的类型检查
  * （`vue-tsc`）与 `platformGate` 的 G1 结构断言（「只有这个文件含 `@tauri-apps/`」）。
- * 下列三处的判别力**全部在真机读数**：
+ * 下列**四处**的判别力**全部在真机读数**：
  * - **base64 请求体的编码口径**（`{ filename, dataBase64 }`；Android 上 `InvokeBody::Raw` 不可达，
  *   理由见 `saveToAlbum` 的注释）⇒ 判据 C 的「请求体形态 = base64 JSON 字符串」那一行
  *   （**编码器本身**有 CI 已知答案向量；**这条链有没有通**只能真机看）；
  * - **端到端字节核对**（`written !== bytes.length` 即抛）⇒ 判据 C / D 读数的「端到端一致（N 字节）」；
+ * - **隐藏 input 的装配**（`type=file` / `accept` / `capture` 属性、挂进 body 再 `click()`）⇒ 判据 A / B
+ *   的读数（那是「选择器 / 相机真的被唤出来」这件事本身）；
  * - **`exitApp()`**（`app.exit(0)`）⇒ 判据 E 的「明确退出 App」按钮。
  */
 export interface TauriDriver {
@@ -130,14 +133,46 @@ export function encodeBase64(bytes: Uint8Array): string {
 }
 
 /**
+ * `cancel` / `change` 都没有来时，等焦点回到窗口之后**再看这一拍**才判「用户取消」。
+ *
+ * 取值理由：`change` 是对话框关闭的**同一批次**里派发的，1 s 远超它需要的传递时间；而它又是人能察觉的
+ * 「按钮怎么还卡着」之下限以下。再长没有收益（只是把卡住的观感拖长），再短则可能抢在 `change` 之前结算
+ * ⇒ 把用户刚选好的文件静默丢掉。
+ *
+ * **为什么公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：生产消费者只有本文件的
+ * `pickWithHiddenInput`；`__tests__/tauriDriver.test.ts` 需要它来**恰好推进一个宽限期**、
+ * 并断言「推进之前仍未结算」——测试里写死 `1000` 就是本项目记账过的「第二份字面量」形态
+ * （改实现后用例仍压在旧值上，边界用例悄悄退化成非边界用例）。同 `BASE64_CHUNK_BYTES` 的理由。
+ */
+export const PICKER_RETURN_GRACE_MS = 1000;
+
+/**
  * 用隐藏 `<input type=file>` 取图；`capture` 非空时带上 `capture` 属性（拍照那一条路）。
  *
- * **取消 = `null`**（正常操作，不许抛错）。**「一直没有 change」不当作失败**：若真机上取消后按钮永久
- * 卡在「读取中」，说明 WebView 不支持 `cancel` 事件（Chrome 113+ 才有）——那是**判据 B 的读数**，
- * 记进报告，处置在 busy 闸门（加超时）。**判据 A 通过后 dialog 分支已删**（规格 §5.1 只保留 spike 选中
- * 的那一条），所以「改走 dialog 分支」不再是一条现成的退路——真要走它得先把依赖与权限加回来。
+ * **取消 = `null`**（正常操作，不许抛错）。**判据 A 通过后 dialog 分支已删**（规格 §5.1 只保留 spike
+ * 选中的那一条），所以「改走 dialog 分支」不再是一条现成的退路——真要走它得先把依赖与权限加回来。
+ *
+ * **结算兜底（2026-10-06 任务级审查 F1）**：`cancel` 事件只有 Chrome 113+ 才有，老 WebView 上
+ * 「用户取消」不会有任何事件 ⇒ promise 永不结算 ⇒ 两个按钮永久 `disabled`、input 节点永久留在 body。
+ * 这是壳的**主链路**，且只有真机能暴露，所以这里自己兜底，不再指望调用方。
+ *
+ * - **为什么用焦点信号**：选择器 / 相机是另一个 Activity，关掉时焦点回到 WebView——这是 `cancel`
+ *   之前通行的「对话框已关」信号（input 自己是 `display:none`，收不到 `focus`）。
+ * - **为什么必须先见过一次 `blur`**：有的 WebView 在打开瞬间会补发一次 `focus`，只认 `focus` 会在
+ *   用户还没挑完时就判成取消。
+ * - **为什么还要 `PICKER_RETURN_GRACE_MS` 这一拍**：焦点先回来、`change` 后到是可能的；直接结算会把
+ *   用户刚选好的文件静默丢掉。等这一拍让正常的 `change` 先赢。
+ * - **已知代价（如实登记）**：不支持 `cancel` 的 WebView 上，取消后要等这个宽限期按钮才恢复可用；
+ *   而若用户在系统相册里停很久再回来（焦点信号早于选择），仍会被判成取消——在「永久卡死」与
+ *   「偶尔要重来一次」之间选了后者。
+ *
+ * **为什么公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：生产消费者在本文件内
+ * （`pickImageFile` 传 `null`、`captureImageFile` 传 `"environment"`）；公开是为了让**结算兜底**在 CI 里
+ * 可判别——上面那四个出口在 happy-dom 下都能用手工派发的事件与假定时器跑到
+ * （`__tests__/tauriDriver.test.ts`）。它是一个真的 DOM 机制，不是 `xxxForTests` 那种测试钩子：
+ * 真机上的判别力（选择器 / 相机真的被唤出）仍不在 CI 里，见文件头的四条。
  */
-function pickWithHiddenInput(capture: "environment" | null): Promise<File | null> {
+export function pickWithHiddenInput(capture: "environment" | null): Promise<File | null> {
   return new Promise<File | null>((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -148,13 +183,39 @@ function pickWithHiddenInput(capture: "environment" | null): Promise<File | null
     document.body.append(input);
 
     let settled = false;
+    let everBlurred = false;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** 三个出口（change / cancel / click 抛错）都要拆掉窗口监听与兜底定时器，否则会跨次泄漏。 */
+    const detach = (): void => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      if (graceTimer !== null) {
+        clearTimeout(graceTimer);
+        graceTimer = null;
+      }
+    };
+
     const finish = (value: File | null): void => {
       if (settled) return;
       settled = true;
+      detach();
       input.remove();
       resolve(value);
     };
 
+    const onBlur = (): void => {
+      everBlurred = true;
+    };
+
+    const onFocus = (): void => {
+      // 没见过 blur 的 focus 是「打开瞬间的补发」，不是「对话框关掉」；已经在等宽限期也不重复排。
+      if (!everBlurred || settled || graceTimer !== null) return;
+      graceTimer = setTimeout(() => finish(null), PICKER_RETURN_GRACE_MS);
+    };
+
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
     input.addEventListener("change", () => finish(input.files?.[0] ?? null));
     input.addEventListener("cancel", () => finish(null));
 
@@ -162,6 +223,7 @@ function pickWithHiddenInput(capture: "environment" | null): Promise<File | null
       input.click();
     } catch (error) {
       settled = true;
+      detach();
       input.remove();
       reject(error instanceof Error ? error : new Error(String(error)));
     }
