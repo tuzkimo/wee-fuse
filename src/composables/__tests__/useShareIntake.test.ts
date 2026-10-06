@@ -859,12 +859,49 @@ describe("useShareIntake", () => {
 
     expect(wrapper.vm.share.pending.value).toBe(FILE); // ★ 第一张没被覆盖
     expect(wrapper.vm.share.message.value).toContain("又收到一张");
+    // 这一张自己**没有**其余张数（热事件不带 `extraCount`）⇒ 不许追加一句空话（F1 的另一半）
+    expect(wrapper.vm.share.message.value).not.toContain("另有");
 
     session.reset();
     await wrapper.vm.share.retry();
     await flushPromises();
 
     expect(toRaw(useDraft().source)?.blob).toBe(FILE); // 摄入的是第一张
+    expect(push).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it("⑦j2 F1：被拒收的那一张**自己带的张数**不许被吞掉（追加进提示条，措辞与别处一致）", async () => {
+    // 可达路径：脏编辑器里已经压着一张（FILE），随后热事件的**排空**拿回另一张**带 `extraCount`** 的
+    // （`OpenedUris` 里同一数组的其余张数）⇒ 走 `intakeOrPark` 的「不覆盖」分支。
+    const spies = inboxSpies({
+      supported: true,
+      takeSequence: [null, { file: FILE2, extraCount: 1 }],
+    });
+    setPlatform(spies.platform);
+    stubDecode();
+    routeState.name = "editor";
+    const session = useProjectSession();
+    session.markDirty();
+
+    const wrapper = mountHost();
+    await flushPromises();
+    const fire = spies.handlers[0];
+    if (fire === undefined) throw new Error("没有注册热启动 handler");
+
+    fire(FILE);
+    await flushPromises();
+
+    expect(wrapper.vm.share.pending.value).toBe(FILE); // 第一张仍在
+    expect(wrapper.vm.share.message.value).toContain("又收到一张");
+    expect(wrapper.vm.share.message.value).toContain("另有 1 张没有处理"); // ★ 数字没被吞掉
+    expect(push).not.toHaveBeenCalled();
+
+    session.reset();
+    await wrapper.vm.share.retry();
+    await flushPromises();
+
+    expect(toRaw(useDraft().source)?.blob).toBe(FILE); // `继续` 摄入的仍是第一张
     expect(push).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
