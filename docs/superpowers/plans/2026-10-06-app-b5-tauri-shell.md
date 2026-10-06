@@ -3796,7 +3796,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 | V2 | `tauriPlatform.ts` 的 `capturePhoto` 删掉开头的 `if (!canCapture) throw …` | 「canCapture：驱动不提供 captureImageFile…」用例 |
 | V3 | `tauriPlatform.ts` 的 `requireFileOrNull` 里 `throw new Error(message);` 改成 `return null;` | 「pickFromAlbum：…非 File…」+「canCapture：…守返回值」+「takeSharedImage：…」三条 |
 | V4 | `tauriPlatform.ts` 的 `bindLate` 里 `if (disposed) unbind(); else unlisten = unbind;` 改成 `unlisten = unbind;` | 「解绑：…注册完成之前解绑」用例（`unlistenLate` 不会再被调用） |
-| V5 | `sniffImageType.ts` 的 `startsWith` 删掉 `if (bytes.length < offset + pattern.length) return false;` | `sniffImageType.test.ts` 的「截断字节」那条 |
+| V5 | `sniffImageType.ts` 的 `startsWith` 删掉 `if (bytes.length < offset + pattern.length) return false;` | **0 红（计划原写「截断字节那条会红」，2026-10-06 由任务 2 的实现者实测证伪）**：`Uint8Array` 的越界读恒为 `undefined`，与任何魔数字节都不相等 ⇒ 循环自己收敛到「不匹配」，那条用例照绿。**这不是断言无效**（它读的是可观测行为，行为确实正确），而是**这道守卫在当前载体上不承重**；保留它的理由是「把『长度必须够』写成显式判据 + 换载体时行为不变」。⇒ **与 V8/V9 同类，按「应当 0 红」登记** |
 | V6 | `ShellProbePage.vue` 的 A / B 改成走 `getPlatform().imagePicking.pickFromAlbum()` | 「A / B 是裸 input…完全不碰能力层」用例 |
 | V7 | `ShellProbePage.vue` 的 `runD` 把 `platform.album.save(...)` 换成直调 `downloadBlob(blob, filename)` | 「C / D 走能力层…」用例（假平台的 `save` 第二次不会被调用） |
 | **V8** | `tauriDriver.ts` 的 `saveToAlbum` 里 `if (written !== bytes.length) { throw … }` 整段删掉 | **CI 里一条都不红**（本文件在 happy-dom 下不可执行）——**如实登记**：判别力在真机判据 C/D（相册文件字节数 vs 读数） |
