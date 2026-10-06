@@ -202,7 +202,19 @@ npm run build
   `ExportPanel`（导出面板：props 进 / `close` 出；自己持 plan、自己调 `core/render/*` 与
   `services/exporter.ts`）**）
 - `src/composables/` — **`useCanvasSurface.ts`：DPR 尺寸 + 量容器 + `ResizeObserver` 接线**
-  （`crop/CropCanvas.vue` 与 `editor/PatternCanvas.vue` 两个消费者共用一套「量容器、不量画布」的口径）
+  （`crop/CropCanvas.vue` 与 `editor/PatternCanvas.vue` 两个消费者共用一套「量容器、不量画布」的口径）；
+  **`useShareIntake.ts`（系统分享进来的摄入链：冷/热启动一条路、脏编辑器先暂存不带走用户、多图只取第一张 +
+  提示告知）；`useShellLifecycle.ts`（返回键三分支 + 退出请求）**——两个都在 `src/App.vue` 的 **setup 顶层**调用
+- `src/services/platform/` — **平台能力层（B5 起）**：四个窄接口（`ImagePicking` / `ShareInbox` / `AlbumSaver` /
+  `AppLifecycle`）+ 两份实现（`browserPlatform` / `tauriPlatform`）+ 一份**共用契约测试**；
+  **`tauriDriver.ts` 是全仓唯一可 import `@tauri-apps/*` 的文件**（`src/__tests__/platformGate.test.ts` 的
+  G1–G4 守这条与「`setPlatform(` 早于 `mount(`」）
+- `src-tauri/` — **Rust 壳（B5 起）**：`src/lib.rs` 两个命令（`take_opened_uris` / `save_image_to_album`）、
+  `capabilities/default.json`（含 **`core:app:allow-exit`**——删了它「明确退出」会静默失效）、
+  `tauri.conf.json`；**`gen/android/**` 入库**（为「换台机器就能重建」）。
+  **维护须知**：`gen/android` 里有**两处手改**（图标 mipmap、`MainActivity.kt` 的 insets 消费）⇒
+  **重跑 `npx tauri android init` 之前先读 [B5 构建记录](docs/superpowers/notes/2026-10-06-app-b5-build-log.md) 的维护须知**，
+  重跑后**必须复验图标与顶部边距**；另 `android/app/build.gradle.kts` 未 pin `ndkVersion`（B5-11）。
 - `src/views/` — 页面（`LibraryPage.vue` 图纸库、**`PickPage.vue` 选图（`/new`）**、
   **`SetupPage.vue` 选区 / 参数 / 结果（`/new/setup`）**、`EditorPage.vue` 编辑器宿主
   （装配 / 保存 / 未保存拦截 / 重载 / 导出面板）、`DecodeLabPage.vue` 解码实验台、
