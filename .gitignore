@@ -4,5 +4,18 @@ dist-ssr/
 *.local
 .DS_Store
 src-tauri/target/
-src-tauri/gen/
+# `gen/schemas` 是每次构建重新生成的 capability schema，忽略；
+# `gen/android` 是 Android Studio 工程，按裁决 6 入库（app_name 等手改要能留下）。
+src-tauri/gen/schemas/
+src-tauri/gen/apple/
+src-tauri/gen/android/**/build/
+src-tauri/gen/android/.gradle/
+# `.kotlin/errors/errors-<时间戳>.log` 是构建期 kotlin daemon 失败回退时落的日志（实跑观察到），
+# 属构建产物、文件名带时间戳，不入库（裁决 6 的清单里没有它，是本次实跑才发现的一类）。
+src-tauri/gen/android/.kotlin/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/.idea/
+*.apk
+*.aab
+*.keystore
 coverage/

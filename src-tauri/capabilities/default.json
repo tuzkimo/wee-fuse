@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "本轮只放真正用到的权限：应用自己的命令不需要 capability，插件命令才需要。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
