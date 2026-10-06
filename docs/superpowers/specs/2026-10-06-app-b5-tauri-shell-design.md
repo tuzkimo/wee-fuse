@@ -501,7 +501,23 @@ Rust 的 `RunEvent` 只有 9 个变体（`Exit` / `ExitRequested` / `WindowEvent
 | `bundle.android.minSdkVersion` | `29` | D4 |
 | `bundle.fileAssociations` | §5.3.1 的三条 | 分享进入 |
 | `plugins`（配置节） | **空**：这个节放的是插件的**配置**，不是插件本身。本轮按需在 `lib.rs` 注册 `tauri_plugin_dialog::init()` 与 `tauri_plugin_fs::init()`（仅当 spike 判据 A 选中 dialog 分支时才需要它们；`<input>` 分支不需要任何插件），不装 `plugin-store` / `plugin-sql` | 图纸库仍在 IndexedDB（WebView 的 IndexedDB 在 Android 上落在 App 数据目录、随 App 卸载而删——这一点写进 §11 的风险表 B5-R8，因为它与 B1 规格「真机上是 App 私有目录里的一个工程 = 一个目录」的原话不同） |
-| `capabilities/default.json` | 只放本轮真正用到的权限：`core:default`、`dialog:allow-open`（仅 dialog 分支）、`fs:allow-read-file` 与它需要的 scope（仅需要读字节时） | 「不给用不到的权限」是本项目一贯口径；`fileAssociations` 的 intent filter 由 CLI 生成，不需要 capability |
+| `capabilities/default.json` | 只放本轮真正用到的权限：`core:default`、`dialog:allow-open`（仅 dialog 分支）、`fs:allow-read-file` 与它需要的 scope（仅需要读字节时）、**`core:app:allow-exit`（`lifecycle.exit()` 与探针页的「明确退出」都要它）** | 「不给用不到的权限」是本项目一贯口径；`fileAssociations` 的 intent filter 由 CLI 生成，不需要 capability |
+
+> ### ⭐ 2026-10-06 真机读数带来的三条追加（人类伙伴实测后确定，**后面的人别再踩**）
+>
+> 1. **`core:app:allow-exit` 是必需的，而它不在 `core:default` 里**：`@tauri-apps/api/app.js` 的 JSDoc 逐字写着
+>    `Requires the core:app:allow-exit permission (not included in core:app:default)`；`gen/schemas/acl-manifests.json` 实读确认
+>    `core:app:default` 只含 version / name / tauri-version / identifier / bundle-type / register-listener / remove-listener / supports-multiple-windows。
+>    ⇒ **只给 `core:default` 时 `plugin:app|exit` 必被 ACL 拒绝**（promise reject）。
+>    **真机现象**：探针页点「明确退出 App」**没反应**——真相是**拒绝错误写进了页面顶部的 `probe-error`，而按钮在屏幕下方，测试者看不到**。
+>    **教训**：**「点了没反应」要先怀疑「错误被写到了看不见的地方」**，而不是先怀疑平台不支持。
+> 2. **启动图标的步骤顺序**：`npx tauri icon` 在 `gen/android` **尚不存在**时只写 `src-tauri/icons/android/`；
+>    随后 `npx tauri android init` 会把**自己的默认 Tauri 图标**写进 `gen/android/app/src/main/res/mipmap-*`。
+>    ⇒ **必须在 `android init` 之后（或之后重跑一次）执行 `npx tauri icon`**，否则装出来的是 Tauri logo（真机实测就是这样）。
+> 3. **`targetSdk ≥ 35` 强制 edge-to-edge，`setDecorFitsSystemWindows(true)` 是 no-op**：本仓 `targetSdk = 37`、设备 Android 16，
+>    模板自带的 `MainActivity.enableEdgeToEdge()` 让窗口 edge-to-edge，而**没人消费 insets ⇒ 内容被系统栏盖住**（真机实测：顶部被遮挡）。
+>    ⇒ **唯一正确做法是消费 insets**（`ViewCompat.setOnApplyWindowInsetsListener` 把 `systemBars` + `displayCutout` 加成 padding）；
+>    `windowOptOutEdgeToEdgeEnforcement` 对 `targetSdk ≥ 36` 也已失效。**这条对产品 UI 同样成立。**
 
 **图标来源**：仓库里没有现成的 App 图标资源。计划任务里必须包含一步「造一张 1024×1024 的源 PNG（纯色底 + 文字标记，用脚本生成，不引入设计稿依赖）」再跑 `npx tauri icon`。**不许**用 `npx tauri icon` 的默认占位图——那是 Tauri 的 logo。
 
