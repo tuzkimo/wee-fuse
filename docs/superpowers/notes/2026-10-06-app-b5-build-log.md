@@ -178,6 +178,7 @@ C（`ACTION_SEND` → `RunEvent::Opened` + 原始字节体）/ D（MediaStore �
 | 5b | **base64 请求体在超大图上的内存压力未验**（R11 的直接代价） | 64 MB 的施工图 ⇒ base64 约 **85 MB 的字符串**，要经 webview ↔ Kotlin 的 IPC 桥；桥对超大 JSON 串的行为（限流 / OOM / 卡顿）**未验**。探针用的是 64×64（无压力）⇒ 这条只会在大图上现形 | 人工清单 11（116×116 ≈ 64 MB）**重点记录耗时与内存表现**；若崩，按 D5 另立小轮下调 `EXPORT_MAX_EDGE`（与 B4 清单 6 的预登记规则同一条） | 中 |
 | 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
 | 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；但 CI **不构建 APK** ⇒ 这条链只在真机构建时被验证 | 每次真机构建顺带验证 | 低 |
+| 8 | **共享契约一度只对浏览器实现生效**（2026-10-06 审查发现，**已修**） | `platformContract.ts` 的 JSDoc 自称「由 `tauriPlatform.test.ts` 调用」，而**全仓唯一调用点是 `browserPlatform.test.ts`** ⇒ 契约里归属**壳侧**的两条分支（`supported` 为真、`canCapture` 为真的 `finishCapture`）**从未执行**。修：`tauriPlatform.test.ts` 用壳 harness（`canCapture: true`）调契约（第 1 轮修复的 F4）。**教训**：JSDoc 里出现「由 X 调用」这类断言性限定时，**回头 grep 一次调用点**——这正是本项目「注释里出现『不是/非/只/必』时回头问一句『代码真的是这样吗』」那条习惯的又一例 |
 
 ---
 
