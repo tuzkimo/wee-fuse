@@ -6,7 +6,7 @@
 
 一起拼豆（WeeFuse）— 拼豆辅助 App，Android 平板优先。
 - 前端：Vue 3 + TypeScript + Vite + Pinia + Tailwind CSS v4
-- 客户端壳：Tauri 2.0（后续阶段引入，桌面端仅开发调试）
+- 客户端壳：Tauri 2.0（**B5 起已落地 Android 壳**，见下方「平台壳」一节；桌面端仍只用于开发调试）
 - 图像引擎：纯前端 TypeScript，`src/core/` 零依赖、与框架无关
 - 后端：后续阶段引入（Go），当前不建目录
 
@@ -49,6 +49,35 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
   真出问题会以测试失败的形式暴露。
 - 撞上时的处置是**改掉这个命名**（例如参数改叫 `sampleWindow`），不要放宽闸门规则，
   也不要在 `src/core/**` 里加任何绕过标记。完整偏差清单见该测试文件头部注释。
+
+## 平台壳（B5 起：Tauri 2 Android）
+
+**分层**：`src/services/platform/**` 是**平台能力层**（唯一碰 Tauri 的地方），四个窄接口
+（`ImagePicking` / `ShareInbox` / `AlbumSaver` / `AppLifecycle`）+ 两份实现（`browserPlatform` / `tauriPlatform`）
++ 一份**共用契约测试**（`__tests__/platformContract.ts`，两实现都跑）。装配在 `src/main.ts`：
+`setPlatform(...)` **必须早于 `mount(`**（`src/__tests__/platformGate.test.ts` 的 G1–G4 守这条，
+以及「谁可以 import `@tauri-apps/*`」）。
+
+- **只有 `src/services/platform/tauriDriver.ts` 可以 import `@tauri-apps/*`**（G1）；只有
+  `capabilities.ts` 读 `isTauri`（G2）。平台对象**一律用 `shallowRef` 装**（Vue 的 `ref` 在 happy-dom 里
+  会把 `File` 深代理、真机不会 ⇒ 口径是「**不依赖宿主实现**」，不是「今天会坏」）。
+- **`src-tauri/`**：Rust 命令 `take_opened_uris` / `save_image_to_album`；`gen/android/**` **入库**
+  （含两处手改：图标 mipmap、`MainActivity.kt` 的 insets ⇒ **重跑 `tauri init` 之前先看构建记录的维护须知**）。
+- **`exit()` 需要 `core:app:allow-exit`**，而它**不在 `core:app:default` 里**；少了它退出会被 ACL 拒绝，
+  而**拒绝的形态可能是「点了没反应」**（不报错、不弹窗）⇒ 排查时先看 `capabilities/default.json`。
+- **`ACTION_SEND_MULTIPLE` 可达**（manifest 声明了），而 **intent-filter 只覆盖 `image/png|jpeg|webp`**
+  ⇒ 非图片在**正常分享面板上不可达**。分享摄入链（`composables/useShareIntake.ts`）按「**只取第一张 + 提示告知**」实现。
+
+**开发命令（壳）**：
+
+```bash
+npx tauri android dev                    # 真机/模拟器调试（会装 SDK 组件，首次较慢）
+npx tauri android build --apk --debug    # 出 debug APK
+cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android   # 桌面 cargo check 看不到 #[cfg(target_os="android")] 的代码 ✗
+```
+
+**B5 的交付边界与已知限制**（逐条编号 + 未验证面）见
+`docs/superpowers/notes/2026-10-06-app-b5-build-log.md` 的 §6/§7；README 的「已知限制与延后项」是对外摘要。
 
 ## 技术约束
 
