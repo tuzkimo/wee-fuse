@@ -2373,20 +2373,32 @@ fn save_image_to_album(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) 
     let result = save_with_platform(&app, &temp, &filename);
     // **无条件删除**：成功失败都删（临时文件不该留在设备上）。
     let _ = std::fs::remove_file(&temp);
-    result.map(|()| image.len())
+
+    // **第三层核对**（规格 §5.4.1 声称的「三层联动」在这里落地）：拿 Kotlin 报的**实际写入字节数**
+    // 与本次图像长度比。Rust 自己读到的长度是 `image.len()`，若只返回它，链路上任何截断都发现不了
+    // （2026-10-06 控制者核对时发现计划早先正是这么写的 ⇒ 规格那句话当时是**假的**）。
+    let written = result?;
+    if written != image.len() {
+        return Err(format!(
+            "相册写入字节数不一致：期望 {}，实际 {written}",
+            image.len()
+        ));
+    }
+    // 返回 **Kotlin 报的数**（前端 `tauriDriver.saveToAlbum` 再拿它与 JS 侧的 `bytes.length` 比 ⇒ 三层闭合）。
+    Ok(written)
 }
 
-/// 平台分派：Android 交给 Kotlin 插件；其它平台响亮失败（桌面端仅开发调试，不假装支持）。
+/// 平台分派：Android 交给 Kotlin 插件（**返回 Kotlin 报的实际写入字节数**）；
+/// 其它平台响亮失败（桌面端仅开发调试，不假装支持）。
 #[cfg(target_os = "android")]
 fn save_with_platform(
     app: &tauri::AppHandle,
     path: &std::path::Path,
     filename: &str,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     use tauri_plugin_album::AlbumExt;
     app.album()
         .save(path.to_string_lossy().to_string(), filename.to_string())
-        .map(|_uri| ())
 }
 
 #[cfg(not(target_os = "android"))]
@@ -2394,7 +2406,7 @@ fn save_with_platform(
     _app: &tauri::AppHandle,
     _path: &std::path::Path,
     _filename: &str,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     Err("本平台不支持写入相册（桌面壳仅用于开发调试）".into())
 }
 
@@ -2508,7 +2520,7 @@ impl<R: Runtime, T: tauri::Manager<R>> AlbumExt<R> for T {
 `src-tauri/plugins/album/src/mobile.rs`：
 
 ```rust
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     plugin::{PluginHandle, PluginApi},
     Runtime,
@@ -2517,6 +2529,7 @@ use tauri::{
 /// Android 插件的 Rust 句柄。`save` 只把**路径**送过去（字节已经在临时文件里了）。
 pub struct Album<R: Runtime>(pub PluginHandle<R>);
 
+/// 送给 Kotlin 的参数。字段名与 Kotlin 侧 `SaveArgs` **逐字一致**。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SavePayload {
@@ -2524,12 +2537,31 @@ struct SavePayload {
     filename: String,
 }
 
+/// Kotlin `invoke.resolve(JSObject{uri, bytes})` 的镜像。
+///
+/// **为什么必须有一个结构体、不能写成 `::<String>`**（2026-10-06 控制者跨语言核对时抓到的接线缺陷）：
+/// `run_mobile_plugin::<T>` 会把 Kotlin 的返回值按 `T` 反序列化，而 Kotlin 侧 resolve 的是**对象**
+/// （`{"uri": …, "bytes": …}`）⇒ 写成 `String` 会在真机上以反序列化失败告终。这条链**只有真机跑得到**
+/// （CI 里 `tauriDriver.ts` 不可执行），所以它**必须在纸面上就对得上**。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveResponse {
+    /// MediaStore 返回的 `content://` URI；由 Rust 侧打印进日志，便于核对落点（见下方 `println!`）。
+    uri: String,
+    /// Kotlin **实际复制进相册**的字节数（第三层核对用它，见 `src-tauri/src/lib.rs`）。
+    bytes: usize,
+}
+
 impl<R: Runtime> Album<R> {
-    /// 交给 Kotlin 的 `@Command fun save`。返回 `Result<(), String>`：Kotlin 侧 reject 时这里拿到错误原文。
-    pub fn save(&self, path: String, filename: String) -> Result<String, String> {
-        self.0
-            .run_mobile_plugin::<String>("save", SavePayload { path, filename })
-            .map_err(|e| e.to_string())
+    /// 交给 Kotlin 的 `@Command fun save`；**返回 Kotlin 报的实际写入字节数**（不是 Rust 自己数的）。
+    /// Kotlin 侧 `invoke.reject` 时这里拿到错误原文并**原样上抛**（不吞）。
+    pub fn save(&self, path: String, filename: String) -> Result<usize, String> {
+        let response: SaveResponse = self
+            .0
+            .run_mobile_plugin("save", SavePayload { path, filename })
+            .map_err(|error| format!("相册插件调用失败：{error}"))?;
+        println!("AlbumPlugin::save 落到 {}", response.uri);
+        Ok(response.bytes)
     }
 }
 ```
