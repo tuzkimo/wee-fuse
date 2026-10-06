@@ -1,4 +1,12 @@
-/** 已通过守卫的可保存内容。 */
+/**
+ * 已通过守卫的可保存内容。
+ *
+ * **为什么公开**：它是 `requireSavableBlob` 的返回类型，而调用方是拿着 `safe.blob` / `safe.filename`
+ * 往下走的（`services/exporter.ts` 与 `browserPlatform.album.save` 都是）——窄化结果必须有具名类型
+ * 才写得出这个签名。**如实记录：今天没有任何文件 `import` 这个类型**（消费者读的是函数返回值，
+ * 由 TS 推断），它属于「公开但无人直接引用」，留在这里是因为删掉它就要把返回类型写成内联字面量，
+ * 而那会让同一个形状出现两份（`AGENTS.md`「公开 API ≠ 被使用的 API」：零引用要如实写明）。
+ */
 export interface SavableBlob {
   readonly blob: Blob;
   /** **已 trim**：调用方拿它去建文件名，不要再自己 trim 一次。 */
