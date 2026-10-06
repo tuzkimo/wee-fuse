@@ -97,10 +97,14 @@ export function useShareIntake(): ShareIntake {
    * （`services/platform/sniffImageType.ts` 的签名表）——拒了就是把能用的图判成「不是图片」；
    * 空 type 同理（无信息 ≠ 不是图片）。
    *
-   * **如实登记（这道闸门的射程）**：壳里 `File.type` 就是嗅探结果（`tauriPlatform.ts` 的 `fileFromUri`），
-   * 而嗅探对「一段纯文本」与「一张 GIF」给出**同一个**回落值 ⇒ 走真机那条链分享纯文本时这里放行，
-   * 由解码那一步失败并给出「图片解码失败」的中文原因（草稿同样不动、一样不跳转）。要在这里就判成
-   * 「只支持图片」，得让平台层带上真实 MIME（Rust / Kotlin 侧），不在本轮边界内。
+   * **如实登记（这道闸门的射程；含 2026-10-06 控制者读生成的 `AndroidManifest.xml` 的核实）**：
+   * ① 正常分享面板上**非图片根本不会把本 App 列为目标**（生成的三个 intent-filter 只覆盖
+   * `image/png` / `image/jpeg` / `image/webp`，既没有 `image/*` 也没有 `*/*`）⇒ 这一支今天只在
+   * **显式 intent** 或被 provider 谎报 MIME 的情况下可达；真到了这里，给出的正是规格那句
+   * 「只支持图片」（在此之前它会落到解码失败，文案是「图片解码失败」，草稿一样不动、一样不跳转）。
+   * ② 壳里 `File.type` 是嗅探结果（`tauriPlatform.ts` 的 `fileFromUri`），而嗅探对「一段纯文本」与
+   * 「一张 GIF」给出**同一个**回落值 `application/octet-stream` ⇒ 若某条路把纯文本以 null-MIME 递进来，
+   * 这里按上面的口径放行、由解码那一步失败并给出中文原因。
    */
   function isClearlyNotImage(type: string): boolean {
     if (type === "" || type === "application/octet-stream") return false;
