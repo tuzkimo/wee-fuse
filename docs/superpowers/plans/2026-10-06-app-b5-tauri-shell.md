@@ -1189,6 +1189,11 @@ git status --short src-tauri/gen | Measure-Object -Line | Select-Object -ExpandP
 
 - [ ] **步骤 9：构建 debug APK（判据 F 的机器侧）并留下第二段证据**
 
+> **构建期生成物（2026-10-06 实测补记）**：**插件**自己的 android 工程会在构建期把 `tauri-api` 解到
+> `src-tauri/plugins/**/android/.tauri/`（`build/**` 里是 `.dex`、transforms 等产物，上百个文件）——
+> `gen/android` 自带 `.gitignore` 里的 `/.tauri` **只覆盖 `gen/android`，插件目录不继承那份规则**。
+> ⇒ 已在顶层 `.gitignore` 加规则忽略它（提交 `618ccbf`）；**`git add` 时不要纳入该目录**。
+
 运行：
 
 ```powershell
