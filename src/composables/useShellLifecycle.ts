@@ -8,7 +8,7 @@ import { useProjectSession } from "@/stores/project";
  * 壳里的退出 / 返回键装配（规格 §5.5.1 / §5.5.2）。**在 `App.vue` 的 setup 顶层调用一次。**
  *
  * **为什么挂在 App 而不是某个页面**：返回键与退出请求是**壳级**事件——Android 的返回键不区分页面
- * （`/library` 上按它同样要退），退出请求更与页面无关。挂在页面里就必然有页面没覆盖到。
+ * （在图纸库 `/` 上按它同样要退），退出请求更与页面无关。挂在页面里就必然有页面没覆盖到。
  * **必须在 setup 的同步执行期调用**：本函数用 `onUnmounted` 登记解绑，挪进条件分支或事件回调里
  * 会让解绑登记不到（Vue 只在 setup 同步执行期收集生命周期钩子）。
  *
@@ -17,7 +17,7 @@ import { useProjectSession } from "@/stores/project";
  *    `onBeforeRouteLeave` → 有未保存改动就取消导航并弹出**同一条**页面内确认条。这里**绝不新增第二套确认 UI**。
  *    这一支优先于 dirty：在编辑器里按返回键正是「有历史 + 有未保存改动」，若让 dirty 先判，返回键会
  *    变成「push 到图纸库」——那会把「回上一页」这个动作整个换掉。
- * ② 无历史且有未保存改动 ⇒ `router.push({ name: "library" })`：主动走到图纸库，守卫照常拦下。
+ * ② 无历史且有未保存改动 ⇒ `router.push({ name: "home" })`：主动走到图纸库，守卫照常拦下。
  *    **绝不 `exit()`** —— 那正是「静默丢稿」，也是本任务存在的唯一理由。
  * ③ 无历史且干净 ⇒ 正常退出。
  *
@@ -57,7 +57,7 @@ export function useShellLifecycle(): void {
       return;
     }
     if (session.dirty) {
-      void router.push({ name: "library" });
+      void router.push({ name: "home" });
       return;
     }
     void platform.lifecycle.exit();
