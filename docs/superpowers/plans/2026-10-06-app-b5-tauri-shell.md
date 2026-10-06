@@ -4180,6 +4180,270 @@ git commit -m "feat(exporter): 面板经能力层落盘（壳里进相册），p
 
 ---
 
+### 任务 5：分享进入（`useShareIntake` + `App.vue` 装配与提示条）
+
+**前置**：任务 2 的 spike 已跑完，**判据 C 的读数已写进 spike 报告**（URI 形态、能否读字节、raw body 是否可用）。步骤 5 是按该读数的条件步骤。
+
+**交付物**：从相册 App / 文件管理器「分享」一张图进「一起拼豆」⇒ **直接落在选区页**且图就是那一张；**冷启动的分享只被摄取一次**（取走即清）；失败**不留半截草稿**；编辑器里还有未保存改动时**不把用户带走**。
+
+**文件：**
+- 创建：`src/composables/useShareIntake.ts`、`src/composables/__tests__/useShareIntake.test.ts`
+- 修改：`src/App.vue`（装配 + 提示条模板）
+
+- [ ] **步骤 1：抄下判据 C 的读数与结论**
+
+把 spike 报告里 **C 块的整段读数**（冷启动 / 热启动 / 原始字节体三行）+ `adb logcat` 里 `RunEvent::Opened：…` 那一行**原文**贴进本次任务报告的开头，写清：URI 的实际形态、能否读出字节、raw body 是否可用。
+
+- [ ] **步骤 2：写失败测试**
+
+`src/composables/__tests__/useShareIntake.test.ts`（照 `src/composables/__tests__/useCanvasSurface.test.ts` 的既有挂载写法；`loadImageSource` 用 `vi.mock("@/services/probe")` + 假画布桩住，**照 `views/__tests__/PickPage.test.ts` 的手法**）：
+
+```ts
+/**
+ * 分享摄入链（规格 §5.3.6）。**五条必须分开钉**：
+ * ① 浏览器（`supported === false`）**不装配**——不能凭空多出一个订阅面；
+ * ② 成功 ⇒ 「解码 → 落草稿 → 进选区页」与相册入口**完全同一条**（差别只在怎么拿到 `File`）；
+ * ③ 冷启动空 ⇒ 什么都不做（不是错误）；
+ * ④ 失败 ⇒ **不落任何草稿** + 提示条给中文原因（与 `PickPage` 的既有纪律同源）；
+ * ⑤ **编辑器有未保存改动时不 adopt、不导航** ⇒ 暂存 + 提示条 + 「继续」；点「继续」后重试成功。
+ *
+ * **⑤ 是本任务唯一的新语义**：直接 `adoptImage` + `push` 会被编辑器守卫拦下，留下「草稿里有图但页面
+ * 没动」的半截状态；先 `push` 再 adopt 又会丢掉被取消的那次导航。所以**先不 adopt**。
+ * **代价如实记**：暂存期间内存里留一张原图（数 MB），直到用户点「继续」或关掉提示条。
+ */
+describe("useShareIntake", () => {
+  it("supported 为 false ⇒ 不订阅、不取走、提示条不出现", async () => {
+    // …注入 { ...browserPlatform, shareInbox: { supported: false, takeSharedImage, onSharedImage } }…
+    expect(takeSharedImage).not.toHaveBeenCalled();
+    expect(onSharedImage).not.toHaveBeenCalled();
+    expect(wrapper.find("[data-testid='share-banner']").exists()).toBe(false);
+  });
+
+  it("冷启动取到文件 ⇒ 解码、落草稿、进选区页", async () => {
+    // 断言 draft.source / sourceSize / preview（恒等于本次建的那张画布）/ crop / stage === "crop" / push setup
+  });
+
+  it("冷启动是空的 ⇒ 什么都不做（不报错、不跳转、不落草稿）", async () => { /* … */ });
+
+  it("解码失败 ⇒ 提示条给中文原因，且**不落任何草稿**", async () => {
+    // loadImageSource 抛「图片解码失败」⇒ 断言 draft.source === null、banner 含该原因、未 push
+  });
+
+  it("编辑器有未保存改动时收到分享 ⇒ 不 adopt、不导航、给「继续」；点继续后重试成功", async () => {
+    // 让 route.name === "editor" 且 session.dirty === true（照 EditorPage 既有测试的置脏方式）
+    // …触发冷启动摄入…
+    expect(useDraft().source).toBeNull();  // ★ 没有半截草稿
+    expect(push).not.toHaveBeenCalled();   // ★ 没有把用户带走
+    expect(wrapper.get("[data-testid='share-banner']").text()).toContain("未保存");
+    // …清掉脏标记…
+    await wrapper.get("[data-testid='share-retry']").trigger("click");
+    await flushPromises();
+    expect(useDraft().source).not.toBeNull();
+    expect(push).toHaveBeenCalledWith({ name: "setup" });
+  });
+
+  it("点「知道了」⇒ 提示条消失且暂存被释放", async () => {
+    // …先制造暂存态…点 share-dismiss ⇒ 断言 banner 不存在、且再次点 retry 什么都不做
+  });
+
+  it("热启动（onSharedImage 触发的文件）也走同一条链", async () => { /* … */ });
+
+  it("卸载 ⇒ 解绑（不泄漏监听）", async () => { /* … */ });
+});
+```
+
+运行：`npx vitest run src/composables/__tests__/useShareIntake.test.ts` ⇒ 预期**红**。
+
+- [ ] **步骤 3：实现**
+
+`src/composables/useShareIntake.ts`：
+
+```ts
+import { onUnmounted, ref, type Ref } from "vue";
+import { useRouter } from "vue-router";
+import { loadImageSource } from "@/services/imageSource";
+import { getPlatform } from "@/services/platform/capabilities";
+import { useDraft } from "@/stores/draft";
+import { useProjectSession } from "@/stores/project";
+
+/** 提示条要用的状态。**页面只读它、调 `retry` / `dismiss`**，摄入逻辑全在本文件里。 */
+export interface ShareIntake {
+  /** 空串 = 不显示提示条。 */
+  readonly message: Ref<string>;
+  /** 编辑器有未保存改动时暂存的那一份分享（非空时提示条给「继续」按钮）。 */
+  readonly pending: Ref<File | null>;
+  /** 「继续」：重试摄入暂存的那一份。 */
+  retry(): Promise<void>;
+  /** 「知道了」：丢弃暂存并清空提示（**释放那张原图的引用**）。 */
+  dismiss(): void;
+}
+
+/**
+ * 分享进入的摄入链（规格 §5.3.6）。**在 `App.vue` 的 setup 顶层调用一次。**
+ *
+ * **为什么挂在 App 而不是某个页面**：分享进来时 App 可能停在任意页面（甚至刚被拉起）；
+ * 摄入链要在**任何页面**都接得住，成功后统一跳 `/new/setup`。
+ *
+ * **两个入口一条链**：冷启动（`takeSharedImage`，取走即清）与热启动（`onSharedImage`）都进 `intake()`。
+ *
+ * **失败一律不落草稿**：与 `PickPage` 的既有纪律同源——留一个「有 source 没 preview」的半截状态，
+ * 选区页会拿到空画布。
+ *
+ * **编辑器 dirty 时先不 adopt**：直接改草稿 + 跳路由会被编辑器守卫拦下，留下「草稿里有图、页面没动」
+ * 的半截状态。所以暂存 + 提示条 + 「继续」；**代价是内存里留一张原图**，直到用户处理。
+ */
+export function useShareIntake(): ShareIntake {
+  const router = useRouter();
+  const draft = useDraft();
+  const session = useProjectSession();
+  const platform = getPlatform();
+
+  const message = ref("");
+  const pending = ref<File | null>(null);
+
+  async function intake(file: File): Promise<void> {
+    message.value = "";
+    try {
+      const loaded = await loadImageSource(file);
+      draft.adoptImage({
+        source: { blob: loaded.blob, type: loaded.type, name: loaded.name },
+        sourceSize: loaded.sourceSize,
+        preview: loaded.preview,
+      });
+      await router.push({ name: "setup" });
+      pending.value = null;
+    } catch (error) {
+      // **不落草稿**：失败时草稿必须与「什么都没发生过」一致。
+      message.value = `分享的图片没能处理：${error instanceof Error ? error.message : String(error)}`;
+      pending.value = null;
+    }
+  }
+
+  /** 摄入前先看「编辑器里有没有未保存的改动」——有就暂存，别把用户带走。 */
+  async function intakeOrPark(file: File): Promise<void> {
+    if (router.currentRoute.value.name === "editor" && session.dirty) {
+      pending.value = file;
+      message.value = "收到一张分享的图片；当前编辑还没保存，处理完再点「继续」。";
+      return;
+    }
+    await intake(file);
+  }
+
+  let offShared: (() => void) | null = null;
+
+  if (platform.shareInbox.supported) {
+    // 热启动：**越早订阅越好**（App 启动时就订好），否则人在相册 App 里分享时接不住。
+    offShared = platform.shareInbox.onSharedImage((file) => {
+      void intakeOrPark(file);
+    });
+
+    // 冷启动：那一份可能已经在 Rust 状态里等着了。
+    void (async () => {
+      try {
+        const file = await platform.shareInbox.takeSharedImage();
+        if (file !== null) await intakeOrPark(file);
+      } catch (error) {
+        message.value = `分享的图片没能读取：${error instanceof Error ? error.message : String(error)}`;
+      }
+    })();
+  }
+
+  onUnmounted(() => {
+    offShared?.();
+  });
+
+  return {
+    message,
+    pending,
+    async retry(): Promise<void> {
+      const file = pending.value;
+      if (file === null) return;
+      await intake(file);
+    },
+    dismiss(): void {
+      pending.value = null;
+      message.value = "";
+    },
+  };
+}
+```
+
+- [ ] **步骤 4：装进 `App.vue`（含提示条）**
+
+```vue
+<script setup lang="ts">
+// 壳里的两个装配（规格 §5.3.6 / §5.5.1）：分享摄入与生命周期。
+// **都必须在 setup 顶层调用**：它们各自用 `onUnmounted` 登记解绑。
+import { useShareIntake } from "@/composables/useShareIntake";
+import { useShellLifecycle } from "@/composables/useShellLifecycle";
+
+const share = useShareIntake();
+useShellLifecycle();
+</script>
+
+<template>
+  <RouterView />
+
+  <!-- 分享摄入的提示条：**不打断用户**（不是弹窗），且不进任何 store。
+       `role="status"` 而不是 `alert`：它是「说明」，不是「必须立刻处理的错误」。
+       `z-50` 高于导出面板覆盖层的 z-30 与未保存确认条的 z-40：它是全局的，不该被任何面板盖住。 -->
+  <p
+    v-if="share.message.value !== ''"
+    data-testid="share-banner"
+    role="status"
+    class="fixed inset-x-0 bottom-0 z-50 bg-amber-50 p-4 text-base text-amber-900"
+  >
+    {{ share.message.value }}
+    <button
+      v-if="share.pending.value !== null"
+      data-testid="share-retry"
+      class="ml-3 rounded border border-amber-400 px-3 py-1"
+      @click="share.retry()"
+    >
+      继续
+    </button>
+    <button
+      data-testid="share-dismiss"
+      class="ml-2 rounded border border-amber-400 px-3 py-1"
+      @click="share.dismiss()"
+    >
+      知道了
+    </button>
+  </p>
+</template>
+```
+
+运行：`npx vitest run src/composables/__tests__/useShareIntake.test.ts`（8 条全绿）+ `npm run test` + `npm run build`
+
+- [ ] **步骤 5：按判据 C 的读数处置**
+
+- **URI 可读 + raw body 可用** ⇒ **空操作**（本任务已完成）。
+- **URI 读不出** ⇒ 追加 Kotlin「把 URI 流复制到 app cache 并返回路径」的命令 + 驱动改用该路径（前端**一行不改**：它只认 `File`）。把改动与读数一起写进报告。
+- **raw body 不可用** ⇒ 属于任务 6 的处置范围（`saveToAlbum` 改 base64），**但要在本任务报告里交叉登记**，免得两边都以为对方在处理。
+
+- [ ] **步骤 6：变异（红数不许预估）**
+
+| ID | 改哪一行 | 期望红 |
+|---|---|---|
+| M28 | `intakeOrPark` 去掉「编辑器 + dirty」那道判断（无条件 `intake`） | 「编辑器有未保存改动 ⇒ 不 adopt、不导航」那条（草稿会被填上、`push` 被调用） |
+| M29 | `dismiss()` 只清 `message` 不清 `pending` | 「点『知道了』⇒ 提示条消失且暂存被释放」那条 |
+| M30 | 冷启动那段改成调用了 `takeSharedImage()` 但**忽略返回值** | 「冷启动取到文件 ⇒ 落草稿」那条 |
+
+- [ ] **步骤 7：三跑 + Commit**
+
+```powershell
+npm run test; $env:TZ="UTC"; npm run test; Remove-Item Env:\TZ; npm run build
+```
+
+```powershell
+git add src/composables/useShareIntake.ts src/composables/__tests__/useShareIntake.test.ts src/App.vue src-tauri src/services/platform/tauriDriver.ts
+git commit -m "feat(app): 系统分享进入的摄入链（冷/热启动同一条路，编辑器有未保存改动时不带走用户）"
+```
+
+（步骤 5 是空操作时，`git add` 里去掉 `src-tauri` 与 `tauriDriver.ts`。）
+
+---
+
 ### 任务 7：生命周期（返回键三分支 + 退出请求；`App.vue` 装配）
 
 **前置**：任务 2 的 spike 已跑完，**判据 E 的读数已写进 spike 报告**（它只影响本任务的**记录与排查路径**，不影响三分支的实现——见步骤 5）。
