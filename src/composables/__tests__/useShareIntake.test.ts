@@ -452,10 +452,11 @@ describe("useShareIntake", () => {
     expect(useDraft().source).toBeNull();
     expect(push).not.toHaveBeenCalled();
     expect(wrapper.vm.share.message.value).toContain("还没保存");
-    // 暂存里必须是**那颗原样的 `File`**，不是 Vue 的深代理：`retry()` 会把它交给
-    // `loadImageSource` → `URL.createObjectURL`，而平台 API 收到的是「另一个对象」。
-    // （`ref` 会深代理，`shallowRef` 不会；这条断言就是两者的判别点。真机 WebView 是否对
-    // 代理做 brand check 本轮未验，见报告。）
+    // 暂存里必须是**那颗原样的 `File`**：`retry()` 会把它交给 `loadImageSource` →
+    // `URL.createObjectURL`，不该递一个别的对象过去。`ref` 在**本仓的 happy-dom 里**会深代理它
+    // （happy-dom 的 `File` 没有 WebIDL 的 `@@toStringTag` ⇒ Vue 的 `targetTypeMap` 把它当普通
+    // `Object` 代理），`shallowRef` 不会 ⇒ 这条断言就是两者的判别点。真机的 `File` 有那个标记、
+    // 本来就不被代理，`shallowRef` 是「不依赖宿主实现」的防御口径（见 composable 的 JSDoc）。
     expect(wrapper.vm.share.pending.value).toBe(FILE);
 
     // 用户处理完编辑器的改动（这里以 store 复位代表），再点「继续」。
