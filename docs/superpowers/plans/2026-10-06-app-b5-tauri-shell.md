@@ -1423,6 +1423,14 @@ describe("平台接入闸门", () => {
 运行：`npx vitest run src/__tests__/platformGate.test.ts`
 预期：**2 passed / 3 failed**（G1 / G3b / G4 故意红；G1 红是因为 `tauriDriver.ts` 还没被创建），失败原因与转绿时点正是上面注释里写的那三条。**不许为了让它变绿而提前创建空壳 `tauriDriver.ts` 或提前改面板**。
 
+> **⚠️ 2026-10-06 实测更正（G1 的扫描范围，实现见提交 `925599a`）**：G1 还必须**排除测试文件**——
+> `src/__tests__/coreBoundary.test.ts:744/759` 把 `"@tauri-apps/api/core"` 当**数据**用（B1 的断言字符串），
+> 而 G1 是「剥注释、保留字符串」的基线 ⇒ 不排除就**必然命中它**，后果是「任务 2 建了 `tauriDriver.ts` 也不会让 G1 转绿」。
+> **做法**：加 `isTestFile(path)`（`path.split("/").includes("__tests__")` 或 `/\.(test|spec)\.ts$/`），在 G1 的扫描循环里 `continue` 跳过；`GATE_FILE` 的显式排除**保留**（冗余但无害）。
+> **理由**：与 `coreBoundary.test.ts` 对 core 扫描的处置**同一个道理**（它自己头部就写了「core 的 `__tests__` 不在扫描范围内」）；且测试文件里静态 import `@tauri-apps/*` 会在 vitest **收集阶段**就崩（自证，不需要这道闸门）。
+> **不许**为此改动 `coreBoundary.test.ts`（那里的字面量是数据，不是违规）。
+> **判别力证据**（控制者亲跑）：往 `src/services/exporter.ts` 加一句 `@tauri-apps` 的 import ⇒ G1 实际值变成 `['../services/exporter.ts']`（**名单里没有 coreBoundary**）⇒ 闸门对**该守的代码**照旧有效。
+
 - [ ] **步骤 12：变异实测（四条闸门各一条，红数回填）**
 
 在**已提交**的树上做（B4 的 R-12），每条自证替换生效、做完还原并确认 `git diff` 为空：
