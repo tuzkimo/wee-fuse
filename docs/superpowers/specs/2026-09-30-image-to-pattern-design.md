@@ -81,7 +81,8 @@ WeeFuse 是一款拼豆辅助 App，中文名「一起拼豆」，Android 优先
 > ① **落点变了**：§7 的导出在浏览器里是**下载文件**，在壳里**保存进系统相册**（MediaStore），后端没变——变的是
 > `services/platform/**` 这一层（新增的平台能力层，四个窄接口 + 两份实现 + 一份共用契约测试；**只有
 > `tauriDriver.ts` 能 import `@tauri-apps/*`**，由 `src/__tests__/platformGate.test.ts` 的 G1–G4 守着）；
-> ② **相册落点尚未端到端验过**（判据 D 的真机读数未到手 ⇒ 任务 6 未交付）⇒ **G4 这道闸门到 B5 收口时仍是红的**（故意红 ✓）；
+> ② **相册落点已端到端验过**（判据 D 真机通过：落点 `album`、文件名与**字节数一致**、「已受理」⇒ 任务 6 落地：
+> `ExportPanel` → `getPlatform().album.save(blob, filename)`；`G4` 转绿、全量 `1286 passed (1286)`，0 红）；
 > ③ **验收设备是手机（Android 16 / WebView 143），平板未验** —— §2 与 §12 里「Android 平板优先」的那条**今天没有读数支撑**，
 > 如实记为未验证面。完整交付边界、限制编号与未验证面见 [B5 构建记录](../notes/2026-10-06-app-b5-build-log.md) §6/§7；
 > 规格本体见 [B5 规格](2026-10-06-app-b5-tauri-shell-design.md)。
