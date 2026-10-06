@@ -71,6 +71,7 @@
 | R-9 | **每次导出前**（`canvasToBlob` 之前）施工图与用量图必须调 `assertCanvasPainted(canvas)`；**分享图不调**（它按设计透明，没有"必定不透明"的点）。面板不调用它 ⇒ 它成为零消费者导出 | 超限画布得到一张「看起来正常」的白图，用户以为图纸本来就这样 |
 | R-10 | 「逐张渲染后即时释放画布」落在**面板**（`canvas.width = 0; canvas.height = 0;` 写在 `finally` 里），**不新增函数名**；服务层不提供释放函数 | 抽出一个只有一个调用点的函数（本项目禁止的抽象）；或内存峰值变成 N 张画布 |
 | R-11 | 探针页实测 `N ≠ 4096` 时**不并进收尾任务**：改常量要同时动 `layout.ts` + `layout.test.ts` + `AGENTS.md` + `CLAUDE.md` 四处，属**独立的小修复轮**（`N < 4096` 时优先级最高） | 在代码冻结后把一次未经审查的常量改动塞进纯文档任务，且四处只改一处 ⇒ 文档与实现漂移 |
+| R-12 | **变异只能在已提交的树上做**：变异前先 `git status` 确认干净；带未提交改动时先提交 / `git stash` / 或 `$env:TEMP` 备份 + `Copy-Item` 还原。**绝不用 `git checkout -- <文件>` 去还原一个还带着未提交改动的文件** | `git checkout --` 会**静默丢弃**该文件里所有未提交的改动。本轮**控制者与实现者各踩一次**：我的复核脚本把第一次运行残留的变异当成了"原文"、于是每次"还原"都把变异写回去；实现者跑变异时冲掉了自己尚未提交的三处修复（重落后逐项核对才确认无损） |
 
 ---
 
@@ -93,7 +94,8 @@
  * **为什么 core 自己声明 `RenderTarget2D` 而不是用 `CanvasRenderingContext2D`**：后者在分层边界闸门
  * （`src/__tests__/coreBoundary.test.ts` 的 `FORBIDDEN_GLOBALS`）里是禁用全局——core 不得引用 DOM 全局。
  * 按 `AGENTS.md` 的口径「在 core 定义接口，在 services 注入实现」：`services/exporter.ts` 把真 ctx 传进来
- * （结构上满足本接口），测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
+ * （**2026-10-05 更正：不是"结构上满足"**——真实 ctx 与它有四处不兼容：`fillStyle` / `strokeStyle` /
+ * `textAlign` / `textBaseline`；窄化在 `services/exporter.ts` 的 `requireContext2D` 里做一次），测试用普通对象桩。代价如实记录：这是 core 里第一份不是纯数据的类型。
  */
 export interface PixelRect {
   readonly x: number;
@@ -672,8 +674,9 @@ export interface LegendPlan {
   readonly rowHeight: number;
   readonly headerY: number;
   readonly tableTop: number;
+  /** 页脚三行（合计 / 精度声明 / 生成时间）的起点：`totalY + 2` / `+16` / `+30`。
+   *  **`footerY` 已删**（任务 1 审查 F2：它与 `totalY` 代数恒等且零消费者）——实现与契约都以本行为准。 */
   readonly totalY: number;
-  readonly footerY: number;
 }
 
 export interface SharePlan {
@@ -979,7 +982,6 @@ export function planLegend(usages: readonly ColorUsage[], options?: PlanOptions)
     headerY: SHEET_MARGIN,
     tableTop,
     totalY: tableTop + itemRows * LEGEND_ROW_H,
-    footerY: canvasHeight - SHEET_MARGIN - SHEET_FOOTER_H,
   };
 }
 
@@ -1204,6 +1206,14 @@ git commit -m "feat(render): 施工图/用量表/分享图的布局与唯一坐�
    M14 属任务 4）。做法：改一行 → 跑聚焦用例 → 记红数 → `git checkout -- <文件>` 还原 → 再跑一次确认回到
    全绿。**不许预估红数**；
 4. 任何与本计划 / 契约不符之处，以及你的处置（不许自行发明名字）。
+
+---
+
+---
+
+---
+
+---
 
 ---
 
@@ -3447,9 +3457,11 @@ export function createCanvasStrict(width: number, height: number): HTMLCanvasEle
  * 取 2D 上下文；拿不到即抛（不静默返回 `null`，让调用方在别处裸崩成 `TypeError`）。
  *
  * **消费者**：`ExportPanel.vue` 把返回值直接传给 `core/render/sheet.ts` / `share.ts`——
- * `CanvasRenderingContext2D` 结构上满足 core 的 `RenderTarget2D`，无需转换、无需断言。
+ * **返回类型就是 `RenderTarget2D`**（内部一次具名窄化）。**2026-10-05 更正**：本节早先那句「结构上满足、
+ * 无需转换、无需断言」是**假的**（任务 3 的审查用编译器实测出四处不兼容：`fillStyle`/`strokeStyle`/
+ * `textAlign`/`textBaseline`）。任务 4 的 `drawSheetTile(requireContext2D(canvas), …)` 写法因此原样可编译。
  */
-export function requireContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+export function requireContext2D(canvas: HTMLCanvasElement): RenderTarget2D {
   const ctx = canvas.getContext("2d");
   if (ctx === null) {
     throw new Error("无法获取 2D 上下文");
@@ -4725,7 +4737,7 @@ async function saveItem(item: ExportItem): Promise<void> {
     if (item.kind === "legend") {
       const plan = legendPlan.value;
       canvas = createCanvasStrict(plan.canvasWidth, plan.canvasHeight);
-      drawLegend(requireContext2D(canvas), props.usages, plan, meta);
+      drawLegend(requireContext2D(canvas), props.palette, props.usages, plan, meta);
       assertCanvasPainted(canvas);
       await downloadAndPreview(item, canvas, "用量表");
     } else if (item.kind === "share") {
@@ -5385,6 +5397,21 @@ git commit -m "feat(editor): 导出面板与内存态图纸接线"
 ---
 
 ## 任务 5：`/lab/canvas` 探针页（R2 真机实测装置）与路由用例
+
+> **2026-10-05 更正注记（按任务 5 的审查 + 修复轮实测，四处；本注记**取代**下面正文里的对应口径）**
+>
+> 1. **`no-upper` 的结论文案不再是原来那一句**：原文案只看「最后一档是否通过」，在**非单调读数**下会打印
+>    「档位梯全部 17 档通过」——而同一页的表格里明明有「被钳制」行（`:152` 的 JSDoc 说扫满 17 档正是为了暴露非单调）。
+>    定稿文案**从同一份读数派生**：末档全过时 `末档 ${lastLadderValue} 通过、上界未触及；全部 ${档数} 档均通过，二分未执行`；
+>    否则 `末档 … 通过、上界未触及；本梯另有 ${failedLadderCount} 档未通过（读数非单调，勿外推），二分未执行`。
+> 2. **`DirectionSummary` 的字段变了**：死字段 `lower` **已删**，换成 `lastLadderValue` + `failedLadderCount`；
+>    `no-lower` 判据改为等价的「`failedLadderCount === ladder.length`」。
+> 3. **账目**：本节正文写「7 条用例 / +8」是**修复轮之前**的数；修复轮（F1–F6）后是 **11 条用例**、
+>    全量 **1120** 用例、本任务共**新增 12 条**（闭合式 `1037 + 28 + 54 + 1 = 1120`）。
+> 4. **本节的「逐字用例代码」不再是字面内容**：实现者追加了桩选项（`readbackColor` / `throwEmptyMessageNamed` /
+>    `throwValue` / `readCount` / `measuredWidth,Height`）与 4 条新用例（判据 3 的颜色半边、非单调读数、抛空 message 的 `Error`、
+>    抛非 `Error` 值），并把两处 `toContain` 强化为逐字 `toBe`（原写法拦不住 `Error: ` 前缀 —— 那两条变异在强化前实测 **0 红**）。
+>    **交付代码是事实，本节代码块是模板**。
 
 **文件：**
 - 创建：`src/views/CanvasLabPage.vue`
@@ -6151,7 +6178,7 @@ describe("/lab/canvas 探针页", () => {
     expect(wrapper.find('[data-testid="probe-table-area"]').exists()).toBe(false);
     // 页面不崩：按钮回到可用、页首自标仍在
     expect(wrapper.get('[data-testid="probe-run"]').attributes("disabled")).toBeUndefined();
-    expect(wrapper.get('[data-testid="lab-notice"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="lab-notice"]').exists()).toBe(true);
 
     wrapper.unmount();
   });
@@ -6186,7 +6213,10 @@ describe("/lab/canvas 探针页", () => {
 - [ ] **步骤 3：跑用例，并做五条定向变异证明判定列与兜底路径都有判别力**
 
 运行：`npx vitest run src/views/__tests__/CanvasLabPage.test.ts`
-预期：**PASS——6 条用例全绿**（`Test Files 1 passed (1)` / `Tests 6 passed (6)`）。
+预期：**PASS——7 条用例全绿**（`Test Files 1 passed (1)` / `Tests 7 passed (7)`）。
+**2026-10-05 更正（按任务 5 实现者的实测回报，三处）**：① 本节早先写的「6 条用例」是计数错——本节逐字给出的代码里有 **7 个 `it`**，以逐字代码为准；
+② 本节逐字代码里 `wrapper.get(...).exists()` **过不了 `vue-tsc`**（TS2339：VTU 的 `get` 返回类型 `Omit<…, "exists">`），已改为 `wrapper.find(...).exists()`；
+③ 实现者另**追加**了 2 条断言（只加不改）：一条读「**未钳制档**的 readback 等值」、一条读 `cell-requested`（原逐字代码把这两个量漏成未断言/只被间接覆盖），补后 P1–P5 的红数不变。
 
 然后逐条做变异 → 记红数 → `git checkout -- src/views/CanvasLabPage.vue` 还原 → 再跑一次确认回到全绿。
 **红数不许预估**：下面只写「变异动作 + 该红的用例标题」，实现者必须在自己报告里逐条附**实跑红数与失败点标题**（B4 规格 §13.3 的既有纪律）。
@@ -6266,7 +6296,7 @@ $env:TZ="UTC"; npm run test                             # 预期：与上一条�
 npm run build                                           # 预期：vue-tsc --noEmit 无输出 + Vite 构建成功
 ```
 
-**账目**：本任务新增 **1 个测试文件**（`src/views/__tests__/CanvasLabPage.test.ts`，**6 条用例**）与 **1 条路由用例**，合计 **+7 条用例**；`src/router/index.ts` 与 `src/router/__tests__/index.test.ts` 都是**只加不改**。
+**账目**：本任务新增 **1 个测试文件**（`src/views/__tests__/CanvasLabPage.test.ts`，**7 条用例**——**2026-10-05 更正：本节早先写 6 条是计数错**）与 **1 条路由用例**，合计 **+8 条用例**；`src/router/index.ts` 与 `src/router/__tests__/index.test.ts` 都是**只加不改**。
 **闭合校验**：用 `node .superpowers/sdd/2026-10-05-app-b4-export/tools/count.mjs` 取分解式，与 `npm run test` 报出的 `Tests  N passed (N)` **逐位相等**；不等就先查清（多/少一条往往意味着用例没被收集或写重了），**不许把运行期总数与分解式任一直接抄进报告**。
 
 - [ ] **步骤 6：Commit**
@@ -6300,7 +6330,7 @@ git commit -m "feat(app): /lab/canvas 上限探针页（R2）与路由用例"
 |---|---|
 | 路由 | `path: "/lab/canvas"`、`name: "canvas-lab"`、组件 `() => import("@/views/CanvasLabPage.vue")` |
 | 页面文件 | `src/views/CanvasLabPage.vue` |
-| 用例文件 | `src/views/__tests__/CanvasLabPage.test.ts`（**6 条用例**，对应 P1–P5 五条变异） |
+| 用例文件 | `src/views/__tests__/CanvasLabPage.test.ts`（**7 条用例**，对应 P1–P5 五条变异） |
 | 入口约定 | 只在路由表里存在、**不进任何用户入口**；CI 无断言（自查命令 + 报告如实记录）；约定同步进 README 的 `src/router/` 行 |
 
 **`data-testid`（页面上共 8 个，全部会被用例读到）**
@@ -6335,7 +6365,7 @@ git commit -m "feat(app): /lab/canvas 上限探针页（R2）与路由用例"
 |---|---|
 | `idle` | `<方向>：尚未测量。`（模板 `v-if` 保证不渲染，但 computed 会求值——**mount 即覆盖**） |
 | `no-lower` | `<方向>：档位梯的第一档（1024）三项判据就没过——没有可收敛的下界，二分未执行（如实记录，不外推）。` |
-| `no-upper` | `<方向>：档位梯全部 17 档通过——上界未触及，二分未执行（要更高只能加档位梯，不许外推）。` |
+| `no-upper` | **2026-10-05 更正（F2 裁定后的新文案，两种都由 `failedLadderCount` 从同一份读数派生）**：末档全过 ⇒ `<方向>：末档 ${lastLadderValue} 通过、上界未触及；全部 ${档数} 档均通过，二分未执行（要更高只能加档位梯，不许外推）。`；**非单调**（另有档位未通过）⇒ `<方向>：末档 ${lastLadderValue} 通过、上界未触及；本梯另有 ${failedLadderCount} 档未通过（读数非单调，勿外推），二分未执行。` —— 后者才是不与自家表格自相矛盾的那一支 |
 | `bisected` | `<方向>：下界 L（末档三项全过）· 上界 U（<上界那一档的判定>）· 二分 8 次后收敛值 C` |
 
 **方向名**：`edge` → `单边上限（短边固定 64 px）`；`area` → `面积上限（正方形）`。
@@ -6602,10 +6632,13 @@ npm run build                                      # 记下 B
 B4 的导出也不消费它；保留还是收窄留给下一次动到它的人）。
 **尚未写明（零消费者）**：B4 收尾时这份清单**已清空**——新增公开导出时按本段口径自查并补 JSDoc。
 **B4 新增的公开面**：
-- `core/render/types.ts` 的 `RenderTarget2D` 是 **core 里第一份不是纯数据的类型**：core 不得引用 DOM
+- `core/render/types.ts` 的 `RenderTarget2D` 是 **core 里第一份照平台对象形状声明的「窄化绘制目标」接口**
+  （**2026-10-05 由最终审查 D 片更正**：本节早先写的「core 里第一份不是纯数据的类型」按字面为假——`core/image/decode.ts` 的 `Decoder`（B1）与 `core/pattern/history.ts` 的 `EditHistory`（B3）都更早，
+  同样是「core 定义接口、services 注入实现」这一口径）：core 不得引用 DOM
   全局，而 `CanvasRenderingContext2D` 在边界闸门（`src/__tests__/coreBoundary.test.ts` 的
   `FORBIDDEN_GLOBALS`）的禁用清单里——按本节上一条「在 core 定义接口，在 services 注入实现」的口径，
-  由 `services/exporter.ts` 把真 ctx 传进去（结构上满足该接口），测试用普通对象桩。取舍如实记录：
+  由 `services/exporter.ts` 把真 ctx 传进去（**2026-10-05 更正：不是"结构上满足"**——实测四处不兼容，
+  窄化在 `requireContext2D` 里做一次；见任务 3 的那段 JSDoc），测试用普通对象桩。取舍如实记录：
   换到的是渲染器的全部布局与文字位置都能在 Node 里被断言。
 - `core/render/layout.ts` 的 `planSheets` / `planLegend` / `planShare`：生产消费者是
   `components/editor/ExportPanel.vue`（面板自己持 plan、自己调渲染器）；`cellBox` / `shareCellBox` /

@@ -11,6 +11,15 @@ import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
+import ExportPanel from "@/components/editor/ExportPanel.vue";
+import {
+  createRecordingTarget,
+  resetExporterMock,
+  stubObjectUrl,
+  type MockExporter,
+  type RecordingTarget,
+} from "@/components/editor/__tests__/exportTestKit";
+import { cellBox, planSheets } from "@/core/render/layout";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -73,6 +82,38 @@ vi.mock("vue-router", () => ({
   },
   RouterLink: { template: "<a><slot /></a>" },
 }));
+
+/**
+ * 导出面板的平台边界（任务 4）：`@/services/exporter` 的五个碰平台的函数换成替身，
+ * `exportFilename` 用**真实现**（文件名的逐字格式是任务 3 用例的事）。
+ *
+ * 为什么不 mock `@/core/render/*`：规格 §13.2 第 1 条要的判据是「`drawSheetTile` **收到的该格
+ * `fillRect` 颜色**是新色」——只有让真渲染器跑在记录型 target 上，`cellBox → fillRect`
+ * 这条链才真的被走过（happy-dom 的 canvas 没有像素语义，CONTRACT §5.1）。
+ *
+ * **替身必须用 `vi.hoisted` 就地声明**（不能放共享模块）：`vi.mock` 的工厂被提升到所有 import
+ * 之前，工厂里引用任何模块级导出都会崩在 TDZ（实测：`Cannot access 'exporter' before
+ * initialization`）。共享模块 `@/components/editor/__tests__/exportTestKit` 提供的是
+ * `MockExporter` 类型（成员由真模块派生 ⇒ 签名漂移在本文件编译失败）、记录型 target（含
+ * `fillText` 记录）、假画布与 `resetExporterMock`。
+ */
+const exporter = vi.hoisted(
+  () =>
+    ({
+      createCanvasStrict: vi.fn(),
+      requireContext2D: vi.fn(),
+      // 面板也会调它（施工图 / 用量表；分享图按设计不调）：「在哪一项上调用、顺序如何」由
+      // `ExportPanel.test.ts` 的**同一个** `resetExporterMock` 默认实现 + 顺序表钉住。
+      assertCanvasPainted: vi.fn(),
+      canvasToBlob: vi.fn(),
+      downloadBlob: vi.fn(),
+    }) satisfies MockExporter,
+);
+
+vi.mock("@/services/exporter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/exporter")>();
+  return { ...actual, ...exporter };
+});
 
 const palette = getBuiltinPalette();
 
@@ -1486,5 +1527,174 @@ describe("回图纸库入口（F1）", () => {
     await flushPromises();
     expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith(target);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 新增（任务 4）：导出面板的接线与端到端
+//
+// 面板自己持有 plan 与逐项状态（契约 §2b / 规格 §10），页面只做三件事：`exporting` 开关、
+// 把**内存态**图纸与页面已有的 `usages` 传下去、`@close` 关掉。下面三条用例把这三件事各钉一条，
+// 第三条就是规格 §13.2 第 1 条（「导出旧图」的判别性用例）。
+// ---------------------------------------------------------------------------
+
+describe("导出面板接线（任务 4）", () => {
+  let recording: RecordingTarget;
+
+  beforeEach(() => {
+    recording = createRecordingTarget();
+    // 五个替身的默认实现与 `ExportPanel.test.ts` 共用一份（`resetExporterMock`）。本文件**不挂
+    // `onStep` / `onCanvas` 钩子**：顺序表与「释放晚于 toBlob」是面板自己那组用例的职责，
+    // 这里只需要「真渲染器把 `fillRect` 记下来」这一件事（端到端那条判据）。
+    resetExporterMock(exporter, recording.target);
+    stubObjectUrl();
+  });
+
+  it("点「导出」→ 面板出现；点「关闭」→ 回编辑态（图纸与编辑态都没被丢掉）", async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+
+    await wrapper.get("[data-testid='export']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+    // 面板真的被挂起来了（不是空壳）：组件实例在，标题也在
+    expect(wrapper.findComponent(ExportPanel).exists()).toBe(true);
+    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("导出图纸");
+
+    await wrapper.get("[data-testid='export-close']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    // 「回编辑态」不是把页面卸载重建：画布、工具栏与图纸都原样还在
+    expect(wrapper.find("[data-testid='editor-canvas']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='tool-brush']").exists()).toBe(true);
+    expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
+  });
+
+  it("面板的 `:project-name` / `:revision` 真的接了线：文件名与图上标题带记录的工程名，涂一格后该项复位", async () => {
+    // 修复波 C-M2：这两条 props 原来**零断言**——把 `:revision` 钉成 0（只有画布那条用例红、面板
+    // 这条不红）、把 `:project-name` 钉成常量（0 红）都能全绿，而它们是「图纸来源是内存态」这条
+    // 承诺在面板这一侧的**唯一**接线。
+    const wrapper = await mountPage();
+    await wrapper.get("[data-testid='export']").trigger("click");
+    await wrapper.get("[data-testid='export-save-tile-0']").trigger("click");
+    await flushPromises();
+
+    // ① `:project-name` 取自**记录**（夹具名「小猫」）：文件名与图上信息条都必须带上它
+    expect(wrapper.get("[data-testid='export-item-tile-0']").text()).toContain("已生成");
+    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(true);
+    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
+    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("小猫-施工图-r1c1.png");
+    expect(
+      recording.texts.some((call) => call.text.startsWith("小猫 · 2 × 1 格")),
+    ).toBe(true);
+
+    // ② `:revision`：涂一格 ⇒ 面板必须收到新的 revision ⇒ 该项回「待生成」、预览被丢弃
+    //    （钉成常量 `0` 时这一条必红——而先前只有 `PatternCanvas` 的 props 用例能发现）
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    await flushPromises();
+    expect(wrapper.get("[data-testid='export-item-tile-0']").text()).toContain("待生成");
+    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(false);
+  });
+
+  it("导出面板打开时按返回：确认条浮在覆盖层**之上**（z 序），用户看得见、也点得动", async () => {
+    // 修复波 B-2：面板是 `fixed inset-0 z-30`，确认条原来是 `z-20` ⇒ 守卫拦下了导航、`leaving` 也
+    // 置真了，但用户看到的是「按了没反应」：什么都看不见、也没有出口。
+    const wrapper = await mountPage();
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    await wrapper.get("[data-testid='export']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+
+    expect(getLeaveGuard()({ name: "home" }, { name: "editor" })).toBe(false);
+    await nextTick();
+
+    const bar = wrapper.get("[data-testid='leave-bar']");
+    const panel = wrapper.get("[data-testid='export-panel']");
+    /** 类名里那个 `z-NN` 的数值（没有 `z-*` 时是 `NaN` ⇒ 后面的比较恒假、必红）。 */
+    const zOf = (el: { classes: () => string[] }): number => {
+      const match = /(?:^|\s)z-(\d+)(?:\s|$)/.exec(el.classes().join(" "));
+      return match === null ? Number.NaN : Number(match[1]);
+    };
+    expect(zOf(panel)).toBe(30);
+    expect(zOf(bar)).toBe(40);
+    expect(zOf(bar)).toBeGreaterThan(zOf(panel));
+    // 三个动作都在：用户有真的出口（而不是「面板盖住了确认条」这种静默死路）
+    // `wrapper.get(...)` 的返回类型是 `Omit<DOMWrapper<Element>, "exists">`（VTU 2.4.10），
+    // 所以「还在不在」必须走 `find(...).exists()`（B4 规格里记过这一条）。
+    expect(wrapper.find("[data-testid='leave-save']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='leave-discard']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='leave-cancel']").exists()).toBe(true);
+  });
+
+  it("面板的 `usages` 跟着图纸走：全空图纸如实说明，涂一格之后那句话消失", async () => {
+    // 夹具：**全空**的 2×1 → `patternStats` 的 usages 为空（`EditorPage` 的 `usages` 就是它）
+    const doc = toProjectDocument(
+      { width: 2, height: 1, paletteId: palette.id, cells: Uint16Array.from([EMPTY, EMPTY]) },
+      palette,
+      { longSide: 2, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
+    );
+    const store = await createMemoryProjectStore();
+    await store.put({
+      meta: {
+        id: "a",
+        name: "小猫",
+        createdAt: "2026-10-03T00:00:00.000Z",
+        updatedAt: "2026-10-03T01:00:00.000Z",
+        thumbnail: "",
+        width: 0,
+        height: 0,
+        colorCount: 0,
+      },
+      doc,
+      source: null,
+    });
+    setProjectStore(store);
+
+    const wrapper = await mountPage();
+    await wrapper.get("[data-testid='export']").trigger("click");
+    expect(wrapper.get("[data-testid='export-empty-note']").text()).toBe("这张图纸没有可拼的像素");
+
+    // 涂一格：`patternStats().usages` 从空变成 1 项——面板那一行必须跟着消失（`:usages` 的接线）。
+    // 少了 `:usages` 这一条 props 的实时性，面板会一直说「没有可拼的像素」（不报错、只是撒谎）。
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [0, 0], [0, 0]);
+    expect(wrapper.find("[data-testid='export-empty-note']").exists()).toBe(false);
+  });
+
+  it("端到端（规格 §13.2-1）：改一格 → 导出施工图 → 渲染器收到的该格是新色，不是落盘记录里的旧值", async () => {
+    const wrapper = await mountPage();
+    const editor = useEditor();
+    const pattern = editor.pattern;
+    if (pattern === null) throw new Error("载入失败：编辑器还没有图纸");
+    const paintedColor = palette.colors[2];
+    if (paintedColor === undefined) throw new Error("色卡至少要有三色");
+
+    // 起点：(1,0) 是**空格**。涂成 2 号色 ⇒ 内存态与落盘记录从这一刻起不一致。
+    editor.setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+    expect(Array.from(pattern.cells)).toEqual([0, 2]);
+    // **夹具的判别力**：存储里那一格仍是旧的 EMPTY。少了这一句，「渲染器收到新色」与
+    // 「新旧两份恰好一样」不可区分——M14 变异会照样绿。
+    expect(storedCells(await getProjectStore().get("a"))).toEqual([0, EMPTY]);
+
+    await wrapper.get("[data-testid='export']").trigger("click");
+    await wrapper.get("[data-testid='export-save-tile-0']").trigger("click");
+    await flushPromises();
+
+    // 判据 = 渲染器**实际收到的**那一格 `fillRect` 的颜色（规格 §13.2 第 1 条逐字）。
+    // 计划与坐标都由真 core 现算：单张施工图的 tile 覆盖全图，`(1,0)` 的片内像素由 `cellBox` 给出。
+    const plan = planSheets(pattern, palette);
+    const tile = plan.tiles[0];
+    if (tile === undefined) throw new Error("施工图计划没有分片");
+    const box = cellBox(tile, 1, 0);
+    const painted = recording.fills.filter(
+      (fill) => fill.x === box.x && fill.y === box.y && fill.w === box.width && fill.h === box.height,
+    );
+    // 期望值**不用 `rgbCss` 现算**（那是被测口径之一）：直接拼出契约 §2 的序列化形状
+    expect(painted.map((fill) => fill.fillStyle)).toEqual([
+      `rgb(${paintedColor.rgb[0]}, ${paintedColor.rgb[1]}, ${paintedColor.rgb[2]})`,
+    ]);
+    // 那一格只被画一次；M14（数据源换成落盘图纸）下它是空格 ⇒ 这里**一格都没有**
+    expect(painted).toHaveLength(1);
   });
 });

@@ -103,8 +103,34 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 **公开 API ≠ 被使用的 API**：导出即承诺。只被测试消费的导出要么收窄到内部，要么在 JSDoc 里
 写明它为何公开。**已写明**：`Decoder.outputSize`（自我描述的文档字段、生产路径不读它）、
 `nearestCellColor`（sRGB 入参的姊妹 API、流水线不用它）；`patternStats` 自 B2 起有了生产消费者
-（`SetupPage.vue` 的结果阶段）并写明了为何公开；`edit.ts` 的四个导出在 **B3** 写明（见上）。
-**尚未写明**（当前仍无生产消费者）：`buildPatternFromImage`——下次动到它时补上。
+（`SetupPage.vue` 的结果阶段）并写明了为何公开；`edit.ts` 的四个导出在 **B3** 写明（见上）；
+`buildPatternFromImage` 在 **B4** 写明（`core/pattern/build.ts` 的 JSDoc：位图直通入口，
+**仍零生产消费者**——生产路径走 `pipeline.ts` 的 `buildPattern` + `resampleToGrid` 两步，
+B4 的导出也不消费它；保留还是收窄留给下一次动到它的人）。
+**尚未写明（零消费者）**：B4 收尾时这份清单**已清空**——新增公开导出时按本段口径自查并补 JSDoc。
+**B4 新增的公开面**：
+- `core/render/types.ts` 的 `RenderTarget2D` 是 **core 里第一份照平台对象形状声明的窄化绘制目标接口**：core 不得引用 DOM
+  全局，而 `CanvasRenderingContext2D` 在边界闸门（`src/__tests__/coreBoundary.test.ts` 的
+  `FORBIDDEN_GLOBALS`）的禁用清单里——按本节上一条「在 core 定义接口，在 services 注入实现」的口径，
+  由 `services/exporter.ts` 把真 ctx 传进去（**2026-10-05 更正：不是"结构上满足"**——实测四处不兼容，
+  窄化在 `requireContext2D` 里做一次；见任务 3 的那段 JSDoc），测试用普通对象桩。取舍如实记录：
+  换到的是渲染器的全部布局与文字位置都能在 Node 里被断言。
+- `core/render/layout.ts` 的 `planSheets` / `planLegend` / `planShare`：生产消费者是
+  `components/editor/ExportPanel.vue`（面板自己持 plan、自己调渲染器）；`cellBox` / `shareCellBox` /
+  `countTileBeads` / `labelInk` / `rgbCss` 的消费者是**渲染器**（`cellBox` 是施工图格坐标 → 输出像素的
+  唯一映射，`shareCellBox` 是分享图那一条同口径的映射——**两个渲染器都不许自己乘格像素**，
+  `rgbCss` 是输出层唯一的颜色序列化口径，两个渲染器共用）。
+- `core/render/sheet.ts` / `share.ts` 的 `drawSheetTile` / `drawLegend` / `drawShare`：生产消费者是
+  `ExportPanel.vue`（吃 `services/exporter.ts` 建好的画布上下文）。
+- `services/exporter.ts` 的 `ExportItemLabel` 与 `createCanvasStrict` / `requireContext2D` /
+  `canvasToBlob` / `downloadBlob` / `assertCanvasPainted` / `exportFilename`：生产消费者同样是
+  `components/editor/ExportPanel.vue`（面板是 services 层之外唯一调用它们的组件；
+  `assertCanvasPainted` 只对施工图与用量表调用，分享图按设计是透明的、不调用）。
+- `core/pattern/board.ts` 的 `BOARD_COLS` / `BOARD_ROWS`：**当前只被同文件的 `boardCount`（两轴各自）
+  与常量断言用例消费**（`board.test.ts` 的 `expect(BOARD_COLS).toBe(29)` / `expect(BOARD_ROWS).toBe(29)`）；
+  B4 的分片步长 `TILE_STEP = BOARD_COLS` 让 **`BOARD_COLS`** 有了**第一个跨文件消费者**——这正是它们
+  当初被导出的理由（分片必须与界面「需要几块板」共用同一组数字）；`BOARD_ROWS` 至今仍只在
+  `boardCount` 与那条断言里被读。
 
 ## 关键常量（改动需同步规格文档）
 
@@ -117,3 +143,11 @@ npm run palette:fetch    # 重新抓取并生成 MARD 色卡数据
 - 撤销栈上限 50
 - 编辑器初始缩放下限 / 缩放上界基准 `MIN_CELL_PX = 24` / `MAX_CELL_PX = 64`（`core/pattern/view.ts`）
 - 编辑器显示阈值 `GRID_LINE_MIN_CELL_PX = 6`（低于它不画网格线）/ `CELL_LABEL_MIN_CELL_PX = 28`（低于它不画格内色号）
+- 导出画布单边上限 `EXPORT_MAX_EDGE = 4096`（`core/render/layout.ts`；**探针页 `/lab/canvas` 实测后调整**，
+  主规格 §12 的 R2 闭环前它只是主规格 §7.3 所给区间的**保守下界**，不是实测值）
+- 施工图格内色号阈值 `SHEET_LABEL_MIN_CELL_PX = 32`（低于它省略色号；**刻意避开**编辑器屏幕提示的
+  `CELL_LABEL_MIN_CELL_PX = 28`——同名不同义的量传错不会报错，是本项目记过账的形态）
+- 施工图最终兜底格像素 `EXPORT_CELL_PX_FLOOR = 8`（主规格 §7.3；走到这里意味着 `labels = false`）
+- 分享图长边上限 `SHARE_MAX_EDGE = 2048`（分享图是「看轮廓」的图，不需逐格可辨）
+- 施工图分片步长 `TILE_STEP = BOARD_COLS`（= 29，`core/render/layout.ts`；**不许写第二份字面量 29**——
+  分片按整块拼豆板对齐，必须与界面「需要几块板」共用同一组数字）

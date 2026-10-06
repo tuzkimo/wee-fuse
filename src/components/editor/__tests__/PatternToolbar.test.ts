@@ -203,7 +203,13 @@ describe("触控目标与字号", () => {
   // happy-dom 没有布局（`getBoundingClientRect()` 恒 0，CONTRACT §9.5），屏幕尺寸在 CI 里
   // 不可观察；「≥44px / ≥16px」（主规格 §6.4、B3 规格 §10）唯一可观察的形式就是类名。
   // 这是**代理断言**、不是像素断言：它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
-  it("所有按钮的触控目标 ≥44px、字号 ≥16px", () => {
+  //
+  // **标题如实修正（任务 4 修复轮 F4，断言一行未动）**：原标题写的是「**所有**按钮的触控目标
+  // ≥44px、字号 ≥16px」，而下面这份 testid 清单是**硬编码**的、**不含** B4 新增的 `export`——
+  // 「所有」在新增按钮之后**字面失实**。标题现在如实说明它覆盖的是「下面这份清单里的既有按钮」；
+  // `export` 的尺寸类断言在同文件下面的 `导出入口` 那组。把 `export` 并进清单要改既有断言，
+  // 属**延后 Minor**（任务 4 报告第 8 条）。
+  it("清单内的既有按钮触控目标 ≥44px、字号 ≥16px（不含 B4 新增的 export）", () => {
     const wrapper = mountToolbar();
     for (const testid of [
       "tool-brush",
@@ -222,5 +228,27 @@ describe("触控目标与字号", () => {
       expect(classes).toContain("min-h-11"); // 2.75rem = 44px
       expect(classes).toContain("text-base"); // 1rem = 16px
     }
+  });
+});
+
+describe("导出入口", () => {
+  // 契约 §2b / 规格 §13.1：工具栏**只加**一个 `export` 事件与一颗按钮，既有语义不动。
+  //
+  // 尺寸类名也在这里断：上面那条既有用例的 testid 清单是**硬编码**的、不含 B4 新增的 `export`，
+  // 而它属于「既有断言，一行不许改」——新增的这颗按钮否则没有任何尺寸类断言。
+  // （控制者裁定 5 采纳本处置；把新按钮加进那条清单需要改既有断言，如实记为**延后 Minor**，
+  //   见报告清单第 8 条。）
+  it("点导出按钮 emit 一次空载荷的 export，且触控目标 ≥44px、字号 ≥16px", async () => {
+    const wrapper = mountToolbar();
+    const button = wrapper.get("[data-testid='export']");
+    expect(button.text()).toContain("导出");
+    expect(button.classes()).toContain("min-h-11"); // 2.75rem = 44px
+    expect(button.classes()).toContain("text-base"); // 1rem = 16px
+
+    await button.trigger("click");
+    // 断言的是**载荷**：`toEqual([[]])` 同时钉住「只 emit 一次」与「是空载荷」
+    expect(wrapper.emitted("export")).toEqual([[]]);
+    // 串台守卫：复制粘贴漏改事件名（emit `save`）时这里红
+    expect(wrapper.emitted("save")).toBeUndefined();
   });
 });

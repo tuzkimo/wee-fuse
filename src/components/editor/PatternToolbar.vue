@@ -38,6 +38,7 @@ const emit = defineEmits<{
   "zoom-in": [];
   "zoom-out": [];
   save: [];
+  export: [];
 }>();
 
 /** 三个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
@@ -125,6 +126,19 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
 
     <!-- 未保存指示：干净时不渲染（CONTRACT §8 的逐字口径）。 -->
     <span v-if="dirty" data-testid="editor-dirty" class="text-base text-amber-700">未保存</span>
+
+    <!--
+      导出入口（B4）：**只加这一个按钮与一个 `export` 事件**——既有 props / 事件的语义一行不动。
+      面板由 `EditorPage` 渲染（唯一装配点），本组件只知道「用户点了导出」。
+      文案与类名照契约 §2b：`min-h-11`（= 44px，与工具栏其余按钮同口径）、`text-base`（= 16px）。
+    -->
+    <button
+      data-testid="export"
+      class="min-h-11 rounded border border-slate-300 px-4 text-base"
+      @click="emit('export')"
+    >
+      导出
+    </button>
 
     <button
       data-testid="editor-save"

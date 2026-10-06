@@ -13,5 +13,8 @@ export const router = createRouter({
     // 有未保存改动时离开会被页面内的确认条拦下（同页重载由 `watch(route.params.id)` 处理，B1-8）。
     { path: "/edit/:id", name: "editor", component: () => import("@/views/EditorPage.vue") },
     { path: "/lab/decode", name: "decode-lab", component: () => import("@/views/DecodeLabPage.vue") },
+    // /lab/canvas 是 B4 的 canvas 上限探针页（R-7：**开发期实验台**，不进任何用户入口、页面自标「CI 不测」；
+    // 真机实测结果回写 `EXPORT_MAX_EDGE`、主规格 §12 的 R2 与 B4 规格 §16 的 B4-R1）。
+    { path: "/lab/canvas", name: "canvas-lab", component: () => import("@/views/CanvasLabPage.vue") },
   ],
 });

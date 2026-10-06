@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { router } from "@/router";
+import CanvasLabPage from "@/views/CanvasLabPage.vue";
 import PickPage from "@/views/PickPage.vue";
 import SetupPage from "@/views/SetupPage.vue";
 
@@ -55,5 +56,21 @@ describe("router", () => {
 
   it("B1 的临时入口不再占着路由名 generate（任务 14 删页前先把名字腾空）", () => {
     expect(router.hasRoute("generate")).toBe(false);
+  });
+
+  // 任务 5 新增。`/lab/canvas` 是 B4 的开发期探针页（R-7：不进任何用户入口）——
+  // **路由表是它唯一的存在处**，所以「名字打错 / 指向别的组件」在别处全是盲区。
+  // 与 `/new`、`/new/setup` 两条同形：只断言 name / path 的话，把 `component` 换成任何别的页面
+  // 照样绿（懒加载器不会因为 `resolve` 就被调用），所以直接把那个 loader 跑一次做**恒等**比较。
+  it("/lab/canvas 是 canvas 上限探针页：名字 canvas-lab、路径 /lab/canvas、组件就是 CanvasLabPage", async () => {
+    const route = router.resolve({ name: "canvas-lab" });
+
+    expect(route.name).toBe("canvas-lab");
+    expect(route.path).toBe("/lab/canvas");
+
+    const loader = route.matched[0]?.components?.default;
+    expect(typeof loader).toBe("function");
+    const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
+    expect(mod.default).toBe(CanvasLabPage);
   });
 });

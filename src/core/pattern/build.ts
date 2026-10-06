@@ -157,7 +157,21 @@ export function buildPattern(grid: SampledGrid, palette: Palette, options: Build
   return { width: grid.width, height: grid.height, paletteId: palette.id, cells };
 }
 
-/** 便捷入口：位图 → 网格 → 图纸。位图应当已经是按裁剪框解码并缩放到目标尺寸的。 */
+/**
+ * 便捷入口：位图 → 网格 → 图纸。位图应当已经是按裁剪框解码并缩放到目标尺寸的。
+ *
+ * **为何公开（B4 收尾补写）**：它是「已经拿着解码好的位图」的直通入口——与 `buildPattern` 的差别只有
+ * 前面那一步 `resampleToGrid(image, image.width, image.height)`（源宽 == 目标宽时是 1:1 精确复制，
+ * 不引入插值）。它的用途是「调用方自己掌握重采样时机」的姊妹入口。
+ *
+ * **如实写明：它仍然是零生产消费者**——生产路径走 `src/services/pipeline.ts` 的
+ * `buildPattern` + `resampleToGrid` 两步（先按裁剪框解码到目标尺寸，再按网格重采样），
+ * **B4 的导出也不消费它**（导出直接对 `editor.pattern` 渲染，不再走图纸构建）。
+ * **保留还是收窄到内部，留给下一次动到它的人裁决**：它现在的消费者只有
+ * `src/core/pattern/__tests__/build.test.ts` 的 `describe("buildPatternFromImage")` 两条用例，
+ * 而「不许删改既有测试」意味着收窄要连着改那两条。它与 `nearestCellColor`（sRGB 入参的姊妹 API、
+ * 流水线不用它）是同一性质：**只被用例消费、都写明了为何公开**。
+ */
 export function buildPatternFromImage(
   image: RgbaImage,
   palette: Palette,

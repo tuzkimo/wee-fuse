@@ -128,8 +128,15 @@ export interface RenderTarget2D {
 }
 ```
 
-`CanvasRenderingContext2D` 结构上满足它 ⇒ `services` 把真 ctx 直接传进去即可；测试用普通对象桩。
-**取舍如实记录**：这个接口是 core 里第一份「不是纯数据」的类型，但它换到的是——渲染器的全部布局与
+`CanvasRenderingContext2D` **并不**严格满足它（2026-10-05 由任务 3 的审查用编译器实测更正，本节早先那句
+「结构上满足 ⇒ 直接传进去即可」是**假的**）：实测**四处**不兼容——`fillStyle` / `strokeStyle` 是
+`string | CanvasGradient | CanvasPattern`、`textAlign` 含 `"start" | "end"`、`textBaseline` 含
+`"alphabetic" | "hanging" | "ideographic"`。所以窄化在 **`services/exporter.ts` 的 `requireContext2D`
+里做一次**（返回类型就是 `RenderTarget2D`），core 不为此放宽类型（core 必须与 DOM 无关）；测试用普通对象桩。
+**取舍如实记录**：这个接口是 core 里第一份**照平台对象形状声明的「窄化绘制目标」接口**
+（**2026-10-05 由最终审查 D 片更正**：本节早先写的「core 里第一份不是纯数据的类型」按字面为假——
+`core/image/decode.ts` 的 `Decoder`（B1）与 `core/pattern/history.ts` 的 `EditHistory`（B3）都更早，
+且同样是「core 定义接口、services 注入实现」），但它换到的是——渲染器的全部布局与
 文字位置都能在 Node 里被断言（happy-dom 的 canvas 是桩，真实像素在本环境永远测不到，见 §14）。
 
 | 新增文件 | 层 | 为什么在这一层 |
@@ -229,9 +236,11 @@ export interface SheetTilePlan {
 
 1. `sheet.ts` 与 `share.ts` 的**源码文本里 `\bcellPx\b` 零命中**——渲染器要线宽 / 字号只能读 plan 上的
    派生字段（`lineWidths`、`labelFontPx`…）。格子的像素位置只能经 `cellBox` 取得。
-2. `sheet.ts` / `share.ts` 里**不得出现 `row * ` / `* width +` 形态的缓冲下标推导**（行优先 stride 属于
-   `cellAt` 的职责）：渲染器读格子值一律走既有 core 导出 `cellAt(pattern, col, row)`
+2. `sheet.ts` / `share.ts` 里**不得直接读 `pattern.cells`**——格值一律经 `cellAt(pattern, col, row)`
    （`core/pattern/edit.ts`，B3 已有生产消费者，越界返回 `EMPTY`，且它的 JSDoc 已写明消费者）。
+   **口径对齐（2026-10-05）**：闸门实现禁的是标识符形态 `pattern.cells`（不是本条早先写的「`row * ` / `* width +`
+   stride 形态」——后者是**意图**，前者是**实际判据**；两条都写出来是为了让实现与文档对得上）。
+   **已知偏差（宁漏不误）**：`const { cells } = pattern` 能同时绕过本条与「正向要求出现 `cellAt(`」那条检查。
 3. `sheet.ts` / `share.ts` 里**不得出现 `canvasWidth /` / `canvasHeight /` 这类除法**，且 `share.ts` 必须
    出现 `shareCellBox(`。**这一条不是洁癖，是本轮最值得记的一次教训**（2026-10-05，任务 2 起草者实测）：
    `plan.canvasWidth / pattern.width` 与 `shareCellBox` **数值逐位相同**，把前者换回 `share.ts` 的变异实测
@@ -294,18 +303,20 @@ if (innerW < 1 || innerH < 1) → 抛「画布上限 {maxEdge} px 太小，无�
 # ① 先按「色号可读的最小格像素」估每片最多几块板
 kc = floor(innerW / (TILE_STEP × SHEET_LABEL_MIN_CELL_PX))
 kr = floor(innerH / (TILE_STEP × SHEET_LABEL_MIN_CELL_PX))
-labels = kc ≥ 1 && kr ≥ 1
 tileCols = min(width,  TILE_STEP × max(kc, 1))
 tileRows = min(height, TILE_STEP × max(kr, 1))
 
-# ② 格像素：两轴取小，再夹进 [下限, 目标]
+# ② labels 按**实际片格数**判，不是按「几块板」判（2026-10-05 由任务 1 的任务审查修正）
+labels = tileCols × SHEET_LABEL_MIN_CELL_PX ≤ innerW && tileRows × SHEET_LABEL_MIN_CELL_PX ≤ innerH
+
+# ③ 格像素：两轴取小，再夹进 [下限, 目标]
 lo = labels ? SHEET_LABEL_MIN_CELL_PX : EXPORT_CELL_PX_FLOOR
 hi = labels ? EXPORT_CELL_PX_TARGET  : SHEET_LABEL_MIN_CELL_PX − 1
 cellPx = clamp(min(floor(innerW / tileCols), floor(innerH / tileRows)), lo, hi)
 if (!labels && min(floor(innerW/tileCols), floor(innerH/tileRows)) < EXPORT_CELL_PX_FLOOR)
     → 抛「画布上限 {maxEdge} px 连 {EXPORT_CELL_PX_FLOOR} px/格 都放不下」
 
-# ③ 划片（行优先），每片一个 tile；末片取剩余格数
+# ④ 划片（行优先），每片一个 tile；末片取剩余格数
 for rowStart in 0, tileRows, 2×tileRows, … while rowStart < height:
   for colStart in 0, tileCols, … while colStart < width:
     cols = min(tileCols, width − colStart); rows = min(tileRows, height − rowStart)
@@ -346,7 +357,9 @@ for rowStart in 0, tileRows, 2×tileRows, … while rowStart < height:
 | 200×200 | **4 张**（116+84 两轴），33 px/格；每片画布 ≤ 3940×4072 |
 | 500×500 | **25 张**（116 格/片 × 5×5 片），33 px/格 |
 | `maxEdge = 1200`、500×500 | `kc = kr = 1` → 1 块板/片，`cellPx = min(floor(1088/29), floor(956/29)) = min(37, 32) = 32`，含色号；片数 `ceil(500/29)² = 324` |
+| **20×20、`maxEdge = 1040`** | `innerW = 928`、`innerH = 796`；`kc = 1` 但 **`kr = 0`** ⇒ 旧判据（按「几块板」）会**误降级**（`labels = false`、格像素被压到 27、丢色号），而实际片宽 `20×32 = 640 ≤ 928`、片高 `640 ≤ 796` 明明放得下 ⇒ **新判据 `labels = true`、`cellPx = 39`**（2026-10-05 由任务 1 的任务审查发现并修正，附用例） |
 | `maxEdge = 320`、500×500 | `innerW = 320−48−64 = 208`、`innerH = 320−48−108−44−44 = 76`；`kc = floor(208/928) = 0` ⇒ `labels = false`；`min(floor(208/29), floor(76/29)) = min(7, 2) = 2 < 8` ⇒ **抛错**（降级链全部失败，主规格 §8 的出口） |
+| `maxEdge` 显式传 `null` | **抛「画布上限必须是 ≥1 的整数」**（`null` 不是「没传」；口径与 `maxColors` 的运行期校验同源——TS 类型挡不住 `JSON.parse` 出来的值） |
 
 `maxEdge` 是**入参**（默认取常量），所以上表最后两行那种平台上限场景可以用合成值在 CI 里判别，
 不必等真机。
@@ -380,6 +393,11 @@ export type ExportWarning =
   `patternStats` 的那次遍历，不在 core 里再走一遍 O(格数)），但**必须校验**：`usages` 是数组、
   每项 `code` 是非空字符串、`name` 是字符串、`count` 是非负整数、且 **`code` 不重复**
   （重复会让表里出现两行同一个色号——页面看起来正常、数字翻倍，属静默错误）。
+  **产出坐标的语义（2026-10-05 补齐，此前规格从未定义它们 → 契约自造了 6 个字段，其中两个恒等）**：
+  `headerY` = 标题行基线、`tableTop` = 表格区首行基线、`totalY` = **页脚三行（合计 / 精度声明 / 生成时间）
+  的起点**（三行分别落在 `totalY + 2` / `+16` / `+30`，合计高度 44 = `SHEET_FOOTER_H` 正好放下）。
+  **`footerY` 已删除**：它与 `totalY` 代数恒等（`canvasH − 边距 − FOOTER_H` 展开即 `tableTop + itemRows×rowHeight`）
+  且零消费者——任务审查（2026-10-05）抓到的正是这条：**保留一个与另一个字段恒等的字段，就是埋了一份会漂移的真相**。
 - `planShare(pattern, options)`：`cellPx = clamp(floor(maxEdge / max(width, height)), 4, 64)`；
   `canvasW = width × cellPx`、`canvasH = height × cellPx`；**无边距、无文字、无分片**；
   `cols` / `rows` 原样记下图纸宽高（供 `shareCellBox` 的范围守卫）。
@@ -456,11 +474,19 @@ export type ExportWarning =
 
 ```ts
 export function createCanvasStrict(width: number, height: number): HTMLCanvasElement
-export function requireContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D
+export function requireContext2D(canvas: HTMLCanvasElement): RenderTarget2D   // 内部一次具名窄化；§3 有四处不兼容的清单
 export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob>
 export function downloadBlob(blob: Blob, filename: string): void
-export function exportFilename(projectName: string, item: ExportItemLabel): string
+export function assertCanvasPainted(canvas: HTMLCanvasElement): void
+export function exportFilename(
+  projectName: string,
+  item: ExportItemLabel,
+  tile?: { rowIndex: number; colIndex: number },   // 只有施工图带；非分片项**不带序号**
+): string
 ```
+
+**六条签名以契约 §2 为准**（2026-10-05 按任务 3 的实现者回报更正：本节早先只列了 5 条、且 `exportFilename` 漏了 `tile` 形参）。
+`assertCanvasPainted` 是规格 §9 第 5 条那条自检的落点，它的**生产消费者是任务 4 的导出面板**（渲染后、`canvasToBlob` 之前调用）。
 
 - `createCanvasStrict`：`width` / `height` 必须是**整数且 ≥1**（措辞沿用既有守卫）；建好并写宽高后
   **回读** `canvas.width` / `canvas.height`——浏览器对超限画布会**静默钳制**（或置 0），读回不一致即抛中文错误。
@@ -615,7 +641,7 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 | `layout` 常量 | 直接断言常量值（改坏即红）：`EXPORT_MAX_EDGE`、`SHEET_LABEL_MIN_CELL_PX = 32`、`EXPORT_CELL_PX_FLOOR = 8`、`SHARE_MAX_EDGE`、`TILE_STEP` 来自 `BOARD_COLS/ROWS` |
 | `planSheets` 单张 | 58×58 → 1 张、40px/格、`labels = true`、画布尺寸逐位断言 |
 | `planSheets` 分片 | 200×200 → 4 张、范围覆盖 0–199 且**无重叠无缺口**（并集 = 全图、两两交集为空）；500×500 → 25 张；每片边界落在 29 的整数倍上 |
-| `planSheets` 阈值 | `maxEdge = 1200`、500×500 ⇒ `cellPx = 32` 且 `labels = true`（画色号）；`maxEdge = 1143`、500×500 ⇒ `cellPx = 31` 且 `labels = false`、`warnings` 含 `labels-omitted`（已实算：`innerW = 1031`、`innerH = 899`、`kr = floor(899/928) = 0`） |
+| `planSheets` 阈值 | `maxEdge = 1200`、500×500 ⇒ `cellPx = 32` 且 `labels = true`（画色号）；`maxEdge = 1143`、500×500 ⇒ `cellPx = 31` 且 `labels = false`、`warnings` 含 `labels-omitted`（已实算：`innerW = 1031`、`innerH = 899`、`kr = floor(899/928) = 0`）；**20×20、`maxEdge = 1040` ⇒ `labels = true`、`cellPx = 39`**（按实际片格数判，不因整板粒度误降级）；**`maxEdge` 显式传 `null` ⇒ 抛**（不是「没传」） |
 | `planSheets` 失败 | 合成极小 `maxEdge`（如 320）⇒ 抛中文错，消息含实际数字 |
 | `cellBox` | 片内四角与中心逐位断言；越界（本片之外）抛错；非安全整数抛错 |
 | **跨计划不变量** | 同一 `(col,row)`、同一 `cellPx` 下，单张计划与分片计划的 `cellBox` **逐位相等**（§4.2） |
@@ -632,6 +658,9 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 1. **内存态 → 渲染器**：`editor.pattern` 改一格后，`drawSheetTile` 收到的该格 `fillRect` 颜色是新色
    （不是 `session.record` 里的旧值）。变异：把面板的数据源换成 `session.record.pattern` → 应红。
 2. **plan → 渲染器**：同一 `(col,row)` 在单张与分片计划下落到同一片内像素（§4.2 的不变量）。
+   **必须拿「原点非零」的片来比**（2026-10-05 的任务 1 实测教训）：两边都用 `tiles[0]`（origin 恒为 0）时，
+   去掉 `− originCol` 的变异**全绿**——那条断言只是复述了实现。追加 `tiles[6]`（origin = 116）一侧后，
+   同一变异转红（实测 2 红）。**「跨计划比较」这类断言，必须让两边的被比较量真的不同。**
    变异：`cellBox` 去掉 `− originCol` → 应红。
 3. **渲染器 → 产物尺寸**：导出产物的画布尺寸 = 格数 × cellPx（与 `THUMBNAIL_MAX_EDGE = 512` 无关）。
    变异：把导出改走 `renderPatternThumbnail` → 应红。
@@ -645,13 +674,13 @@ object URL）**。每张都是用户手势触发，不存在多下载拦截，�
 
 | # | 变异 | 该红的断言（**红数一律由实现者实跑回填，本表不写数字**） |
 |---|---|---|
-| M1 | `cellBox` 去掉 `− tile.originCol` | §13.2-2 的跨计划不变量 + 分片坐标用例 |
+| M1 | `cellBox` 去掉 `− tile.originCol` | 片内四角逐位用例 + 跨计划不变量用例（**后者必须含原点非零片**，见 §13.2-2；实测 2 红） |
 | M2 | `cellBox` 的越界守卫改成夹取 | 越界用例（列 / 行两条） |
 | M3 | `labels` 判据从 `≥ 32` 改成 `> 32` | 阈值边界用例（`maxEdge = 1200` ⇒ 恰 32px 那条） |
 | M4 | `labels = false` 时仍画色号 | 「格区域内 `fillText` 为 0 次」用例 |
-| M5 | `kc` / `kr` 的 `max(…, 1)` 去掉 | 极小 `maxEdge` 的失败用例（会先撞死循环或错误结果） |
-| M6 | `tileCols` 不取 29 的整数倍（改回「每片一块板」） | 分片边界用例 |
-| M7 | 划片循环的 `while (colStart < width)` 改成 `<=` | 覆盖 / 重叠用例（并集 = 全图、两两交集为空） |
+| M5 | `kc` / `kr` 的 `max(…, 1)` 去掉 | **没有红数：进程级失败**。实测（2026-10-05）`tileRows = 0` ⇒ 划片外层循环步长 0 ⇒ 死循环，vitest worker 在 2.5 s 内 OOM 崩掉、**没有任何一条被标记为红**。⇒ 这个守卫挡的是死循环，不是「错的数字」；跑这条变异要限堆（`NODE_OPTIONS=--max-old-space-size=768`） |
+| M6 | `tileCols` 不取 29 的整数倍（改回「每片一块板」） | 分片边界用例（实测 12 红，含单张 / 分片 / 刻度 / 计数各组） |
+| M7 | 划片循环的 `while (colStart < width)` 改成 `<=` | **原写「覆盖 / 重叠用例」是定位错误**（2026-10-05 实测）：`<=` 只在宽高恰为片步长整数倍时多推一个**零格** tile，而 200 / 500 不是整数倍 ⇒ 覆盖用例不红。**真正抓住它的是两条单张用例**（58×58、116×116 的 `tiles.length` 由 1 变 4，实测 2 红） |
 | M8 | `createCanvasStrict` 删掉回读校验 | 会钳制的画布替身那条用例 |
 | M9 | 把 `tile.cellPx` 写进 `sheet.ts`（例如自己算 `col * tile.cellPx`） | 源码闸门第 1 条 |
 | M10 | `drawShare` 删掉 `imageSmoothingEnabled = false` | 分享图用例 |
@@ -714,7 +743,7 @@ M8 与 M13 —— **M8 → 3 红、M13 → 4 红**，红点与片段点名的断
 
 | # | 风险 | 验证方式 | 降级方案 |
 |---|---|---|---|
-| B4-R1 | canvas 单边 / 面积上限的真值（主规格 R2） | `/lab/canvas` 探针页，手机真机二分（清单 3） | 下调 `EXPORT_MAX_EDGE` → 片数变多，正确性不变。**实测值若 ≠ 4096，不在 B4 收尾任务里顺手改**：那要同时动 `layout.ts` 的常量、`layout.test.ts` 的既有断言、`AGENTS.md` + `CLAUDE.md` 的常量行共四处，属**独立的一次小修复轮**（简报 → 实现 → 控制者复核 → 全新子代理审查）。**若实测 N < 4096，那一轮的优先级最高**（否则该手机上导出会走降级链甚至失败）；若 N > 4096，只是片数偏多，可选 |
+| B4-R1 | canvas 单边 / 面积上限的真值（主规格 R2）——**已实测（2026-10-06，人类伙伴手机）**：单边 ≥ 32768（装置到顶未触及）、面积上限 ≈ **2^28 px**（`16384²` 通过、`16416²` 起「尺寸被接受但读回全 0」）。原始读数见 B4 构建记录 §7.1 | `/lab/canvas` 探针页（已交付并执行）；读数的判决规则预登记在构建记录 §12 | **按预登记规则：实测 `N ≥ 4096` ⇒ 保守下界成立、不立轮**（最坏 `4096²` = 实测面积上限的 6.3%，Safe）。**另一条实测结论更重要**：失败形态是「**尺寸被接受 + 像素读回全 0**」而非钳制 ⇒ `createCanvasStrict` 的回读守卫抓不到它，**§9 第 5 条的自检才是防线**（分享图按设计不自检，它靠 `SHARE_MAX_EDGE = 2048` 的 1.6% 余量）。抬常量属**可选**（仅减少片数），要动 `layout.ts` 常量 + `layout.test.ts` 断言 + `AGENTS.md` + `CLAUDE.md` 四处 |
 | B4-R2 | 超限画布被**静默钳制**（得到白图） | `createCanvasStrict` 回读 + §9 第 5 条的左上角边距像素自检；人工清单 6 | 回读不一致即抛 ⇒ 走降级链，不产出白图 |
 | B4-R3 | 手机上 64 MB 的画布是否可用 | 人工清单 6 | 下调 `EXPORT_MAX_EDGE` |
 | B4-R4 | 长按 `<img>` 存相册在目标浏览器可用 | 人工清单 4 / 5 | 退回「下载到文件管理器再导入」（如实写进 README） |

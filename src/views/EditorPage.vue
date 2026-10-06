@@ -17,6 +17,7 @@ import type { Rect } from "@/core/image/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
 import { zoomCellView, type CellPoint } from "@/core/pattern/view";
+import ExportPanel from "@/components/editor/ExportPanel.vue";
 import PalettePanel from "@/components/editor/PalettePanel.vue";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
@@ -73,6 +74,15 @@ const pendingRerun = ref(false);
  * 不能靠临时把 `session.dirty` 置假来表达（那会顺手改掉一个语义不同的状态位）。
  */
 const allowLeave = ref(false);
+
+/**
+ * 导出面板是否打开（规格 §10.1）。
+ *
+ * **页面只做接线**（R-4）：plan、逐项状态、渲染与下载都在 `ExportPanel` 里。页面给它的三样东西是
+ * 「内存态图纸 + 页面已有的 usages + 失效通道 revision」——`usages` 直接复用**下面**那个 `usages`
+ * computed（它在 `stats` 之后派生；面板因此不必再走一遍 O(格数) 的 `patternStats`，规格 §5.4 的分工）。
+ */
+const exporting = ref(false);
 
 /**
  * **已经载入**的 id。
@@ -545,6 +555,7 @@ function rerun(): void {
             @zoom-in="onCommand('zoom-in')"
             @zoom-out="onCommand('zoom-out')"
             @save="onCommand('save')"
+            @export="exporting = true"
           />
 
           <PalettePanel
@@ -565,11 +576,13 @@ function rerun(): void {
       </div>
     </template>
 
-    <!-- 未保存离开的确认条（页面内，不是浏览器 confirm） -->
+    <!-- 未保存离开的确认条（页面内，不是浏览器 confirm）。
+         **z-40 > 导出覆盖层的 z-30**（修复波 B-2）：面板打开时按返回，守卫照常拦下并把 `leaving`
+         置真，但确认条若被压在全屏面板之下，用户看到的是「按了没反应」——什么都没发生、也没有出口。 -->
     <div
       v-if="leaving"
       data-testid="leave-bar"
-      class="fixed inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-3 border-t border-slate-300 bg-amber-50 p-4"
+      class="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center gap-3 border-t border-slate-300 bg-amber-50 p-4"
     >
       <p class="text-lg text-amber-900">有未保存的改动，确定要离开吗？</p>
       <button
@@ -611,5 +624,23 @@ function rerun(): void {
     >
       重试保存
     </button>
+
+    <!--
+      导出面板（规格 §10.1）。**图纸来源恒为 `editor.pattern`**（**内存态**，含未保存改动）——
+      导出不触发保存、也不读落盘记录里的图纸字段。**唯一取自落盘记录的是工程名**
+      （`:project-name`，只是文件名的前缀与图上标题；记录里的名字改了也不会改变导出的字节）。
+
+      `v-if` 必须**同时**要求 `editor.pattern` 存在（契约 §2b）：少了后半句，图纸还没载入时
+      面板会在渲染期抛错（`:pattern` 拿到 null）。除此之外不新增别的门。
+    -->
+    <ExportPanel
+      v-if="exporting && editor.pattern !== null"
+      :pattern="editor.pattern"
+      :palette="palette"
+      :usages="usages"
+      :project-name="session.record?.meta.name ?? '图纸'"
+      :revision="editor.revision"
+      @close="exporting = false"
+    />
   </main>
 </template>
