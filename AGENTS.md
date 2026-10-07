@@ -4,11 +4,13 @@
 
 ## 项目概述
 
-一起拼豆（WeeFuse）— 拼豆辅助 App，Android 平板优先。
+一起拼豆（WeeFuse）— 拼豆辅助 App，Android 平台（**平板优先，但手机与平板都要求排版正确**）。
 - 前端：Vue 3 + TypeScript + Vite + Pinia + Tailwind CSS v4
 - 客户端壳：Tauri 2.0（**B5 起已落地 Android 壳**，见下方「平台壳」一节；桌面端仍只用于开发调试）
 - 图像引擎：纯前端 TypeScript，`src/core/` 零依赖、与框架无关
 - 后端：后续阶段引入（Go），当前不建目录
+
+**技术栈全表、环境要求与逐阶段文档索引**见 `docs/开发文档索引.md`。
 
 ## 开发命令
 
@@ -81,19 +83,11 @@ cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android 
 
 ## 文档真源（2026-10-07 起）
 
-**README 只讲「是什么」与「怎么跑」**——项目介绍、功能特性、快速开始、出包入口；
-**不再承载开发记录**（进度叙事、延后项表、目录结构都已移出）。
-引用延后项时**一律引下面这份清单，不要引 README**：
+**README 面向普通用户**：只讲「这是什么、能做什么」，**不承载任何开发内容**
+（进度叙事、延后项表、目录结构、开发命令、发布流程都已移出）。
 
-| 内容 | 唯一真源 |
-|---|---|
-| 第一阶段（图像引擎）延后项 `L1–L11` | `docs/superpowers/notes/2026-10-01-engine-build-log.md` §9 |
-| 计划 B1 延后项 `B1-1…B1-20` | `docs/superpowers/notes/2026-10-03-app-b1-build-log.md` §8 |
-| 计划 B2 延后项 `B2-1…B2-57` | `docs/superpowers/notes/2026-10-03-app-b2-build-log.md` §8 |
-| 计划 B3 延后项 `B3-1…B3-42` | `docs/superpowers/notes/2026-10-04-app-b3-build-log.md` §8 |
-| 计划 B4 延后项 `B4-1…B4-35` | `docs/superpowers/notes/2026-10-05-app-b4-build-log.md` §8 |
-| 计划 B5 延后项 `B5-1…B5-26` 与未验证面 | `docs/superpowers/notes/2026-10-06-app-b5-build-log.md` §6 / §7 |
-| 出包、签名、发布流程 | `docs/Android发布指南.md` |
+**开发向的地图在 `docs/开发文档索引.md`**（技术栈、环境要求、逐阶段的规格 / 计划 / 构建记录，
+以及每个阶段的**延后项唯一真源**）——**引用延后项时一律引那份清单，不要引 README**。
 
 **改写历史构建记录必须经人类伙伴明确批准**（先例：B4-31 是「人类伙伴批准直接改写原文」，
 2026-10-07 的这次分离也是）。**默认口径仍是「只加更正注记，不改历史正文」**——报告是**当时的**证据。
