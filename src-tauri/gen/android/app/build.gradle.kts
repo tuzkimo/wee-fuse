@@ -14,7 +14,25 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val keystoreProperties = Properties().apply {
+    val propFile = file("key.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
+    signingConfigs {
+        create("release") {
+            // 只在 key.properties 存在时装配：本地/CI 有钥匙就签，没有就退回未签名（不静默换身份）
+            if (keystoreProperties.containsKey("storeFile")) {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
     compileSdk = 37
     namespace = "cn.tuzkimo.weefuse"
     defaultConfig {
@@ -39,6 +57,7 @@ android {
             }
         }
         getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
             optimization {
                enable = true
             }

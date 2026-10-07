@@ -32,3 +32,8 @@ src-tauri/plugins/**/android/.idea
 *.aab
 *.keystore
 coverage/
+
+# 签名 keystore：**绝对不许入库**（本仓提交 gen/android ⇒ 没有这条规则就会把私钥推上公有仓 ✗）。
+# 位置与 wee-count 一致：src-tauri/gen/android/weefuse.jks；口令在同目录 app/key.properties（也已忽略 ✓）。
+*.jks
+*.p12
