@@ -115,7 +115,9 @@ npm run build
 以及**保存到系统相册**（判据 D 真机通过：落点 `album`、字节数一致、「已受理」⇒ 任务 6 落地、`G4` 转绿、全量 `1286 passed (1286)`、**0 红**）。
 怎么用：`npx tauri android dev`（真机调试）或 `npx tauri android build --apk --debug`（出包）；
 桌面 `npx tauri dev` **仅用于开发调试**（导出仍走下载）。`/lab/shell` 是**开发期实验台，不进用户入口**。
-**在线打包**：仓库的 Actions → `android-package` → **Run workflow**（或推 `v*` tag）⇒ 在 GitHub 机器上出一个 arm64 debug APK，从该 run 的 **Artifacts** 下载（**不需要任何 secret** ✓）；想要**签名 release + 自动发 Release**：那 4 个 secret **已经配好** ✓（2026-10-07）。**签名材料放在本地且被忽略**：
+**正式版发布（在线）**：推 `v*` tag ⇒ Actions 的 **`release-android`** 工作流在 GitHub 机器上出 arm64 **已签名 release APK**（`WeeFuse_<tag>_arm64.apk`）并自动挂 GitHub Release。
+  **只发布正式版本**：**没有手动入口**（2026-10-07 起，照 `wee-count` 的 `release-android.yml` 收窄 —— 原先「`workflow_dispatch` 手动出 debug 包」那条已撤掉，理由是**签名 release 的 CI 路径已经跑通**：run 37604348081 产物同时含 `weefuse-release-apk` ✓）；
+  tag 必须与 `src-tauri/tauri.conf.json` 的版本号一致，且 4 个签名 secret 缺任何一个都**在第一步就响亮失败** ✗（那 4 个 secret **已经配好** ✓，2026-10-07）。**签名材料放在本地且被忽略**：
   `src-tauri/gen/android/weefuse.jks`（钥匙）+ `src-tauri/gen/android/app/key.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`）
   ⇒ 本地 `npx tauri android build --apk` 直接出**已签名** release 包 ✓（实测指纹与 CI 产物一致 ✓）。**换钥匙**：
   `keytool -genkeypair -v -keystore src-tauri/gen/android/weefuse.jks -alias weefuse -keyalg RSA -keysize 2048 -validity 10000` ⇒ 改 `key.properties` ⇒ 

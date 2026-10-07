@@ -1,0 +1,156 @@
+name: release-android
+
+# **正式版发布通道**：只在推 `v*` tag 时触发，出 arm64 已签名 release APK 并挂 GitHub Release。
+#
+# 设计参考 `wee-count` 的 release-android.yml，但**参数按本仓验证过的那套**：
+# NDK 30.0.14904198 / compileSdk·targetSdk 37 / Java 17 Temurin / JVM target 1.8 / gradle wrapper 9.6.1
+# （wrapper 自己下）⇒ 别照抄别的项目的 NDK 版本 ✗。以下三条是本仓的取舍，都是**刻意**的：
+#
+# ① **只发布正式版本**：不再出 debug 包、不留 `workflow_dispatch` 手动入口。
+#    理由：debug 包当初的唯一用途是「没有 secret 也能在线出包」，而这条已经结清 ——
+#    2026-10-07 的 run 37604348081（`headSha` = `700a4ba`，即加 release signingConfig 的那个提交）
+#    产物里**同时**有 `weefuse-release-apk` ✓ ⇒ 签名 release 的 CI 路径已跑通，
+#    手动入口买不到额外信息，只多一个「手动跑要不要发 Release」的分支判断 ✗。
+#    代价**如实记下**：没有 tag 就没有在线试跑；试跑 = 推一个与 tauri.conf.json 版本一致的 tag，
+#    而它会真的发一个 Release（构建失败时 gh-release 那步不会跑 ⇒ 不会发坏产物 ✓）。
+#
+# ② **签名 secrets 缺失 = 响亮失败**（不再「跳过 release、静默只出 debug」）：正式发布少一个 secret
+#    就该红，而不是产出一个没有附加物的 Release ✗。
+#
+# ③ **tag 与 `tauri.conf.json` 版本必须一致**：不一致直接失败，防止 tag 与包内版本号对不上。
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-android
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 30.0.14904198
+    steps:
+      - uses: actions/checkout@v4
+
+      # 用 step 级 env 把 secret 暴露出来，才能用 `${!v}` 间接展开做遍历检查
+      # （`if:` 里读不了 secrets ✗，所以这里不用 `if`，直接**缺谁就报谁**并 exit 1 ✓）。
+      - name: 校验签名 Secrets 完整性
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::缺少 Secret: ${v}，请到仓库 Settings > Secrets and variables > Actions 添加"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: 校验 tag 与 tauri.conf.json 版本一致
+        run: |
+          TAURI_VERSION=$(jq -r .version src-tauri/tauri.conf.json)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$TAURI_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与 tauri.conf.json 的版本 ${TAURI_VERSION} 不一致 ⇒ 先 bump 版本号，或改用正确的 tag"
+            exit 1
+          fi
+          echo "版本一致：${TAURI_VERSION}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 安装 Android NDK（SDK 平台交给 Gradle 按需自动下载）
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          echo "SDK=$SDK"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          # **只装 NDK**。教训（2026-10-07 首次实跑失败于这一步）：我按名字猜的 `platforms;android-37` 在官方仓库里
+          # **不存在** ✗（报 `Failed to find package 'platforms;android-37'`）—— 本机 SDK 目录叫 `android-37.0`，
+          # 平台标识与目录名不是一回事 ✓。而本仓 `compileSdk/targetSdk = 37` ⇒ 交给 **AGP 按需自动下载**平台
+          # （license 已在上一行接受 ✓），比在这里猜 id 稳 ✓。
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${NDK_VERSION}" > /dev/null
+          # 装没装上必须**响亮**：目录不在就立刻失败，并把可用 NDK 列出来 ——
+          # 否则后面的构建会报一个与根因无关的错 ✗（本项目记过账的形态）。
+          if [ ! -d "$SDK/ndk/${NDK_VERSION}" ]; then
+            echo "::error::NDK ${NDK_VERSION} 没装上。当前 \$SDK/ndk 下可用："
+            ls -1 "$SDK/ndk" 2>/dev/null || true
+            echo "::error::仓库里可见的 ndk 包（尾部 20 行）："
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" --list 2>/dev/null | grep -i 'ndk;' | tail -n 20 || true
+            exit 1
+          fi
+          echo "NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 单元测试
+        run: npm run test
+
+      # **桌面 cargo check 看不到 `#[cfg(target_os = "android")]` 的代码** ✗（本仓被这条咬过两次，
+      # 见 ci.yml 与 B5 构建记录 R9）。放在这里是为了在**真正编 Android 之前**就先失败得清清楚楚：
+      # `npx tauri android build` 本来也会编到这块代码，但那要等到 7 分钟的 gradle 流程里才报 ✗。
+      - name: Rust 类型检查（Android target）
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android
+
+      # 签名材料：`build.gradle.kts` 用 `file("key.properties")` 与 `file(storeFile)` **相对 app 模块目录**解析 ✓
+      # ⇒ jks 与 key.properties 都放 `src-tauri/gen/android/app/` 下，`storeFile=weefuse.jks` 才对得上 ✓。
+      - name: 还原签名材料
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/app/weefuse.jks
+          cat > src-tauri/gen/android/app/key.properties <<EOF
+          storeFile=weefuse.jks
+          storePassword=${ANDROID_KEYSTORE_PASSWORD}
+          keyAlias=${ANDROID_KEY_ALIAS}
+          keyPassword=${ANDROID_KEY_PASSWORD}
+          EOF
+
+      - name: 构建 arm64 release APK
+        run: npx tauri android build --apk --target aarch64
+
+      - name: 收集产物
+        run: |
+          mkdir -p release-apk
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "::error::未找到 release APK 产物"
+            exit 1
+          fi
+          cp "$APK" "release-apk/WeeFuse_${GITHUB_REF_NAME}_arm64.apk"
+          ls -l release-apk
+
+      - name: 发布 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-apk/*.apk
+          generate_release_notes: true

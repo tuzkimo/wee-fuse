@@ -526,13 +526,13 @@ E	关闭请求	（尚未触发）
 |---|---|---|---|---|
 | 1 | **六判据（F/A/B/C/D/E）全未取得真机读数** | 探针页与通路在任务 2 交付；**A–E 需要人类伙伴在手机上点** | 操作卡：`.superpowers/sdd/2026-10-06-app-b5-tauri-shell/phone-probe-instructions.md` | **最高**（它决定 pass 2 各任务的实现分支） |
 | 2 | **平板未验** | 本轮验收设备是**手机**（裁决 4） | 将来有平板时重跑 `/lab/shell` 与人工清单 | 中 |
-| 3 | **release 签名 / 上架未做** | 只交付 debug APK（debug keystore 由 CLI 生成） | 需 keystore 与账号（敏感配置，红线） | 低（本阶段不要求） |
+| 3 | **上架 / 应用商店分发未做**（**2026-10-07 部分更正** ✓：release 签名**已落地并验过** —— `build.gradle.kts` 的 `signingConfigs.release` + 4 个 secret + 本地 `npx tauri android build --apk` 出已签名包、指纹与 CI 产物一致 ✓，见 README；**「只交付 debug APK」这句已过时** ✗ —— 发布通道当天晚些从 `android-package` 收窄成 `release-android`、不再出 debug 包，见 §8 第 4 条） | 签名材料已就位 ✓，只缺**分发账号** | 拿到账号后走 Play Console 或自建分发 | 低（本阶段不要求） |
 | 4 | **Rust 侧零单测**（CI 只 `cargo check`） | `take_opened_uris` 的「取走即清」、信封解析、三层核对都只有真机判别力 | §2 的判据 C/D 读数 | 中 |
 | 4b | **mobile-only 的 `cfg` 分支从不被 CI 编译** | CI 的 `cargo check` 编的是桌面 target，`#[cfg(target_os = "android")]` 整块（含 `save_with_platform` 的 Android 实现、`RunEvent::Opened` 的入队与 `emit`）与插件的移动端路径**不参与类型检查**。**实测代价（R9）**：任务 2 用真机构建才抓到 `E0716` 临时值与被遗漏的 `Manager` 引入 | 每次 `tauri android build` 顺带验证；若要把这条纳入 CI，需要加一个 Android target 的 `cargo check`（本轮不做，记为首选项） | 中 |
 | 5 | **`tauriDriver.ts` 在 happy-dom 下不可执行** | 信封布局 / 字节核对 / `exitApp()` 三处零 CI 断言。**2026-10-06 修正（任务 2 修复轮）**：这句**过粗**——正因为驱动**全部走动态 `import()`**，模块本身在 happy-dom 里**可以被 import**，所以它的**纯函数部分可测**：base64 编码器已单独建 `src/services/platform/__tests__/tauriDriver.test.ts` 覆盖（含已知答案向量与分块边界）。**仍然零 CI 断言的是「与平台交互的那几处」**（`invoke` / `listen` / `exitApp`），不是整个文件 | 同上 | 中 |
 | 5b | **base64 请求体在超大图上的内存压力未验**（R11 的直接代价） | 64 MB 的施工图 ⇒ base64 约 **85 MB 的字符串**，要经 webview ↔ Kotlin 的 IPC 桥；桥对超大 JSON 串的行为（限流 / OOM / 卡顿）**未验**。探针用的是 64×64（无压力）⇒ 这条只会在大图上现形 | 人工清单 11（116×116 ≈ 64 MB）**重点记录耗时与内存表现**；若崩，按 D5 另立小轮下调 `EXPORT_MAX_EDGE`（与 B4 清单 6 的预登记规则同一条） | 中 |
 | 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
-| 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；**CI 曾不构建 APK**，但 2026-10-07 起有了 `android-package` 工作流（手动触发或 v* tag）⇒ 这条链现在**在线也能被验证** ✓（首次实跑：见 §8 第 3 条） | 每次真机构建顺带验证 | 低 |
+| 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；**CI 曾不构建 APK**，但 2026-10-07 起有了发布工作流（**当天晚些从「android-package」收窄为 `release-android`，仅 `v*` tag 触发**，见 §8 第 3/4 条）⇒ 这条链现在**在线也能被验证** ✓（首次实跑：见 §8 第 3 条） | 每次真机构建顺带验证 | 低 |
 | 8 | **共享契约一度只对浏览器实现生效**（2026-10-06 审查发现，**已修**） | `platformContract.ts` 的 JSDoc 自称「由 `tauriPlatform.test.ts` 调用」，而**全仓唯一调用点是 `browserPlatform.test.ts`** ⇒ 契约里归属**壳侧**的两条分支（`supported` 为真、`canCapture` 为真的 `finishCapture`）**从未执行**。修：`tauriPlatform.test.ts` 用壳 harness（`canCapture: true`）调契约（第 1 轮修复的 F4）。**教训**：JSDoc 里出现「由 X 调用」这类断言性限定时，**回头 grep 一次调用点**——这正是本项目「注释里出现『不是/非/只/必』时回头问一句『代码真的是这样吗』」那条习惯的又一例 |
 
 ---
@@ -559,6 +559,7 @@ E	关闭请求	（尚未触发）
 | # | 建议/已落地 | 结果 |
 |---|---|---|
 | 3 | **2026-10-07：新建「在线打包」工作流 `.github/workflows/android-package.yml`**（人类伙伴批准建**公有仓** `tuzkimo/wee-fuse` 并要「可以在线打包的 action」；参考 `wee-count` 的 `release-android.yml`，但**参数按本仓真机验证过的那套**：NDK `30.0.14904198` / `compileSdk·targetSdk 37` / Java 17 Temurin / JVM 1.8） | ✅ **已跑通**：首次实跑**失败于「安装 Android SDK 平台与 NDK」** ✗（我按目录名猜的 `platforms;android-37` 在官方仓库**不存在** ⇒ `Failed to find package`；修法 = **只装 NDK、平台交给 AGP 按需下载** ✓，并让「NDK 没装上」响亮失败并列出可用清单 ✓，提交 `031b42a`）⇒ 第二次 run **success** ✓，**产物已下载验证**（`weefuse-main-arm64-debug.apk` 131.9 MB / 927 条目 / 含 `lib/arm64-v8a/libweefuse_lib.so` / 只有 arm64-v8a ✓）。**debug 包不需要任何 secret** ✓；配了 4 个签名 secret 才额外出签名 release 并挂 GitHub Release ✓ |
+| 4 | **2026-10-07：`android-package` 改名 `release-android` 并收窄成「只发布正式版本」**（人类伙伴要求：参考 `wee-count` 的 `release-android.yml` 的设计、只发布正式版本、工作流名复用 `release-android`）。变了四处：① **去掉 debug 打包**（含 `upload-artifact` 两个 job 产物）；② **去掉 `workflow_dispatch`** ⇒ 触发只剩 `push: tags: ['v*']`；③ 签名 secrets 缺失从「跳过 release」改为**响亮失败**（正式发布少一个 secret 就该红 ✓）；④ 产物改名 `WeeFuse_<tag>_arm64.apk` | ✅ **落地并**（能离线验的部分）**全验过**：YAML 可解析、`on` 解析结果就是 `{"push":{"tags":["v*"]}}` ✓；9 段 `run` 块全部过 `bash -n` ✓；三段有逻辑的块**真跑过并带反例** ✓ —— secrets 检查「全配 ⇒ 放行」且**逐个**缺一个 ⇒ `exit 1` + 报出缺哪个（4/4 反例都红 ✓）；tag 版本检查 `v0.9.0 vs 0.9.0` 放行、`v0.10.0 vs 0.9.0` ⇒ `exit 1` ✓；收集步骤在假产物树上产出 `WeeFuse_v0.9.0_arm64.apk` ✓、无产物 ⇒ `exit 1` ✓（jq 在 WSL 里缺 ⇒ 用 shim 顶替，验的是**比较逻辑**；GitHub runner 预装 jq ✓）。**仍未验证面**：**首次 tag 实跑还没发生** ✗ —— 上面验的是脚本逻辑，不是 GitHub runner 上的端到端（下一次推 `v*` tag 才闭环）。**为什么敢撤掉「手动手动出 debug 包」这条**：查 run 记录发现**签名 release 的 CI 路径早已跑通** ✓ —— run `37604348081` 的 `headSha` = `700a4ba`（正是加 `signingConfigs.release` 的那个提交），产物**同时**含 `weefuse-debug-apk` 与 `weefuse-release-apk`，而后者那一步的**门就是 keystore secret 存在** ⇒ 手动入口买不到额外信息，只多一个「手动跑要不要发 Release」的分支判断 ✗ |
 
 **下表是任务 2 时期的两条原始建议（保留作对照）**：
 
