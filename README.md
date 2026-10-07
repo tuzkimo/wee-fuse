@@ -115,6 +115,7 @@ npm run build
 以及**保存到系统相册**（判据 D 真机通过：落点 `album`、字节数一致、「已受理」⇒ 任务 6 落地、`G4` 转绿、全量 `1286 passed (1286)`、**0 红**）。
 怎么用：`npx tauri android dev`（真机调试）或 `npx tauri android build --apk --debug`（出包）；
 桌面 `npx tauri dev` **仅用于开发调试**（导出仍走下载）。`/lab/shell` 是**开发期实验台，不进用户入口**。
+**在线打包**：仓库的 Actions → `android-package` → **Run workflow**（或推 `v*` tag）⇒ 在 GitHub 机器上出一个 arm64 debug APK，从该 run 的 **Artifacts** 下载（**不需要任何 secret** ✓）；想要**签名 release + 自动发 Release**，去 `Settings → Secrets and variables → Actions` 加 `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` 四个 secret 即可（keystore 本身**不要入库** ✗）。
 逐条边界、限制编号（`B5-*`）与未验证面见 [B5 构建记录](docs/superpowers/notes/2026-10-06-app-b5-build-log.md) §6/§7；
 规格见 [B5 规格](docs/superpowers/specs/2026-10-06-app-b5-tauri-shell-design.md)。
 

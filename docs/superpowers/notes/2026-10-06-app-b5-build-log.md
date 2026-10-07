@@ -528,7 +528,7 @@ E	关闭请求	（尚未触发）
 | 5 | **`tauriDriver.ts` 在 happy-dom 下不可执行** | 信封布局 / 字节核对 / `exitApp()` 三处零 CI 断言。**2026-10-06 修正（任务 2 修复轮）**：这句**过粗**——正因为驱动**全部走动态 `import()`**，模块本身在 happy-dom 里**可以被 import**，所以它的**纯函数部分可测**：base64 编码器已单独建 `src/services/platform/__tests__/tauriDriver.test.ts` 覆盖（含已知答案向量与分块边界）。**仍然零 CI 断言的是「与平台交互的那几处」**（`invoke` / `listen` / `exitApp`），不是整个文件 | 同上 | 中 |
 | 5b | **base64 请求体在超大图上的内存压力未验**（R11 的直接代价） | 64 MB 的施工图 ⇒ base64 约 **85 MB 的字符串**，要经 webview ↔ Kotlin 的 IPC 桥；桥对超大 JSON 串的行为（限流 / OOM / 卡顿）**未验**。探针用的是 64×64（无压力）⇒ 这条只会在大图上现形 | 人工清单 11（116×116 ≈ 64 MB）**重点记录耗时与内存表现**；若崩，按 D5 另立小轮下调 `EXPORT_MAX_EDGE`（与 B4 清单 6 的预登记规则同一条） | 中 |
 | 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
-| 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；但 CI **不构建 APK** ⇒ 这条链只在真机构建时被验证 | 每次真机构建顺带验证 | 低 |
+| 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；**CI 曾不构建 APK**，但 2026-10-07 起有了 `android-package` 工作流（手动触发或 v* tag）⇒ 这条链现在**在线也能被验证** ✓（首次实跑：见 §8 第 3 条） | 每次真机构建顺带验证 | 低 |
 | 8 | **共享契约一度只对浏览器实现生效**（2026-10-06 审查发现，**已修**） | `platformContract.ts` 的 JSDoc 自称「由 `tauriPlatform.test.ts` 调用」，而**全仓唯一调用点是 `browserPlatform.test.ts`** ⇒ 契约里归属**壳侧**的两条分支（`supported` 为真、`canCapture` 为真的 `finishCapture`）**从未执行**。修：`tauriPlatform.test.ts` 用壳 harness（`canCapture: true`）调契约（第 1 轮修复的 F4）。**教训**：JSDoc 里出现「由 X 调用」这类断言性限定时，**回头 grep 一次调用点**——这正是本项目「注释里出现『不是/非/只/必』时回头问一句『代码真的是这样吗』」那条习惯的又一例 |
 
 ---
@@ -550,7 +550,13 @@ E	关闭请求	（尚未触发）
 **次之**：**116×116 的 base64 内存压力**（清单 11 本轮报「G 正常」✓ ⇒ 在 ≈64 MB 量级下可用 ✓，但**只测了「不崩」**，
 没有耗时/峰值内存读数 ✗）；**再次**：**横竖屏**（清单 13 的横竖屏那半**仍未执行** ✗，而顶部遮挡正是这一类问题的第一次现身 ✓）。
 
-## 8. 建议的处置（**改动 CI/CD 属红线**：第 1 条已经人类伙伴**明确批准**后落地；第 2 条待排期）
+## 8. 建议的处置（**改动 CI/CD 属红线**：均经人类伙伴明确批准后落地）
+
+| # | 建议/已落地 | 结果 |
+|---|---|---|
+| 3 | **2026-10-07：新建「在线打包」工作流 `.github/workflows/android-package.yml`**（人类伙伴批准建**公有仓** `tuzkimo/wee-fuse` 并要「可以在线打包的 action」；参考 `wee-count` 的 `release-android.yml`，但**参数按本仓真机验证过的那套**：NDK `30.0.14904198` / `compileSdk·targetSdk 37` / Java 17 Temurin / JVM 1.8） | ✅ **已跑通**：首次实跑**失败于「安装 Android SDK 平台与 NDK」** ✗（我按目录名猜的 `platforms;android-37` 在官方仓库**不存在** ⇒ `Failed to find package`；修法 = **只装 NDK、平台交给 AGP 按需下载** ✓，并让「NDK 没装上」响亮失败并列出可用清单 ✓，提交 `031b42a`）⇒ 第二次 run **success** ✓，**产物已下载验证**（`weefuse-main-arm64-debug.apk` 131.9 MB / 927 条目 / 含 `lib/arm64-v8a/libweefuse_lib.so` / 只有 arm64-v8a ✓）。**debug 包不需要任何 secret** ✓；配了 4 个签名 secret 才额外出签名 release 并挂 GitHub Release ✓ |
+
+**下表是任务 2 时期的两条原始建议（保留作对照）**：
 
 | # | 建议 | 实测依据 | 状态 |
 |---|---|---|---|
