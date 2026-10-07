@@ -1,6 +1,6 @@
 # 一起拼豆（WeeFuse）
 
-本地优先、把照片变成拼豆图纸的 Android 辅助 App。
+把图片/照片变成拼豆图纸的 App。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![ci](https://github.com/tuzkimo/wee-fuse/actions/workflows/ci.yml/badge.svg)](https://github.com/tuzkimo/wee-fuse/actions/workflows/ci.yml)
