@@ -885,3 +885,21 @@ describe("保存经能力层落盘（任务 6：规格 §5.4.3 / §9.2-2 —— 
     expect(text).not.toContain("已保存到相册");
   });
 });
+
+
+describe("B5-25：那句「长按预览图存进相册」的提示只对浏览器成立", () => {
+  afterEach(() => {
+    setPlatform(browserPlatform);
+  });
+
+  it("浏览器（默认落点 download）⇒ 提示在；壳（落点 album）⇒ 提示不在", () => {
+    // 壳里点「保存」直接进系统相册 ⇒ 再让用户去长按预览图是多余提示（B5-25）。
+    // 两侧都钉：只钉壳侧的话，「提示被整段删掉」也会绿（那是另一种错）。
+    const onBrowser = mountPanel(makeSmallPattern());
+    expect(onBrowser.text()).toContain("长按下面的预览图存进相册");
+
+    setPlatform({ ...browserPlatform, album: { kind: "album", save: vi.fn(async () => undefined) } });
+    const inShell = mountPanel(makeSmallPattern());
+    expect(inShell.text()).not.toContain("长按下面的预览图存进相册");
+  });
+});

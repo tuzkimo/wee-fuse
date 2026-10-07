@@ -101,6 +101,13 @@ const shareSummary = computed(() => {
 const totalBeads = computed(() => props.usages.reduce((sum, usage) => sum + usage.count, 0));
 const colorCount = computed(() => props.usages.length);
 
+/**
+ * 那句「手机上也可以长按下面的预览图存进相册」**只对浏览器成立**：壳里点「保存」就直接进系统相册 ✓，
+ * 长按是多余提示（`B5-25`）。判据用渲染期读到的落点（与 `statusText` 同源 ✓）。
+ * **消费者 = 模板里那句话的 `v-if`**；判别力在 `ExportPanel.test.ts`（浏览器默认落点 ⇒ 在；壳假平台 ⇒ 不在）。
+ */
+const showsLongPressHint = computed(() => getPlatform().album.kind === "download");
+
 /** 渲染器只吃字符串、不读 `Date`（规格 §9 第 1 条），所以每次生成取一次就够。 */
 function makeMeta(generatedAt: string): SheetMeta {
   return {
@@ -421,7 +428,7 @@ async function saveItem(item: ExportItem): Promise<void> {
       <p data-testid="export-summary-legend" class="text-base text-slate-700">{{ legendSummary }}</p>
       <p data-testid="export-summary-share" class="text-base text-slate-700">{{ shareSummary }}</p>
       <p v-if="usages.length === 0" data-testid="export-empty-note" class="text-base text-amber-700">这张图纸没有可拼的像素</p>
-      <p class="text-base text-slate-500">手机上也可以长按下面的预览图存进相册。</p>
+      <p v-if="showsLongPressHint" class="text-base text-slate-500">手机上也可以长按下面的预览图存进相册。</p>
     </div>
 
     <!-- 逐项：一项一个「保存」，互不影响 -->
