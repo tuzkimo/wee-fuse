@@ -455,7 +455,11 @@ E	关闭请求	（尚未触发）
 
 ## 6. 正式接受的限制与延后项（截至任务 1）
 
-一行一条，编号供 README 引用。**判定为可接受、明确不修**的项：
+一行一条。**自 2026-10-07 起，本节是 `B5-1 … B5-26` 的唯一真源**——原文那句「编号供 README 引用」
+已随 README 撤除「已知限制」节而失去用途（依据见
+`docs/superpowers/specs/2026-10-07-readme-and-dev-notes-restructure-design.md`）；撤除前 README 那份摘录
+**既编号漂移又过期**（它把自己的 `B5-11` 用在本文的 **B5-15** 上，且仍写「两处手改」而本文已是三处），
+故那份摘录**没有可并入的内容**、直接作废。**判定为可接受、明确不修**的项：
 
 - B5-1 测试文件整体不在 G1 的扫描范围内（`__tests__` 路径段 / `.test.ts` / `.spec.ts` 结尾）。理由：包名在既有测试里是**数据**（`coreBoundary.test.ts`），而测试里静态 import `@tauri-apps/*` 会在 vitest 收集阶段就崩（自证）。**代价如实记**：测试文件里把包名拼进字符串不会被拦。
 - B5-2 闸门的语料库只有 `src/**/*.{ts,vue}` ⇒ 不看 `.js` / `.mjs` / `.cjs` / `.jsx` / `.tsx`，也不看仓库根配置。换后缀 / 换语言前必须先改那个 glob。
@@ -476,7 +480,10 @@ E	关闭请求	（尚未触发）
   取消后要等一个宽限期（`PICKER_RETURN_GRACE_MS`）按钮才恢复；而**用户在系统相册里停很久再回来**（焦点信号早于选择）
   仍会被判成取消。**取舍已定**：在「**永久卡死**」与「**偶尔要重来一次**」之间选了后者 ✓。
 - B5-14 **`onCloseRequested` 在 Android 上未观察到触发**（判据 E，B5-R6）：退出请求那条分支在真机上是**惰性**的；
-  「有未保存改动就别退出」这条路**由返回键三分支覆盖** ✓。**不视为缺陷**，但 README 要如实写。
+  「有未保存改动就别退出」这条路**由返回键三分支覆盖** ✓。**不视为缺陷**。~~但 README 要如实写。~~
+  **2026-10-07 更正**：README 自本轮起不再承载「已知限制」节（人类伙伴 2026-10-07 决定，依据见
+  `docs/superpowers/specs/2026-10-07-readme-and-dev-notes-restructure-design.md` §5）⇒ 本条继续作为
+  **内部记录**留档，**对外不再声明**。
 - B5-15 **三处手改落在「已入库的生成工程」里**（2026-10-07 从两处变三处）：① 图标 mipmap；② `MainActivity.kt` 的 insets 消费；
   **③ `app/build.gradle.kts` 的 release 签名块**（`keystoreProperties` + `signingConfigs.create("release")` + release 挂钩，照 wee-count 验证过的写法 ✓，提交 `700a4ba`）
   —— 它让**本地** `npx tauri android build --apk` 与 **CI** 都能出**已签名** release 包 ✓（实测两边指纹一致：`b639e6b0…`）。
@@ -531,7 +538,7 @@ E	关闭请求	（尚未触发）
 | 4b | **mobile-only 的 `cfg` 分支从不被 CI 编译** | CI 的 `cargo check` 编的是桌面 target，`#[cfg(target_os = "android")]` 整块（含 `save_with_platform` 的 Android 实现、`RunEvent::Opened` 的入队与 `emit`）与插件的移动端路径**不参与类型检查**。**实测代价（R9）**：任务 2 用真机构建才抓到 `E0716` 临时值与被遗漏的 `Manager` 引入 | 每次 `tauri android build` 顺带验证；若要把这条纳入 CI，需要加一个 Android target 的 `cargo check`（本轮不做，记为首选项） | 中 |
 | 5 | **`tauriDriver.ts` 在 happy-dom 下不可执行** | 信封布局 / 字节核对 / `exitApp()` 三处零 CI 断言。**2026-10-06 修正（任务 2 修复轮）**：这句**过粗**——正因为驱动**全部走动态 `import()`**，模块本身在 happy-dom 里**可以被 import**，所以它的**纯函数部分可测**：base64 编码器已单独建 `src/services/platform/__tests__/tauriDriver.test.ts` 覆盖（含已知答案向量与分块边界）。**仍然零 CI 断言的是「与平台交互的那几处」**（`invoke` / `listen` / `exitApp`），不是整个文件 | 同上 | 中 |
 | 5b | **base64 请求体在超大图上的内存压力未验**（R11 的直接代价） | 64 MB 的施工图 ⇒ base64 约 **85 MB 的字符串**，要经 webview ↔ Kotlin 的 IPC 桥；桥对超大 JSON 串的行为（限流 / OOM / 卡顿）**未验**。探针用的是 64×64（无压力）⇒ 这条只会在大图上现形 | 人工清单 11（116×116 ≈ 64 MB）**重点记录耗时与内存表现**；若崩，按 D5 另立小轮下调 `EXPORT_MAX_EDGE`（与 B4 清单 6 的预登记规则同一条） | 中 |
-| 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | 写进 README 的已知限制 | 低（如实记录即可） |
+| 6 | **切后台被系统回收会丢未保存改动** | 规格 §5.5.4 的刻意不做（Rust 无 `Paused`/`Suspended`；`visibilitychange` 拦不住） | ~~写进 README 的已知限制~~ **2026-10-07 更正**：README 不再承载「已知限制」节（依据见 `docs/superpowers/specs/2026-10-07-readme-and-dev-notes-restructure-design.md` §5）⇒ 本条**无对外出口**，仅作内部记录 | 低（如实记录即可） |
 | 7 | **`:app:rustBuild*` 依赖 `npm run tauri`** | 已由 `"tauri": "tauri"` script 解决（P9）；**CI 曾不构建 APK**，但 2026-10-07 起有了发布工作流（**当天晚些从「android-package」收窄为 `release-android`，仅 `v*` tag 触发**，见 §8 第 3/4 条）⇒ 这条链现在**在线也能被验证** ✓（首次实跑：见 §8 第 3 条） | 每次真机构建顺带验证 | 低 |
 | 8 | **共享契约一度只对浏览器实现生效**（2026-10-06 审查发现，**已修**） | `platformContract.ts` 的 JSDoc 自称「由 `tauriPlatform.test.ts` 调用」，而**全仓唯一调用点是 `browserPlatform.test.ts`** ⇒ 契约里归属**壳侧**的两条分支（`supported` 为真、`canCapture` 为真的 `finishCapture`）**从未执行**。修：`tauriPlatform.test.ts` 用壳 harness（`canCapture: true`）调契约（第 1 轮修复的 F4）。**教训**：JSDoc 里出现「由 X 调用」这类断言性限定时，**回头 grep 一次调用点**——这正是本项目「注释里出现『不是/非/只/必』时回头问一句『代码真的是这样吗』」那条习惯的又一例 |
 

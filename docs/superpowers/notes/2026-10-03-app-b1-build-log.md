@@ -127,28 +127,32 @@ R9 问的是「`crop.x/y` 为负（越界裁剪）会怎样」。任务 2 的实
 | B1-1 | `GeneratePage` 的成功路径**在 happy-dom 下无法覆盖**，靠平台边界桩 + 真实浏览器人工验证 | 桩只替换平台 I/O，断言落在外部可观察量上；真实解码/canvas/IDB 刷新仍只靠浏览器那一次 |
 | B1-2 | `renderPatternThumbnail` 的**像素内容无断言**（happy-dom canvas 是桩） | 「封面是图纸不是原图」在 CI 里只守到「创建了两个 canvas + `toDataURL` 被调用」 |
 | B1-3 | `estimateUsage()` 的「`navigator.storage` 根本不存在」这一支无断言 | 三条有判别力的分支已用 `vi.stubGlobal` 覆盖 |
-| B1-4 | `setProjectStore` / `getProjectStore` 的覆盖推后到 B2 | 它们是两个单例适配器，B2 装配路由与页面时会真实消费 |
+| B1-4 | `setProjectStore` / `getProjectStore` 的覆盖推后到 B2 | 它们是两个单例适配器，B2 装配路由与页面时会真实消费。**已在 B2 闭环**：任务 2 新增 `services/__tests__/projectStore.test.ts`（适配器 3 条：「未注入时抛错而不是静默返回假实现」「注入后是同一个实例」「`null` 能复位」）。 |
 | B1-5 | `probeSourceSize` 的**成功路径在 CI 中零覆盖** | happy-dom 使该路径不可能达成；`probeImageSize` 的成功路径已由 `probe.test.ts` 以 4000×3000 判别性覆盖 |
-| B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口） | 响亮失败但用户无出路；~~B2 会整体替换这一页~~ **收尾轮（任务 9）改判：这是死路，必须修**——`defaultName` 改为 `.slice(0, PROJECT_NAME_MAX)` 并补断言（第 121 字的文件名落盘名字长 100）。「B2 会替换它」不构成不修的理由：在那之前用户会被卡死 |
-| B1-7 | `LibraryPage` 在**存储级失败**时不置 `storeUnavailable`（只给琥珀错误条，新建**不禁用**） | 真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径 |
-| B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载** | B1 的导航图生不出这个跳转，B3 会遇到 |
-| B1-9 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`） | 它是 B2/B3 的接口面；注释已改为与事实一致 |
+| B1-6 | `defaultName` 不夹 `PROJECT_NAME_MAX`（>100 字文件名 → `put` 抛错，而 B1 无改名入口） | 响亮失败但用户无出路；~~B2 会整体替换这一页~~ **收尾轮（任务 9）改判：这是死路，必须修**——`defaultName` 改为 `.slice(0, PROJECT_NAME_MAX)` 并补断言（第 121 字的文件名落盘名字长 100）。「B2 会替换它」不构成不修的理由：在那之前用户会被卡死。**本轮已修**（`GeneratePage.defaultName` 夹到 100，并补断言）。B2 把这份逻辑迁成 `services/projectStore.ts` 的 `defaultProjectName`，`GeneratePage.vue` 随之删除——本项的历史措辞保留。 |
+| B1-7 | `LibraryPage` 在**存储级失败**时不置 `storeUnavailable`（只给琥珀错误条，新建**不禁用**） | 真正的修法是区分「未注入」与「库打不开」，属 B2 的错误处理口径。**已在 B2 闭环**（规格 §8）：现在**未注入**给「不允许本地保存」、**`list()` 打不开**显示具体原因，两种都置 `storeUnavailable` 并**禁用「新建」**；`LibraryPage.test.ts` 三条用例分别钉住（未注入 / `list` 抛错 / 只有 `estimateUsage` 失败时列表与新建照常）。 |
+| B1-8 | `EditorPage` 只在 `onMounted` 载入且无 `:key` → `/edit/A → /edit/B` 仅参数变化时**不重载** | B1 的导航图生不出这个跳转，B3 会遇到。**已在 B3 闭环**：`EditorPage.vue` 新增 `watch(() => route.params.id, …)` 重载 + `editor.reset()`，有未保存改动时先走同一条确认条，**「保存并离开」= 保存旧 id 的改动、再载入新 id**——同一条路由记录只变参数时 `onBeforeRouteLeave` **不触发**（它不是 `beforeRouteUpdate`），那次导航其实**已经提交**、`route.params.id` 已是 b，重放的目标与当前地址逐字相同会被 vue-router 当成重复导航直接 resolve，所以「再载入」必须由 `replayPending()` 自己做、不能留给 `watch`（`loadedId` 在 `activate` 入口就写，保证只载入一次）。`EditorPage.test.ts` 两条用例钉住，其中「有未保存改动时先拦下，确认后才切到新 id」**按真实顺序断言**（确认后画布/标题/历史都是 b 的内容，不再手动把路由参数退回空值替生产代码补一步）。 |
+| B1-9 | `useProjectSession().adopt` 在 B1 **无生产消费者**（生成页直接 `put`） | 它是 B2/B3 的接口面；注释已改为与事实一致。**已在 B2 闭环**：`SetupPage.generate()` 走 `session.adopt(pattern, params, meta)` + `await session.save()`（`SetupPage.vue`），保存失败时按主规格 §8 保留内存态并给重试。 |
 | B1-10 | `data:image/` 是**前缀**判定，故 `data:image/svg+xml` 会放行 | 规格 §12 的既有口径 |
 | B1-11 | 两个实现的 `rename("nope", "   ")` 错误文案优先级不同（IDB 先校验 name、内存先查存在性） | 契约未定义优先级，两条都对 |
-| B1-12 | `crop.x/y` 允许负数 → 越界源矩形**静默产出带透明边的图纸**（见 §5） | B1 生产路径可证明永不越界；是否在入口夹取/拒绝交 B2 |
-| B1-13 | `generatePattern` 未按源图尺寸校验 `crop` | 同上，B2 决策 |
+| B1-12 | `crop.x/y` 允许负数 → 越界源矩形**静默产出带透明边的图纸**（见 §5） | B1 生产路径可证明永不越界；是否在入口夹取/拒绝交 B2。**已在 B2 闭环**（规格 §5.2）：`GenerateRequest.sourceSize` 改为**必填**，`services/pipeline.ts` 在解码之前**拒绝**越界 `crop`（**不夹取**，报错带上实际数字），UI 侧另有 `clampRectToSource` 夹取作为第一道。 |
+| B1-13 | `generatePattern` 未按源图尺寸校验 `crop` | 同上，B2 决策。**已在 B2 闭环**：同 B1-12——校验落在 `pipeline.ts` 的入口，`pipeline.test.ts`（任务 6）与 `SetupPage.test.ts`「选区大于源图时流水线响亮拒绝（第二道防线真的在）」两处覆盖。 |
 | B1-14 | `LibraryPage` 的 rename/delete `catch` 分支、改名预填值、「算了」取消按钮、`maxColors: null` 的 `save→load` 往返未断言 | 已自曝，属覆盖面 |
-| B1-15 | 「打开」在 B1 只显示只读**参数**（名称 / 尺寸 / 用色数 / 是否存了原图），**不渲染 `session.pattern` 预览**——`fromProjectDocument` 读回来的 `pattern` / `params` 在应用层没有 UI 消费者 | 渲染 `pattern` 就是 B3 的核心交付（Canvas 分层渲染 + 画笔 + 缩放平移），B1 加一个「临时预览」会被 B3 整体替换。**裁决：如实收窄规格 §7.2 的口径，不补预览**（与 B1-6 相反：那条是**死路**必须修，这条只是**未完成**） |
+| B1-15 | 「打开」在 B1 只显示只读**参数**（名称 / 尺寸 / 用色数 / 是否存了原图），**不渲染 `session.pattern` 预览**——`fromProjectDocument` 读回来的 `pattern` / `params` 在应用层没有 UI 消费者 | 渲染 `pattern` 就是 B3 的核心交付（Canvas 分层渲染 + 画笔 + 缩放平移），B1 加一个「临时预览」会被 B3 整体替换。**裁决：如实收窄规格 §7.2 的口径，不补预览**（与 B1-6 相反：那条是**死路**必须修，这条只是**未完成**）。**已在 B3 闭环**：`pattern` 成为画布与调色板面板的数据源（B3 规格 §5 / §9），`params` 已在 B2 被重跑入口消费。 |
 | B1-16 | `src/components/ui/*.vue` 不存在：B1 的 UI 组件（大触控目标按钮、卡片、确认对话框）以内联 Tailwind class 写在各 view 内 | 抽公共组件推迟到出现**第二个消费者**时。**不为了对齐规格 §3 去新建一个 `components/` 目录**——那会造出没有消费者的抽象 |
-| B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error` | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）。**裁决：维持现状**，记此以免被当成遗漏 |
-| B1-18 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走） | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文（规格 §14 的 B1-R3）；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。**本条在收尾轮修 README 编号漂移时被误删过，修复轮 1 由复审者指出并恢复** |
+| B1-17 | `LibraryPage` 的 `list()` 与 `estimateUsage()` 共用一个 `try`：只 `estimateUsage` 失败也会置 `error` | 面很窄（`estimateUsage` 自身已把「浏览器不支持」折成 `null`）。**裁决：维持现状**，记此以免被当成遗漏。**已在 B2 闭环**（规格 §8）：两个失败域已分开，`LibraryPage.test.ts`「只有 `estimateUsage` 失败：列表正常、占用行消失、新建**不**禁用」。 |
+| B1-18 | `GeneratePage.createId` 的 `crypto.randomUUID` **回退分支无断言**（只在非安全上下文走） | 回退存在且不抛错。**仍未验**：Tauri 的 asset 协议是否算安全上下文（规格 §14 的 B1-R3）；可用 `vi.stubGlobal` 去掉 `crypto.randomUUID` 补一条。**本条在收尾轮修 README 编号漂移时被误删过，修复轮 1 由复审者指出并恢复**。**B2 删页后的现状**：这份 `createId` 现在是 `SetupPage.vue` 里的唯一一份（与旧页逐字相同），回退分支**同样无断言**——补断言应补在那里。 |
 | B1-19 | `LibraryPage` 的相对时间在**每次渲染时取 `new Date()`**，列表停留期间**不自动刷新**（不会自己从「3 分钟前」跳到「4 分钟前」） | 图纸库不是实时面板；要跳秒就得加定时器，会带来 happy-dom 下的定时器测试复杂度。**裁决：维持现状**（修复轮 1 复审同判） |
 | ~~B1-20~~ | ~~**CI 对「日期用本地日还是 UTC 日」这条实现选择没有判别力**~~ —— **已闭环（合并后修复，提交 `779bdc6`）**。修法**不是**给 CI 设非零 `TZ`（那属 `.github/` 变更），而是**在用例内钉住时区**：照**同组织 WeeCount 的仓内先例**（`src/utils/__tests__/datetime.test.ts` 的 `should roll to next local day for early-morning UTC times in positive offset zones`，`process.env.TZ` + `try/finally` 逐字还原）。加了 `Asia/Shanghai`（正向跨日）与 `America/New_York`（反向跨日）两条，各带一条「夹具确实跨日」的前置自证断言。**实测：变异 `toLocalDateString → toISOString().slice(0, 10)` 在 `TZ=UTC`（= CI）下 2 failed** → 判别力已回到 CI；7 个时区各 14/14 绿。 | 留档是因为**过程可复用**：最初那条「断言本地日 ≠ UTC 日」的自证断言判别力为零、且只在偏移 ≥ +2h 成立 → 在 UTC / 西半球 / UTC+1 下**必红**；用 `getTimezoneOffset() !== 0` 守卫它是「必要但不充分」（只排除偏移 0）。**教训：断言需要「本地时区」参与时，就把它钉住，而不要假设运行环境是什么时区**——这也是 WeeCount 早就走通的路。另注：经 `globalThis` 取 `process.env` 而非文件级 `/// <reference types="node" />`——后者会把 `@types/node` 拉进整个 `vue-tsc` 程序、**削弱 `src/core/**` 的 Node 全局闸门**（`AGENTS.md` 明令禁止），实测边界闸门仍 29/29 绿。 |
 
 > **B1-15 / B1-16 / B1-17 是收尾轮（任务 9）补记的三条，B1-18 / B1-19 / B1-20 是修复轮补记的三条，其中 B1-20 已在合并后闭环（见该行）。**
 > 就原表而言：**B1-6 的第三栏按收尾轮的改判回写了**（原先写「B2 会整体替换这一页」，改判为
-> 「这是死路，必须修」），**其余 B1-1…B1-14 一字未改**，编号因此保持稳定。README 的
-> 「计划 B1 的延后项」表与 B1-1…B1-20 逐条对齐。
+> 「这是死路，必须修」），**其余 B1-1…B1-14 一字未改**，编号因此保持稳定。
+>
+> **2026-10-07：本表自即日起是 B1-1…B1-20 的唯一真源。** README 那份副本已随「README 与开发记录分离」
+> 撤除（依据见 `docs/superpowers/specs/2026-10-07-readme-and-dev-notes-restructure-design.md`）；
+> 撤除前 README 比本表多出的 `已在 B2 / B3 闭环` 注记，已**逐条追加进上表对应行的第三栏**（只追加、
+> 未改动任何原有措辞）。
 
 ---
 
