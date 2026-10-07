@@ -76,8 +76,8 @@ tag 必须与 `src-tauri/tauri.conf.json` 的版本号一致。本地出已签�
 | 计划 B4：导出 | [规格](docs/superpowers/specs/2026-10-05-app-b4-export-design.md) | [计划](docs/superpowers/plans/2026-10-05-app-b4-export.md) | [记录](docs/superpowers/notes/2026-10-05-app-b4-build-log.md) |
 | 计划 B5：Tauri Android 壳 | [规格](docs/superpowers/specs/2026-10-06-app-b5-tauri-shell-design.md) | [计划](docs/superpowers/plans/2026-10-06-app-b5-tauri-shell.md) | [记录](docs/superpowers/notes/2026-10-06-app-b5-build-log.md) |
 
-各轮的**延后项与已知限制的唯一真源是那份构建记录**（第一阶段见引擎记录的 §9，B1 见其 §8，
-B2 见其 §8，B4 见其 §8，B5 见其 §6/§7）——README 不再复制它们。
+各轮的**延后项与已知限制的唯一真源是那份构建记录**（第一阶段见引擎记录的 §9，B1 / B2 / B3 / B4 各见其 §8，
+B5 见其 §6/§7）——README 不再复制它们。
 
 ## License
 
