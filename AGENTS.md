@@ -77,7 +77,26 @@ cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android 
 ```
 
 **B5 的交付边界与已知限制**（逐条编号 + 未验证面）见
-`docs/superpowers/notes/2026-10-06-app-b5-build-log.md` 的 §6/§7；README 的「已知限制与延后项」是对外摘要。
+`docs/superpowers/notes/2026-10-06-app-b5-build-log.md` 的 §6/§7。
+
+## 文档真源（2026-10-07 起）
+
+**README 只讲「是什么」与「怎么跑」**——项目介绍、功能特性、快速开始、出包入口；
+**不再承载开发记录**（进度叙事、延后项表、目录结构都已移出）。
+引用延后项时**一律引下面这份清单，不要引 README**：
+
+| 内容 | 唯一真源 |
+|---|---|
+| 第一阶段（图像引擎）延后项 `L1–L11` | `docs/superpowers/notes/2026-10-01-engine-build-log.md` §9 |
+| 计划 B1 延后项 `B1-1…B1-20` | `docs/superpowers/notes/2026-10-03-app-b1-build-log.md` §8 |
+| 计划 B2 延后项 `B2-1…B2-57` | `docs/superpowers/notes/2026-10-03-app-b2-build-log.md` §8 |
+| 计划 B3 延后项 `B3-1…B3-42` | `docs/superpowers/notes/2026-10-04-app-b3-build-log.md` §8 |
+| 计划 B4 延后项 `B4-1…B4-35` | `docs/superpowers/notes/2026-10-05-app-b4-build-log.md` §8 |
+| 计划 B5 延后项 `B5-1…B5-26` 与未验证面 | `docs/superpowers/notes/2026-10-06-app-b5-build-log.md` §6 / §7 |
+| 出包、签名、发布流程 | `docs/Android发布指南.md` |
+
+**改写历史构建记录必须经人类伙伴明确批准**（先例：B4-31 是「人类伙伴批准直接改写原文」，
+2026-10-07 的这次分离也是）。**默认口径仍是「只加更正注记，不改历史正文」**——报告是**当时的**证据。
 
 ## 技术约束
 
