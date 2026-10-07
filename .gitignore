@@ -32,6 +32,10 @@ src-tauri/plugins/**/android/.idea
 *.aab
 *.keystore
 coverage/
+# 引入 Python 图标脚本（`src-tauri/icons/source/generate_icons.py`）后新增：`__pycache__` 只在**有人
+# import 这个模块**时才生成（直接 `python generate_icons.py` 不生成），本次实跑测试就撞上过一次 ⇒
+# 显式忽略，免得 `.pyc` 被一次 `git add src-tauri` 扫进库。
+**/__pycache__/
 
 # 签名 keystore：**绝对不许入库**（本仓提交 gen/android ⇒ 没有这条规则就会把私钥推上公有仓 ✗）。
 # 位置与 wee-count 一致：src-tauri/gen/android/weefuse.jks；口令在同目录 app/key.properties（也已忽略 ✓）。

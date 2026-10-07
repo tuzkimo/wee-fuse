@@ -56,9 +56,9 @@ keytool -genkeypair -v -keystore src-tauri/gen/android/weefuse.jks -alias weefus
 
 ## 维护须知：`tauri init` 会把工程改回模板
 
-`src-tauri/gen/android/**` 入库，其中有**三处是手改**：
+`src-tauri/gen/android/**` 入库，其中有**三处是模板外内容**：
 
-1. 图标 mipmap；
+1. 图标 mipmap（`npx tauri icon` 的产物，真源见 [开发约定详解](开发约定详解.md) 的「App 图标」）；
 2. `MainActivity.kt` 的 insets 消费；
 3. `app/build.gradle.kts` 的 release 签名块（`keystoreProperties` + `signingConfigs.create("release")` + release 挂钩）。
 
@@ -66,7 +66,11 @@ keytool -genkeypair -v -keystore src-tauri/gen/android/weefuse.jks -alias weefus
 [B5 构建记录](superpowers/notes/2026-10-06-app-b5-build-log.md) 的维护须知（§6 的 B5-15），
 重跑**之后**必须复验「图标是不是我们的」与「页面顶部有没有被系统栏盖住」。
 
-**正确顺序是 `android init` → `npx tauri icon app-icon.png`**；反过来是**静默失效**（装出来是 Tauri logo）。
+**正确顺序是 `android init` → `npx tauri icon src-tauri/icons/source/manifest.json`**；
+反过来是**静默失效**（装出来是 Tauri logo）。**注意 `tauri icon` 的输入换成了 manifest**（四图层：
+完整图 / 自适应背景 / 前景 / Android 13+ 主题图标），不再是仓库根那个早已删掉的 `app-icon.png`——
+裸跑 `npx tauri icon` 会因默认输入 `./app-icon.png` 不存在而报错。图标要改内容时先跑
+`python src-tauri/icons/source/generate_icons.py`（脚本自带 66dp 安全圆断言）。
 
 另有一条未 pin 项：`android/app/build.gradle.kts` 未固定 `ndkVersion`（B5-11），NDK 升级会静默换版本。
 
