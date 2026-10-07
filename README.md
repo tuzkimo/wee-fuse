@@ -115,7 +115,11 @@ npm run build
 以及**保存到系统相册**（判据 D 真机通过：落点 `album`、字节数一致、「已受理」⇒ 任务 6 落地、`G4` 转绿、全量 `1286 passed (1286)`、**0 红**）。
 怎么用：`npx tauri android dev`（真机调试）或 `npx tauri android build --apk --debug`（出包）；
 桌面 `npx tauri dev` **仅用于开发调试**（导出仍走下载）。`/lab/shell` 是**开发期实验台，不进用户入口**。
-**在线打包**：仓库的 Actions → `android-package` → **Run workflow**（或推 `v*` tag）⇒ 在 GitHub 机器上出一个 arm64 debug APK，从该 run 的 **Artifacts** 下载（**不需要任何 secret** ✓）；想要**签名 release + 自动发 Release**，去 `Settings → Secrets and variables → Actions` 加 `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` 四个 secret 即可（keystore 本身**不要入库** ✗）。
+**在线打包**：仓库的 Actions → `android-package` → **Run workflow**（或推 `v*` tag）⇒ 在 GitHub 机器上出一个 arm64 debug APK，从该 run 的 **Artifacts** 下载（**不需要任何 secret** ✓）；想要**签名 release + 自动发 Release**：那 4 个 secret **已经配好** ✓（2026-10-07）。**签名材料放在本地且被忽略**：
+  `src-tauri/gen/android/weefuse.jks`（钥匙）+ `src-tauri/gen/android/app/key.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`）
+  ⇒ 本地 `npx tauri android build --apk` 直接出**已签名** release 包 ✓（实测指纹与 CI 产物一致 ✓）。**换钥匙**：
+  `keytool -genkeypair -v -keystore src-tauri/gen/android/weefuse.jks -alias weefuse -keyalg RSA -keysize 2048 -validity 10000` ⇒ 改 `key.properties` ⇒ 
+  用 `[Convert]::ToBase64String([IO.File]::ReadAllBytes("…weefuse.jks"))` 更新 `ANDROID_KEYSTORE_BASE64`（连同另三个 secret）。**这两个文件绝不能入库** ✗（`.gitignore` 已挡 ✓）。
 逐条边界、限制编号（`B5-*`）与未验证面见 [B5 构建记录](docs/superpowers/notes/2026-10-06-app-b5-build-log.md) §6/§7；
 规格见 [B5 规格](docs/superpowers/specs/2026-10-06-app-b5-tauri-shell-design.md)。
 
@@ -213,7 +217,7 @@ npm run build
 - `src-tauri/` — **Rust 壳（B5 起）**：`src/lib.rs` 两个命令（`take_opened_uris` / `save_image_to_album`）、
   `capabilities/default.json`（含 **`core:app:allow-exit`**——删了它「明确退出」会静默失效）、
   `tauri.conf.json`；**`gen/android/**` 入库**（为「换台机器就能重建」）。
-  **维护须知**：`gen/android` 里有**两处手改**（图标 mipmap、`MainActivity.kt` 的 insets 消费）⇒
+  **维护须知**：`gen/android` 里有**三处手改**（① 图标 mipmap、② `MainActivity.kt` 的 insets 消费、③ `app/build.gradle.kts` 的 release 签名块，2026-10-07 加）⇒
   **重跑 `npx tauri android init` 之前先读 [B5 构建记录](docs/superpowers/notes/2026-10-06-app-b5-build-log.md) 的维护须知**，
   重跑后**必须复验图标与顶部边距**；另 `android/app/build.gradle.kts` 未 pin `ndkVersion`（B5-11）。
 - `src/views/` — 页面（`LibraryPage.vue` 图纸库、**`PickPage.vue` 选图（`/new`）**、
