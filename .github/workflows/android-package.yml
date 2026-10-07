@@ -26,7 +26,6 @@ jobs:
     # 用 env 把 secret 暴露出来，才能用 `if: env.X != ''` 判断「有没有配签名」✓（`if` 里不能直接读 secrets ✗）。
     env:
       NDK_VERSION: 30.0.14904198
-      ANDROID_PLATFORM: android-37
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -44,13 +43,25 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: 安装 Android SDK 平台与 NDK
+      - name: 安装 Android NDK（SDK 平台交给 Gradle 按需自动下载）
         run: |
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           echo "SDK=$SDK"
           yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "platforms;${ANDROID_PLATFORM}" "ndk;${NDK_VERSION}" > /dev/null
-          # Tauri 的 rustBuild* 任务要能定位 NDK；两个变量名都设上，省得踩「名字对不上、静默换版本」✗
+          # **只装 NDK**。教训（2026-10-07 首次实跑失败于这一步）：我按名字猜的 `platforms;android-37` 在官方仓库里
+          # **不存在** ✗（报 `Failed to find package 'platforms;android-37'`）—— 本机 SDK 目录叫 `android-37.0`，
+          # 平台标识与目录名不是一回事 ✓。而本仓 `compileSdk/targetSdk = 37` ⇒ 交给 **AGP 按需自动下载**平台
+          # （license 已在上一行接受 ✓），比在这里猜 id 稳 ✓。
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${NDK_VERSION}" > /dev/null
+          # 装没装上必须**响亮**：目录不在就立刻失败，并把可用 NDK 列出来 ——
+          # 否则后面的构建会报一个与根因无关的错 ✗（本项目记过账的形态）。
+          if [ ! -d "$SDK/ndk/${NDK_VERSION}" ]; then
+            echo "::error::NDK ${NDK_VERSION} 没装上。当前 \$SDK/ndk 下可用："
+            ls -1 "$SDK/ndk" 2>/dev/null || true
+            echo "::error::仓库里可见的 ndk 包（尾部 20 行）："
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" --list 2>/dev/null | grep -i 'ndk;' | tail -n 20 || true
+            exit 1
+          fi
           echo "NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
