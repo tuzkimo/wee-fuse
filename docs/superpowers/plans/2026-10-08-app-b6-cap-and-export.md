@@ -1110,13 +1110,32 @@ export function drawSheet(
    `drawSheetTile` 的第 2–7 步**逐字搬过来**（`tile` → `plan`、`tile.grid` → `plan.grid`、`plan.labels` 的判断改成恒真），
    `drawSheetTile` 改成调这五个函数（任务 11 再删它）。搬的时候**不要顺手改任何坐标算式**：落位由既有用例钉着。
    **实参形状按任务 6 的实际落地为准**（控制者裁决 2026-10-08）：`drawInfoBar(target, pattern, meta, beads, lineOneY, lineTwoY)`、
-   `paintCells(target, pattern, palette, plan)`、`drawLabels(target, palette, plan)`、`drawCellsAndLabels(target, pattern, palette, plan)`、
+   `paintCells(target, pattern, palette, plan)`、`drawLabels(target, cells, plan)`（第 4 步吃第 3 步收集的格心清单，**不接受 `palette`**——否则它得再走一遍网格）、`drawCellsAndLabels(target, pattern, palette, plan)`、
    `drawGridLines(target, plan)`、`drawRulers(target, plan)`（第 6 步不需要 `pattern`，带未用形参会撞 `noUnusedParameters`）、
    `drawBoardLabels(target, plan)`。五个步骤函数保持**模块私有**（`drawBoardPage` 同在 `sheet.ts`，够用）。
    **`plan.labels` 的降级分支只留在 `drawSheetTile` 里**（它由任务 11 删除）：`drawSheetTile` 第 3/4 步分别调 `paintCells` + `drawLabels`，
    而共用的 `drawCellsAndLabels` 恒画、零分支——这是「色号恒画」与「既有 `labels=false` 用例不许红」两条约束的唯一两全解。
 2. `countTileBeads(pattern, tile)` 的入参类型同样放宽成 `TileGeometry`（它只读 `originCol/originRow/cols/rows` 与 `cells.length` 的校验）。
 3. `LEGEND_FOOTER_FONT_PX` / `LEGEND_FOOTER_LINE_H` 是 `sheet.ts` 里已有的私有常量（任务 11 删掉独立用量表后它们仍被这里用，**不许删**）。
+
+**必须补的两条入口守卫**（控制者裁决 2026-10-08，任务 6 的审查者发现；简报的参考实现漏了，属「计划强制」）：
+
+1. `drawSheet` 在**任何写操作之前**校验 `usages` 与 `plan` **同源**：
+   `plan.legend.itemRows === Math.ceil(usages.length / plan.legend.itemCols)`，消息与 `drawLegend` 的同源守卫同形。
+   该先例的注释已经把危害写清：**配错不会报错，只会让行数溢出画布、画出一张看起来正常的残缺图**（用料条压到页脚上/越出 `canvasHeight`）。
+2. `drawSheet` 在**任何写操作之前**把 `usages` 的每个色号在色卡里解析一遍（非数组也在这里抛）。理由：`planSheet` 的 `requireUsages`
+   只校验形状（数组 / `code` 非空 / `name` / `count` / 去重），**不校验色号是否存在于传入的色卡**，所以「usages 来自另一张色卡」能通过计划阶段，
+   直到渲染末段才炸——而那时整张网格已经画完（违反「校验写在任何写操作之前」）。
+   抽一个模块私有 `requireUsagesInPalette(palette, usages)`，任务 9 的 `drawBoardPage` 入口也要调它。
+
+**测试侧的三处诚实性修正**（同一位审查者点名，避免用例名承诺断言没做的事）：
+
+- 新增用例 1 的标题删掉「旧口径下会被降级的尺寸照样画」这句不成立的因果（6×6 夹具下 `cellPx = 40`，旧口径本来就会画色号）——
+  它实际钉的是「网格内 33 颗实心格 ⇒ 33 条格内文字」；「恒画 vs 降级」的真判别点是 `drawCellsAndLabels` 零分支与 `planSheet` 字号不足时抛错。
+- 用例 3 里「排在用料条之后」要改成**真的按调用顺序**断言（比较 `calls.texts` 中页脚那条与全部用料条文字的**下标**），
+  否则把绘制顺序反过来它照样绿。
+- 用例 2 的标题承诺了「数量右对齐」，而断言里没有它 ⇒ 要么补一条（数量文字的 `textAlign === "right"` 与右端位置），要么把标题收窄到实际断言；
+  顺带修掉注释里引用的旧常量名 `LEGEND_SWATCH_SIZE`（新路径用的是 `plan.legend.swatchSize`）。
 
 - [ ] **步骤 4：运行测试验证通过**
 
@@ -1660,6 +1679,10 @@ describe("drawBoardPage（B6：每块板一页）", () => {
 预期：FAIL，`drawBoardPage is not a function`、`renderBoardPageBlob is not a function`。
 
 - [ ] **步骤 3：改实现**
+
+**入口守卫（与任务 6 同口径，控制者裁决 2026-10-08）**：`drawBoardPage` 在**任何写操作之前**也要
+① 校验 `usages` 与 `plan.legend.itemRows` 同源（`plan.legend.itemRows === Math.ceil(usages.length / plan.legend.itemCols)`），
+② 调任务 6 抽出的模块私有 `requireUsagesInPalette(palette, usages)`（非数组与色号不在色卡里都在此抛）。
 
 `sheet.ts` 新增：
 
