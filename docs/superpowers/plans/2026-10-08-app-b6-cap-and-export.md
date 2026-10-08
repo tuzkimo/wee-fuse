@@ -1752,6 +1752,19 @@ git commit -m "feat(core,services): A4/A3 每块板一页的渲染与 Blob 通�
   });
 ```
 
+**同时补两处任务 4 审查者点名的覆盖缺口**（都在本任务要动的那张表上）：
+
+- **行与行之间的顺序**：任务 4 的用例只钉了「行内 testid 序列」与「恰好 5 行」，把 `history` 与 `display` 两行对调仍然全绿，而规格是**位置口径**。新增：
+  `expect(wrapper.findAll("[data-testid^='toolbar-row-']").map((row) => row.attributes("data-testid"))).toEqual(["toolbar-row-tools","toolbar-row-history","toolbar-row-display","toolbar-row-view","toolbar-row-output"]);`
+- **`editor-dirty` 的归属**：任务 4 的断言只遍历 `button`，那个 `<span data-testid="editor-dirty">` 落在哪一行没被钉住。把 `output` 行改成同时收集 button 与 span 的 testid（`container.findAll("button, span[data-testid]")`），并断言结果为 `["export","print","editor-save","editor-dirty"]`（`dirty: true` 时）。
+
+**模板**：`toolbar-row-output` 内补回一行注释（任务 4 的简报模板把它连同 B4 的说明一起丢了，审查者定性为「信息损失、非噪音清除」）：
+
+```html
+      <!-- 导出 / 打印面板都由 `EditorPage` 渲染（唯一装配点）：本组件只知道用户点了哪一个，
+           不持有面板状态、也不 import 任何 store。 -->
+```
+
 `ExportPanel.test.ts` 按下面的形状重写（保留它原有的 `vi.hoisted` 替身声明、`exportTestKit` 用法与 object URL 回收用例）：
 
 ```ts
