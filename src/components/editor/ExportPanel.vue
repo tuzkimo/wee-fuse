@@ -30,6 +30,7 @@ import {
   renderBoardPageBlob,
   renderSheetBlob,
   usagesInRange,
+  type SheetRenderInput,
 } from "@/services/sheetExport";
 
 const props = defineProps<{
@@ -59,21 +60,6 @@ const paper = ref<"a4" | "a3">("a4");
  * 需要跟着编辑失效的是**逐项状态**，见下面那个 `watch`。
  */
 const sheetPlan = computed(() => planSheet(props.pattern, props.palette, props.usages));
-
-/**
- * 本页用量：按页格范围独立统计（**不是全图用量**），打印时拿着那一页备料。
- *
- * **只建一次 `planBoardPage`**：几何（格范围）与用量来自同一份计划，函数内部取完 `usagesInRange`
- * 就丢掉计划——每项重复建计划不会更正确，只会更慢。
- */
-function pageUsages(index: number): readonly ColorUsage[] {
-  const plan = planBoardPage(props.pattern, props.palette, props.usages, {
-    boardSize: boardSize.value,
-    paper: paper.value,
-    index,
-  });
-  return usagesInRange(props.pattern, props.palette, plan);
-}
 
 /** 页数：**只问 `printBoardCount`**（它与 `planBoardPage` 是同一份分页数学的两个出口）。 */
 const pageCount = computed(() =>
@@ -122,6 +108,15 @@ function makeItems(): ExportItem[] {
     previewUrl: "",
   }));
 }
+
+/**
+ * 是否有任何一项正在生成。
+ *
+ * **四个打印选项按钮在 `busy` 期间禁用**（第 1 轮审查要求的第 3 条）：改板大小 / 纸张会**重建清单**、
+ * 把飞行中那一项丢掉。名字与字节的同源由 `SaveSnapshot` 保证（那条修复本身是硬的），禁用是**可达性**
+ * 层面的第二道：不让用户走进那个窗口，也不给将来重写时序的人留下入口。
+ */
+const busy = computed(() => items.value.some((item) => item.status === "busy"));
 
 /**
  * 面板自持的逐项状态。`ref` 会把数组元素也变成响应式代理，所以就地改 `item.status` 即触发重渲染。
@@ -215,19 +210,54 @@ function statusText(item: ExportItem): string {
 }
 
 /**
+ * 落盘路径的一份**快照**（B6 任务 10 第 1 轮审查的关键修复）。
+ *
+ * **为什么必须整体快照、而不是逐个「记得早点取」**：名字与字节必须出自**同一次取用**。这份路径上有
+ * 两个 `await`（渲染通道里的 `canvasToBlob`、以及能力层的 `album.save`），而期间用户可以改板大小 /
+ * 纸张（那正是清单重建的入口）。任何一处「`await` 之后再读 `props` / `ref`」都会产出**名与字节
+ * 不同源**的静默错产物：29 板的第 3 页渲染完，名字却按 58 板写成 `r2c1`；页索引在新选项下不存在时
+ * 更会直接抛「页索引越界」，用户无过错却保存失败。
+ *
+ * 旧实现（分片时代）在 `await` 之前就把 `tile` 取好了 ⇒ 本快照是把那条纪律**恢复到**选项上
+ * （工程名那条纪律由 B-3 立下，这里只是把它推广到全部入参）。
+ */
+interface SaveSnapshot {
+  readonly mode: "sheet" | "print";
+  readonly pattern: Pattern;
+  readonly palette: Palette;
+  readonly usages: readonly ColorUsage[];
+  readonly projectName: string;
+  readonly boardSize: 29 | 58;
+  readonly paper: "a4" | "a3";
+}
+
+/**
+ * 本页用量（打印模式）：按页格范围独立统计（**不是全图用量**），打印时拿着那一页备料。
+ *
+ * **只吃快照**（不读 `props` / `ref`）：调用方必须拿**同一份快照**去算本页用量、渲染与命名——
+ * 否则飞行中改板大小 / 纸张时，「用料条列的那一页」可能不是「画布上那一页」，而这不会有任何报错。
+ */
+function pageUsages(snapshot: SaveSnapshot, index: number): readonly ColorUsage[] {
+  const plan = planBoardPage(snapshot.pattern, snapshot.palette, snapshot.usages, {
+    boardSize: snapshot.boardSize,
+    paper: snapshot.paper,
+    index,
+  });
+  return usagesInRange(snapshot.pattern, snapshot.palette, plan);
+}
+
+/**
  * 保存一项：**渲染该张 → 经能力层落盘 → 显示预览**（R-5）。
  *
  * 逐项独立：状态与原因都写在这一项上，抛错不冒泡到别的项（规格 §10.3）。
- * `busy` 期间按钮禁用（模板），函数自己再挡一次连点——手势可能比下一帧更快。
+ * `busy` 期间按钮禁用（模板与四个选项按钮），函数自己再挡一次连点——手势可能比下一帧更快。
  *
- * 文件名的第三个实参**只在打印模式上传**（`boardPageTile` 给出本页的行列，1 起）：
- * 单张施工图整图一块，**不带序号**（契约 §2 的两个标签各有一份命名模板）。
- *
- * **`await` 前后必须用同一个「这一刻」**（修复轮 F6 + 修复波 B-3）：
- * 1. **代数与工程名都在第一个 `await` 之前取**：`generationAtStart` 判「这一项还在不在」，
- *    `projectName` 保证「文件名的工程名」与「画布上那批字节」出自同一次取用（否则会出现
- *    「名字是新的、图纸是旧的」这种静默错产物）；
- * 2. 落盘之后若代数变了或已卸载 ⇒ **直接 return**：**连 object URL 都不创建**（创建了就是一个挂在
+ * **开头那一段快照之后，落盘路径只读局部量**（见 `SaveSnapshot` 的 JSDoc）：
+ * 1. **快照与代数都在第一个 `await` 之前取**：`generationAtStart` 判「这一项还在不在」，
+ *    快照保证「文件名」与「画布上那批字节」出自同一次取用；
+ * 2. **文件名也在第一个 `await` 之前算好**（它不依赖 blob）：`boardPageTile` 读的是快照里的
+ *    板大小 / 纸张，所以飞行中改选项既不会写错页身份、也不会用越界的页索引去算名字；
+ * 3. 落盘之后若代数变了或已卸载 ⇒ **直接 return**：**连 object URL 都不创建**（创建了就是一个挂在
  *    被丢弃项上、`onUnmounted` 永远扫不到的引用），也不把状态改成「已保存到相册」（那个 UI 已经
  *    不存在了）。落盘本身**照常完成**——用户那一次手势已经点了，不该因为面板被关掉而白点。
  *
@@ -238,31 +268,51 @@ async function saveItem(item: ExportItem): Promise<void> {
   if (item.status === "busy") return;
   item.status = "busy";
   item.error = "";
+  // ---- 快照：这一行之后，落盘路径**不再读 `props` / `ref`** -------------------------------
   const generationAtStart = generation;
-  const projectName = props.projectName;
+  const snapshot: SaveSnapshot = {
+    mode: props.mode,
+    pattern: props.pattern,
+    palette: props.palette,
+    usages: props.usages,
+    projectName: props.projectName,
+    boardSize: boardSize.value,
+    paper: paper.value,
+  };
+  const sheetInput: SheetRenderInput = {
+    pattern: snapshot.pattern,
+    palette: snapshot.palette,
+    usages: snapshot.usages,
+    projectName: snapshot.projectName,
+  };
   try {
+    // 名字**先算**（不依赖 blob）：它读的每一个量都来自上面那份快照。
+    const filename =
+      snapshot.mode === "sheet"
+        ? exportFilename(snapshot.projectName, "施工图")
+        : exportFilename(
+            snapshot.projectName,
+            "打印",
+            boardPageTile(
+              snapshot.pattern,
+              snapshot.palette,
+              snapshot.usages,
+              snapshot.boardSize,
+              snapshot.paper,
+              item.pageIndex,
+            ),
+          );
     const blob =
-      props.mode === "sheet"
-        ? await renderSheetBlob({ pattern: props.pattern, palette: props.palette, usages: props.usages, projectName })
+      snapshot.mode === "sheet"
+        ? await renderSheetBlob(sheetInput)
         : await renderBoardPageBlob(
             {
-              pattern: props.pattern,
-              palette: props.palette,
-              usages: props.usages,
-              projectName,
-              boardSize: boardSize.value,
-              paper: paper.value,
+              ...sheetInput,
+              boardSize: snapshot.boardSize,
+              paper: snapshot.paper,
               pageIndex: item.pageIndex,
             },
-            pageUsages(item.pageIndex),
-          );
-    const filename =
-      props.mode === "sheet"
-        ? exportFilename(projectName, "施工图")
-        : exportFilename(
-            projectName,
-            "打印",
-            boardPageTile(props.pattern, props.palette, props.usages, boardSize.value, paper.value, item.pageIndex),
+            pageUsages(snapshot, item.pageIndex),
           );
     await getPlatform().album.save(blob, filename);
     // 代数 + 卸载双判据（B4 的既有防线），**排在 `createObjectURL` 之前**：URL 根本不诞生，
@@ -309,11 +359,12 @@ const showsLongPressHint = computed(() => getPlatform().album.kind === "download
       <p v-if="mode === 'print'" data-testid="export-summary-print" class="text-base text-slate-700">
         共 {{ pageCount }} 页（每页一块 {{ boardSize }}×{{ boardSize }} 板 · {{ paper.toUpperCase() }}）· 打印时选「适合页面」，页眉写明了每格实际毫米。
       </p>
+      <!-- 选项按钮在**任一项生成中**禁用：改选项会重建清单、把飞行中那一项丢掉（时序与可达性是一对）。 -->
       <div v-if="mode === 'print'" class="flex flex-wrap gap-2 pt-2">
-        <button data-testid="print-board-29" :aria-pressed="boardSize === 29" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="boardSize = 29">29 标准板</button>
-        <button data-testid="print-board-58" :aria-pressed="boardSize === 58" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="boardSize = 58">58 大板</button>
-        <button data-testid="print-paper-a4" :aria-pressed="paper === 'a4'" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="paper = 'a4'">A4</button>
-        <button data-testid="print-paper-a3" :aria-pressed="paper === 'a3'" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="paper = 'a3'">A3</button>
+        <button data-testid="print-board-29" :aria-pressed="boardSize === 29" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="boardSize = 29">29 标准板</button>
+        <button data-testid="print-board-58" :aria-pressed="boardSize === 58" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="boardSize = 58">58 大板</button>
+        <button data-testid="print-paper-a4" :aria-pressed="paper === 'a4'" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="paper = 'a4'">A4</button>
+        <button data-testid="print-paper-a3" :aria-pressed="paper === 'a3'" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="paper = 'a3'">A3</button>
       </div>
       <p v-if="usages.length === 0" data-testid="export-empty-note" class="text-base text-amber-700">这张图纸没有可拼的像素</p>
       <p v-if="showsLongPressHint" class="text-base text-slate-500">手机上也可以长按下面的预览图存进相册。</p>

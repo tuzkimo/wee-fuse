@@ -1559,7 +1559,8 @@ describe("导出面板接线（任务 4 / 任务 10）", () => {
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
     // 面板真的被挂起来了（不是空壳）：组件实例在，标题也在
     expect(wrapper.findComponent(ExportPanel).exists()).toBe(true);
-    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("导出施工图");
+    // 标题就是模式最直接的陈述（整页 `text()` 的 `toContain` 会被别处的字眼碰巧满足）
+    expect(wrapper.get("[data-testid='export-panel'] h2").text()).toBe("导出施工图");
     // **sheet 模式**：摘要与唯一一项都是「施工图」，打印选项不出现
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(true);
     expect(wrapper.findAll("[data-testid^='export-item-']")).toHaveLength(1);
@@ -1581,11 +1582,16 @@ describe("导出面板接线（任务 4 / 任务 10）", () => {
     await wrapper.get("[data-testid='print']").trigger("click");
 
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
-    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("打印");
+    // **不要用整页 `text()` 里的「打印」当判据**：页标签写的是「打印页 第 1 行…」，那是一句**恒真**的
+    // 断言。模式的判据是标题与摘要文案。
+    expect(wrapper.get("[data-testid='export-panel'] h2").text()).toBe("打印");
     expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
     // 2×1 图纸 ⇒ 29 板下恰好 1 页（页数来自 `printBoardCount`，不是常数）
     expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(1);
+    expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain(
+      "共 1 页（每页一块 29×29 板 · A4）",
+    );
     expect(wrapper.find("[data-testid='print-board-29']").exists()).toBe(true);
 
     await wrapper.get("[data-testid='export-close']").trigger("click");

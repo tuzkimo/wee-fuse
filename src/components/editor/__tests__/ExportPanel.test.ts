@@ -168,6 +168,24 @@ async function saveAndSettle(wrapper: ReturnType<typeof mount>, id: string): Pro
   await flushPromises();
 }
 
+/**
+ * 摘掉 `disabled` 之后点一下某个选项按钮。
+ *
+ * **为什么需要它**（任务 10 第 1 轮修复）：四个打印选项在**任一项生成中**禁用（修复的第 3 条，
+ * 生产上用户点不动），而 `disabled` 同样拦住了用例的 `trigger`——于是「飞行中改选项」这条路径在
+ * 用例里变得**不可达**。这里手动解除，让**时序判据**（名字与字节同源）独立于**可达性判据**（禁用）
+ * 被测到：将来有人删掉 `disabled`、或另开一条改选项的路径，这条时序判据仍对「退回旧写法」的变异必红。
+ * 可达性由「任一项生成中时四个打印选项禁用」那条用例单独钉住。
+ */
+async function clickDisabledOption(
+  wrapper: ReturnType<typeof mount>,
+  testid: string,
+): Promise<void> {
+  const button = wrapper.get(`[data-testid='${testid}']`);
+  button.element.removeAttribute("disabled");
+  await button.trigger("click");
+}
+
 /** 面板源码：词法闸门用（`from "…/stores/…"` 一次都不许出现）。 */
 const PANEL_SOURCES: Record<string, string> = import.meta.glob<string>("../ExportPanel.vue", {
   eager: true,
@@ -294,6 +312,23 @@ describe("两种模式的清单（规格 §8 的两个入口 / §10）", () => {
     // ③ 回到 29 板要能重建回去（不是单向的：只加不清的写法会在这一条上红）
     await wrapper.get("[data-testid='print-board-29']").trigger("click");
     expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(16);
+  });
+
+  it("mode=print：非整除尺寸也要对（30×30 + 29 板 ⇒ 2×2 = 4 页，末列 / 末行收窄）", async () => {
+    // **整除夹具覆盖不到的那一支**：116×116 是 29 与 58 的公倍数，所以「最后一列 / 行只有一部分格」
+    // 这条路径在旧夹具下**一次都没被走过**——标签的行列换算与 `usagesInRange` 的格范围收窄都在这条路上。
+    // 30 = 29 + 1 ⇒ 板阵 2×2：第 2 页只有 1 列、第 4 页只有 1 列 1 行。
+    const pattern = makePattern(30, 30, undefined);
+    const wrapper = mountPanel("print", { pattern, usages: patternStats(pattern, palette).usages });
+
+    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("共 4 页");
+    expect(wrapper.get("[data-testid='export-item-page-1']").text()).toContain(
+      "第 1 行 第 2 列（第 2/4 页）",
+    );
+    expect(wrapper.get("[data-testid='export-item-page-3']").text()).toContain(
+      "第 2 行 第 2 列（第 4/4 页）",
+    );
   });
 
   it("mode 就地切换也重建清单（判据不吊在调用方的 `v-if` 上）", async () => {
@@ -427,6 +462,54 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     await saveAndSettle(wrapper, "page-3");
     expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(3508, 4961);
     expect(exporter.downloadBlob.mock.calls[1]?.[1]).toBe("测试工程-打印-r2c2.png");
+  });
+
+  it("打印页的末列 / 末行收窄真的走到落盘（30×30：第 2 页 r1c2、第 4 页 r2c2，页脚按收窄后的格数）", async () => {
+    // 整除夹具下「本页格范围」恒等于整块板，所以 `usagesInRange` / `countTileBeads` 的**收窄**从未
+    // 被走过。30×30 + 29 板：第 2 页 = 列 29–29（1 列）× 行 0–28（29 行）、第 4 页 = 1×1。
+    const pattern = makePattern(30, 30, undefined);
+    const wrapper = mountPanel("print", { pattern, usages: patternStats(pattern, palette).usages });
+
+    await saveAndSettle(wrapper, "page-1");
+    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("测试工程-打印-r1c2.png");
+    // 页脚的两半来自两个不同的源：**本页**由收窄后的格范围现数（29）、**全图**来自 `input.usages`（900）
+    expect(recording.texts.map((call) => call.text)).toContain("本页 29 颗 · 全图 900 颗（1 种色）");
+
+    await saveAndSettle(wrapper, "page-3");
+    expect(exporter.downloadBlob.mock.calls[1]?.[1]).toBe("测试工程-打印-r2c2.png");
+    expect(recording.texts.map((call) => call.text)).toContain("本页 1 颗 · 全图 900 颗（1 种色）");
+  });
+
+  it("任一项生成中时四个打印选项禁用（改选项会重建清单、把飞行中那一项丢掉）", async () => {
+    // 缺陷的可达入口就是这四颗按钮：飞行窗口里点一下，清单重建、飞行中的项被丢弃。
+    // `disabled` 是「将来的时序错误不再可达」这条防线；判别力在下面两个方向的断言里。
+    const wrapper = mountPanel("print", printOverrides());
+    const optionIds = ["print-board-29", "print-board-58", "print-paper-a4", "print-paper-a3"];
+    for (const id of optionIds) {
+      expect(wrapper.get(`[data-testid='${id}']`).attributes("disabled")).toBeUndefined();
+    }
+
+    let release = (): void => {};
+    exporter.canvasToBlob.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          release = () => {
+            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
+          };
+        }),
+    );
+    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("生成中…");
+    for (const id of optionIds) {
+      expect(wrapper.get(`[data-testid='${id}']`).attributes("disabled")).toBeDefined();
+    }
+
+    release();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
+    for (const id of optionIds) {
+      expect(wrapper.get(`[data-testid='${id}']`).attributes("disabled")).toBeUndefined();
+    }
   });
 
   it("改一格（revision 变）⇒ 所有「已生成」复位为「待生成」，预览销号后丢弃", async () => {
@@ -813,6 +896,89 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
     expect(createdBlobs[0]).toBe(blob);
     // ⑥ 面板不再直调 `downloadBlob`（G4 的行为面：旧路径一次都不许走，哪怕它在浏览器里也能用）
     expect(exporter.downloadBlob).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **飞行中改板大小：名字与字节必须出自同一份快照**（第 1 轮审查的关键项）。
+   *
+   * 旧的 `downloadAndPreview` 在 `await` **之前**就把 `tile` 取好了，而收敛后的 `saveItem` 一度在
+   * `await` 之后才读 `boardSize.value` / `paper.value` 去算名字 ⇒ 字节是 29 板的第 3 页、名字却写成
+   * 58 板下的 `r2c1`（静默错产物，正是 B-3 修过的那一类）。
+   *
+   * 判据挑「同一 index 在两个板大小下**页身份不同**」的那一页（29 板的 index 2 = r1c3；58 板下同
+   * index = r2c1），所以「名字读的是哪一份选项」判得开。
+   *
+   * **为什么要先 `removeAttribute("disabled")`**：修复的第 3 条让这四颗按钮在生成中禁用（生产上
+   * 用户点不动那正是修复），而 `disabled` 也拦住了用例的 `trigger`。这里手动解除，是为了让**时序**
+   * 这条判据**独立于可达性**被测到：将来有人删掉 `disabled`、或另开一条改选项的路径，这条用例仍然
+   * 会在「名字退回旧写法」的变异上红。可达性由「任一项生成中时四个打印选项禁用」那条单独钉住。
+   */
+  it("飞行中改板大小：文件名仍与本页字节同源（不写成新选项下的页身份）", async () => {
+    const saves: { blob: Blob; filename: string }[] = [];
+    const albumSave = vi.fn(async (blob: Blob, filename: string): Promise<void> => {
+      saves.push({ blob, filename });
+    });
+    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
+
+    const wrapper = mountPanel("print", printOverrides());
+    let release = (): void => {};
+    exporter.canvasToBlob.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          release = () => {
+            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
+          };
+        }),
+    );
+
+    await wrapper.get("[data-testid='export-save-page-2']").trigger("click");
+    await clickDisabledOption(wrapper, "print-board-58");
+    // 选项真的换了（清单已重建、页数变成 58 板的 4 页）——否则下面的断言就在测一个没发生的场景
+    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    release();
+    await flushPromises();
+
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    // 名字 = 29 板的页身份 r1c3（旧写法在这里给 r2c1），字节是同一份快照渲染出来的
+    expect(saves[0]?.filename).toBe("测试工程-打印-r1c3.png");
+    // 画布也是旧选项那一份（A4 = 2480×3508）
+    expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(2480, 3508);
+    // 被丢弃的项不许被写上 URL（代数守卫照常生效）；落盘本身照常发生
+    expect(createdUrls).toEqual([]);
+  });
+
+  /**
+   * 同一缺陷的**第二种后果**：`boardPageTile` 在 `await` 之后按**新**选项算名字时，新选项下不存在的
+   * 页索引会直接抛「页索引 15 越界」——`album.save` 一次都不会被调用，用户无过错却保存失败。
+   */
+  it("飞行中改板大小：末页仍能落盘（旧写法会用越界的页索引算名字 ⇒ 保存失败）", async () => {
+    const saves: { blob: Blob; filename: string }[] = [];
+    const albumSave = vi.fn(async (blob: Blob, filename: string): Promise<void> => {
+      saves.push({ blob, filename });
+    });
+    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
+
+    const wrapper = mountPanel("print", printOverrides());
+    let release = (): void => {};
+    exporter.canvasToBlob.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          release = () => {
+            resolve(new Blob([new Uint8Array([2])], { type: "image/png" }));
+          };
+        }),
+    );
+
+    // 29 板下的第 16 页（r4c4）。飞行中切到 58 板（只有 4 页 ⇒ index 15 不存在）
+    await wrapper.get("[data-testid='export-save-page-15']").trigger("click");
+    await clickDisabledOption(wrapper, "print-board-58");
+    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    release();
+    await flushPromises();
+
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    expect(saves[0]?.filename).toBe("测试工程-打印-r4c4.png");
+    expect(createdUrls).toEqual([]);
   });
 
   it("平台保存失败 ⇒ 走既有的逐项失败态（驱动给的中文原因 + 可重试），不静默、也不产生预览 URL", async () => {
