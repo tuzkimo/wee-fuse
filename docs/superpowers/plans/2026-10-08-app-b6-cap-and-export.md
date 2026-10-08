@@ -2464,12 +2464,26 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
 **文件：**
 - 修改：`docs/开发约定详解.md`（「关键常量」一节）
 - 修改：`docs/开发文档索引.md`（B6 那一行的计划列）
+- 修改：`README.md:13`（用户可见文案里的「长边 1–500 颗豆」→「1–116」）
+- 修改：`src/services/patternThumbnail.ts:11-15`（把「设计意图」那段改到与 116 自洽）、`src/services/__tests__/idbProjectStore.test.ts:64`、`src/services/__tests__/patternThumbnail.test.ts:243`（由 500 派生的注释数字）
 - 创建：`docs/superpowers/notes/2026-10-08-app-b6-build-log.md`（构建记录，**实现完成后写**：每批的实测结论、延后项唯一真源）
+
+> **本任务的文件清单由任务 1 的实现者补全**（控制者裁决 2026-10-08）：`README.md` 与三处由 500 派生的注释
+> 都不在任务 1 的范围内，也没有别的简报覆盖它们，属于「谁都不管就会留下来」的残留。
 
 - [ ] **步骤 1：改「关键常量」**
 
 按规格 §13 的常量变更表逐条改：`长边豆数范围 1–500` → `1–116`；删 `EXPORT_CELL_PX_FLOOR`、`SHARE_MAX_EDGE` 两条；
 新增 `SHEET_MIN_LABEL_FONT_PX = 10`、`LEGEND_ITEM_W / LEGEND_ROW_H`、`PRINT_DPI / PAPER_MM / PRINT_MARGIN_MM / PRINT_BEAD_PX`（含「29 + A4 ⇒ 1 格恰为 `BEAD_MM`」这条关系）。
+
+用户可见与派生数字的收尾（**逐条改，不许留 500**）：
+
+1. `README.md:13`：「长边 1–500 颗豆（58 / 116 是一键快捷值）」→「长边 1–116 颗豆（29 / 58 / 116 是一键快捷值）」。
+2. `src/services/patternThumbnail.ts:11-15`：「设计意图」那段里「500×500 的图纸在 512 下每格只有 1px…1024 能给它 2px」，
+   在 116 上限下不再自洽（116×116 在 512 下每格 4px、在 1024 下每格 8px，且该文件是**只缩不放**）。
+   按事实重写这一段，并保留「`maxEdge` 对一切合法图纸都是空操作」这条结论（116 < 512 仍然成立）。
+3. `src/services/__tests__/idbProjectStore.test.ts:64` 与 `src/services/__tests__/patternThumbnail.test.ts:243` 的注释里由 500 派生的数字，
+   按同口径换成 116 派生的真实数字（116×116 = 13456 个数、约 27 KB 的 grid）。
 
 - [ ] **步骤 2：改索引**
 
