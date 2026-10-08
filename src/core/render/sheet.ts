@@ -14,6 +14,7 @@ import {
   countTileBeads,
   labelInk,
   rgbCss,
+  type BoardPagePlan,
   type GridGeometry,
   type LegendBandPlan,
   type LegendPlan,
@@ -26,11 +27,13 @@ import type { PixelRect, RenderTarget2D } from "./types";
 
 /**
  * 施工图的三个渲染器：**单张**（`drawSheet`，B6 起的生产路径）、**分片**（`drawSheetTile`，任务 11 删）
- * 与**独立用量表**（`drawLegend`，任务 11 删），外加两者共用的**用料条**（`drawLegendBand`）。
+ * 与**独立用量表**（`drawLegend`，任务 11 删），外加两者共用的**用料条**（`drawLegendBand`），
+ * 以及 B6 的**打印页**（`drawBoardPage`，每块板一页）。
  *
  * **单张与分片共用同一组步骤函数**（`drawInfoBar` / `drawCellsAndLabels` / `drawGridLines` /
  * `drawRulers` / `drawBoardLabels`）：第 2–7 步只有一份实现，两个 `draw*` 只负责各自的步序、信息条文案
- * 与页脚。任务 9 的打印页也复用其中四步。
+ * 与页脚。**打印页复用其中四步**（`drawInfoBar` 是施工图口径的「成品几厘米」，打印页的页眉另写两行
+ * `boardPageHeader`）——「同一件事的第二份实现」在这里被结构性消灭。
  *
  * **本文件零格子↔像素算术**（只有带内落位偏移，见下）：所有像素位置来自 plan 的派生字段
  * （`grid` / `vLines` / `hLines` / `colTicks` / `rowTicks` / `colBoards` / `rowBoards` /
@@ -689,6 +692,113 @@ export function drawSheet(
   target.textBaseline = "middle";
   target.fillText(
     `合计 ${beads} 颗 · ${meta.colorCount} 种色`,
+    SHEET_MARGIN,
+    plan.footerY - LEGEND_FOOTER_LINE_H,
+  );
+  target.fillText(meta.accuracy, SHEET_MARGIN, plan.footerY);
+  target.fillText(
+    `生成时间：${meta.generatedAt}`,
+    SHEET_MARGIN,
+    plan.footerY + LEGEND_FOOTER_LINE_H,
+  );
+}
+
+/**
+ * 打印页页眉两行。**实际毫米与缩放比必须如实写出来**，不许让用户自己猜（规格 §7.1）：
+ * 用户拿到的是一张按纸缩放的图，不知道「实际一格多少毫米」就无从判断它能不能直接垫在板子上用。
+ *
+ * 两行各自承担一件事：第一行是**身份**（工程名 / 板大小 / 纸型 / 本页在板阵里的行列 / 第几块板），
+ * 第二行是**本页内容与量纲**（格范围 / 一格多少毫米 / 缩放比 / 打印设置提示）。
+ * `percent === 100` 时写「实物大小」而不是「实物的 100%」：它是一条对用户的结论，不是一个数值。
+ *
+ * **它只读 plan 与 meta**（不含 `target`），所以可以直接被用例逐字断言；页眉两行的 y 由计划的
+ * `infoBar.lineOneY` / `lineTwoY` 给（渲染器不自己排版）。
+ */
+export function boardPageHeader(plan: BoardPagePlan, meta: SheetMeta): readonly [string, string] {
+  const firstCol = plan.originCol + 1;
+  const lastCol = plan.originCol + plan.cols;
+  const firstRow = plan.originRow + 1;
+  const lastRow = plan.originRow + plan.rows;
+  const mm = plan.cellMm.toFixed(1);
+  const percent = Math.round(plan.scaleRatio * 100);
+  const scale = percent === 100 ? `1 格 = ${mm}mm（实物大小）` : `1 格 = ${mm}mm（实物的 ${percent}%）`;
+  return [
+    `${meta.projectName} · 板 ${plan.boardSize} × ${plan.boardSize} · ${plan.paper.toUpperCase()} · 第 ${plan.boardRow + 1} 行 第 ${plan.boardCol + 1} 列 · 第 ${plan.boardIndex + 1}/${plan.boardTotal} 块板`,
+    `本页 列 ${firstCol}–${lastCol} · 行 ${firstRow}–${lastRow} · ${scale} · 打印时选「适合页面」`,
+  ];
+}
+
+/**
+ * 一页打印页：整页 = 页眉 + 一块板（带刻度与板号）+ 本页用料条 + 末行。
+ *
+ * **它与 `drawSheet` 共用第 3–7 步的步骤函数**（`drawCellsAndLabels` / `drawGridLines` / `drawRulers` /
+ * `drawBoardLabels`）与用料条 `drawLegendBand`：两处的差异只有页眉文案、页脚文案与几何来源
+ * （打印页的几何由纸型锁死，来自 `planBoardPage`）。信息条**有意不复用** `drawInfoBar`——那两行是
+ * 「成品几厘米」的施工图口径，打印页要写的是实际毫米与缩放比。
+ *
+ * **`usages` 是必需入参、语义是「本页那一份」**（不是全图）：用料条只该列本页要用的色，
+ * 而 `plan.legend` 的行数是按这份用量扣出来的高度预算 ⇒ 两者必须**同源**。
+ *
+ * 入口守卫（规格 §12：非法输入响亮失败）写在**任何写操作之前**，顺序：`kind` → 色卡一致性 →
+ * `usages` 与 `plan.legend` 同源 → `requireUsagesInPalette` → `countTileBeads`。
+ * 前三条防的都是「错配不报错、只把坐标/行数静默映射到别处」；第 4 条防「usages 来自另一张色卡」
+ * 一路画完整块板才炸；最后一条顺带跑完 `requirePattern` 的 `cells` 长度自洽校验。
+ */
+export function drawBoardPage(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  plan: BoardPagePlan,
+  meta: SheetMeta,
+): void {
+  if ((plan.kind as string) !== "board-page") {
+    throw new Error(`plan 的类型不匹配：期望 board-page，实际 ${String(plan.kind)}`);
+  }
+  if (pattern.paletteId !== palette.id) {
+    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
+  }
+  // 入口守卫之三：`usages` 必须与 `planBoardPage` 收到的是**同一份**（消息与 `drawSheet` 的同源守卫同形）。
+  // `LegendBandPlan.itemRows` 是计划用来扣高度预算的字段，而 `drawLegendBand` 只按 `itemCols` 排布、
+  // **不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到页脚上 / 越出 `canvasHeight`。
+  const expectedRows = Math.ceil(usages.length / plan.legend.itemCols);
+  if (plan.legend.itemRows !== expectedRows) {
+    throw new Error(
+      `用料条与本图不符：计划 ${plan.legend.itemRows} 行、按 ${usages.length} 项应为 ${expectedRows} 行`,
+    );
+  }
+  // 入口守卫之四：色号必须在色卡里解析得出来（非数组也在这里抛）。缺了它，「另一张色卡的 usages」
+  // 会一路画完整块板，直到渲染末段（`drawLegendBand` 解析色块真色时）才炸。
+  requireUsagesInPalette(palette, usages);
+  // 颗数必须在填白之前算：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验。
+  const beads = countTileBeads(pattern, plan);
+
+  target.fillStyle = SHEET_BACKGROUND;
+  target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
+
+  const [lineOne, lineTwo] = boardPageHeader(plan, meta);
+  target.fillStyle = TEXT_INK;
+  target.font = `${INFO_FONT_PX}px sans-serif`;
+  target.textAlign = "left";
+  target.textBaseline = "top";
+  target.fillText(lineOne, SHEET_MARGIN, plan.infoBar.lineOneY);
+  target.fillText(lineTwo, SHEET_MARGIN, plan.infoBar.lineTwoY);
+
+  drawCellsAndLabels(target, pattern, palette, plan);
+  drawGridLines(target, plan);
+  drawRulers(target, plan);
+  drawBoardLabels(target, plan);
+  // **打印页的用料条按计划的 `left` 落位**（在可打印区内居中），不要传 `SHEET_MARGIN`：
+  // 那会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（任务 8 的实现者实测）。
+  drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
+
+  // 末行三行：本页颗数 / 全图合计 + 精度声明 / 生成时间（口径与单张施工图一致）
+  target.fillStyle = TEXT_INK;
+  target.font = `${LEGEND_FOOTER_FONT_PX}px sans-serif`;
+  target.textAlign = "left";
+  target.textBaseline = "middle";
+  target.fillText(
+    `本页 ${beads} 颗 · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色）`,
     SHEET_MARGIN,
     plan.footerY - LEGEND_FOOTER_LINE_H,
   );

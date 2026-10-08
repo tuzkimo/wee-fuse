@@ -9,8 +9,8 @@
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
-import { planSheet } from "@/core/render/layout";
-import { drawSheet, type SheetMeta } from "@/core/render/sheet";
+import { planBoardPage, planSheet } from "@/core/render/layout";
+import { drawBoardPage, drawSheet, type SheetMeta } from "@/core/render/sheet";
 import type { RenderTarget2D } from "@/core/render/types";
 import {
   assertCanvasPainted,
@@ -62,6 +62,47 @@ export async function renderSheetBlob(input: SheetRenderInput): Promise<Blob> {
   const plan = planSheet(input.pattern, input.palette, input.usages);
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
     drawSheet(target, input.pattern, input.palette, input.usages, plan, sheetMeta(input, nowText()));
+  });
+}
+
+/**
+ * 打印页通道的入参：在 `SheetRenderInput` 之上补三个版面参数。
+ *
+ * **`boardSize` / `paper` 是与 core 的 `PrintBoardSize` / `PrintPaper` 同值的字面量联合**：这里有意的
+ * 第二个写处（core 的枚举是运行期判据，这里是调用方的编译期接口）。漂移是**响的**而不是静默的——
+ * `planBoardPage` 收到表外的值一律抛（`requireBoardSize` / `requirePaper` 由 `layout.test.ts` 与
+ * `PRINT_BOARD_SIZES` 钉在一起）。
+ */
+export interface BoardPageRenderInput extends SheetRenderInput {
+  readonly boardSize: 29 | 58;
+  readonly paper: "a4" | "a3";
+  readonly pageIndex: number;
+}
+
+/**
+ * 一页 A4/A3 打印页（每页一块板 + 本页用料）。`usages` 传的是**本页**用量，不是全图。
+ *
+ * 第二参数 `pageUsages` 缺省取 `input.usages`：视图层已经按页算好本页用量时显式传（它的行数必须与
+ * `planBoardPage` 收到的那份一致，否则 `drawBoardPage` 的同源守卫会抛）；只有一张图 / 全图一份用量时
+ * 不必重复写一遍。`meta.totalBeads` 用**全图**用量求和（页脚写的是「本页 N 颗 · 全图 M 颗」）。
+ *
+ * `draw` 回调必须是**同步**的（`renderWithPlan` 只 `await` 它之后的 `canvasToBlob`）：渲染器一页要写
+ * 上万次目标，没有一处需要异步。
+ */
+export async function renderBoardPageBlob(
+  input: BoardPageRenderInput,
+  pageUsages: readonly ColorUsage[] = input.usages,
+): Promise<Blob> {
+  const plan = planBoardPage(input.pattern, input.palette, pageUsages, {
+    boardSize: input.boardSize,
+    paper: input.paper,
+    index: input.pageIndex,
+  });
+  return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
+    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, {
+      ...sheetMeta(input, nowText()),
+      totalBeads: input.usages.reduce((sum, usage) => sum + usage.count, 0),
+    });
   });
 }
 

@@ -9,7 +9,7 @@ import { planSheet } from "@/core/render/layout";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { renderSheetBlob } from "@/services/sheetExport";
+import { renderBoardPageBlob, renderSheetBlob } from "@/services/sheetExport";
 
 /**
  * `@/services/exporter` 的替身。**声明必须走 `vi.hoisted`**：`vi.mock` 的工厂被提升到所有 import
@@ -149,5 +149,31 @@ describe("renderSheetBlob", () => {
     await renderSheetBlob({ pattern, palette: makePalette(), usages: makeUsages(), projectName: "测试工程" });
     const plan = planSheet(pattern, makePalette(), makeUsages());
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(plan.canvasWidth, plan.canvasHeight);
+  });
+});
+
+/**
+ * 打印页通道。**独立一个 describe、带自己的 `beforeEach`**：替身的默认实现由
+ * `resetExporterMock` 装（`createCanvasStrict` 造记录型假画布、`requireContext2D` 给记录型 target），
+ * 依赖上面那个 describe 的 `beforeEach` 会在「用例顺序变了 / 单跑一条」时静默失去替身实现。
+ */
+describe("renderBoardPageBlob", () => {
+  beforeEach(() => {
+    const { target } = createRecordingTarget();
+    resetExporterMock(exporter, target);
+  });
+
+  it("renderBoardPageBlob 的画布就是纸型像素（A4 = 2480×3508）", async () => {
+    const pattern = makePattern(58, 58, undefined);
+    await renderBoardPageBlob({
+      pattern,
+      palette: makePalette(),
+      usages: makeUsages(),
+      projectName: "测试工程",
+      boardSize: 29,
+      paper: "a4",
+      pageIndex: 0,
+    });
+    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
   });
 });

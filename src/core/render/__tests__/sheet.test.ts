@@ -9,6 +9,7 @@ import {
   SHEET_RULER_LEFT,
   SHEET_RULER_TOP,
   cellBox,
+  planBoardPage,
   planLegend,
   planSheet,
   planSheets,
@@ -19,7 +20,7 @@ import {
   type SheetTilePlan,
   type TileGeometry,
 } from "../layout";
-import { drawLegend, drawSheet, drawSheetTile, type SheetMeta } from "../sheet";
+import { drawBoardPage, drawLegend, drawSheet, drawSheetTile, type SheetMeta } from "../sheet";
 import { createMockTarget, type MockCalls } from "./helpers";
 
 /**
@@ -948,6 +949,86 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     expect(() => drawSheet(target, pattern, palette, stranger, plan, makeMeta())).toThrow(
       "用量表里的色号不在色卡里：Z9",
     );
+    expect(calls.fills).toEqual([]);
+  });
+});
+
+describe("drawBoardPage（B6：每块板一页）", () => {
+  it("页眉写出板大小、纸型、页码、本页格范围与「1 格 = X mm（实物的 Y%）」", () => {
+    const pattern = makePattern(116, 116, undefined);
+    const palette = makePalette();
+    const usages = [{ code: "A1", name: "白", count: 10 }];
+    const plan = planBoardPage(pattern, palette, usages, { boardSize: 58, paper: "a3", index: 0 });
+    const { target, calls } = createMockTarget();
+    drawBoardPage(target, pattern, palette, usages, plan, makeMeta());
+    const texts = calls.texts.map((t) => t.text);
+    expect(texts.some((t) => t.includes("58") && t.includes("A3"))).toBe(true);
+    expect(texts.some((t) => t.includes("第 1/4 块板"))).toBe(true);
+    expect(texts.some((t) => t.includes("列 1–58") && t.includes("行 1–58"))).toBe(true);
+    // 页眉里的实际毫米与缩放比是「无空格」写法（与实现逐字一致：`4.7mm`，不是 `4.7 mm`）；
+    // 58+A3 的比率是 **93%**（宽度预算扣掉刻度带之后 cellPx = 55 / 59 = 0.9322）
+    expect(texts.some((t) => /1 格 = 4\.7mm（实物的 93%）/.test(t))).toBe(true);
+  });
+
+  it("用料条只画本页用到的色（传进来的 usages 就是本页那一份）", () => {
+    const pattern = makePattern(58, 58);
+    const palette = makePalette();
+    const pageUsages = [{ code: "A2", name: "黑", count: 7 }];
+    const plan = planBoardPage(pattern, palette, pageUsages, { boardSize: 29, paper: "a4", index: 0 });
+    const { target, calls } = createMockTarget();
+    drawBoardPage(target, pattern, palette, pageUsages, plan, makeMeta());
+    // 只取**用料条带内**的文字：页脚三行也在 legend.top 之下，不过滤会把它们一起收进来
+    const bandBottom = plan.legend.top + plan.legend.itemRows * plan.legend.rowHeight;
+    const codes = calls.texts.filter((t) => t.y > plan.legend.top && t.y < bandBottom);
+    expect(codes.map((t) => t.text)).toEqual(["A2", "7"]);
+  });
+
+  it("usages 与 plan 不同源（用料条行数对不上）即抛，且不留下半张图（写在任何写操作之前）", () => {
+    // 与 `drawSheet` 的同源守卫同因：`LegendBandPlan.itemRows` 是计划用来扣高度预算的字段，而
+    // `drawLegendBand` 只按 `itemCols` 排布、**不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到
+    // 页脚上 / 越出 `canvasHeight`，画出一张看起来正常的残缺图。
+    const pattern = makePattern(58, 58);
+    const codes = Array.from({ length: 12 }, (_, index) => `B${index + 1}`);
+    const palette = makePaletteOf(codes);
+    const many = codes.map((code, index) => ({ code, name: `色 ${index + 1}`, count: index + 1 }));
+    const manyPlan = planBoardPage(pattern, palette, many, { boardSize: 29, paper: "a4", index: 0 });
+    expect(manyPlan.legend.itemCols).toBe(11);
+    expect(manyPlan.legend.itemRows).toBe(2); // 前提：12 项在 11 列下要两行
+
+    const { target, calls } = createMockTarget();
+    expect(() =>
+      drawBoardPage(target, pattern, palette, many.slice(0, 4), manyPlan, makeMeta()),
+    ).toThrow("用料条与本图不符：计划 2 行、按 4 项应为 1 行");
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("色号不在色卡里、usages 不是数组都在**填白之前**抛（渲染末段才炸会画掉一整块板）", () => {
+    const pattern = makePattern(58, 58);
+    const palette = makePalette();
+    const one = [{ code: "A1", name: "白", count: 3 }];
+    // 计划按 1 项造（11 列下是 1 行），所以下面两次调用的行数守卫都放行，抛的必然是那两条守卫本身
+    const plan = planBoardPage(pattern, palette, one, { boardSize: 29, paper: "a4", index: 0 });
+    expect(plan.legend.itemRows).toBe(1);
+
+    const { target, calls } = createMockTarget();
+    expect(() =>
+      drawBoardPage(target, pattern, palette, [{ code: "Z9", name: "不在色卡", count: 1 }], plan, makeMeta()),
+    ).toThrow("用量表里的色号不在色卡里：Z9");
+    expect(calls.fills).toEqual([]);
+
+    // **`{ length: 1 }` 是刻意选的**：它不是数组、也没有 `code`，但 `length` 与计划行数相符 ⇒ 同源守卫
+    // 放行，抛的是数组守卫本身（`Array.isArray` 那条）。用一个「长度不符的字符串」会先撞上行数守卫，
+    // 这条用例就变成在钉另一条守卫了。
+    expect(() =>
+      drawBoardPage(
+        target,
+        pattern,
+        palette,
+        { length: 1 } as unknown as readonly ColorUsage[],
+        plan,
+        makeMeta(),
+      ),
+    ).toThrow("用量表必须是数组（当前 object）");
     expect(calls.fills).toEqual([]);
   });
 });
