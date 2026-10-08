@@ -17,6 +17,7 @@ import { patternStats } from "@/core/pattern/stats";
 import { EMPTY } from "@/core/pattern/types";
 import { toProjectDocument } from "@/core/project/file";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
+import ExportPanel from "@/components/editor/ExportPanel.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import { createDomBitmapPlatform, createExactDecoder, createFastDecoder } from "@/services/decoders";
 import { loadImageSource } from "@/services/imageSource";
@@ -122,6 +123,10 @@ const resultImage = computed(() =>
 const resultStats = computed(() =>
   session.pattern === null ? null : patternStats(session.pattern, palette),
 );
+
+/** 导出面板是否打开（就地打开，不跳编辑器：结果页已经有图纸与用量，跳走反而打断「改参数再生成」这条路）。 */
+const exporting = ref(false);
+const resultUsages = computed(() => resultStats.value?.usages ?? []);
 
 /**
  * 结果阶段的尺寸三行（规格 §6.3）。
@@ -428,6 +433,13 @@ function resetCrop(): void {
             改选区
           </button>
           <button
+            data-testid="result-export"
+            class="min-h-12 rounded border border-slate-300 px-4 text-base"
+            @click="exporting = true"
+          >
+            导出
+          </button>
+          <button
             data-testid="open-editor"
             class="min-h-12 rounded bg-slate-900 px-4 text-base text-white"
             @click="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
@@ -486,4 +498,14 @@ function resetCrop(): void {
       重试保存
     </button>
   </main>
+
+  <ExportPanel
+    v-if="exporting && session.pattern !== null"
+    :pattern="session.pattern"
+    :palette="palette"
+    :usages="resultUsages"
+    :project-name="session.record?.meta.name ?? '图纸'"
+    mode="sheet"
+    @close="exporting = false"
+  />
 </template>

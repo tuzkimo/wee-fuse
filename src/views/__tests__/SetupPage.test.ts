@@ -1021,6 +1021,32 @@ describe("结果阶段", () => {
     expect(push).toHaveBeenCalledWith({ name: "editor", params: { id } });
   });
 
+  it("结果页有导出按钮，点击后就地打开导出面板（不跳编辑器）", async () => {
+    // 沿用本文件已有的「跑到结果阶段」路径：seedDraft() → mount → 点 generate → flushPromises()
+    // **唯一一处对简报代码的增补**：简报那一段漏了 `stubPlatform()`，而 happy-dom 没有
+    // `createImageBitmap`（见下面「平台缺少 createImageBitmap」那条），没有桩时流水线在第一步就抛，
+    // `result-pane` 根本不出现——简报预期的 RED 是 `Unable to get [data-testid='result-export']`，
+    // 逐字使用实测红在第 1 条断言（`result-pane` 不存在，原始输出见 task-13 报告 §RED）。
+    // 本文件其余每一条跑到结果阶段的用例都先调它；增补这一行不改断言、也不改被测行为。
+    stubPlatform();
+    seedDraft();
+    setProjectStore(await createMemoryProjectStore());
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    await wrapper.get("[data-testid='result-export']").trigger("click");
+    // 简报这里写的是 `wrapper.get(...).exists()`，但 `get` 的返回类型是
+    // `Omit<DOMWrapper<Element>, "exists">`——`vue-tsc` 直接报 TS2339（`npm run build` 红）。
+    // 换成 `find(...).exists()` 语义逐字等价（`get` = 「找不到就抛」+ 找到了；`find().exists()` =
+    // 「找得到吗」），也因此与本文件其余断言的写法一致。
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(true);
+  });
+
   it("平板结果阶段能页内回选区（左栏当场换回画布）", async () => {
     stubPlatform();
     const draft = seedDraft();
