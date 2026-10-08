@@ -58,6 +58,17 @@ let disposed = false;
 /** 现算完成前用缩略图垫场；算完换成施工图。 */
 const previewSrc = computed(() => blobUrl.value || props.thumbnail);
 
+/**
+ * 图上页眉、文件名与标题的**唯一**工程名来源（2026-10-08 收口）。
+ *
+ * 此前是三处两个源：标题与文件名取 `props.name`，而渲染进图里的页眉取 `record.meta.name`——两者由
+ * 不同的人在不同时刻写入，重命名之后就可能是两个名字（一张图上的名字与它落盘的文件名不同，用户
+ * 无从判断哪一份是新的）。**取 `props.name`**：① 标题与文件名本来就用它（改另两处会改掉现有行为
+ * 与既有断言）；② 它是用户点开这条工程时看到的名字，「图上与档上同名」的判据就是用户看到的那一个。
+ * `record.meta.name` 在本组件里不再被读（`record` 只提供 `doc`）。
+ */
+const sheetName = computed(() => props.name);
+
 onMounted(async () => {
   try {
     const record = await getProjectStore().get(props.projectId);
@@ -67,12 +78,19 @@ onMounted(async () => {
     }
     const { pattern } = fromProjectDocument(record.doc, palette);
     const usages = patternStats(pattern, palette).usages;
-    const blob = await renderSheetBlob({ pattern, palette, usages, projectName: record.meta.name });
+    const blob = await renderSheetBlob({ pattern, palette, usages, projectName: sheetName.value });
     // **卸载判据排在任何副作用之前**（见 `disposed` 的 JSDoc）：这里是这颗 blob 唯一的注册点，
     // 一旦放过，已死实例上生出来的 object URL 再没有人能销号。
     if (disposed) return;
     sheetBlob.value = blob;
-    blobUrl.value = URL.createObjectURL(blob);
+    // **预览 URL 单独兜错**（2026-10-08 收口）：它与「图纸生成」是两件事——URL 造不出来时图纸**已经
+    // 算完了**（`sheetBlob` 已就位、保存按钮因此可点），报成「图纸生成失败」是失实；同理也不该让它
+    // 落进下面那个 catch，把一颗已生成的 blob 说成失败。预览失败只影响垫场图，保存路径不受影响。
+    try {
+      blobUrl.value = URL.createObjectURL(blob);
+    } catch (e) {
+      error.value = `预览生成失败：${e instanceof Error ? e.message : String(e)}`;
+    }
   } catch (e) {
     // 中文包裹（第 2 轮修复）：`String(e)` 对非 Error 来源（IndexedDB 的 `DOMException`、
     // 被抛出的字符串 / 普通对象）会露出裸英文，而**「失败必须给出中文原因」对所有来源成立**。
@@ -91,16 +109,20 @@ onUnmounted(() => {
 
 async function save(): Promise<void> {
   const blob = sheetBlob.value;
-  // `saving` 早退是**判据**，`blobUrl === ''` 那个 `disabled` 只是视觉：同一 tick 的第二次点击
-  // 会在 `disabled` 刷新之前进来（见 `saving` 的 JSDoc）。
+  // `saving` 早退是**判据**，`:disabled` 只是视觉：同一 tick 的第二次点击会在 `disabled` 刷新之前
+  // 进来（见 `saving` 的 JSDoc）。可点性判的是 `sheetBlob`（而不是 `blobUrl`）：blob 在 URL 之前
+  // 就绪，URL 造不出来不该让一颗**已经生成好**的 blob 存不了（2026-10-08 收口）。
   if (blob === null || saving.value) return;
   saving.value = true;
   // **入口清空**（第 2 轮修复）：不清的话，重试期间屏幕上还挂着上一轮的「保存失败：…」，
   // 用户会以为**这次**也失败了（而这次可能成功）。
   saveState.value = "";
   try {
-    await getPlatform().album.save(blob, exportFilename(props.name, "施工图"));
-    saveState.value = getPlatform().album.kind === "album" ? "已保存到相册" : "已开始下载";
+    await getPlatform().album.save(blob, exportFilename(sheetName.value, "施工图"));
+    // **浏览器支逐字是「已生成」**（2026-10-08 控制者撤销此前的保留裁决）：B5-24（2026-10-06）已把
+    // 口径收口为「已生成」，理由是下载被浏览器拦下时「已开始下载」失实；本批规格 §9.2-3 也要求
+    // 与导出面板同一口径（`ExportPanel.vue` 的 `statusText` 浏览器支就是「已生成」）。
+    saveState.value = getPlatform().album.kind === "album" ? "已保存到相册" : "已生成";
   } catch (e) {
     saveState.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
   } finally {
@@ -113,11 +135,11 @@ async function save(): Promise<void> {
 <template>
   <section data-testid="sheet-viewer" class="fixed inset-0 z-30 overflow-y-auto bg-white p-4">
     <header class="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3">
-      <h2 data-testid="sheet-title" class="project-name text-2xl font-bold text-slate-900">{{ name }} · 施工图</h2>
+      <h2 data-testid="sheet-title" class="project-name text-2xl font-bold text-slate-900">{{ sheetName }} · 施工图</h2>
       <div class="flex flex-wrap gap-3">
         <button
           data-testid="sheet-save"
-          :disabled="blobUrl === '' || saving"
+          :disabled="sheetBlob === null || saving"
           class="min-h-11 rounded bg-slate-900 px-6 text-base text-white disabled:opacity-50"
           @click="save"
         >

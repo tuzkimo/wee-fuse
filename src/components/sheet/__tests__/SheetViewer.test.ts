@@ -114,6 +114,10 @@ describe("SheetViewer", () => {
     const [blob, filename] = albumSave.mock.calls[0] as [Blob, string];
     expect(blob.size).toBeGreaterThan(0);
     expect(filename).toBe("小猫-施工图.png");
+    // **图上工程名与文件名同源**（2026-10-08 收口）：这条夹具里 `props.name`（小猫）与记录里的
+    // `meta.name`（测试工程，`seedRecord` 的缺省值）是**两个不同的名字**，所以「渲染入参取哪个」
+    // 在这里是判得开的——取 `record.meta.name` 时下面这句会红（图上写着 A、档上叫 B）。
+    expect((renderSheetBlob.mock.calls[0]?.[0] as SheetRenderInput).projectName).toBe("小猫");
     // **预览 URL 与落盘用的是同一颗 blob**（规格纪律：留住 blob 本体，不许 `fetch(objectUrl)` 再取
     // 一遍——那会白复制一份全分辨率位图）。这是本组件唯一一条「不复制」的机检。
     expect(createObjectUrl.mock.calls[0]?.[0]).toBe(blob);
@@ -235,7 +239,10 @@ describe("SheetViewer", () => {
     expect(wrapper.find("[data-testid='sheet-error']").exists()).toBe(false);
   });
 
-  it("成功文案按落点分叉：浏览器落点（download）说「已开始下载」，不冒充相册", async () => {
+  it("成功文案按落点分叉：浏览器落点（download）说「已生成」，不冒充相册", async () => {
+    // **逐字就是「已生成」**（2026-10-08 控制者撤销此前的保留裁决）：B5-24（2026-10-06）已把口径
+    // 收口为「已生成」——下载被浏览器拦下时「已开始下载」失实；本批规格 §9.2-3 也要求与导出面板
+    // 同一口径（`ExportPanel.vue` 的 `statusText` 浏览器支逐字是「已生成」）。
     await seedRecord();
     albumKind.value = "download";
     const wrapper = mount(SheetViewer, { props: { projectId: "p1", name: "小猫", thumbnail: "" } });
@@ -243,8 +250,27 @@ describe("SheetViewer", () => {
     await wrapper.get("[data-testid='sheet-save']").trigger("click");
     await flushPromises();
     const text = wrapper.get("[data-testid='sheet-save-state']").text();
-    expect(text).toBe("已开始下载");
+    expect(text).toBe("已生成");
     expect(text).not.toContain("已保存到相册");
+    expect(text).not.toContain("已开始下载");
+  });
+
+  it("预览 URL 造不出来 ≠ 图纸生成失败：blob 仍可保存，可点性判的是 sheetBlob", async () => {
+    await seedRecord();
+    // 真实形态：某些环境（或 blob 已被释放）下 `createObjectURL` 会抛。图纸这时**已经算完**，
+    // 报成「图纸生成失败」是失实；而可点性若挂在 `blobUrl` 上，这颗已就绪的 blob 就永远存不了。
+    createObjectUrl.mockImplementationOnce(() => {
+      throw new Error("object URL 被拒");
+    });
+    const wrapper = mount(SheetViewer, { props: { projectId: "p1", name: "小猫", thumbnail: "" } });
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-error']").text()).toBe("预览生成失败：object URL 被拒");
+    const button = wrapper.get("[data-testid='sheet-save']");
+    expect((button.element as HTMLButtonElement).disabled).toBe(false);
+    await button.trigger("click");
+    await flushPromises();
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    expect(wrapper.get("[data-testid='sheet-save-state']").text()).toBe("已保存到相册");
   });
 
   it("保存进行中时按钮禁用，同一 tick 连点两次只落盘一次", async () => {
