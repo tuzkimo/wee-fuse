@@ -64,7 +64,7 @@ describe("computeGridSize", () => {
 
   it("长边越界抛错", () => {
     expect(() => computeGridSize(100, 100, 0)).toThrow(/长边豆数/);
-    expect(() => computeGridSize(100, 100, 501)).toThrow(/长边豆数/);
+    expect(() => computeGridSize(100, 100, 117)).toThrow(/长边豆数/);
     expect(() => computeGridSize(100, 100, 2.5)).toThrow(/长边豆数/);
   });
 

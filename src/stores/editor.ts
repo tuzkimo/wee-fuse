@@ -131,8 +131,9 @@ export const useEditor = defineStore("editor", () => {
    * 「图纸用色比色卡少」时让 `setCurrentColor` / `pickFromCell` 抛出难归因的错误。
    *
    * 这里**不做**「每格值必须 < colorCount 或 = EMPTY」的 O(n) 扫描：`Pattern` 只有 `buildPattern`
-   * 与 `fromProjectDocument` 两个来源，两者都已保证值域；在 store 里再扫 25 万格是每次载入的固定
-   * 开销，而它挡不住任何已知路径（坏数据由 `pickFromCell` 那一处的值域守卫响亮拦下）。
+   * 与 `fromProjectDocument` 两个来源，两者都已保证值域；在 store 里再扫一遍整张图纸（116×116
+   * 上限下是 1.3 万格）是每次载入的固定开销，而它挡不住任何已知路径（坏数据由 `pickFromCell`
+   * 那一处的值域守卫响亮拦下）。
    */
   const colorCount = ref(0);
   /** 每次 `cells` 变更自增。画布 `watch` 它来决定重绘（见 `lastDirty`）。 */

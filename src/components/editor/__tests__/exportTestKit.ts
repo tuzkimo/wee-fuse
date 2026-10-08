@@ -3,8 +3,10 @@ import type { RenderTarget2D } from "@/core/render/types";
 import type * as exporterModule from "@/services/exporter";
 
 /**
- * 导出面板两处用例（`src/components/editor/__tests__/ExportPanel.test.ts` 与
- * `src/views/__tests__/EditorPage.test.ts`）共用的**测试桩**（任务 4 修复轮 F2）。
+ * 导出用例共用的**测试桩**（任务 4 修复轮 F2）：
+ * `src/components/editor/__tests__/ExportPanel.test.ts` / `src/views/__tests__/EditorPage.test.ts` /
+ * `src/services/__tests__/sheetExport.test.ts`。**消费者清单以本行为准**（不写数量，免得每加一处
+ * 都要回来改两个地方）。
  *
  * **为什么它必须存在**：这两份桩原来逐字重复了约 65 行——`@/services/exporter` 的五个函数替身、
  * `RenderTarget2D` 的记录型普通对象桩、object URL 的桩、假画布与顺序表。重复的两份桩不是
@@ -12,7 +14,7 @@ import type * as exporterModule from "@/services/exporter";
  * **假绿**的形式沉默（一端记了、另一端没记）——这正是本项目记过账的缺陷形态
  * （「两端各自正确、错在接线」）。
  *
- * **本文件不是交付代码**：它在测试目录里、**不新增生产消费者**，只有上面那两个用例文件 import 它。
+ * **本文件不是交付代码**：它在测试目录里、**不新增生产消费者**，只有上面列出的用例文件 import 它。
  * 文件名不叫 `*.test.ts` / `*.spec.ts`，所以不会被 vitest 收集成用例——与
  * `src/services/__tests__/projectStoreContract.ts`（同款先例）一致。
  *
@@ -121,8 +123,10 @@ export function createRecordingTarget(): RecordingTarget {
     textAlign: "center",
     textBaseline: "middle",
     // **与真实 ctx 的默认值一致（`true`）**，也与 `core/render/__tests__/helpers.ts` 的桩一致
-    // （修复波 C-m4）：两个共享桩的初值不一致时，任何「渲染器把插值关掉了」的面板侧断言都会变成
-    // **恒真**（桩自己给的 `false`），而不是被测行为。
+    // （修复波 C-m4 定的口径，2026-10-08 更新动机）：当初的理由是「分享图渲染器要求画之前就关插值」，
+    // 分享图下线后**已经没有任何渲染器关插值**（唯一会关的只剩 `services/patternThumbnail.ts` 的
+    // 缩略图画布，它不走这个桩）。初值仍然要对：两个共享桩的初值不一致时，任何「渲染器把插值关掉了」
+    // 的面板侧断言都会变成**恒真**（桩自己给的 `false`），而不是被测行为。
     imageSmoothingEnabled: true,
     fillRect: (x, y, w, h) => {
       fills.push({ x, y, w, h, fillStyle: target.fillStyle });
@@ -249,7 +253,7 @@ export interface ResetExporterHooks {
 }
 
 /**
- * 给五个替身逐项 `mockReset()` 并装上**默认实现**。两个用例文件在各自的 `beforeEach` 里调用它，
+ * 给五个替身逐项 `mockReset()` 并装上**默认实现**。每个消费者在各自的 `beforeEach` 里调用它，
  * 于是「默认实现」也只有一份。
  *
  * 默认实现的形状是承重的：

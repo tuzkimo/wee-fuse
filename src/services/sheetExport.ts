@@ -40,6 +40,15 @@ export function sheetMeta(input: SheetRenderInput, generatedAt: string): SheetMe
   };
 }
 
+/**
+ * 三件事的**唯一顺序**（建画布 → 渲染 → 自检 → toBlob → 释放画布），`renderSheetBlob` 与
+ * `renderBoardPageBlob` 共用——顺序在两个入口各写一遍迟早会漂。
+ *
+ * **`draw` 必须是同步的**（类型上写明不了，故写在这里）：参数类型是 `(target) => void`，而
+ * TypeScript **会静态接受**一个 `async` 回调，紧接着的 `draw(...)` 也不 `await` ⇒ 若后人传了
+ * `async draw`，紧随其后的 `assertCanvasPainted` 自检会跑在绘制完成**之前**（看到的是一张空画布），
+ * 正是这个抽象要防的形态。渲染器一页要写上万次目标，没有一处需要异步。
+ */
 async function renderWithPlan(
   width: number,
   height: number,
@@ -48,7 +57,8 @@ async function renderWithPlan(
   const canvas = createCanvasStrict(width, height);
   try {
     draw(requireContext2D(canvas));
-    // 自检必须在 toBlob **之前**：反过来的话，一张「看起来正常」的白图已经落盘了才被发现。
+    // 自检必须在 toBlob **之前**：反过来的话，一张「看起来正常」的白图**已经交给调用方
+    //（并可能被落盘）**才被发现。
     assertCanvasPainted(canvas);
     return await canvasToBlob(canvas);
   } finally {

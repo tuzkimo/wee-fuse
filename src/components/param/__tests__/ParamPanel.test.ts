@@ -124,7 +124,9 @@ describe("长边输入", () => {
     expect(wrapper.get("[data-testid='summary']").text()).toContain("29 × 29 颗");
   });
 
-  it.each(["0", "501", "2.5", ""])("非法输入 %s 不 emit，给出原因并禁用生成", async (bad) => {
+  // 越界探针取 **117**（上限 116 的紧邻外侧）：旧写法是 `"501"`，改常量前后它都被拒、
+  // 没有任何判别力；117 才真的钉住「上限就是 116」这一条。
+  it.each(["0", "117", "2.5", ""])("非法输入 %s 不 emit，给出原因并禁用生成", async (bad) => {
     const wrapper = mountPanel();
     await wrapper.get("[data-testid='long-side']").setValue(bad);
 
@@ -133,7 +135,7 @@ describe("长边输入", () => {
     expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
   });
 
-  // 【修复轮 1】上面那条只断言 0 / 501 **被拒**，1 与 116 这两个边界值从未被断言「**接受**」：
+  // 【修复轮 1】上面那条只断言 0 / 117 **被拒**，1 与 116 这两个边界值从未被断言「**接受**」：
   // 把 `value <= MAX_LONG_SIDE` 改成 `<`（或把 `>= MIN_LONG_SIDE` 改成 `>`）后 20 条用例全绿。
   // 边界是规格 §4.6 / 关键常量「长边豆数范围 1–116」的端点，被拒就是功能缺失。
   it.each([1, 116])("边界值 %i 被接受（emit、有摘要、可生成）", async (value) => {

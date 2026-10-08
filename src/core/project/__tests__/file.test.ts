@@ -159,7 +159,7 @@ describe("toProjectDocument", () => {
 
   it("非法参数抛错（长边越界 / 档位非法 / 旋转非法）", () => {
     const p = pattern3x3();
-    expect(() => toProjectDocument(p, palette, { ...params, longSide: 501 })).toThrow(/长边/);
+    expect(() => toProjectDocument(p, palette, { ...params, longSide: 117 })).toThrow(/长边/);
     expect(() =>
       toProjectDocument(p, palette, { ...params, maxColors: 8 as unknown as 16 }),
     ).toThrow(/档位/);

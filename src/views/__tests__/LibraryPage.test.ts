@@ -284,32 +284,17 @@ describe("LibraryPage", () => {
   // -------------------------------------------------------------------------
 
   it("长工程名不撑宽卡片：名字用 .project-name，列表与卡片允许收缩", async () => {
-    // 沿用本文件已有的写法：塞一个只实现 list() 的普通对象（`LibraryPage` 只调 list / estimateUsage）
-    setProjectStore({
-      list: async () => [
-        {
-          id: "p1",
-          name: "IMG_20240101_1234567890_edited_edited_edited_final_version",
-          createdAt: "2026-10-08T00:00:00.000Z",
-          updatedAt: "2026-10-08T00:00:00.000Z",
-          thumbnail: "",
-          width: 58,
-          height: 58,
-          colorCount: 12,
-        },
-      ],
-      get: async () => null,
-      put: async () => undefined,
-      remove: async () => undefined,
-      rename: async () => {
-        throw new Error("本用例不需要改名");
-      },
-      estimateUsage: async () => null,
-    });
+    // 与 `beforeEach` 同一套写法（`createMemoryProjectStore` + `makeRecord`）：手搓的六方法桩
+    // 会随 `ProjectStore` 增删成员而悄悄失同步，而这两个助手本来就在本文件里用着。
+    const store = await createMemoryProjectStore();
+    await store.put(
+      makeRecord("p1", "IMG_20240101_1234567890_edited_edited_edited_final_version", "2026-10-08T00:00:00.000Z"),
+    );
+    setProjectStore(store);
     const wrapper = mount(LibraryPage);
     await flushPromises();
 
-    const list = wrapper.get("ul");
+    const list = wrapper.get("[data-testid='project-list']");
     expect(list.classes()).toContain("grid-cols-1");
     const card = wrapper.get("[data-testid='project-card']");
     expect(card.classes()).toContain("min-w-0");

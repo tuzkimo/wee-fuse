@@ -187,7 +187,14 @@ function onPick(point: CellPoint): void {
   editor.pickFromCell(point.x, point.y);
 }
 
-/** 适配 = `fitTransform` 的**既有导出**（规格 §4.2：不新增第三个函数）。 */
+/**
+ * 适配 = `fitTransform` 的**既有导出**（规格 §4.2：不新增第三个函数），语义是**填满视口**。
+ *
+ * **它与默认视图的口径有意不同**：小图纸上「适配」会把格子放大到满屏（2×1 在 800×600 里是 400 px/格），
+ * 而默认视图封在 `min(适配比例, MAX_CELL_PX)`（`defaultCellView`，规格 §5.2）。这不是缺陷——
+ * 「适配」是用户主动按下的动作，要看的是整张图铺满；「默认视图」要的是不吓人。
+ * 本函数**保持裸 `fitTransform`**（规格 §5.2 逐字要求），不要顺手改成 `defaultCellView`。
+ */
 function fitView(): void {
   const pattern = editor.pattern;
   if (pattern === null || viewport.value.width <= 0) return;

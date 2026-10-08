@@ -33,8 +33,8 @@ const DB_VERSION = 1;
  *
  * 记录分成三个 object store：`projects`（meta + doc）、`metas`（只有 meta，供 `list()` 读）与
  * `sources`（原图，**落盘为 `ArrayBuffer` + `type`**）。`list()` 只开 `metas` 的事务，
- * 因此既不会读到 MB 级的原图，也不会把几十万格的 `grid` 载入内存——这对图纸库有几十个
- * 工程的情况很重要（规格 §7.1）。`metas` 与 `projects` 的 meta 在同一事务里写，不会漂移。
+ * 因此既不会读到 MB 级的原图，也不会把上万格的 `grid`（116×116 上限下是 13456 个数、约 27 KB）
+ * 载入内存——这对图纸库有几十个工程的情况很重要（规格 §7.1）。`metas` 与 `projects` 的 meta 在同一事务里写，不会漂移。
  *
  * **为什么原图落盘 `ArrayBuffer` 而不是 `Blob`**（任务 0 的实测结论，账本 R3）：happy-dom 的全局
  * `Blob` 过不了结构化克隆（无 `Symbol.toStringTag`，字节挂在 symbol 键上），裸 `structuredClone`

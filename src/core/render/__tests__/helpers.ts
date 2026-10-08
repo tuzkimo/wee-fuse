@@ -9,7 +9,8 @@ import type { RenderTarget2D } from "../types";
  * 全都在 Node 里可断言。真实像素的观感验证在规格 §14 的人工清单里，不做成断言（§13.4）。
  *
  * **与真实 ctx 的两处刻意对齐**（否则正确实现会假红）：
- * 1. `fillRect` 记下**调用当刻**的 `imageSmoothingEnabled`（分享图要求画之前就已关插值）；
+ * 1. `fillRect` 记下**调用当刻**的 `imageSmoothingEnabled`（真实 canvas 就是这么读的；分享图下线后
+ *    已无渲染器关插值，记录口径仍照旧——桩的取值口径不该随被测行为一起变）；
  * 2. 路径的 `lineWidth` / `strokeStyle` 在 **`stroke()` 那一刻**刷新——真实 canvas 也是在 stroke
  *    时读这两个属性，所以「先 beginPath 再设线宽」这种合法写法不会被记成错的值。
  */
@@ -21,7 +22,7 @@ export interface FillCall {
   readonly w: number;
   readonly h: number;
   readonly fillStyle: string;
-  /** 调用当刻的 `imageSmoothingEnabled`（分享图要求「画之前」就已关闭插值）。 */
+  /** 调用当刻的 `imageSmoothingEnabled`（记录口径与真实 ctx 一致）。 */
   readonly smoothing: boolean;
 }
 

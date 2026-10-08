@@ -627,8 +627,8 @@ function draw(): void {
 
 // 两个 watch 的源都是**浅引用 / 标量**：`pattern` 在 store 里是 `markRaw` 的同一个对象（身份变 = 换图纸）、
 // `lastDirty` 每次提交都是新数组、`view` 每次 `setView` 都是新对象——浅比较足够。
-// 不加 `deep: true`：`pattern.cells` 是最大 25 万格的 TypedArray，深遍历既昂贵又不会多发现任何变化
-// （格子变了必然伴随 `revision` 变，那条已经在源里）。
+// 不加 `deep: true`：`pattern.cells` 是最大 1.3 万格（116×116）的 TypedArray，深遍历既昂贵又不会多
+// 发现任何变化（格子变了必然伴随 `revision` 变，那条已经在源里）。
 // `tool` 不是重绘源：叠加层画什么由**手势自己的 kind** 决定，工具只在按下那一刻决定起哪种手势。
 watch([() => props.pattern, () => props.revision, () => props.lastDirty], () => draw());
 watch([() => props.view, () => props.currentColor, () => props.showGrid, () => props.showLabels], () => draw());

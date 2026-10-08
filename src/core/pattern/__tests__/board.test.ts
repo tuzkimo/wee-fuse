@@ -51,7 +51,7 @@ describe("boardCount", () => {
   });
 
   // 规格允许的最大图纸（`MAX_LONG_SIDE = 116 = 4 × 29`，见 types.ts）：116 正好是整 4 块板，
-  // 于是「最大合法图纸要几块板」这个乘积（4×4 = 16）真的被读过一次——此前最大只到 59（3×3）。
+  // 于是 `16` 这个乘积此前没有被读过（59 那组只到 3×3 = 9）。
   it("最大合法图纸 116×116 = 4×4 = 16 块板", () => {
     expect(boardCount(MAX_LONG_SIDE, MAX_LONG_SIDE)).toEqual({ cols: 4, rows: 4, total: 16 });
   });

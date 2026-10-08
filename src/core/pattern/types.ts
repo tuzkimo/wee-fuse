@@ -1,7 +1,7 @@
 /** 空格标记：该格不拼豆。Uint16Array 的最大值，不会与任何色卡下标冲突。 */
 export const EMPTY = 0xffff;
 
-/** 长边豆数的合法范围。 */
+/** 长边豆数下限。 */
 export const MIN_LONG_SIDE = 1;
 /**
  * 长边豆数上限 = **116 = 4 × 29**（四块标准板的宽度）。

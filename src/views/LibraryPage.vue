@@ -159,7 +159,7 @@ function open(id: string): void {
       还没有图纸。点右上角「新建图纸」选一张图片开始吧。
     </p>
 
-    <ul class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ul data-testid="project-list" class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <li
         v-for="meta in projects"
         :key="meta.id"

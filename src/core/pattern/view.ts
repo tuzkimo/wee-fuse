@@ -32,10 +32,11 @@ import type { Rect } from "../image/types";
 /**
  * 缩放范围的**上界基准**：一颗豆 64 CSS px 已远大于指尖，再放大拿不到更多信息。
  *
- * **关键取舍**：它只是上界的**基准**，真正的上界是 `max(MAX_CELL_PX, 适配比例 × 2)`
- * ——固定 64 会让 8×8 这类小图纸出现「上界 < 下界」，视图被钉死成一个不可缩放的单一比例
- * （规格 §4.2）。B6 起它同时是 `defaultCellView` 的**封顶值**（`min(适配比例, MAX_CELL_PX)`，
- * 规格 §5.2：小图纸的适配比例可能远大于 64，不封顶就是「满屏一块色块」）。
+ * **关键取舍**：它只是上界的**基准**，真正的上界是 `max(MAX_CELL_PX, 适配比例 × 2)`——固定 64 会让
+ * 小图纸的缩放范围塌成 `[64, 64]` 这个不可缩放的单一比例（下界已由 `minCellScale` 封到
+ * `MAX_CELL_PX`，上界若也固定成 64 就没有任何放大余量；规格 §4.2）。B6 起它同时是 `defaultCellView`
+ * 的**封顶值**（`min(适配比例, MAX_CELL_PX)`，规格 §5.2：小图纸的适配比例可能远大于 64，不封顶就是
+ * 「满屏一块色块」）。
  *
  * **为何公开**：工具栏的 ± 缩放与 store 的边界断言共用它。
  */
@@ -164,8 +165,8 @@ function requireGridSize(grid: Size): Size {
  * **关键取舍**：不新增「适配比例」这个概念的第二份实现——仍直接调 `fitTransform` 取 `scale` 再封顶，
  * 于是视口与图纸的守卫、以及 contain 口径都与 B2 的选区页逐字一致。
  *
- * **为何公开**：`stores/editor.ts`（任务 4）与工具栏的 ± 缩放要读同一个下界；`defaultCellView`
- * 与 `zoomCellView` 也由它定义，用例据此断言「上下界不退化」。
+ * **为何公开**：`zoomCellView` 的下界夹取与 `defaultCellView` 的定义都读它（`stores/editor.ts` 只
+ * import `defaultCellView`，**不直接**读这条下界），用例据此断言「上下界不退化」。
  */
 export function minCellScale(viewport: Size, grid: Size): number {
   return Math.min(fitTransform(viewport, grid).scale, MAX_CELL_PX);
@@ -203,7 +204,9 @@ export function maxCellScale(viewport: Size, grid: Size): number {
  * **为何公开**：`stores/editor.ts` 的 `onViewport` 是它唯一的生产消费者。
  */
 export function defaultCellView(viewport: Size, grid: Size): ViewTransform {
-  const scale = Math.min(minCellScale(viewport, grid), MAX_CELL_PX);
+  // 不再套一层 `Math.min(…, MAX_CELL_PX)`：`minCellScale` 自己就以 `MAX_CELL_PX` 封顶，
+  // 两处独立封顶会让「改一处封顶值」需要追两层（`view.test.ts` 的等式与承重不变量钉着这条口径）。
+  const scale = minCellScale(viewport, grid);
   return clampView(
     {
       scale,

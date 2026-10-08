@@ -190,8 +190,12 @@ describe("renderBoardPageBlob", () => {
    * （`sheetMeta` 的 `totalBeads` / `colorCount` 与页脚那句「… 全图 M 颗（K 种色）」都取自它），
    * 第二个实参才是**本页**用量（用料条）。把本页用量塞进 `input.usages` 会让页脚**静默**把本页数
    * 标成全图数——这条用例就是那个接线错误的判据。
+   *
+   * **本用例只断页脚那一半**（标题据此收窄，2026-10-08）：用料条那一半（本页独有的色号必须出现、
+   * 只有别的页才有的色号不许出现）由面板层的接线用例覆盖——`ExportPanel.test.ts` 的「打印页的用料条
+   * 只列本页用到的色」。这里不再重复一遍。
    */
-  it("页脚的全图颗数 / 色数取自 input.usages（本页用量只影响用料条）", async () => {
+  it("页脚的全图颗数 / 色数取自 input.usages", async () => {
     const pattern = makePattern(58, 58, undefined); // 全 A1 实心：本页 29×29 = 841 颗
     await renderBoardPageBlob(
       {

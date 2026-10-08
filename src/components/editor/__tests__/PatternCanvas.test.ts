@@ -317,7 +317,7 @@ describe("色块层：图纸尺寸 × 1px/格，单格只重绘该格", () => {
     const first = draws.at(-1)?.args;
     // 目标矩形 = {offsetX, offsetY, 图纸宽 × scale, 图纸高 × scale}：漏 offset 或漏 scale 这条必红。
     expect(first?.slice(1)).toEqual([-200, -200, 768, 768]);
-    // 层是 1px/格（32×32），**不是**屏幕尺寸（§5.1：500×500 在 24px/格下要 12000×12000 的离屏画布）。
+    // 层是 1px/格（32×32），**不是**屏幕尺寸（§5.1：116×116 在 24px/格下要 2784×2784 的离屏画布）。
     const layer = first?.[0] as HTMLCanvasElement;
     expect([layer.width, layer.height]).toEqual([32, 32]);
 

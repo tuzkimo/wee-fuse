@@ -70,7 +70,7 @@ const RULER_TEXT_GAP = 8;
 const BOARD_TEXT_INSET = 2;
 /** 信息条字号（px）。**不随格子缩放、不参与布局预算**。 */
 const INFO_FONT_PX = 18;
-/** 用料条表头与表格行的字号（px）。**不随格子缩放**。 */
+/** 用料条正文字号（px）：带内只有**色号 + 数量**两条文字，没有表头。**不随格子缩放**。 */
 const LEGEND_FONT_PX = 14;
 /** 末行三行（合计 / 精度声明 / 生成时间）的字号与行距（px）。**不随格子缩放**。 */
 const LEGEND_FOOTER_FONT_PX = 12;
@@ -103,13 +103,13 @@ function colorOf(palette: Palette, index: number): PaletteColor {
 /**
  * 用料条的**入口守卫**：`usages` 必须是数组，且每个色号都要能在**传入的色卡**里解析出来。
  *
- * **为什么必须有它**（控制者 2026-10-08 裁决，任务 6 审查者发现）：`planSheet` 的 `requireUsages` 只校验
+ * **为什么必须有它**（控制者 2026-10-08 裁决）：`planSheet` 的 `requireUsages` 只校验
  * 形状（数组 / `code` 非空 / `name` / `count` / 去重），**不校验色号是否存在于传入的色卡**，所以
  * 「`usages` 来自另一张色卡」能通过计划阶段，直到渲染末段（`drawLegendBand` 解析色块真色时）才炸——
- * 而那时整张网格（25 万格量级）已经画完，违反「校验写在任何写操作之前」。
+ * 而那时整张网格（116×116 上限下是 1.3 万格量级）已经画完，违反「校验写在任何写操作之前」。
  *
  * 消息与 `drawLegendBand` 的同名守卫**逐字一致**（同一件事不许有两种说法）。
- * `drawLegendBand` 本体保留自己的守卫（它可被直接调用，例如任务 9 的打印页），这里的第二次调用是
+ * `drawLegendBand` 本体保留自己的守卫（它可被直接调用，例如打印页），这里的第二次调用是
  * 「在任何写操作之前失败」这条时序要求的落点。
  */
 function requireUsagesInPalette(palette: Palette, usages: readonly ColorUsage[]): void {
@@ -133,7 +133,7 @@ function requireUsagesInPalette(palette: Palette, usages: readonly ColorUsage[])
  * `itemCols` 排布、**不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到页脚上 / 越出 `canvasHeight`，
  * 画出一张看起来正常的残缺图。
  *
- * **为什么抽成函数**（任务 11）：单张施工图与打印页各有一模一样的一段（连消息都逐字相同）——
+ * **为什么抽成函数**（2026-10-08 收口）：单张施工图与打印页各有一模一样的一段（连消息都逐字相同）——
  * 「同一件事的第二份实现」在此收敛成一处，两边的时序（必须排在色号守卫之后、`countTileBeads` 之前）
  * 也只有一个落点。
  */
@@ -189,7 +189,7 @@ interface LabelCell {
 /**
  * 第 2 步：信息条两行（两个 y 都是**文本顶边**，字号不随格子缩放、不参与布局预算）。
  *
- * **施工图专用**：打印页的页眉是另外两行文案（任务 9 自写，有意不复用本函数——它要写的是实际毫米与
+ * **施工图专用**：打印页的页眉是另外两行文案（打印页自写，有意不复用本函数——它要写的是实际毫米与
  * 缩放比）。两行都只读 `pattern` / `meta`：整图的信息条里没有「本片颗数」这个量（见 `infoLineTwo`）。
  */
 function drawInfoBar(
@@ -444,8 +444,9 @@ export function drawSheet(
   drawRulers(target, plan);
   drawBoardLabels(target, plan);
   // **用料条的横向落位来自计划的 `left`**，不要传 `SHEET_MARGIN`：打印页的条带必须在**可打印区**内居中，
-  // 复用 `SHEET_MARGIN` 会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（落进不可打印区，任务 8 实测
-  // ——见 `LegendBandPlan.left` 的 JSDoc）。单张施工图的 `left` 恰好就是 `SHEET_MARGIN`，行为不变。
+  // 复用 `SHEET_MARGIN` 会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（落进不可打印区，
+  // 2026-10-08 实测——见 `LegendBandPlan.left` 的 JSDoc）。单张施工图的 `left` 恰好就是 `SHEET_MARGIN`，
+  // 行为不变。
   drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
 
   // 末行三行，`plan.footerY` 是页脚带的**中线**：`SHEET_FOOTER_H = 44` 正好放得下三行 12px
@@ -522,7 +523,7 @@ export function drawBoardPage(
     throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
   }
   // 入口守卫之三（**必须排在同源校验之前**）：色号必须在色卡里解析得出来，非数组也在这里抛
-  // （`requireUsagesInPalette` 的 `Array.isArray` 那条）。顺序的理由（任务 9 的实现者实测）：反过来的话，
+  // （`requireUsagesInPalette` 的 `Array.isArray` 那条）。顺序的理由（2026-10-08 实测）：反过来的话，
   // 非数组 usages 会先撞同源校验——字符串的 `.length` 让消息变成「按 12 项应为 2 行」（失实），
   // `null` 更是直接 TypeError。这与 `drawSheet` 的落地顺序同口径。
   requireUsagesInPalette(palette, usages);
@@ -541,7 +542,7 @@ export function drawBoardPage(
   target.textAlign = "left";
   target.textBaseline = "top";
   // **文字左沿取 `plan.textLeft`（= 可打印区左沿 118px）**，不是 `SHEET_MARGIN`（24px = 2.03mm）：
-  // 后者会让页眉两行与页脚三行落进 10mm 的不可打印区被裁（任务 9 的实现者实测）。
+  // 后者会让页眉两行与页脚三行落进 10mm 的不可打印区被裁（2026-10-08 实测）。
   target.fillText(lineOne, plan.textLeft, plan.infoBar.lineOneY);
   target.fillText(lineTwo, plan.textLeft, plan.infoBar.lineTwoY);
 
@@ -550,7 +551,7 @@ export function drawBoardPage(
   drawRulers(target, plan);
   drawBoardLabels(target, plan);
   // **打印页的用料条按计划的 `left` 落位**（在可打印区内居中），不要传 `SHEET_MARGIN`：
-  // 那会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（任务 8 的实现者实测）。
+  // 那会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（2026-10-08 实测）。
   drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
 
   // 末行三行：本页颗数 / 全图合计 + 精度声明 / 生成时间（口径与单张施工图一致，左沿同样取 `plan.textLeft`）

@@ -140,7 +140,7 @@ describe("defaultCellView（§4.2）", () => {
     expect(defaultCellView(V1000, GRID_10)).toEqual(V(MAX_CELL_PX, 180, 80));
   });
 
-  it("比例落在 (适配, MAX_CELL_PX] 内时取适配，偏移居中后过夹取", () => {
+  it("适配比例 ≤ `MAX_CELL_PX` 时取适配（不封顶）", () => {
     // 40×24 放进 1000×800：适配 = min(25, 33.3) = 25 < 64；图像 1000×600 ⇒ 偏移 (0, 100)
     const viewport = { width: 1000, height: 800 };
     const grid = { width: 40, height: 24 };
@@ -394,15 +394,24 @@ describe("cellRectFromScreen（§4.7）", () => {
     );
   });
 
-  it("起止点落在同一格时是合法的 1×1（不夹成 2×2）", () => {
-    // 屏幕 (10, 10) 与 (29, 29) 都落在格子 (1,1)（屏幕区间 [10, 30)）内。
+  it("起止点落在同一格 / 各自压在格边时都是合法的 1×1（不夹成 2×2）", () => {
+    // ① **真正的同格**：格子坐标 1.2 与 1.8（屏幕 14 与 26，都在格子 (1,1) 的屏幕区间 [10, 30) 内）。
+    // 两端都不在格边上是关键——它才是 JSDoc 里 `ceil(9.2) − floor(9.2) = 1` 那条路径的夹具。
+    expect(cellRectFromScreen({ x: 14, y: 14 }, { x: 26, y: 26 }, V(20, -10, -10), GRID_8)).toEqual({
+      x: 1,
+      y: 1,
+      width: 1,
+      height: 1,
+    });
+    // ② 起点压在格左边、终点压在格内（屏幕 (10, 10) 是格子 (1,1) 的左上角，(29, 29) 在其内）：
+    // floor 给 1、ceil 给 2，宽度仍是 1。
     expect(cellRectFromScreen({ x: 10, y: 10 }, { x: 29, y: 29 }, V(20, -10, -10), GRID_8)).toEqual({
       x: 1,
       y: 1,
       width: 1,
       height: 1,
     });
-    // 非整数视口产出的视图（`defaultCellView(V_FRAC, GRID_8)` = V(15.03125, 15.125, 0)，比例 = 120.25/8）：
+    // ③ 非整数视口产出的视图（`defaultCellView(V_FRAC, GRID_8)` = V(15.03125, 15.125, 0)，比例 = 120.25/8）：
     // 两个屏幕点由**视图自身**算出（`屏幕 = 偏移 + 格子坐标 × 比例`），分别压在格子 (1,1) 与 (2,2) 的
     // 左 / 上边缘上，闭式解随之重算。
     const fracView = defaultCellView(V_FRAC, GRID_8);

@@ -172,12 +172,12 @@ describe("renderPatternThumbnail", () => {
   });
 
   it("极端长宽比 + 极小上限时也不会开出 0 宽/0 高的画布（0 尺寸画布的 toDataURL 是 \"data:,\"）", () => {
-    // `Math.max(1, Math.round(...))` 这个夹取在 1×500 的图纸 + maxEdge=1 时才生效：
-    // 去掉它，输出画布宽度就是 round(1 × 1/500) = 0。真浏览器对 0 尺寸画布返回 "data:,"，
-    // 而任务 3 的 `meta.thumbnail` 校验要求 `data:image/` 前缀 —— 于是「保存工程」会以一个
+    // `Math.max(1, Math.round(...))` 这个夹取在 1×116 的图纸 + maxEdge=1 时才生效：
+    // 去掉它，输出画布宽度就是 round(1 × 1/116) = 0。真浏览器对 0 尺寸画布返回 "data:,"，
+    // 而 `meta.thumbnail` 的校验要求 `data:image/` 前缀 —— 于是「保存工程」会以一个
     // 与缩略图毫无关系的文案失败。
     renderPatternThumbnail(
-      { width: 1, height: 500, paletteId: "fake", cells: new Uint16Array(500) },
+      { width: 1, height: 116, paletteId: "fake", cells: new Uint16Array(116) },
       palette,
       1,
     );
@@ -238,9 +238,9 @@ describe("renderPatternThumbnail", () => {
     expect(draws).toEqual([]);
   });
 
-  it("结果预览上限就是 1024（任务 11 新增的第二个消费者）", () => {
+  it("结果预览上限就是 1024（B6 新增的第二个消费者）", () => {
     // 与上面 512 同一条理由：`SetupPage` 只是把它当实参传进来，值本身在别处读不到——
-    // 把它改成 512 的话本文件与 SetupPage 的用例**都不会红**（图纸长边 ≤ 500，只缩不放，
+    // 把它改成 512 的话本文件与 SetupPage 的用例**都不会红**（图纸长边 ≤ 116，只缩不放，
     // 两个值产出逐像素相同的位图），所以字面量只能在这里钉。
     expect(RESULT_PREVIEW_MAX_EDGE).toBe(1024);
   });
