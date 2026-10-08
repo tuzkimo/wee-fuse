@@ -2494,6 +2494,16 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
 7. `src/core/pattern/types.ts:12-13` 的 JSDoc 指向 `core/render/layout.ts` 的 `planSheet`——该符号由**任务 5** 新增。
    T15 执行时它应当已经存在；**先核实**，不存在就改成 `planSheets` 或删掉括号里的指针（不要留一个指向不存在符号的注释）。
 
+任务 2 的审查者挑出的次要项（同形状，一并打包）：
+
+8. `src/views/__tests__/LibraryPage.test.ts:265-285` 手搓了 21 行、六个方法的 store 桩，而同一文件本来就有 `createMemoryProjectStore()`
+   与 `makeRecord(...)`（`beforeEach` 就在用）⇒ 换成那套四行写法（`await createMemoryProjectStore()` + `put(makeRecord(...))`），
+   顺带修掉注释 `:264` 那句与代码不符的「只实现 list()」。
+9. `src/views/__tests__/LibraryPage.test.ts:289` 的 `wrapper.get("ul")` 是全文唯一一个无锚选择器 ⇒ 给图纸库的 `ul` 加
+   `data-testid="project-list"` 并改用它（当前失效方式是变红、不是静默，属脆弱性收紧）。
+10. `src/style.css:10` 注释写「三处引用…施工图查看层标题」——任务 14 落地 `SheetViewer` 之后它才为真 ⇒ **核实**三处都在
+   （图纸库卡片名、编辑页标题、查看层标题）；若查看层没接入 `.project-name`，那是一个真实缺口，按缺口处理。
+
 - [ ] **步骤 2：改索引**
 
 `docs/开发文档索引.md` 的 B6 行补上计划与构建记录两列（计划路径 `superpowers/plans/2026-10-08-app-b6-cap-and-export.md`）。
