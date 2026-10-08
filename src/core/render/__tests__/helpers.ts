@@ -77,9 +77,9 @@ export interface MockCalls {
   readonly strayOps: string[];
   /**
    * `save()` / `restore()` 的调用次数。当前两个渲染器（`drawSheet` / `drawBoardPage`）一次都不调
-   * （都是 0），但**配平是必须保持的不变量**（不配平会泄漏 target 的全局状态）。`core/render/` 下
-   * 现在只剩**一条** `saves === restores` 断言（`sheet.test.ts` 里 `drawSheet` 那条；`drawBoardPage`
-   * 的用例没有它），所以这条不变量眼下就压在这一条上。
+   * （都是 0），但**配平是必须保持的不变量**（不配平会泄漏 target 的全局状态）。规格 §14 把这条
+   * 不变量列在两个渲染器名下，`sheet.test.ts` 因此**各有一条** `saves === restores` 断言
+   * （2026-10-08 终审前只有 `drawSheet` 那条，`drawBoardPage` 是零覆盖）。
    * 计数成对增长是有意的：只记一个数就判不出「多了一次 save」，也无法允许将来正当的成对使用。
    */
   saves: number;

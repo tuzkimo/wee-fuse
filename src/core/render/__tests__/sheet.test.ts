@@ -12,6 +12,7 @@ import {
   planBoardPage,
   planSheet,
   rgbCss,
+  type BoardPagePlan,
   type SheetPlan,
   type TileGeometry,
 } from "../layout";
@@ -474,8 +475,8 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     const usages = makeUsages();
     // `maxEdge = 460` 是本文件实测出的那一档（规格 §14 要求「夹具里含一个旧口径下会被降级的尺寸」）：
     // 用料条 2 行 ⇒ `innerH = 460 − 48 − 108 − 44 − 52 − 44 = 164` ⇒ `cellPx = floor(164 / 6) = 27`、
-    // `labelFontPx = round(27 × 0.38) = 10`（恰在下限上，故计划阶段不抛）。旧的降级判据
-    // `SHEET_LABEL_MIN_CELL_PX = 32`（已随降级链删除）在这一档判 `labels = false`；而本文件其余夹具的
+    // `labelFontPx = round(27 × 0.38) = 10`（恰在下限上，故计划阶段不抛）。旧的降级判据（每格 32 px
+    // 的阈值常量，已随降级链一起删除）在这一档判「不画色号」；而本文件其余夹具的
     // `cellPx = 40` 在 32 之上 ⇒ **只有这一档能证伪「按旧阈值跳过格内色号」**（变异实测见报告）。
     const plan = planSheet(pattern, palette, usages, { maxEdge: 460 });
     expect(plan.cellPx).toBe(27);
@@ -626,6 +627,58 @@ describe("drawBoardPage（B6：每块板一页）", () => {
         makeMeta(),
       ),
     ).toThrow("用量表必须是数组（当前 string）");
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("save / restore 配平（规格 §14 把该不变量也列在打印页名下，此前只有 `drawSheet` 一条）", () => {
+    const pattern = makePattern(58, 58);
+    const palette = makePalette();
+    const usages = [{ code: "A1", name: "白", count: 10 }];
+    const plan = planBoardPage(pattern, palette, usages, { boardSize: 29, paper: "a4", index: 0 });
+    const { target, calls } = createMockTarget();
+    drawBoardPage(target, pattern, palette, usages, plan, makeMeta());
+    expect(calls.saves).toBe(calls.restores);
+  });
+});
+
+/**
+ * 入口守卫的**前两步**（契约 §4b 逐字列出的顺序：`kind` → 色卡一致性 → 色号 → 用料条同源 → 颗数）。
+ *
+ * **为什么单列一组**（2026-10-08 终审发现）：这两步此前**全仓零用例**——把 `drawSheet` /
+ * `drawBoardPage` 里那四条 `if` 一起删掉，全套仍然绿。两个渲染器的守卫逐字相同，所以两个都断：
+ * 只覆盖一个的话，另一个的守卫照旧可以被删掉而不红（第 2–4 步已各有用例，这组补上后五步都可判）。
+ */
+describe("入口守卫的前两步：kind 与色卡一致性", () => {
+  it("`kind` 不匹配的伪计划 ⇒ 在任何写操作之前抛（期望值与实际值都逐字钉住）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const usages = makeUsages();
+    const { target, calls } = createMockTarget();
+    const fakeSheet = { ...planSheet(pattern, palette, usages), kind: "board-page" } as unknown as SheetPlan;
+    expect(() => drawSheet(target, pattern, palette, usages, fakeSheet, makeMeta())).toThrow(
+      "plan 的类型不匹配：期望 sheet，实际 board-page",
+    );
+    const fakeBoard = {
+      ...planBoardPage(pattern, palette, usages, { boardSize: 29, paper: "a4", index: 0 }),
+      kind: "sheet",
+    } as unknown as BoardPagePlan;
+    expect(() => drawBoardPage(target, pattern, palette, usages, fakeBoard, makeMeta())).toThrow(
+      "plan 的类型不匹配：期望 board-page，实际 sheet",
+    );
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("色卡不一致（伪色卡只换了 id）⇒ 在任何写操作之前抛", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const usages = makeUsages();
+    const other: Palette = { ...palette, id: "other-palette" };
+    const { target, calls } = createMockTarget();
+    const message = "图纸的色卡是 test-palette，与传入的色卡 other-palette 不一致";
+    const sheetPlan = planSheet(pattern, palette, usages);
+    const boardPlan = planBoardPage(pattern, palette, usages, { boardSize: 29, paper: "a4", index: 0 });
+    expect(() => drawSheet(target, pattern, other, usages, sheetPlan, makeMeta())).toThrow(message);
+    expect(() => drawBoardPage(target, pattern, other, usages, boardPlan, makeMeta())).toThrow(message);
     expect(calls.fills).toEqual([]);
   });
 });

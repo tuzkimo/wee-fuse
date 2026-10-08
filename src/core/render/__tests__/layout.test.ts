@@ -326,6 +326,15 @@ describe("planSheet（B6：单张施工图）", () => {
     ).toThrow(/每格只有 24 px、色号字号 9 px，低于下限 10 px/);
   });
 
+  it("画布上限连网格的横向起点都放不下（`innerW < 1`）⇒ 专门消息，且排在其他守卫之前", () => {
+    // `innerW = maxEdge − 2 × SHEET_MARGIN − SHEET_RULER_LEFT = maxEdge − 112`：112 是它的零点，
+    // 取 100 就是负数。这一支此前零用例（终审发现）——删掉那三行后，同样的输入会改报
+    // 「可用区域放不下 6×6 的图纸」（`cellPx < 1` 那条），即消息失实而全套仍绿。
+    expect(() => planSheet(makePattern(6, 6), makePalette(), makeUsages(), { maxEdge: 100 })).toThrow(
+      "画布上限 100 px 太小，无法生成施工图",
+    );
+  });
+
   it("用料条的列数随可用宽变化、行数随色数变化，且 top 落在网格下沿", () => {
     const pattern = makePattern(6, 6);
     const plan = planSheet(pattern, makePalette(), makeUsages());

@@ -10,7 +10,7 @@ import { planSheet } from "@/core/render/layout";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { renderBoardPageBlob, renderSheetBlob } from "@/services/sheetExport";
+import { renderBoardPageBlob, renderSheetBlob, usagesInRange } from "@/services/sheetExport";
 
 /**
  * `@/services/exporter` 的替身。**声明必须走 `vi.hoisted`**：`vi.mock` 的工厂被提升到所有 import
@@ -211,5 +211,36 @@ describe("renderBoardPageBlob", () => {
     );
     const footer = texts.map((text) => text.text).filter((text) => text.includes("· 全图"));
     expect(footer).toEqual(["本页 841 颗 · 全图 33 颗（4 种色）"]);
+  });
+});
+
+/**
+ * `usagesInRange` 的两条合同此前零判据（2026-10-08 终审发现）：坏下标抛错、结果按色卡下标升序
+ * ——删掉 `if (color === undefined) throw` 或把 `.sort` 换向，全套都仍然绿。
+ */
+describe("usagesInRange（本页用量的唯一实现）", () => {
+  it("色卡里没有该下标 ⇒ 抛（静默跳过会让用料条少一行，而图看起来完全正常）", () => {
+    // 1×1 的图纸指向色卡第 7 色，而夹具色卡只有 4 色（A1–A4）
+    expect(() =>
+      usagesInRange(makePattern(1, 1, [7]), makePalette(), {
+        originCol: 0,
+        originRow: 0,
+        cols: 1,
+        rows: 1,
+      }),
+    ).toThrow("色卡里没有下标 7 的颜色");
+  });
+
+  it("结果按**色卡下标升序**（B6-13 保留它与 `patternStats` 差异的唯一理由）", () => {
+    // 格值序列 3 / 3 / 1 / 0 / 2：按下标升序是 A1 A2 A3 A4（计数 1 / 1 / 1 / 2）；
+    // 按首次出现顺序是 A4 A2 A1 A3，按用量降序是 A4 打头——两种排法都会让这条用例红。
+    const usages = usagesInRange(makePattern(5, 1, [3, 3, 1, 0, 2]), makePalette(), {
+      originCol: 0,
+      originRow: 0,
+      cols: 5,
+      rows: 1,
+    });
+    expect(usages.map((usage) => usage.code)).toEqual(["A1", "A2", "A3", "A4"]);
+    expect(usages.map((usage) => usage.count)).toEqual([1, 1, 1, 2]);
   });
 });
