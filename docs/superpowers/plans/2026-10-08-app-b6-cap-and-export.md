@@ -1847,8 +1847,9 @@ git commit -m "feat(core,services): A4/A3 每块板一页的渲染与 Blob 通�
 ```
 
 **另补一条判别力要求**（任务 7 的实现者实测：`sheetMeta` 的六个字段在任务 7 内**零直接断言**——对调 `paletteName`/`accuracy`、把 `totalBeads` 写 0 都全绿，属本仓记过账的 F1 形态）：
-在 sheet 模式的保存用例里，除了断言 `export-save-sheet` 的实参，还要用 `exportTestKit` 的记录型 target 断言**信息条与末行的文字至少各出现一次**
-（`projectName`、`totalBeads`、`accuracy` 三个字段各被观察到一次），把这类静默漂移挡住。
+在 sheet 模式的保存用例里，除了断言 `export-save-sheet` 的实参，还要用 `exportTestKit` 的记录型 target 断言**信息条与末行的文字**，把 `sheetMeta` 的**六个**字段全部观察到至少一次——
+`projectName`（信息条第一行）、`totalBeads` 与 `colorCount`（信息条第二行的「全图 N 颗（M 种色）」）、`paletteName` 与 `accuracy`（同在信息条第二行，**必须分别断言**，
+否则对调 `sheetMeta` 里这两个字段仍然全绿——任务 7 的审查者点名的正是这个漏洞）、`generatedAt`（末行「生成时间：…」）。
 
 `ExportPanel.test.ts` 按下面的形状重写（保留它原有的 `vi.hoisted` 替身声明、`exportTestKit` 用法与 object URL 回收用例）：
 
@@ -2657,6 +2658,10 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
    「适配 = 填满视口」是既有契约）⇒ 只在该处补一句注释写清：小图纸上「适配」会放大到满屏（用户主动动作），而**默认视图**才是 `min(适配, MAX_CELL_PX)`。
 17. `planSheet` 在可用高度为负时抛出的消息里会出现 `-1 px` 这种噪声（任务 5 的实现者与审查者都点名，抛错语义正确、只是措辞）⇒ 在字号下限守卫之前加一条
    `cellPx < 1` 的专门分支，消息写「画布上限 X px 放不下 N×M 的图纸（扣掉用料条后没有可用高度）」，不要让负数格像素出现在用户可见文本里。
+20. `src/services/sheetExport.ts:50` 的注释说自检提前会发现「一张『看起来正常』的白图已经**落盘**了」，但同文件 `:7-8` 明确「不做落盘、由调用方决定」
+   ⇒ 改成「已经交给调用方（并可能被落盘）」。
+21. `src/services/sheetExport.ts:45` 的 `draw: (target) => void` 会**静态接受** `async` 回调，而 `:49` 不 `await` ⇒ 若后人传 async draw，
+    `:51` 的自检会早于绘制完成（正是该抽象要防的形态）⇒ 在类型或注释上写明「**draw 必须同步**」，并说明理由。
 18. `src/core/render/__tests__/sheet.test.ts` 里新增的第一条 `drawSheet` 用例，标题写「旧口径下会被降级的尺寸照样画」，但 6×6 夹具下
    `cellPx = 40`（远超旧的 32px 阈值）、那条断言其实与降级无关（任务 6 的实现者自报）⇒ 把标题改成它真正验证的东西
    （「网格内每颗实心格都画了色号：33 颗 ⇒ 33 条文字」），不要把一句不成立的因果留在用例名里。
