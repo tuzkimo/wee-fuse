@@ -2485,6 +2485,15 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
 3. `src/services/__tests__/idbProjectStore.test.ts:64` 与 `src/services/__tests__/patternThumbnail.test.ts:243` 的注释里由 500 派生的数字，
    按同口径换成 116 派生的真实数字（116×116 = 13456 个数、约 27 KB 的 grid）。
 
+任务 1 的审查者挑出的 5 条次要项（**同形状的小活，打包在本任务清扫**，逐条改完在报告里点名）：
+
+4. `src/core/pattern/types.ts:4`：`/** 长边豆数的合法范围。 */` 在新 JSDoc 块插入后只描述了下界 ⇒ 改成 `/** 长边豆数下限。 */`。
+5. `src/core/pattern/__tests__/board.test.ts:53-55`：注释里「此前最大只到 59（3×3）」是从被替换掉的 `boardCount(500, 500)` 那条用例继承下来的失真表述
+   ⇒ 改成「116 = 4 × 29 正好 4 块板，`16` 这个乘积此前没有被读过」，删掉那句历史。
+6. `src/components/param/__tests__/ParamPanel.test.ts:127`：越界探针还是 `"501"`（旧上限下同样被拒，改常量前后都绿、没有判别力）⇒ 换成 `"117"`。
+7. `src/core/pattern/types.ts:12-13` 的 JSDoc 指向 `core/render/layout.ts` 的 `planSheet`——该符号由**任务 5** 新增。
+   T15 执行时它应当已经存在；**先核实**，不存在就改成 `planSheets` 或删掉括号里的指针（不要留一个指向不存在符号的注释）。
+
 - [ ] **步骤 2：改索引**
 
 `docs/开发文档索引.md` 的 B6 行补上计划与构建记录两列（计划路径 `superpowers/plans/2026-10-08-app-b6-cap-and-export.md`）。
