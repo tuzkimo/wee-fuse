@@ -1026,7 +1026,7 @@ export function drawSheet(
 
 **执行者注意**：
 
-1. 步骤函数 `drawInfoBar` / `drawCellsAndLabels` / `drawGridLines` / `drawRulers` / `drawBoardLabels` 的实现就是把现有
+1. 步骤函数 `drawInfoBar`（**只有单张施工图用**：打印页的页眉是两行不同的文案）/ `drawCellsAndLabels` / `drawGridLines` / `drawRulers` / `drawBoardLabels`（后四个**两者共用**）的实现，就是把现有
    `drawSheetTile` 的第 2–7 步**逐字搬过来**（`tile` → `plan`、`tile.grid` → `plan.grid`、`plan.labels` 的判断改成恒真），
    `drawSheetTile` 改成调这五个函数（任务 11 再删它）。搬的时候**不要顺手改任何坐标算式**：落位由既有用例钉着。
 2. `countTileBeads(pattern, tile)` 的入参类型同样放宽成 `TileGeometry`（它只读 `originCol/originRow/cols/rows` 与 `cells.length` 的校验）。
@@ -1399,7 +1399,6 @@ export function planBoardPage(
   palette: Palette,
   usages: readonly ColorUsage[],
   page: { readonly boardSize: number; readonly paper: string; readonly index: number },
-  options?: PlanOptions,
 ): BoardPagePlan {
   requirePattern(pattern);
   requirePalette(pattern, palette);
@@ -1486,7 +1485,8 @@ export function planBoardPage(
 }
 ```
 
-`options` 暂未使用——**不要**留一个没用到的参数：把它从签名里删掉，任务 9/10 需要时再加。
+`planBoardPage` **不收 `PlanOptions`**：打印页的画布由纸型决定，没有可调的 `maxEdge`（`planSheet` 才有）。
+不要为了「以后可能要」留一个没用到的参数。
 
 - [ ] **步骤 4：运行测试验证通过**
 
@@ -1506,8 +1506,12 @@ git commit -m "feat(core): 打印页计划 planBoardPage（板大小 29/58 × �
 **文件：**
 - 修改：`src/core/render/sheet.ts`（新增 `drawBoardPage`、`boardPageHeader`）
 - 修改：`src/services/sheetExport.ts`（新增 `renderBoardPageBlob`）
-- 修改：`src/services/exporter.ts:24,238-269`（`ExportItemLabel` 收窄为 `"施工图" | "打印"`）
-- 测试：`src/core/render/__tests__/sheet.test.ts`、`src/services/__tests__/exporter.test.ts`、`src/services/__tests__/sheetExport.test.ts`
+- 测试：`src/core/render/__tests__/sheet.test.ts`、`src/services/__tests__/sheetExport.test.ts`
+
+> **任务顺序修正（控制者裁决 2026-10-08）**：`src/services/exporter.ts` 的 `ExportItemLabel` 收窄与
+> `exportFilename` 改写**不在本任务做，移到任务 10**。理由：本任务单独改它会让此刻仍在引用
+> `"用量表"` / `"分享图"` 的 `ExportPanel.vue` 立刻编译不过（`vue-tsc` 红、面板用例红），
+> 而每个任务结束时工作树必须是绿的。任务 9 只加新代码，不动既有标签联合。
 
 - [ ] **步骤 1：改测试（先红）**
 
@@ -1542,21 +1546,6 @@ describe("drawBoardPage（B6：每块板一页）", () => {
 });
 ```
 
-`exporter.test.ts`：把 `:373-394` 的分片文件名用例改成
-
-```ts
-  it("打印页带 r{行}c{列}（1 起），施工图不带序号", () => {
-    expect(exportFilename("小猫", "施工图")).toBe("小猫-施工图.png");
-    expect(exportFilename("小猫", "打印", { rowIndex: 0, colIndex: 0 })).toBe("小猫-打印-r1c1.png");
-    expect(exportFilename("小猫", "打印", { rowIndex: 3, colIndex: 4 })).toBe("小猫-打印-r4c5.png");
-  });
-```
-
-并把该文件里其余 `"分享图"` / `"用量表"` 的用法换成 `"施工图"` 或 `"打印"`（例如 `:321` 的 `downloadBlob` 文件名、`:443`、`:454`、`:458`、`:464`、`:468`）；
-`:483-495` 那条「用量表 / 分享图带了 tile ⇒ 抛」改成 `"施工图" 带了 tile ⇒ 抛`，消息相应改为 `施工图不带分片序号`；`:471-481` 的「施工图缺分片序号」改成「打印缺分片序号」（消息 `打印的分片序号缺失`）。
-
-`src/services/platform/__tests__/platformContract.ts:76,87`：`"小猫-分享图.png"` → `"小猫-打印-r1c1.png"`（两处）。
-
 `sheetExport.test.ts` 追加：
 
 ```ts
@@ -1577,9 +1566,9 @@ describe("drawBoardPage（B6：每块板一页）", () => {
 
 - [ ] **步骤 2：运行测试验证失败**
 
-运行：`npm run test -- src/core/render/__tests__/sheet.test.ts src/services/__tests__/exporter.test.ts src/services/__tests__/sheetExport.test.ts`
+运行：`npm run test -- src/core/render/__tests__/sheet.test.ts src/services/__tests__/sheetExport.test.ts`
 
-预期：FAIL，`drawBoardPage is not a function`、`renderBoardPageBlob is not a function`、类型错误 `"打印" 不在 ExportItemLabel 里`。
+预期：FAIL，`drawBoardPage is not a function`、`renderBoardPageBlob is not a function`。
 
 - [ ] **步骤 3：改实现**
 
@@ -1676,47 +1665,11 @@ export async function renderBoardPageBlob(
 }
 ```
 
-`exporter.ts`：
-
-```ts
-/** 导出的内容标签；就是文件名中段那两个词（B6 起：分享图与独立用量表已下线）。 */
-export type ExportItemLabel = "施工图" | "打印";
-```
-
-`exportFilename` 改成：
-
-```ts
-export function exportFilename(
-  projectName: string,
-  item: ExportItemLabel,
-  tile?: { rowIndex: number; colIndex: number },
-): string {
-  const safeName = normalizeProjectName(projectName);
-  if (item !== "施工图" && item !== "打印") {
-    throw new Error(`导出内容标签非法：${item}`);
-  }
-  if (item === "施工图") {
-    if (tile !== undefined) throw new Error("施工图不带分片序号");
-    return `${safeName}-施工图.png`;
-  }
-  if (tile === undefined || tile === null) throw new Error("打印的分片序号缺失");
-  if (
-    !Number.isSafeInteger(tile.rowIndex) ||
-    tile.rowIndex < 0 ||
-    !Number.isSafeInteger(tile.colIndex) ||
-    tile.colIndex < 0
-  ) {
-    throw new Error(`分片序号非法：${tile.rowIndex}, ${tile.colIndex}（必须是 ≥0 的安全整数）`);
-  }
-  return `${safeName}-${item}-r${tile.rowIndex + 1}c${tile.colIndex + 1}.png`;
-}
-```
-
-`assertCanvasPainted` 的 JSDoc 里「分享图不调用自检」那段删掉（分享图不存在了），改成「本函数由 `services/sheetExport.ts` 唯一调用」。
+`services/exporter.ts` **本任务不动**（`ExportItemLabel` 收窄与 `exportFilename` 改写在任务 10；理由见本任务开头的顺序修正）。
 
 - [ ] **步骤 4：运行测试验证通过**
 
-运行：`npm run test -- src/core/render/__tests__/sheet.test.ts src/services/__tests__/exporter.test.ts src/services/__tests__/sheetExport.test.ts src/services/platform/__tests__/platformContract.ts`
+运行：`npm run test -- src/core/render/__tests__/sheet.test.ts src/services/__tests__/sheetExport.test.ts`
 
 预期：PASS（`platformContract.ts` 不是用例文件，由两个平台用例文件 import，跑对应文件即可）。
 
@@ -1733,7 +1686,27 @@ git commit -m "feat(core,services): A4/A3 每块板一页的渲染与 Blob 通�
 - 修改：`src/components/editor/ExportPanel.vue`（几乎整段重写 script 与模板）
 - 修改：`src/components/editor/PatternToolbar.vue`（`output` 行加「打印」按钮与 `print` 事件）
 - 修改：`src/views/EditorPage.vue:85,558,636-644`（`exporting` → `panelMode`）
-- 测试：`src/components/editor/__tests__/ExportPanel.test.ts`（重写）、`PatternToolbar.test.ts`（补一行断言）、`src/views/__tests__/EditorPage.test.ts`
+- 修改：`src/services/exporter.ts:24,238-269`（**任务 9 移过来的**：`ExportItemLabel` 收窄为 `"施工图" | "打印"`、`exportFilename` 改写、`assertCanvasPainted` 的 JSDoc 去掉「分享图不调用自检」）
+- 测试：`src/components/editor/__tests__/ExportPanel.test.ts`（重写）、`PatternToolbar.test.ts`（补一行断言）、`src/views/__tests__/EditorPage.test.ts`、`src/services/__tests__/exporter.test.ts`、`src/services/platform/__tests__/platformContract.ts`
+
+> **为什么 exporter 的改动落在本任务**（控制者裁决 2026-10-08）：面板重写与标签收窄必须**同一个提交**——
+> 只做标签收窄会让此刻仍引用 `"用量表"` / `"分享图"` 的 `ExportPanel.vue` 编译不过，工作树就不绿了。
+
+> **B4 的四条既有防线逐字保留**（重写 script 时**不许**顺手删）：清单代数 `generation`、`unmounted` 标志、
+> `revokePreview(item)`（先 `revokeObjectURL` 再清空）、`statusText(item)`（壳里「已保存到相册」/ 浏览器「已生成」）。
+> 逐项状态机（`idle` / `busy` / `done` / `error`）与「一项失败不影响其他项」的隔离语义也不变。
+
+> **exporter 的两个文件改动**（同任务内，属于同一批）：
+> `ExportItemLabel` 改成 `export type ExportItemLabel = "施工图" | "打印";`；`exportFilename` 改成
+> 「`施工图` 不带序号、带了 `tile` 即抛」+「`打印` 必须有 `tile`（`undefined` / `null` 都算缺）」，消息分别用
+> `施工图不带分片序号` 与 `打印的分片序号缺失`（其余守卫逐字不变）。
+> `exporter.test.ts`：`:373-394` 那条改成
+> `expect(exportFilename("小猫", "施工图")).toBe("小猫-施工图.png")`、
+> `expect(exportFilename("小猫", "打印", { rowIndex: 0, colIndex: 0 })).toBe("小猫-打印-r1c1.png")`、
+> `expect(exportFilename("小猫", "打印", { rowIndex: 3, colIndex: 4 })).toBe("小猫-打印-r4c5.png")`；
+> 其余 `"分享图"` / `"用量表"` 的用法换成 `"施工图"` 或 `"打印"`（`:321`、`:443`、`:454`、`:458`、`:464`、`:468`）；
+> `:483-495` 那条改成「`施工图` 带了 tile ⇒ 抛（消息 `施工图不带分片序号`）」；`:471-481` 改成「`打印` 缺分片序号（消息 `打印的分片序号缺失`）」。
+> `platformContract.ts:76,87` 的 `"小猫-分享图.png"` → `"小猫-打印-r1c1.png"`。
 
 - [ ] **步骤 1：改测试（先红）**
 
