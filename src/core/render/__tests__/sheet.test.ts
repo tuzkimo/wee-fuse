@@ -817,7 +817,7 @@ function makeUsages(): ColorUsage[] {
 }
 
 describe("drawSheet（B6：单张 + 底部用料条）", () => {
-  it("网格内每颗实心格都画了色号（33 颗 ⇒ 33 条文字，旧口径下会被降级的尺寸照样画）", () => {
+  it("网格内每颗实心格都画了色号（33 颗实心格 ⇒ 33 条格内文字）", () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const plan = planSheet(pattern, makePalette(), makeUsages());
     const { target, calls } = createMockTarget();
@@ -833,7 +833,7 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     const { target, calls } = createMockTarget();
     drawSheet(target, pattern, palette, usages, plan, makeMeta());
 
-    // 色块：每个色号一颗 LEGEND_SWATCH_SIZE 的方块，y = 带内该行的中线 − 半个色块
+    // 色块：每个色号一颗 `plan.legend.swatchSize` 的方块，y = 带内该行的中线 − 半个色块
     for (let i = 0; i < usages.length; i += 1) {
       const col = i % plan.legend.itemCols;
       const row = Math.floor(i / plan.legend.itemCols);
@@ -844,6 +844,20 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     }
     const codes = calls.texts.filter((t) => t.text === "A1" && t.y > plan.legend.top);
     expect(codes.length).toBe(1);
+    // 色号与数量（标题承诺的两样）：色号左对齐在项内偏移处，数量**右对齐**在项右端内缩处
+    const firstCenterY = plan.legend.top + plan.legend.rowHeight / 2;
+    expect(codes[0]).toMatchObject({
+      textAlign: "left",
+      x: SHEET_MARGIN + plan.legend.codeX,
+      y: firstCenterY,
+    });
+    const count = calls.texts.find(
+      (text) => text.text === String(usages[0]?.count) && text.y === firstCenterY,
+    );
+    expect(count).toMatchObject({
+      textAlign: "right",
+      x: SHEET_MARGIN + plan.legend.itemWidth - plan.legend.countRightPad,
+    });
   });
 
   it("末行三行（合计 / 精度声明 / 生成时间）都在网格下方，且排在用料条之后", () => {
@@ -858,8 +872,16 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     expect(texts).toContain("屏幕色仅供参考，以实物为准");
     expect(texts).toContain("生成时间：2026-10-08 10:00");
     expect(texts.some((t) => t.includes("合计 33 颗"))).toBe(true);
-    // 用料条在 footer 之前画：带内文字的 y 都小于这三行
-    expect(Math.max(...belowGrid.map((t) => t.y))).toBeGreaterThan(plan.legend.top);
+    // 用料条在末行**之前**画：按 `calls.texts` 的**调用下标**比，而不是比 y 的大小——
+    // 页脚三行恒在 `legend.top` 之下（`footerY > legend.top`），只比 y 的话把绘制顺序反过来照样绿。
+    const bandBottom = plan.legend.top + plan.legend.itemRows * plan.legend.rowHeight;
+    const bandIndices = calls.texts
+      .map((text, index) => ({ text, index }))
+      .filter((item) => item.text.y >= plan.legend.top && item.text.y < bandBottom)
+      .map((item) => item.index);
+    expect(bandIndices).toHaveLength(usages.length * 2); // 每项两条：色号 + 数量
+    const totalIndex = calls.texts.findIndex((text) => text.text.includes("合计 33 颗"));
+    expect(totalIndex).toBeGreaterThan(Math.max(...bandIndices));
   });
 
   it("save / restore 配平（不配平会泄漏 target 的全局状态）", () => {
@@ -869,5 +891,56 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     const { target, calls } = createMockTarget();
     drawSheet(target, pattern, makePalette(), usages, plan, makeMeta());
     expect(calls.saves).toBe(calls.restores);
+  });
+
+  it("usages 与 plan 不同源（用料条行数对不上）即抛，且不留下半张图（写在任何写操作之前）", () => {
+    // `LegendBandPlan.itemRows` 是计划用来扣高度预算的字段，而渲染器只按 `itemCols` 排布、
+    // **不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到页脚上 / 越出 `canvasHeight`，
+    // 画出一张看起来正常的残缺图（`drawLegend` 的同源守卫是同一先例）。
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const codes = Array.from({ length: 21 }, (_, index) => `B${index + 1}`);
+    const manyPalette = makePaletteOf(codes);
+    const many: ColorUsage[] = codes.map((code, index) => ({
+      code,
+      name: `色 ${index + 1}`,
+      count: index + 1,
+    }));
+    const manyPlan = planSheet(pattern, manyPalette, many);
+    expect(manyPlan.legend.itemRows).toBe(2); // 前提：21 项在 20 列下要两行
+
+    const { target, calls } = createMockTarget();
+    expect(() =>
+      drawSheet(target, pattern, manyPalette, many.slice(0, 4), manyPlan, makeMeta()),
+    ).toThrow("用料条与本图不符：计划 2 行、按 4 项应为 1 行");
+    expect(calls.fills).toEqual([]);
+  });
+
+  it("非数组 usages 与不在色卡里的色号都在**填白之前**抛（渲染末段才炸会留下一整张网格）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const plan = planSheet(pattern, palette, makeUsages());
+
+    const { target, calls } = createMockTarget();
+    expect(() =>
+      drawSheet(
+        target,
+        pattern,
+        palette,
+        "not-an-array" as unknown as readonly ColorUsage[],
+        plan,
+        makeMeta(),
+      ),
+    ).toThrow("用量表必须是数组（当前 string）");
+    expect(calls.fills).toEqual([]);
+
+    // 坏色号在**第二项**：校验若发生在动笔之后，画布上会先出现底 + 33 个色块（这正是修复前的形态）
+    const stranger: ColorUsage[] = [
+      { code: "A1", name: "白", count: 1 },
+      { code: "Z9", name: "不在色卡", count: 2 },
+    ];
+    expect(() => drawSheet(target, pattern, palette, stranger, plan, makeMeta())).toThrow(
+      "用量表里的色号不在色卡里：Z9",
+    );
+    expect(calls.fills).toEqual([]);
   });
 });

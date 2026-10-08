@@ -112,6 +112,32 @@ function colorOf(palette: Palette, index: number): PaletteColor {
   return color;
 }
 
+/**
+ * 用量表的**入口守卫**：`usages` 必须是数组，且每个色号都要能在**传入的色卡**里解析出来。
+ *
+ * **为什么必须有它**（控制者 2026-10-08 裁决，任务 6 审查者发现）：`planSheet` 的 `requireUsages` 只校验
+ * 形状（数组 / `code` 非空 / `name` / `count` / 去重），**不校验色号是否存在于传入的色卡**，所以
+ * 「`usages` 来自另一张色卡」能通过计划阶段，直到渲染末段（`drawLegendBand` 解析色块真色时）才炸——
+ * 而那时整张网格（25 万格量级）已经画完，违反「校验写在任何写操作之前」。
+ *
+ * 消息与 `drawLegend` / `drawLegendBand` 的同名守卫**逐字一致**（同一件事不许有两种说法）。
+ * `drawLegendBand` 本体保留自己的守卫（它可被直接调用，例如任务 9 的打印页），这里的第二次调用是
+ * 「在任何写操作之前失败」这条时序要求的落点。
+ */
+function requireUsagesInPalette(palette: Palette, usages: readonly ColorUsage[]): void {
+  if (!Array.isArray(usages)) {
+    throw new Error(`用量表必须是数组（当前 ${typeof usages}）`);
+  }
+  const runtime = createPaletteRuntime(palette);
+  for (const usage of usages) {
+    const index = runtime.indexByCode.get(usage.code);
+    if (index === undefined) {
+      throw new Error(`用量表里的色号不在色卡里：${usage.code}`);
+    }
+    colorOf(palette, index);
+  }
+}
+
 /** 信息条第一行。**成品口径见契约 §4b：取长边**（`max(width, height)` 经 `beadsToCm` / `formatCm`），不是总颗数。 */
 function infoLineOne(pattern: Pattern, meta: SheetMeta): string {
   const longEdge = Math.max(pattern.width, pattern.height);
@@ -154,8 +180,8 @@ interface LabelCell {
 /**
  * 第 2 步：信息条两行（两个 y 都是**文本顶边**，字号不随格子缩放、不参与布局预算）。
  *
- * **只服务单张施工图**：打印页的页眉是另外两行文案（任务 9 自写，不复用本函数）。
- * 颗数由调用方经 `countTileBeads` 给出——渲染器不自己数格子。
+ * **施工图专用**（单张 `drawSheet` 与分片 `drawSheetTile` 共用同一组文案）：打印页的页眉是另外两行
+ * 文案（任务 9 自写，有意不复用本函数）。颗数由调用方经 `countTileBeads` 给出——渲染器不自己数格子。
  */
 function drawInfoBar(
   target: RenderTarget2D,
@@ -626,6 +652,19 @@ export function drawSheet(
   }
   if (pattern.paletteId !== palette.id) {
     throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
+  }
+  // 入口守卫之二：色号必须在色卡里解析得出来（非数组也在这里抛）。缺了它，「另一张色卡的 usages」
+  // 会一路画完整张网格，直到渲染末段才炸——校验时机属于「任何写操作之前」。
+  requireUsagesInPalette(palette, usages);
+  // 入口守卫之三：`usages` 必须与 `planSheet` 收到的是**同一份**。`LegendBandPlan.itemRows` 是计划用来
+  // 扣高度预算的字段，而 `drawLegendBand` 只按 `itemCols` 排布、**不读 `itemRows`** ⇒ 配错不会报错，
+  // 只会让用料条压到页脚上 / 越出 `canvasHeight`，画出一张看起来正常的残缺图（`drawLegend` 的同源守卫
+  // 是同一先例）。放在 `countTileBeads` 之前：它也是入口守卫，而颗数那一步顺带跑 `requirePattern`。
+  const expectedRows = Math.ceil(usages.length / plan.legend.itemCols);
+  if (plan.legend.itemRows !== expectedRows) {
+    throw new Error(
+      `用料条与本图不符：计划 ${plan.legend.itemRows} 行、按 ${usages.length} 项应为 ${expectedRows} 行`,
+    );
   }
   // 颗数必须在填白之前算：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验
   const beads = countTileBeads(pattern, plan);
