@@ -16,13 +16,15 @@
 //    状态与中文原因，**不影响其他项**。
 //
 // 分页数学**只此一份**：页身份（`boardRow` / `boardCol`）取 `boardPageTile`（内部走 `planBoardPage`）、
-// 本页用量取 `usagesInRange`、页数取 `printBoardCount`——面板自己**不写除法**。
+// 本页用量取 `usagesInRange`、页数取 `printBoardCount`、页标签的列数取 `printBoardCols`——面板自己
+// **不写除法**（2026-10-08 收口：`printBoardCols` 就是为了把面板里那份 `Math.ceil(width / boardSize)`
+// 收进 layout.ts 才导出的）。
 // 导出**不乘 DPR**、**不经过 `renderPatternThumbnail`**（R-6）。
 import { computed, onUnmounted, ref, watch } from "vue";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
-import { planBoardPage, planSheet, printBoardCount } from "@/core/render/layout";
+import { planBoardPage, planSheet, printBoardCols, printBoardCount } from "@/core/render/layout";
 import { exportFilename } from "@/services/exporter";
 import { getPlatform } from "@/services/platform/capabilities";
 import {
@@ -81,9 +83,9 @@ interface ExportItem {
 /**
  * 清单由模式决定：单张模式一项；打印模式一页一项（`id` = `page-<页索引>`，与 `pageIndex` 同源）。
  *
- * **页标签的文案**用 `boardCols` 换算行列（`第 r 行 第 c 列`），而**真正的页身份**（`boardRow` /
- * `boardCol`）由 `planBoardPage` 给出、落盘文件名取的就是它（`boardPageTile`）——两处口径一致，
- * 但标签只是文案，不参与任何落盘决定。
+ * **页标签的文案**用 `printBoardCols` 给出的列数换算行列（`第 r 行 第 c 列`），而**真正的页身份**
+ * （`boardRow` / `boardCol`）由 `planBoardPage` 给出、落盘文件名取的就是它（`boardPageTile`）
+ * ——两处口径同源（面板自己**不写除法**），但标签只是文案，不参与任何落盘决定。
  */
 function makeItems(): ExportItem[] {
   if (props.mode === "sheet") {
@@ -98,7 +100,7 @@ function makeItems(): ExportItem[] {
       },
     ];
   }
-  const boardCols = Math.ceil(props.pattern.width / boardSize.value);
+  const boardCols = printBoardCols(props.pattern.width, boardSize.value);
   return Array.from({ length: pageCount.value }, (_, index) => ({
     id: `page-${index}`,
     label: `打印页 第 ${Math.floor(index / boardCols) + 1} 行 第 ${(index % boardCols) + 1} 列（第 ${index + 1}/${pageCount.value} 页）`,

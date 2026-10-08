@@ -267,12 +267,30 @@ function requirePaper(value: string): PrintPaper {
   return value;
 }
 
+/** 一维上需要几块板（入参已由调用方校验）：两处口径共用它，不写第二份 `Math.ceil`。 */
+function boardColsOf(length: number, boardSize: number): number {
+  return Math.ceil(length / boardSize);
+}
+
+/**
+ * 板阵的**列数**（一行放几块板）= 宽 ÷ 板大小向上取整。
+ *
+ * **它是「一维上要几块板」的唯一一份除法**（2026-10-08 收口）：`printBoardCount` 的两个轴与
+ * 导出面板的页标签（`第 r 行 第 c 列`）都从这里取。面板自己写 `Math.ceil(width / boardSize)`
+ * 就是第二份分页数学——它与 `planBoardPage` 的网格口径漂移时不会报错，只会把页标签写成另一页。
+ */
+export function printBoardCols(width: number, boardSize: number): number {
+  requirePositiveInteger(width, "图纸宽度");
+  return boardColsOf(width, requireBoardSize(boardSize));
+}
+
 /**
  * 打印页数。**与 `boardCount` 是两个不同的量**：后者恒按标准板（29）算「需要几块标准板」，
  * 这里的板大小是入参——同一张 116×116 图纸在 29 板下是 16 页、在 58 板下是 4 页。
  *
  * 它只回答「几页」，不产生任何页的身份；页身份（`boardRow` / `boardCol` / 本页格范围）由
  * `planBoardPage` 给出，调用方**不许**自己重算除法（那正是「同一件事的第二份实现」）。
+ * 两个轴各自的那一份除法在 `printBoardCols` 里，本函数只是把它们乘起来。
  *
  * **宽高必须是 ≥1 的整数**（与 `boardCount` 同口径）：只查安全整数会让 `(0, 0, 29)` 静默返回 0 页
  * ——「0 页」不是一个可展示的答案，调用方拿它去 `v-for` 只会得到一张空白页。
@@ -281,7 +299,7 @@ export function printBoardCount(width: number, height: number, boardSize: number
   requirePositiveInteger(width, "图纸宽度");
   requirePositiveInteger(height, "图纸高度");
   const size = requireBoardSize(boardSize);
-  return Math.ceil(width / size) * Math.ceil(height / size);
+  return boardColsOf(width, size) * boardColsOf(height, size);
 }
 
 /** 网格线档位：板边界优先于 5 格主刻度（145 这类重叠位置必须算板边界）。 */
@@ -435,7 +453,9 @@ export function planSheet(
     labelFontPx,
     tickFontPx,
     // `lineOneY` / `lineTwoY` 是**文本顶边**（渲染器用 `textBaseline = "top"`）；
-    // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY ∓ LEGEND_FOOTER_LINE_H`。
+    // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY ∓ 14`。
+    // 那个 14 是行距（= `sheet.ts` 的模块私有常量 `LEGEND_FOOTER_LINE_H`）；它不导出、本文件里
+    // 解析不到这个名字，所以这里写死数值——改动行距时必须同时改 `sheet.ts` 与本行（R19）。
     infoBar: { lineOneY: SHEET_MARGIN, lineTwoY: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2) },
     legend: band,
     footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,

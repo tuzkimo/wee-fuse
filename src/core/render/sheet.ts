@@ -133,6 +133,11 @@ function requireUsagesInPalette(palette: Palette, usages: readonly ColorUsage[])
  * `itemCols` 排布、**不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到页脚上 / 越出 `canvasHeight`，
  * 画出一张看起来正常的残缺图。
  *
+ * **限制（如实写明）：它只比行数**——比的是 `itemRows` 这个「高度预算」量，**不比逐项内容、也不比较
+ * 数组身份**。同一 `itemCols` 下行数相同的两份用量表（例如 20 列下的 21 项与 40 项）都能通过它：
+ * 那不会破坏它要守的高度不变量（画出来的行数确实等于计划扣的行数），但「列出来的色」未必与计划
+ * 声称的那一份相同——色号的合法性由上面的 `requireUsagesInPalette` 与 `drawLegendBand` 自己守。
+ *
  * **为什么抽成函数**（2026-10-08 收口）：单张施工图与打印页各有一模一样的一段（连消息都逐字相同）——
  * 「同一件事的第二份实现」在此收敛成一处，两边的时序（必须排在色号守卫之后、`countTileBeads` 之前）
  * 也只有一个落点。
