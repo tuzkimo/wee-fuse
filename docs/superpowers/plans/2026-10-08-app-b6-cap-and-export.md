@@ -1530,7 +1530,8 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     expect(texts.some((t) => t.includes("58") && t.includes("A3"))).toBe(true);
     expect(texts.some((t) => t.includes("第 1/4 块板"))).toBe(true);
     expect(texts.some((t) => t.includes("列 1–58") && t.includes("行 1–58"))).toBe(true);
-    expect(texts.some((t) => /1 格 = 4\.[0-9] mm（实物的 9[0-9]%）/.test(t))).toBe(true);
+    // 页眉里的实际毫米与缩放比是「无空格」写法（与实现逐字一致：`4.7mm`，不是 `4.7 mm`）
+    expect(texts.some((t) => /1 格 = 4\.7mm（实物的 95%）/.test(t))).toBe(true);
   });
 
   it("用料条只画本页用到的色（传进来的 usages 就是本页那一份）", () => {
@@ -1540,7 +1541,9 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     const plan = planBoardPage(pattern, palette, pageUsages, { boardSize: 29, paper: "a4", index: 0 });
     const { target, calls } = createMockTarget();
     drawBoardPage(target, pattern, palette, pageUsages, plan, makeMeta());
-    const codes = calls.texts.filter((t) => t.y > plan.legend.top);
+    // 只取**用料条带内**的文字：页脚三行也在 legend.top 之下，不过滤会把它们一起收进来
+    const bandBottom = plan.legend.top + plan.legend.itemRows * plan.legend.rowHeight;
+    const codes = calls.texts.filter((t) => t.y > plan.legend.top && t.y < bandBottom);
     expect(codes.map((t) => t.text)).toEqual(["A2", "7"]);
   });
 });
