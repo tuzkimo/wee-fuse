@@ -3,12 +3,14 @@ import type { Palette } from "../../palette/types";
 import type { ColorUsage } from "../../pattern/stats";
 import { EMPTY, type Pattern } from "../../pattern/types";
 import {
+  PRINT_MARGIN_MM,
   SHEET_FOOTER_H,
   SHEET_INFO_BAR_H,
   SHEET_MARGIN,
   SHEET_RULER_LEFT,
   SHEET_RULER_TOP,
   cellBox,
+  mmToPx,
   planBoardPage,
   planLegend,
   planSheet,
@@ -983,6 +985,41 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     expect(codes.map((t) => t.text)).toEqual(["A2", "7"]);
   });
 
+  it("页眉两行与页脚三行的左沿取 plan.textLeft（全部文字的 x 都在可打印区内，SHEET_MARGIN = 2.03mm 会被裁）", () => {
+    const pattern = makePattern(58, 58);
+    const palette = makePalette();
+    const pageUsages = [{ code: "A2", name: "黑", count: 7 }];
+    const plan = planBoardPage(pattern, palette, pageUsages, { boardSize: 29, paper: "a4", index: 0 });
+    // **前提：两种左沿真的不同**（相同的话，这条用例对「用 SHEET_MARGIN」的变异没有判别力）：
+    // 24px = 2.03mm 落在家用机常见的 5mm 不可打印区之内，而 `PRINT_MARGIN_MM` 是 10mm 的余量口径。
+    expect(plan.textLeft).toBe(mmToPx(PRINT_MARGIN_MM));
+    expect(plan.textLeft).toBeGreaterThan(SHEET_MARGIN);
+
+    const { target, calls } = createMockTarget();
+    drawBoardPage(target, pattern, palette, pageUsages, plan, makeMeta());
+
+    // ① 全部文字——页眉 / 页脚 / 格内色号 / 刻度 / 板号 / 用料条——的 x 都不得落进不可打印区。
+    // 只断页眉那两行是不够的：页脚三行原来写的也是 `SHEET_MARGIN`（2026-10-08 实测补入）。
+    for (const text of calls.texts) {
+      expect(text.x).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));
+    }
+
+    // ② 页眉两行**恰好**落在 textLeft。按 y 定位而不是拿实现自己拼的字符串当期望值：
+    // 页眉两行的 y 只有这两条文字用（网格从 `grid.y = 234` 起），所以「恰好两条」本身就是判据。
+    const headerCalls = calls.texts.filter(
+      (text) => text.y === plan.infoBar.lineOneY || text.y === plan.infoBar.lineTwoY,
+    );
+    expect(headerCalls).toHaveLength(2);
+    expect(headerCalls.map((text) => text.x)).toEqual([plan.textLeft, plan.textLeft]);
+
+    // ③ 页脚三行同理。`LEGEND_FOOTER_LINE_H` 是 `sheet.ts` 的模块私有常量（不新增公开名字），
+    // 故这里写它的值 14——与 `drawLegend` 的页脚用例同一口径。
+    const footerYs = [plan.footerY - 14, plan.footerY, plan.footerY + 14];
+    const footerCalls = calls.texts.filter((text) => footerYs.includes(text.y));
+    expect(footerCalls).toHaveLength(3);
+    expect(footerCalls.map((text) => text.x)).toEqual([plan.textLeft, plan.textLeft, plan.textLeft]);
+  });
+
   it("usages 与 plan 不同源（用料条行数对不上）即抛，且不留下半张图（写在任何写操作之前）", () => {
     // 与 `drawSheet` 的同源守卫同因：`LegendBandPlan.itemRows` 是计划用来扣高度预算的字段，而
     // `drawLegendBand` 只按 `itemCols` 排布、**不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到
@@ -1016,19 +1053,20 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     ).toThrow("用量表里的色号不在色卡里：Z9");
     expect(calls.fills).toEqual([]);
 
-    // **`{ length: 1 }` 是刻意选的**：它不是数组、也没有 `code`，但 `length` 与计划行数相符 ⇒ 同源守卫
-    // 放行，抛的是数组守卫本身（`Array.isArray` 那条）。用一个「长度不符的字符串」会先撞上行数守卫，
-    // 这条用例就变成在钉另一条守卫了。
+    // 非数组 `usages`：抛的必须是**数组守卫**的消息，而不是用料条同源校验的「按 N 项应为 M 行」。
+    // 顺序反过来时，字符串的 `.length` 会让后者报出**失实的项数**（`"not-an-array".length === 12` ⇒
+    // 「按 12 项应为 2 行」，可这里根本没有 12 项），`null` 更是直接 TypeError（读 `.length`）——
+    // 所以色号 / 数组守卫必须排在同源校验**之前**（控制者 2026-10-08 裁决，与 `drawSheet` 的落地顺序同口径）。
     expect(() =>
       drawBoardPage(
         target,
         pattern,
         palette,
-        { length: 1 } as unknown as readonly ColorUsage[],
+        "not-an-array" as unknown as readonly ColorUsage[],
         plan,
         makeMeta(),
       ),
-    ).toThrow("用量表必须是数组（当前 object）");
+    ).toThrow("用量表必须是数组（当前 string）");
     expect(calls.fills).toEqual([]);
   });
 });

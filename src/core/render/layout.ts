@@ -847,6 +847,12 @@ export interface BoardPagePlan extends TileGeometry {
   readonly labelFontPx: number;
   readonly tickFontPx: number;
   readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
+  /**
+   * **页眉 / 页脚文字的左沿**（任务 9 的实现者实测补入）：打印页的文字必须从**可打印区**左沿起，
+   * 用 `SHEET_MARGIN = 24px`（2.03mm）会让页眉两行与页脚三行落进 10mm 的不可打印区被裁。
+   * 单张施工图（屏幕产物）没有这个字段，它的文字左沿就是 `SHEET_MARGIN`。
+   */
+  readonly textLeft: number;
   readonly legend: LegendBandPlan;
   readonly footerY: number;
 }
@@ -966,6 +972,8 @@ export function planBoardPage(
     labelFontPx,
     tickFontPx,
     infoBar: { lineOneY: marginPx, lineTwoY: marginPx + Math.round(PAGE_HEADER_H / 2) },
+    // 页眉 / 页脚文字的左沿 = 可打印区左沿（不是 `SHEET_MARGIN`：那是屏幕产物的边距）
+    textLeft: marginPx,
     legend: band,
     footerY: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H / 2,
   };

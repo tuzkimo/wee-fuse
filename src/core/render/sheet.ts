@@ -740,9 +740,9 @@ export function boardPageHeader(plan: BoardPagePlan, meta: SheetMeta): readonly 
  * 而 `plan.legend` 的行数是按这份用量扣出来的高度预算 ⇒ 两者必须**同源**。
  *
  * 入口守卫（规格 §12：非法输入响亮失败）写在**任何写操作之前**，顺序：`kind` → 色卡一致性 →
- * `usages` 与 `plan.legend` 同源 → `requireUsagesInPalette` → `countTileBeads`。
- * 前三条防的都是「错配不报错、只把坐标/行数静默映射到别处」；第 4 条防「usages 来自另一张色卡」
- * 一路画完整块板才炸；最后一条顺带跑完 `requirePattern` 的 `cells` 长度自洽校验。
+ * `requireUsagesInPalette` → `usages` 与 `plan.legend` 同源 → `countTileBeads`。
+ * 前两条防的都是「错配不报错、只把坐标静默映射到别处」；**色号守卫必须排在用料条同源校验之前**
+ * （理由见函数内第一段注释）；最后一条顺带跑完 `requirePattern` 的 `cells` 长度自洽校验。
  */
 export function drawBoardPage(
   target: RenderTarget2D,
@@ -758,7 +758,12 @@ export function drawBoardPage(
   if (pattern.paletteId !== palette.id) {
     throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
   }
-  // 入口守卫之三：`usages` 必须与 `planBoardPage` 收到的是**同一份**（消息与 `drawSheet` 的同源守卫同形）。
+  // 入口守卫之三（**必须排在同源校验之前**）：色号必须在色卡里解析得出来，非数组也在这里抛
+  // （`requireUsagesInPalette` 的 `Array.isArray` 那条）。顺序的理由（任务 9 的实现者实测）：反过来的话，
+  // 非数组 usages 会先撞同源校验——字符串的 `.length` 让消息变成「按 12 项应为 2 行」（失实），
+  // `null` 更是直接 TypeError。这与 `drawSheet` 的落地顺序同口径。
+  requireUsagesInPalette(palette, usages);
+  // 入口守卫之四：`usages` 必须与 `planBoardPage` 收到的是**同一份**（消息与 `drawSheet` 的同源守卫同形）。
   // `LegendBandPlan.itemRows` 是计划用来扣高度预算的字段，而 `drawLegendBand` 只按 `itemCols` 排布、
   // **不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到页脚上 / 越出 `canvasHeight`。
   const expectedRows = Math.ceil(usages.length / plan.legend.itemCols);
@@ -767,9 +772,6 @@ export function drawBoardPage(
       `用料条与本图不符：计划 ${plan.legend.itemRows} 行、按 ${usages.length} 项应为 ${expectedRows} 行`,
     );
   }
-  // 入口守卫之四：色号必须在色卡里解析得出来（非数组也在这里抛）。缺了它，「另一张色卡的 usages」
-  // 会一路画完整块板，直到渲染末段（`drawLegendBand` 解析色块真色时）才炸。
-  requireUsagesInPalette(palette, usages);
   // 颗数必须在填白之前算：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验。
   const beads = countTileBeads(pattern, plan);
 
@@ -781,8 +783,10 @@ export function drawBoardPage(
   target.font = `${INFO_FONT_PX}px sans-serif`;
   target.textAlign = "left";
   target.textBaseline = "top";
-  target.fillText(lineOne, SHEET_MARGIN, plan.infoBar.lineOneY);
-  target.fillText(lineTwo, SHEET_MARGIN, plan.infoBar.lineTwoY);
+  // **文字左沿取 `plan.textLeft`（= 可打印区左沿 118px）**，不是 `SHEET_MARGIN`（24px = 2.03mm）：
+  // 后者会让页眉两行与页脚三行落进 10mm 的不可打印区被裁（任务 9 的实现者实测）。
+  target.fillText(lineOne, plan.textLeft, plan.infoBar.lineOneY);
+  target.fillText(lineTwo, plan.textLeft, plan.infoBar.lineTwoY);
 
   drawCellsAndLabels(target, pattern, palette, plan);
   drawGridLines(target, plan);
@@ -792,20 +796,20 @@ export function drawBoardPage(
   // 那会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（任务 8 的实现者实测）。
   drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
 
-  // 末行三行：本页颗数 / 全图合计 + 精度声明 / 生成时间（口径与单张施工图一致）
+  // 末行三行：本页颗数 / 全图合计 + 精度声明 / 生成时间（口径与单张施工图一致，左沿同样取 `plan.textLeft`）
   target.fillStyle = TEXT_INK;
   target.font = `${LEGEND_FOOTER_FONT_PX}px sans-serif`;
   target.textAlign = "left";
   target.textBaseline = "middle";
   target.fillText(
     `本页 ${beads} 颗 · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色）`,
-    SHEET_MARGIN,
+    plan.textLeft,
     plan.footerY - LEGEND_FOOTER_LINE_H,
   );
-  target.fillText(meta.accuracy, SHEET_MARGIN, plan.footerY);
+  target.fillText(meta.accuracy, plan.textLeft, plan.footerY);
   target.fillText(
     `生成时间：${meta.generatedAt}`,
-    SHEET_MARGIN,
+    plan.textLeft,
     plan.footerY + LEGEND_FOOTER_LINE_H,
   );
 }
