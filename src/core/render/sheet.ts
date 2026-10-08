@@ -14,14 +14,23 @@ import {
   countTileBeads,
   labelInk,
   rgbCss,
+  type GridGeometry,
+  type LegendBandPlan,
   type LegendPlan,
   type SheetPlan,
   type SheetTilePlan,
+  type SingleSheetPlan,
+  type TileGeometry,
 } from "./layout";
 import type { PixelRect, RenderTarget2D } from "./types";
 
 /**
- * 施工图（分片）与用量表的绘制。
+ * 施工图的三个渲染器：**单张**（`drawSheet`，B6 起的生产路径）、**分片**（`drawSheetTile`，任务 11 删）
+ * 与**独立用量表**（`drawLegend`，任务 11 删），外加两者共用的**用料条**（`drawLegendBand`）。
+ *
+ * **单张与分片共用同一组步骤函数**（`drawInfoBar` / `drawCellsAndLabels` / `drawGridLines` /
+ * `drawRulers` / `drawBoardLabels`）：第 2–7 步只有一份实现，两个 `draw*` 只负责各自的步序、信息条文案
+ * 与页脚。任务 9 的打印页也复用其中四步。
  *
  * **本文件零格子↔像素算术**（只有带内落位偏移，见下）：所有像素位置来自 plan 的派生字段
  * （`grid` / `vLines` / `hLines` / `colTicks` / `rowTicks` / `colBoards` / `rowBoards` /
@@ -124,7 +133,194 @@ function footerLine(tile: SheetTilePlan, tileBeads: number): string {
 }
 
 /**
+ * 共用步骤函数吃的计划形状：**本片格范围 + 网格几何 + 两个字号**（= `TileGeometry` 再加两个字号）。
+ *
+ * `SheetTilePlan`（分片，任务 11 删）与 `SingleSheetPlan`（单张，B6）都满足它，所以两者（以及任务 9 的
+ * 打印页）共用同一组渲染步骤——「同一件事的第二份实现」在这里被结构性消灭。
+ */
+interface GridStepPlan extends TileGeometry {
+  readonly labelFontPx: number;
+  readonly tickFontPx: number;
+}
+
+/** 一条待画的格内色号：色号 + 墨色 + 中心点（第 3 步收集，第 4 步统一画）。 */
+interface LabelCell {
+  readonly code: string;
+  readonly ink: string;
+  readonly cx: number;
+  readonly cy: number;
+}
+
+/**
+ * 第 2 步：信息条两行（两个 y 都是**文本顶边**，字号不随格子缩放、不参与布局预算）。
+ *
+ * **只服务单张施工图**：打印页的页眉是另外两行文案（任务 9 自写，不复用本函数）。
+ * 颗数由调用方经 `countTileBeads` 给出——渲染器不自己数格子。
+ */
+function drawInfoBar(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  meta: SheetMeta,
+  tileBeads: number,
+  lineOneY: number,
+  lineTwoY: number,
+): void {
+  target.fillStyle = TEXT_INK;
+  target.font = `${INFO_FONT_PX}px sans-serif`;
+  target.textAlign = "left";
+  target.textBaseline = "top";
+  target.fillText(infoLineOne(pattern, meta), SHEET_MARGIN, lineOneY);
+  target.fillText(infoLineTwo(meta, tileBeads), SHEET_MARGIN, lineTwoY);
+}
+
+/**
+ * 第 3 步：逐格真色 + 空格斜线。逐格 `cellBox` → `cellAt`；实心格立刻填（**不画每格边框**，
+ * 格线统一在第 5 步画），空格只收集斜线、循环结束后共用一次 beginPath / stroke。
+ *
+ * 返回值是第 4 步要画的色号。**收集与绘制分成两步**是给旧分片渲染器留的接缝：`drawSheetTile` 在
+ * `labels = false` 的旧降级计划下不画色号（规格 B4 的 `labels-omitted`），而 B6 的
+ * `drawSheet` / 打印页走 `drawCellsAndLabels` —— 在那里色号恒画、没有分支。降级路径只活在
+ * `drawSheetTile` 一处，任务 11 随 `planSheets` 一起删除。
+ */
+function paintCells(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  plan: GridStepPlan,
+): readonly LabelCell[] {
+  const emptyBoxes: PixelRect[] = [];
+  const labelCells: LabelCell[] = [];
+  for (let row = plan.originRow; row < plan.originRow + plan.rows; row += 1) {
+    for (let col = plan.originCol; col < plan.originCol + plan.cols; col += 1) {
+      const value = cellAt(pattern, col, row);
+      const box = cellBox(plan, col, row);
+      if (value === EMPTY) {
+        emptyBoxes.push(box);
+        continue;
+      }
+      const color = colorOf(palette, value);
+      target.fillStyle = rgbCss(color.rgb);
+      target.fillRect(box.x, box.y, box.width, box.height);
+      labelCells.push({
+        code: color.code,
+        ink: labelInk(color.rgb),
+        cx: box.x + box.width / 2,
+        cy: box.y + box.height / 2,
+      });
+    }
+  }
+  if (emptyBoxes.length > 0) {
+    target.beginPath();
+    target.lineWidth = plan.lineWidths.thin;
+    target.strokeStyle = EMPTY_STROKE;
+    for (const box of emptyBoxes) {
+      target.moveTo(box.x, box.y);
+      target.lineTo(box.x + box.width, box.y + box.height);
+    }
+    target.stroke();
+  }
+  return labelCells;
+}
+
+/** 第 4 步：格内色号。字号取 plan 的 labelFontPx、墨色取 labelInk（Lab 的 L*），位置取 cellBox 的中心。 */
+function drawLabels(target: RenderTarget2D, cells: readonly LabelCell[], plan: GridStepPlan): void {
+  if (cells.length === 0) return;
+  target.font = `${plan.labelFontPx}px sans-serif`;
+  target.textAlign = "center";
+  target.textBaseline = "middle";
+  for (const cell of cells) {
+    target.fillStyle = cell.ink;
+    target.fillText(cell.code, cell.cx, cell.cy);
+  }
+}
+
+/**
+ * 第 3 + 4 步（单张施工图与打印页共用）：逐格真色 + 空格斜线 + **格内色号恒画**。
+ *
+ * 这里**没有**（也不许有）「色号画不下就省略」的分支：计划阶段（`planSheet` / `planBoardPage`）已经
+ * 保证字号不低于 `SHEET_MIN_LABEL_FONT_PX`，画不下时在计划阶段响亮失败（规格 §6.2 的失败语义）。
+ */
+function drawCellsAndLabels(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  plan: GridStepPlan,
+): void {
+  drawLabels(target, paintCells(target, pattern, palette, plan), plan);
+}
+
+/**
+ * 第 5 步：网格线。按档分组、由细到粗，**每档一次 beginPath + 每线一对 moveTo/lineTo + 一次 stroke**；
+ * 顺序不能反——先画粗线会被后画的细线切断，板边界就不再连续。（单张施工图与打印页共用）
+ */
+function drawGridLines(target: RenderTarget2D, plan: GridGeometry): void {
+  for (const group of GRID_GROUPS) {
+    const vertical = plan.vLines.filter((line) => line.kind === group);
+    const horizontal = plan.hLines.filter((line) => line.kind === group);
+    if (vertical.length === 0 && horizontal.length === 0) continue; // 不成组就不发空 stroke
+    target.beginPath();
+    target.lineWidth = plan.lineWidths[group];
+    target.strokeStyle = GRID_STROKE;
+    for (const line of vertical) {
+      target.moveTo(line.at, plan.grid.y);
+      target.lineTo(line.at, plan.grid.y + plan.grid.height);
+    }
+    for (const line of horizontal) {
+      target.moveTo(plan.grid.x, line.at);
+      target.lineTo(plan.grid.x + plan.grid.width, line.at);
+    }
+    target.stroke();
+  }
+}
+
+/** 第 6 步：刻度。位置取自 plan（渲染器不自己算），显示值是**全局格号 + 1**。（共用） */
+function drawRulers(target: RenderTarget2D, plan: GridStepPlan): void {
+  target.fillStyle = TEXT_INK;
+  target.font = `${plan.tickFontPx}px sans-serif`;
+  target.textAlign = "center";
+  target.textBaseline = "bottom";
+  for (const tick of plan.colTicks) {
+    target.fillText(String(tick.col + 1), tick.x, plan.grid.y - RULER_TEXT_GAP);
+  }
+  target.textAlign = "right";
+  target.textBaseline = "middle";
+  for (const tick of plan.rowTicks) {
+    target.fillText(String(tick.row + 1), plan.grid.x - RULER_TEXT_GAP, tick.y);
+  }
+}
+
+/** 第 7 步：板边界标注。位置取自 plan 的 colBoards / rowBoards（带内远离网格的那一侧）。（共用） */
+function drawBoardLabels(target: RenderTarget2D, plan: GridStepPlan): void {
+  // **字号显式取自 `plan.tickFontPx`**（契约 §4b 的字号表）：它与刻度同号是有意的，但不靠继承——
+  // 继承会让「在刻度段与板号段之间插一次 `target.font` 赋值」静默改掉板号字号，而两条断言都看不见。
+  target.font = `${plan.tickFontPx}px sans-serif`;
+  target.textAlign = "center";
+  target.textBaseline = "top";
+  for (const edge of plan.colBoards) {
+    target.fillText(
+      `第 ${edge.board} 块板`,
+      edge.x,
+      plan.grid.y - SHEET_RULER_TOP + BOARD_TEXT_INSET,
+    );
+  }
+  target.textAlign = "left";
+  target.textBaseline = "middle";
+  for (const edge of plan.rowBoards) {
+    target.fillText(
+      `第 ${edge.board} 块板`,
+      plan.grid.x - SHEET_RULER_LEFT + BOARD_TEXT_INSET,
+      edge.y,
+    );
+  }
+}
+
+/**
  * 画一张施工图分片：固定 8 步（规格 §6 第 1–8 步）。每一步只读 plan 给的几何，渲染器零算术。
+ *
+ * **第 2–7 步已经逐字搬进上面那组共用步骤函数**（B6 的任务 6），这里只剩步序、第 1 步与第 8 步页脚；
+ * 任务 11 随 `planSheets` 一起删除本函数。**`plan.labels === false` 的旧降级计划仍不画格内色号**
+ * （规格 B4 的 `labels-omitted` 语义，既有用例钉着它），所以第 3 步与第 4 步在这里被分别调用：
+ * 共用函数据此没有降级分支，而降级路径只活在这一处。
  *
  * **色号越界的校验时机**（控制者 2026-10-05 裁定，记 minor）：色号是**逐格**取用的，`colorOf` 在
  * 绘制循环里抛，因此坏色号抛出时画布上可能已经有一些格子。这是**校验时机**问题、不是「是否响亮
@@ -168,123 +364,24 @@ export function drawSheetTile(
   target.fillRect(0, 0, tile.canvasWidth, tile.canvasHeight);
 
   // 第 2 步：信息条两行。本片颗数走 layout 的 countTileBeads（渲染器不自己数格子）。
-  target.fillStyle = TEXT_INK;
-  target.font = `${INFO_FONT_PX}px sans-serif`;
-  target.textAlign = "left";
-  target.textBaseline = "top";
-  target.fillText(infoLineOne(pattern, meta), SHEET_MARGIN, SHEET_MARGIN);
-  target.fillText(
-    infoLineTwo(meta, tileBeads),
+  drawInfoBar(
+    target,
+    pattern,
+    meta,
+    tileBeads,
     SHEET_MARGIN,
     SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2),
   );
 
-  // 第 3 步：色块与空格。逐格 `cellBox` → `cellAt`；实心格立刻填（**不画每格边框**，格线统一在
-  // 第 5 步画），空格只收集斜线、循环结束后共用一次 beginPath / stroke。
-  const emptyBoxes: PixelRect[] = [];
-  const labelCells: Array<{
-    readonly code: string;
-    readonly ink: string;
-    readonly cx: number;
-    readonly cy: number;
-  }> = [];
-  for (let row = tile.originRow; row < tile.originRow + tile.rows; row += 1) {
-    for (let col = tile.originCol; col < tile.originCol + tile.cols; col += 1) {
-      const value = cellAt(pattern, col, row);
-      const box = cellBox(tile, col, row);
-      if (value === EMPTY) {
-        emptyBoxes.push(box);
-        continue;
-      }
-      const color = colorOf(palette, value);
-      target.fillStyle = rgbCss(color.rgb);
-      target.fillRect(box.x, box.y, box.width, box.height);
-      // 第 4 步的色号只在这里收集：`plan.labels` 全文件**只读这一处**（M4 的靶点唯一）。
-      // 关闭色号时不付 rgbToLab 的代价。
-      if (plan.labels) {
-        labelCells.push({
-          code: color.code,
-          ink: labelInk(color.rgb),
-          cx: box.x + box.width / 2,
-          cy: box.y + box.height / 2,
-        });
-      }
-    }
-  }
-  if (emptyBoxes.length > 0) {
-    target.beginPath();
-    target.lineWidth = tile.lineWidths.thin;
-    target.strokeStyle = EMPTY_STROKE;
-    for (const box of emptyBoxes) {
-      target.moveTo(box.x, box.y);
-      target.lineTo(box.x + box.width, box.y + box.height);
-    }
-    target.stroke();
-  }
+  // 第 3 步：色块与空格；第 4 步：格内色号。**旧降级计划不画色号**（B6 的
+  // `drawSheet` / 打印页走共用的 `drawCellsAndLabels`，那里色号恒画、没有分支）。
+  const labelCells = paintCells(target, pattern, palette, tile);
+  if (plan.labels) drawLabels(target, labelCells, tile);
 
-  // 第 4 步：格内色号。字号取 plan 的 labelFontPx、墨色取 labelInk（Lab 的 L*），位置取 cellBox 的中心。
-  if (labelCells.length > 0) {
-    target.font = `${tile.labelFontPx}px sans-serif`;
-    target.textAlign = "center";
-    target.textBaseline = "middle";
-    for (const cell of labelCells) {
-      target.fillStyle = cell.ink;
-      target.fillText(cell.code, cell.cx, cell.cy);
-    }
-  }
-
-  // 第 5 步：网格线。按档分组、由细到粗，**每档一次 beginPath + 每线一对 moveTo/lineTo + 一次 stroke**；
-  // 顺序不能反——先画粗线会被后画的细线切断，板边界就不再连续。
-  for (const group of GRID_GROUPS) {
-    const vertical = tile.vLines.filter((line) => line.kind === group);
-    const horizontal = tile.hLines.filter((line) => line.kind === group);
-    if (vertical.length === 0 && horizontal.length === 0) continue; // 不成组就不发空 stroke
-    target.beginPath();
-    target.lineWidth = tile.lineWidths[group];
-    target.strokeStyle = GRID_STROKE;
-    for (const line of vertical) {
-      target.moveTo(line.at, tile.grid.y);
-      target.lineTo(line.at, tile.grid.y + tile.grid.height);
-    }
-    for (const line of horizontal) {
-      target.moveTo(tile.grid.x, line.at);
-      target.lineTo(tile.grid.x + tile.grid.width, line.at);
-    }
-    target.stroke();
-  }
-
-  // 第 6 步：刻度。位置取自 plan（渲染器不自己算），显示值是**全局格号 + 1**。
-  target.fillStyle = TEXT_INK;
-  target.font = `${tile.tickFontPx}px sans-serif`;
-  target.textAlign = "center";
-  target.textBaseline = "bottom";
-  for (const tick of tile.colTicks) {
-    target.fillText(String(tick.col + 1), tick.x, tile.grid.y - RULER_TEXT_GAP);
-  }
-  target.textAlign = "right";
-  target.textBaseline = "middle";
-  for (const tick of tile.rowTicks) {
-    target.fillText(String(tick.row + 1), tile.grid.x - RULER_TEXT_GAP, tick.y);
-  }
-
-  // 第 7 步：板边界标注。位置取自 plan 的 colBoards / rowBoards（带内远离网格的那一侧）。
-  // **字号显式取自 `tile.tickFontPx`**（契约 §4b 的字号表）：它与刻度同号是有意的，但不靠继承——
-  // 继承会让「在刻度段与板号段之间插一次 `target.font` 赋值」静默改掉板号字号，而两条断言都看不见。
-  target.font = `${tile.tickFontPx}px sans-serif`;
-  target.textAlign = "center";
-  target.textBaseline = "top";
-  for (const edge of tile.colBoards) {
-    target.fillText(`第 ${edge.board} 块板`, edge.x, tile.grid.y - SHEET_RULER_TOP + BOARD_TEXT_INSET);
-  }
-  target.textAlign = "left";
-  target.textBaseline = "middle";
-  for (const edge of tile.rowBoards) {
-    target.fillText(
-      `第 ${edge.board} 块板`,
-      tile.grid.x - SHEET_RULER_LEFT + BOARD_TEXT_INSET,
-      edge.y,
-    );
-  }
+  // 第 5 步：网格线（三档、由细到粗）；第 6 步：刻度；第 7 步：板边界标注。
+  drawGridLines(target, tile);
+  drawRulers(target, tile);
+  drawBoardLabels(target, tile);
 
   // 第 8 步：页脚（片范围）。r / c 取 tile.rowIndex / colIndex，**不从 index 反推网格形状**。
   target.fillStyle = TEXT_INK;
@@ -443,5 +540,120 @@ export function drawLegend(
     `生成时间：${meta.generatedAt}`,
     SHEET_MARGIN,
     plan.totalY + LEGEND_FOOTER_FIRST_LINE + 2 * LEGEND_FOOTER_LINE_H,
+  );
+}
+
+/**
+ * 用料条（B6 起嵌在单张施工图 / 打印页的网格下沿）：色块 + 色号 + 数量的多列排布。
+ *
+ * **几何全部来自 `LegendBandPlan`**（`top` / `itemCols` / `itemWidth` / `rowHeight` / `swatchSize` /
+ * `codeX` / `countRightPad`，由 `planLegendBand` 算出）——渲染器不自己乘除，也不读本文件里那套旧独立
+ * 用量表的私有常量（`LEGEND_SWATCH_SIZE = 20` / `LEGEND_CODE_X = 28` / `LEGEND_RIGHT_PAD`，任务 11 删）。
+ * `left` 是带的左边距（单张施工图与打印页都给 `SHEET_MARGIN`）。
+ *
+ * **`usages` 是入参**：单张施工图传全图用量，打印页传**本页**用量——同一个函数服务两者，所以它不能从
+ * plan 里读（plan 是纯数据，不含用量的副本）。
+ *
+ * **空表早退**：`usages` 为空时什么都不画（带高为 0，没有数据行的用料条是噪声）。
+ * **色号 → rgb 全部前置解析**（坏色号必须在动笔前抛，不留半张图）——口径与 `drawLegend` 一致。
+ */
+export function drawLegendBand(
+  target: RenderTarget2D,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  band: LegendBandPlan,
+  left: number,
+): void {
+  if (!Array.isArray(usages)) {
+    throw new Error(`用量表必须是数组（当前 ${typeof usages}）`);
+  }
+  if (usages.length === 0) return;
+  // 色号 → rgb 全部前置解析（坏色号必须在动笔前抛，不留半张图）——口径与既有 drawLegend 一致
+  const runtime = createPaletteRuntime(palette);
+  const swatchStyles: string[] = usages.map((usage) => {
+    const index = runtime.indexByCode.get(usage.code);
+    if (index === undefined) throw new Error(`用量表里的色号不在色卡里：${usage.code}`);
+    const color = palette.colors[index];
+    if (color === undefined) throw new Error(`色卡里没有下标 ${index} 的颜色`);
+    return rgbCss(color.rgb);
+  });
+  for (let index = 0; index < usages.length; index += 1) {
+    const usage = usages[index] as ColorUsage;
+    const cellX = left + (index % band.itemCols) * band.itemWidth;
+    const centerY =
+      band.top + Math.floor(index / band.itemCols) * band.rowHeight + band.rowHeight / 2;
+    const swatchY = centerY - band.swatchSize / 2;
+    target.fillStyle = swatchStyles[index] as string;
+    target.fillRect(cellX, swatchY, band.swatchSize, band.swatchSize);
+    target.strokeStyle = SWATCH_FRAME_STROKE;
+    target.lineWidth = SWATCH_FRAME_WIDTH;
+    target.strokeRect(cellX, swatchY, band.swatchSize, band.swatchSize);
+
+    target.fillStyle = TEXT_INK;
+    target.font = `${LEGEND_FONT_PX}px sans-serif`;
+    target.textAlign = "left";
+    target.textBaseline = "middle";
+    target.fillText(usage.code, cellX + band.codeX, centerY);
+    target.textAlign = "right";
+    target.fillText(String(usage.count), cellX + band.itemWidth - band.countRightPad, centerY);
+  }
+}
+
+/**
+ * 单张施工图：整图一块 + 底部用料条 + 末行。固定步序（规格 §6）：
+ * 填白 → 信息条 → 逐格真色 + 空格斜线 → 格内色号 → 网格线三档 → 刻度 → 板号 → 用料条 → 末行三行。
+ *
+ * **格内色号恒画**（`plan.labels` 这个概念已经不存在）：计划阶段已经保证字号不低于
+ * `SHEET_MIN_LABEL_FONT_PX`，所以这里不需要（也不许有）降级分支。
+ *
+ * **`usages` 是必需入参而不是从 plan 里读**：plan 是纯数据（不含 `usages` 的副本，避免同一份数据
+ * 在计划与调用方各存一份），而且它必须与 `planSheet` 收到的是**同一份**——两份用量会让
+ * 「用料条列出来的色」与「计划按它算出来的带高」对不上。
+ *
+ * **计划的类型名**：任务 5 落的类型叫 `SingleSheetPlan`（过渡名，因为旧的**自动分片** `SheetPlan` 还在
+ * 被 `drawSheetTile` 读着）；任务 11 删掉分片版之后会改回 `SheetPlan`，形状不变。
+ */
+export function drawSheet(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  plan: SingleSheetPlan,
+  meta: SheetMeta,
+): void {
+  if ((plan.kind as string) !== "sheet") {
+    throw new Error(`plan 的类型不匹配：期望 sheet，实际 ${String(plan.kind)}`);
+  }
+  if (pattern.paletteId !== palette.id) {
+    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
+  }
+  // 颗数必须在填白之前算：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验
+  const beads = countTileBeads(pattern, plan);
+
+  target.fillStyle = SHEET_BACKGROUND;
+  target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
+
+  drawInfoBar(target, pattern, meta, beads, plan.infoBar.lineOneY, plan.infoBar.lineTwoY);
+  drawCellsAndLabels(target, pattern, palette, plan);
+  drawGridLines(target, plan);
+  drawRulers(target, plan);
+  drawBoardLabels(target, plan);
+  drawLegendBand(target, palette, usages, plan.legend, SHEET_MARGIN);
+
+  // 末行三行，`plan.footerY` 是页脚带的**中线**：`SHEET_FOOTER_H = 44` 正好放得下三行 12px
+  target.fillStyle = TEXT_INK;
+  target.font = `${LEGEND_FOOTER_FONT_PX}px sans-serif`;
+  target.textAlign = "left";
+  target.textBaseline = "middle";
+  target.fillText(
+    `合计 ${beads} 颗 · ${meta.colorCount} 种色`,
+    SHEET_MARGIN,
+    plan.footerY - LEGEND_FOOTER_LINE_H,
+  );
+  target.fillText(meta.accuracy, SHEET_MARGIN, plan.footerY);
+  target.fillText(
+    `生成时间：${meta.generatedAt}`,
+    SHEET_MARGIN,
+    plan.footerY + LEGEND_FOOTER_LINE_H,
   );
 }

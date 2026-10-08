@@ -10,13 +10,16 @@ import {
   SHEET_RULER_TOP,
   cellBox,
   planLegend,
-  planShare,
+  planSheet,
   planSheets,
+  planShare,
+  rgbCss,
   type LegendPlan,
   type SheetPlan,
   type SheetTilePlan,
+  type TileGeometry,
 } from "../layout";
-import { drawLegend, drawSheetTile, type SheetMeta } from "../sheet";
+import { drawLegend, drawSheet, drawSheetTile, type SheetMeta } from "../sheet";
 import { createMockTarget, type MockCalls } from "./helpers";
 
 /**
@@ -87,13 +90,15 @@ function solidInTile(pattern: Pattern, tile: SheetTilePlan): number {
 }
 
 /**
- * 只取落在 `tile.grid` **内部**的文字。
+ * 只取落在 `plan.grid` **内部**的文字。
  *
  * **这条过滤是必须的，不是洁癖**：`labels = false` 时信息条 / 刻度 / 板号 / 页脚都还在写字，
  * `expect(calls.texts).toEqual([])` 这种写法永远是假绿——它根本没读到「格区域内没有色号」
  * 这条真正要守的性质。渲染器用例里任何关于「格内色号」的断言都必须经过本函数。
+ *
+ * 入参只要求 `TileGeometry`（= 网格几何 + 本片格范围）：分片计划与单张计划（B6）都用它。
  */
-function textsInGrid(calls: MockCalls, tile: SheetTilePlan): MockCalls["texts"] {
+function textsInGrid(calls: MockCalls, tile: TileGeometry): MockCalls["texts"] {
   return calls.texts.filter(
     (text) =>
       text.x > tile.grid.x &&
@@ -793,5 +798,76 @@ describe("§13.2 承重断言的渲染器侧", () => {
     // 规格 §9 第 3 条：导出不经过 renderPatternThumbnail（它的 THUMBNAIL_MAX_EDGE = 512）
     expect(tile.grid.width).toBeGreaterThan(512);
     expect(tile.grid.height).toBeGreaterThan(512);
+  });
+});
+
+/**
+ * 33 个实心格的用量（26 + 5 + 1 + 1 = 33），与 `CELLS_6X6` 的用色一一对应（下标顺序 = 色卡下标顺序，
+ * 所以第 i 项的色块真色就是 `palette.colors[i]`）。**计数独立数一遍**，不与被测实现同源。
+ *
+ * `layout.test.ts` 里有一个同名同值的夹具；两个测试文件不共享私有夹具，故这里照抄一份。
+ */
+function makeUsages(): ColorUsage[] {
+  return [
+    { code: "A1", name: "白", count: 26 },
+    { code: "A2", name: "黑", count: 5 },
+    { code: "A3", name: "红", count: 1 },
+    { code: "A4", name: "浅灰", count: 1 },
+  ];
+}
+
+describe("drawSheet（B6：单张 + 底部用料条）", () => {
+  it("网格内每颗实心格都画了色号（33 颗 ⇒ 33 条文字，旧口径下会被降级的尺寸照样画）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const plan = planSheet(pattern, makePalette(), makeUsages());
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, makePalette(), makeUsages(), plan, makeMeta());
+    expect(textsInGrid(calls, plan)).toHaveLength(33);
+  });
+
+  it("用料条画在网格下沿：每项一个色块 + 色号 + 数量，且数量右对齐", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const usages = makeUsages();
+    const plan = planSheet(pattern, palette, usages);
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, palette, usages, plan, makeMeta());
+
+    // 色块：每个色号一颗 LEGEND_SWATCH_SIZE 的方块，y = 带内该行的中线 − 半个色块
+    for (let i = 0; i < usages.length; i += 1) {
+      const col = i % plan.legend.itemCols;
+      const row = Math.floor(i / plan.legend.itemCols);
+      const centerY = plan.legend.top + row * plan.legend.rowHeight + plan.legend.rowHeight / 2;
+      const swatch = fillAt(calls, SHEET_MARGIN + col * plan.legend.itemWidth, centerY - plan.legend.swatchSize / 2);
+      expect(swatch?.w).toBe(plan.legend.swatchSize);
+      expect(swatch?.fillStyle).toBe(rgbCss(palette.colors[i]!.rgb));
+    }
+    const codes = calls.texts.filter((t) => t.text === "A1" && t.y > plan.legend.top);
+    expect(codes.length).toBe(1);
+  });
+
+  it("末行三行（合计 / 精度声明 / 生成时间）都在网格下方，且排在用料条之后", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const usages = makeUsages();
+    const plan = planSheet(pattern, makePalette(), usages);
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, makePalette(), usages, plan, makeMeta({ generatedAt: "2026-10-08 10:00" }));
+
+    const belowGrid = calls.texts.filter((t) => t.y > plan.grid.y + plan.grid.height);
+    const texts = belowGrid.map((t) => t.text);
+    expect(texts).toContain("屏幕色仅供参考，以实物为准");
+    expect(texts).toContain("生成时间：2026-10-08 10:00");
+    expect(texts.some((t) => t.includes("合计 33 颗"))).toBe(true);
+    // 用料条在 footer 之前画：带内文字的 y 都小于这三行
+    expect(Math.max(...belowGrid.map((t) => t.y))).toBeGreaterThan(plan.legend.top);
+  });
+
+  it("save / restore 配平（不配平会泄漏 target 的全局状态）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const usages = makeUsages();
+    const plan = planSheet(pattern, makePalette(), usages);
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, makePalette(), usages, plan, makeMeta());
+    expect(calls.saves).toBe(calls.restores);
   });
 });
