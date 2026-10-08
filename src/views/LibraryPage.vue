@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import {
   getProjectStore,
   PROJECT_NAME_MAX,
@@ -42,6 +43,12 @@ const storeFailureText = computed(() => {
 const renamingId = ref<string | null>(null);
 const renameDraft = ref("");
 const pendingDelete = ref<ProjectMeta | null>(null);
+/**
+ * 正在「查看施工图」的那一条（B6 任务 14）。整条 `meta` 而不是只存 id：查看层要的三样
+ * （id / name / thumbnail）在这一刻全在手上，只存 id 就得再回库查一次——而查看层自己
+ * **还要**回库拿 `doc`，那会变成同一份记录查两遍。
+ */
+const sheetTarget = ref<ProjectMeta | null>(null);
 
 const hasProjects = computed(() => projects.value.length > 0);
 
@@ -193,6 +200,9 @@ function open(id: string): void {
             <button data-testid="open-project" class="min-h-12 flex-1 rounded bg-slate-900 px-4 text-white" @click="open(meta.id)">
               打开
             </button>
+            <button data-testid="view-sheet" class="min-h-12 rounded border border-slate-300 px-4" @click="sheetTarget = meta">
+              施工图
+            </button>
             <button data-testid="rename-project" class="min-h-12 rounded border border-slate-300 px-4" @click="startRename(meta)">
               改名
             </button>
@@ -207,6 +217,14 @@ function open(id: string): void {
     <p v-if="usage" class="mt-8 text-base text-slate-500">
       已用 {{ formatMb(usage.usage) }} / 可用约 {{ formatMb(usage.quota) }}
     </p>
+
+    <SheetViewer
+      v-if="sheetTarget !== null"
+      :project-id="sheetTarget.id"
+      :name="sheetTarget.name"
+      :thumbnail="sheetTarget.thumbnail"
+      @close="sheetTarget = null"
+    />
 
     <div
       v-if="pendingDelete"

@@ -1,7 +1,9 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { toProjectDocument } from "@/core/project/file";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
+import { getBuiltinPalette } from "@/services/palette";
 import { setProjectStore } from "@/services/projectStore";
 import { makeRecord } from "@/services/__tests__/projectStoreContract";
 import LibraryPage from "@/views/LibraryPage.vue";
@@ -10,6 +12,16 @@ const push = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push }),
   RouterLink: { template: "<a><slot /></a>" },
+}));
+
+/**
+ * 渲染通道替身（B6 任务 14）：下面的「施工图」用例会挂上真的 `SheetViewer`，而它**真的**去
+ * `renderSheetBlob`。不替的话 happy-dom 里会为它建一张真画布（`getContext("2d")` 返回 `null`
+ * ⇒ 组件以「无法获取 2D 上下文」告警/失败），成为一条与列表页无关的假红。
+ * 本文件只断言「点开就挂上查看层」；查看层内部行为由 `SheetViewer.test.ts` 覆盖。
+ */
+vi.mock("@/services/sheetExport", () => ({
+  renderSheetBlob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
 }));
 
 describe("LibraryPage", () => {
@@ -294,6 +306,44 @@ describe("LibraryPage", () => {
     expect(name.classes()).toContain("project-name");
     // 旧的 truncate（nowrap）正是撑宽隐式 auto 轨道的根因，不许留
     expect(name.classes()).not.toContain("truncate");
+  });
+
+  // -------------------------------------------------------------------------
+  // 首页「查看施工图」的接线（B6 任务 14）。只钉一件事：卡片上有这个按钮、点了会挂上查看层、
+  // 关掉会摘掉。**查看层内部**（垫场、保存、失败文案、object URL 释放）由
+  // `src/components/sheet/__tests__/SheetViewer.test.ts` 覆盖，这里不重复。
+  // -------------------------------------------------------------------------
+
+  it("卡片有「施工图」按钮，点开查看层", async () => {
+    const store = await createMemoryProjectStore();
+    await store.put({
+      meta: {
+        id: "p1", name: "小猫",
+        createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z",
+        thumbnail: "", width: 58, height: 58, colorCount: 12,
+      },
+      doc: toProjectDocument(
+        { width: 2, height: 1, paletteId: getBuiltinPalette().id, cells: new Uint16Array([0, 0]) },
+        getBuiltinPalette(),
+        { longSide: 58, maxColors: null, crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
+      ),
+      source: null,
+    });
+    setProjectStore(store);
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
+    // 简报原文这里是 `wrapper.get(...).exists()).toBe(true)`——**编译不过**：`get()` 的返回类型是
+    // `Omit<DOMWrapper, "exists">`（它保证找得到，故刻意不给 `exists`），`vue-tsc` 报 TS2339。
+    // 语意不变，只把 `get` 换成 `find`。
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(true);
+
+    // 「关闭」必须真的摘掉查看层（只断言「开得出来」时，把 `@close` 那根线删掉照样绿）。
+    await flushPromises();
+    await wrapper.get("[data-testid='sheet-close']").trigger("click");
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
   });
 });
 
