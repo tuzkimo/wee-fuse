@@ -155,9 +155,16 @@ function infoLineOne(pattern: Pattern, meta: SheetMeta): string {
   return `${meta.projectName} · ${pattern.width} × ${pattern.height} 格 · 成品 ${formatCm(beadsToCm(longEdge))} 厘米`;
 }
 
-/** 信息条第二行：**精度声明是主规格 §11 的硬要求，不许省略**（末尾那一段来自 `meta.accuracy`）。 */
-function infoLineTwo(meta: SheetMeta, tileBeads: number): string {
-  return `${meta.paletteName} · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色）/ 本片 ${tileBeads} 颗 · ${meta.generatedAt} · ${meta.accuracy}`;
+/**
+ * 信息条第二行：**精度声明是主规格 §11 的硬要求，不许省略**（末尾那一段来自 `meta.accuracy`）。
+ *
+ * **没有「本片 N 颗」这半句**（2026-10-08 控制者裁决）：单张施工图是一张**整图**（不再分片），
+ * 「本片」与「全图」指的是同一张图，写出来是「全图 33 颗（4 种色）/ 本片 33 颗」这种自相矛盾的一行。
+ * 本页 / 全图的分工只活在打印页的页脚（`drawBoardPage` 里的「本页 N 颗 · 全图 M 颗」）。
+ * 因此本函数**不收颗数**：图纸现数的实心格只出现在末行的「合计 N 颗」那一处。
+ */
+function infoLineTwo(meta: SheetMeta): string {
+  return `${meta.paletteName} · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色） · ${meta.generatedAt} · ${meta.accuracy}`;
 }
 
 /**
@@ -183,13 +190,12 @@ interface LabelCell {
  * 第 2 步：信息条两行（两个 y 都是**文本顶边**，字号不随格子缩放、不参与布局预算）。
  *
  * **施工图专用**：打印页的页眉是另外两行文案（任务 9 自写，有意不复用本函数——它要写的是实际毫米与
- * 缩放比）。颗数由调用方经 `countTileBeads` 给出——渲染器不自己数格子。
+ * 缩放比）。两行都只读 `pattern` / `meta`：整图的信息条里没有「本片颗数」这个量（见 `infoLineTwo`）。
  */
 function drawInfoBar(
   target: RenderTarget2D,
   pattern: Pattern,
   meta: SheetMeta,
-  tileBeads: number,
   lineOneY: number,
   lineTwoY: number,
 ): void {
@@ -198,7 +204,7 @@ function drawInfoBar(
   target.textAlign = "left";
   target.textBaseline = "top";
   target.fillText(infoLineOne(pattern, meta), SHEET_MARGIN, lineOneY);
-  target.fillText(infoLineTwo(meta, tileBeads), SHEET_MARGIN, lineTwoY);
+  target.fillText(infoLineTwo(meta), SHEET_MARGIN, lineTwoY);
 }
 
 /**
@@ -432,7 +438,7 @@ export function drawSheet(
   target.fillStyle = SHEET_BACKGROUND;
   target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
 
-  drawInfoBar(target, pattern, meta, beads, plan.infoBar.lineOneY, plan.infoBar.lineTwoY);
+  drawInfoBar(target, pattern, meta, plan.infoBar.lineOneY, plan.infoBar.lineTwoY);
   drawCellsAndLabels(target, pattern, palette, plan);
   drawGridLines(target, plan);
   drawRulers(target, plan);

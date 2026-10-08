@@ -637,9 +637,10 @@ describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b�
     expect(lines).toContain("测试工程 · 6 × 6 格 · 成品 3.0 厘米");
 
     // ② totalBeads 与 colorCount：信息条第二行的「全图 N 颗（M 种色）」。
-    //    整行**锚定**（前缀 / 颗数 / 色数 / `本片` 段 / 末尾精度声明全部逐字对上）。
+    //    整行**锚定**（前缀 / 颗数 / 色数 / 时间 / 末尾精度声明全部逐字对上）。**没有「本片」段**：
+    //    单张施工图是一张整图（不再分片），「本片」与「全图」指的是同一张图，写出来自相矛盾。
     const infoLine = new RegExp(
-      `^测试色卡 · 全图 ${stats.total} 颗（${stats.colorCount} 种色）/ 本片 ${stats.total} 颗 · .+ · 屏幕色仅供参考，以实物为准$`,
+      `^测试色卡 · 全图 ${stats.total} 颗（${stats.colorCount} 种色） · .+ · 屏幕色仅供参考，以实物为准$`,
     );
     const matched = lines.filter((text) => infoLine.test(text));
     expect(matched).toHaveLength(1);
@@ -652,11 +653,13 @@ describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b�
     //    反向：色卡名不许出现在行尾、精度声明不许出现在行首
     expect(line.startsWith("屏幕色仅供参考")).toBe(false);
     expect(line.endsWith("测试色卡")).toBe(false);
+    //    信息条里不许再出现分片口径的「本片」（整图没有第二个颗数可说）
+    expect(line.includes("本片")).toBe(false);
 
     // ④ generatedAt：信息条中段取出它，末行的「生成时间：…」必须**逐字相同**且是日期时间的样子
     //    （空串 / 被别的东西冒充都会红）。
     const generatedAt = new RegExp(
-      `^测试色卡 · 全图 ${stats.total} 颗（${stats.colorCount} 种色）/ 本片 ${stats.total} 颗 · (.+) · 屏幕色仅供参考，以实物为准$`,
+      `^测试色卡 · 全图 ${stats.total} 颗（${stats.colorCount} 种色） · (.+) · 屏幕色仅供参考，以实物为准$`,
     ).exec(line)?.[1];
     expect(generatedAt).toMatch(/^\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}$/);
     expect(lines).toContain(`生成时间：${generatedAt ?? ""}`);
@@ -671,12 +674,12 @@ describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b�
     // 或者写死成某个常数，下面这一条就会红——而只喂真 `usages` 的那条**判不开**（两者恰好相等）。
     //
     // 判别力来自**两个数故意不一致**：图纸本身是 33 颗 / 4 色，而这里喂进去的 `usages` 只有
-    // 1 项 5 颗 ⇒ 信息条的「全图」必须是 **5 颗（1 种色）**、而「本片」仍是图纸现数的 **33 颗**。
+    // 1 项 5 颗 ⇒ 信息条的「全图」必须是 **5 颗（1 种色）**（图纸现扫的 33 颗只在末行的合计里出现）。
     const wrapper = mountPanel("sheet", { usages: [{ code: "A1", name: "白", count: 5 }] });
     await saveAndSettle(wrapper, "sheet");
     const lines = recording.texts.map((call) => call.text);
 
-    expect(lines.some((text) => text.includes("全图 5 颗（1 种色）/ 本片 33 颗"))).toBe(true);
+    expect(lines.some((text) => text.includes("全图 5 颗（1 种色） · "))).toBe(true);
     expect(lines).toContain("合计 33 颗 · 1 种色");
     // 反向：图纸现扫出来的那个口径**不许**出现在「全图」那一段里
     expect(lines.some((text) => text.includes("全图 33 颗"))).toBe(false);
