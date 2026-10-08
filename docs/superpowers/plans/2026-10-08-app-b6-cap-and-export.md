@@ -2716,6 +2716,10 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
    ⇒ 改成「已经交给调用方（并可能被落盘）」。
 21. `src/services/sheetExport.ts:45` 的 `draw: (target) => void` 会**静态接受** `async` 回调，而 `:49` 不 `await` ⇒ 若后人传 async draw，
     `:51` 的自检会早于绘制完成（正是该抽象要防的形态）⇒ 在类型或注释上写明「**draw 必须同步**」，并说明理由。
+22. **新常量的逐字断言族**（任务 8 的实现者点名：`PRINT_BOARD_SIZES` 没有 `toEqual([29, 58])`，守卫与它互钉了但「表被改成 `[29, 57]`」查不出）
+   ⇒ 一次性给这些新常量各补一条字面量断言：`PRINT_BOARD_SIZES`、`PRINT_DPI`、`PRINT_MARGIN_MM`、`PAPER_MM`（a4/a3 的毫米）、
+   `SHEET_MIN_LABEL_FONT_PX`、`LEGEND_ITEM_W` / `LEGEND_ROW_H`（任务 11 改回终态名之后）、`PAGE_HEADER_H`。
+   放在这里而不是各任务里，是因为它们同属「常量值就是契约」这一类。
 18. `src/core/render/__tests__/sheet.test.ts` 里新增的第一条 `drawSheet` 用例，标题写「旧口径下会被降级的尺寸照样画」，但 6×6 夹具下
    `cellPx = 40`（远超旧的 32px 阈值）、那条断言其实与降级无关（任务 6 的实现者自报）⇒ 把标题改成它真正验证的东西
    （「网格内每颗实心格都画了色号：33 颗 ⇒ 33 条文字」），不要把一句不成立的因果留在用例名里。
