@@ -1846,6 +1846,10 @@ git commit -m "feat(core,services): A4/A3 每块板一页的渲染与 Blob 通�
            不持有面板状态、也不 import 任何 store。 -->
 ```
 
+**另补一条判别力要求**（任务 7 的实现者实测：`sheetMeta` 的六个字段在任务 7 内**零直接断言**——对调 `paletteName`/`accuracy`、把 `totalBeads` 写 0 都全绿，属本仓记过账的 F1 形态）：
+在 sheet 模式的保存用例里，除了断言 `export-save-sheet` 的实参，还要用 `exportTestKit` 的记录型 target 断言**信息条与末行的文字至少各出现一次**
+（`projectName`、`totalBeads`、`accuracy` 三个字段各被观察到一次），把这类静默漂移挡住。
+
 `ExportPanel.test.ts` 按下面的形状重写（保留它原有的 `vi.hoisted` 替身声明、`exportTestKit` 用法与 object URL 回收用例）：
 
 ```ts
@@ -2656,6 +2660,8 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
 18. `src/core/render/__tests__/sheet.test.ts` 里新增的第一条 `drawSheet` 用例，标题写「旧口径下会被降级的尺寸照样画」，但 6×6 夹具下
    `cellPx = 40`（远超旧的 32px 阈值）、那条断言其实与降级无关（任务 6 的实现者自报）⇒ 把标题改成它真正验证的东西
    （「网格内每颗实心格都画了色号：33 颗 ⇒ 33 条文字」），不要把一句不成立的因果留在用例名里。
+19. `src/components/editor/__tests__/exportTestKit.ts:15-16,253` 的 JSDoc 写「只有那两个用例文件 import 它 / 两个用例文件在 `beforeEach` 里调用它」，
+   现在多了第三个消费者 `src/services/__tests__/sheetExport.test.ts` ⇒ 把消费者清单改成三个（或改成不说数量的写法，免得每次加消费者都要回来改）。
 
 - [ ] **步骤 2：改索引**
 
