@@ -82,6 +82,28 @@ export const TICK_EVERY = 5;
  */
 export const TILE_STEP = BOARD_COLS;
 
+/** 格内色号字号的硬下限（px）。低于它就不是「字小」而是噪点，必须响亮失败而不是静默出图。 */
+export const SHEET_MIN_LABEL_FONT_PX = 10;
+
+/**
+ * 底部用料条的几何（B6 新增：它嵌在产物底部，不再是独立成图）。
+ *
+ * **为什么这两个名字带 `BAND_` 前缀**（**过渡状态，任务 11 收口**）：上面那对 `LEGEND_ITEM_W` /
+ * `LEGEND_ROW_H`（= 300 / 30）现在仍被即将删除的**独立用量表图**（`planLegend` / `drawLegend`）使用，
+ * 而用料条要用压缩几何（= 200 / 22，规格 §13 的常量迁移表）。同一个文件里一对常量不能有两个值，
+ * 所以本任务**只做加法**：旧的 300 / 30 原样留在原地（既有 `planLegend` 的用例因此一条都不红），
+ * 压缩几何另起名字挂在用料条上。
+ * **任务 11 删掉 `planLegend` / `drawLegend` 时，把这两个名字改回 `LEGEND_ITEM_W` / `LEGEND_ROW_H`**
+ * ——届时旧的 300 / 30 随 `planLegend` 一起消失，不留「同一件事的第二份解释」。
+ */
+export const LEGEND_BAND_ITEM_W = 200;
+export const LEGEND_BAND_ROW_H = 22;
+export const LEGEND_SWATCH_SIZE = 16;
+export const LEGEND_CODE_X = 26;
+export const LEGEND_COUNT_RIGHT_PAD = 8;
+/** 用料条顶边与本带首行的间距；**`canvasHeight` 无条件含它**（见 `planSheet` 的高度预算）。 */
+export const LEGEND_PAD_TOP = 8;
+
 /**
  * 格内色号字号比例（0.38 × cellPx）。
  *
@@ -101,17 +123,8 @@ const LABEL_FONT_RATIO = 0.38;
  */
 const TICK_FONT_RATIO = 0.3;
 
-/** 一张施工图分片。字段与契约 §2 逐字一致；**plan 是纯数据**（不含函数 / 闭包）。 */
-export interface SheetTilePlan {
-  readonly index: number;
-  readonly rowIndex: number;
-  readonly colIndex: number;
-  readonly originCol: number;
-  readonly originRow: number;
-  readonly cols: number;
-  readonly rows: number;
-  readonly canvasWidth: number;
-  readonly canvasHeight: number;
+/** 一张施工图的网格几何：**格坐标 → 像素**的全部落位（网格矩形、三档线、刻度、板边界）都在这里算完。 */
+export interface GridGeometry {
   readonly grid: PixelRect;
   readonly vLines: readonly GridLine[];
   readonly hLines: readonly GridLine[];
@@ -120,12 +133,35 @@ export interface SheetTilePlan {
   readonly colBoards: readonly ColBoardEdge[];
   readonly rowBoards: readonly RowBoardEdge[];
   readonly lineWidths: LineWidths;
-  readonly labelFontPx: number;
-  readonly tickFontPx: number;
-  /** **只给 `cellBox` 用**；渲染器读它就是缺陷（词法闸门会红）。 */
+}
+
+/**
+ * 网格几何 + **本片格范围**。`cellBox` / `countTileBeads` 只要这么多就够——所以分片计划
+ * （`SheetTilePlan`）与单张计划（`SingleSheetPlan`）**共用同一条格↔像素映射**（规格 §4.2 的承重不变量）。
+ */
+export interface TileGeometry extends GridGeometry {
+  readonly originCol: number;
+  readonly originRow: number;
+  readonly cols: number;
+  readonly rows: number;
+  /** **只给 `cellBox` / `countTileBeads` 与计划自洽用**；渲染器读它就是缺陷（词法闸门会红）。 */
   readonly cellPx: number;
 }
 
+/** 一张施工图分片。字段与契约 §2 逐字一致；**plan 是纯数据**（不含函数 / 闭包）。 */
+export interface SheetTilePlan extends TileGeometry {
+  readonly index: number;
+  readonly rowIndex: number;
+  readonly colIndex: number;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly labelFontPx: number;
+  readonly tickFontPx: number;
+}
+
+/**
+ * **自动分片**计划（B4）。**任务 11 删除**（116 上限下分片恒为 1 片）；单张施工图请用 `SingleSheetPlan`。
+ */
 export interface SheetPlan {
   readonly kind: "sheet";
   readonly cellPx: number;
@@ -134,6 +170,39 @@ export interface SheetPlan {
   readonly tileRows: number;
   readonly tiles: readonly SheetTilePlan[];
   readonly warnings: readonly ExportWarning[];
+}
+
+/** 底部用料条带的几何（B6 新增）。 */
+export interface LegendBandPlan {
+  readonly top: number;
+  readonly itemCols: number;
+  readonly itemRows: number;
+  readonly itemWidth: number;
+  readonly rowHeight: number;
+  readonly swatchSize: number;
+  readonly codeX: number;
+  readonly countRightPad: number;
+}
+
+/**
+ * **单张施工图的计划**（B6 新增：整张图纸一块 + 底部用料条）。
+ *
+ * **为什么现在叫 `SingleSheetPlan` 而不是 `SheetPlan`**（**过渡名，任务 11 收口**）：`SheetPlan` 这个名字
+ * 现在被上面的**自动分片**计划占着（`planSheets(...): SheetPlan`，含 `tiles` / `labels` / `warnings`），
+ * 而 `core/render/sheet.ts` 的既有渲染器（`drawSheetTile`，本任务不碰）正是按那个形状读 `plan.tiles`。
+ * 本任务只做加法 ⇒ 旧类型原样留在原地、新形状另起名字。
+ * **任务 11 删掉 `planSheets` / `SheetTilePlan` / 分片版 `SheetPlan` 时，把这个名字改回 `SheetPlan`**
+ * ——任务 6 的 `drawSheet` 与任务 9 的 `drawBoardPage` 都吃这个形状（它们的简报里写的就是 `SheetPlan`）。
+ */
+export interface SingleSheetPlan extends TileGeometry {
+  readonly kind: "sheet";
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly labelFontPx: number;
+  readonly tickFontPx: number;
+  readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
+  readonly legend: LegendBandPlan;
+  readonly footerY: number;
 }
 
 /** 结构化提示：core 只出事实，中文文案在视图层（与 `formatCm` 的既有分工一致）。 */
@@ -226,18 +295,24 @@ function kindOf(index: number): GridLine["kind"] {
   return "thin";
 }
 
-function makeTile(input: {
-  index: number; rowIndex: number; colIndex: number;
-  originCol: number; originRow: number; cols: number; rows: number;
-  cellPx: number; labelFontPx: number; tickFontPx: number;
-}): SheetTilePlan {
-  const { index, rowIndex, colIndex, originCol, originRow, cols, rows, cellPx } = input;
-  const grid: PixelRect = {
-    x: SHEET_MARGIN + SHEET_RULER_LEFT,
-    y: SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP,
-    width: cols * cellPx,
-    height: rows * cellPx,
-  };
+/**
+ * 网格几何：由「格范围 + 原点像素 + 格像素」算出网格矩形、三档线、刻度与板边界。
+ *
+ * **坐标口径是全局格号**（`vLines` 的 `at` 里那个 `− originCol` 是唯一的分片痕迹），由
+ * `layout.test.ts` 的落位用例钉着（刻度取全局坐标、板边界档位、`cellBox` 的跨计划不变量）。
+ * `planSheets` 的分片与 `planSheet` 的单张共用它——**六个循环不写第二份**。
+ */
+function makeGridGeometry(input: {
+  readonly originCol: number;
+  readonly originRow: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly cellPx: number;
+  readonly x: number;
+  readonly y: number;
+}): GridGeometry {
+  const { originCol, originRow, cols, rows, cellPx, x, y } = input;
+  const grid: PixelRect = { x, y, width: cols * cellPx, height: rows * cellPx };
   const vLines: GridLine[] = [];
   for (let col = originCol; col <= originCol + cols; col += 1) {
     vLines.push({ at: grid.x + (col - originCol) * cellPx, kind: kindOf(col) });
@@ -266,12 +341,25 @@ function makeTile(input: {
       rowBoards.push({ board: row / TILE_STEP + 1, row, y: grid.y + (row - originRow) * cellPx });
     }
   }
+  return { grid, vLines, hLines, colTicks, rowTicks, colBoards, rowBoards, lineWidths: SHEET_LINE_WIDTHS };
+}
+
+function makeTile(input: {
+  index: number; rowIndex: number; colIndex: number;
+  originCol: number; originRow: number; cols: number; rows: number;
+  cellPx: number; labelFontPx: number; tickFontPx: number;
+}): SheetTilePlan {
+  const { index, rowIndex, colIndex, originCol, originRow, cols, rows, cellPx } = input;
   return {
     index, rowIndex, colIndex, originCol, originRow, cols, rows,
     canvasWidth: 2 * SHEET_MARGIN + SHEET_RULER_LEFT + cols * cellPx,
     canvasHeight: 2 * SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP + rows * cellPx + SHEET_FOOTER_H,
-    grid, vLines, hLines, colTicks, rowTicks, colBoards, rowBoards,
-    lineWidths: SHEET_LINE_WIDTHS, labelFontPx: input.labelFontPx, tickFontPx: input.tickFontPx, cellPx,
+    ...makeGridGeometry({
+      originCol, originRow, cols, rows, cellPx,
+      x: SHEET_MARGIN + SHEET_RULER_LEFT,
+      y: SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP,
+    }),
+    labelFontPx: input.labelFontPx, tickFontPx: input.tickFontPx, cellPx,
   };
 }
 
@@ -347,12 +435,89 @@ export function planSheets(pattern: Pattern, palette: Palette, options?: PlanOpt
 }
 
 /**
+ * 单张施工图计划：整张图纸一块（B6 起不再分片），底部嵌一条用料条。
+ *
+ * **闭式，无迭代**：先算用料条（只依赖色数与可用宽），再把它从可用高度里扣掉，最后定格像素。
+ * `cellPx` 取三个上界的较小者：目标格像素、宽方向能放下、高方向能放下。
+ * **色号画不下就抛**（不再静默省略）——这是规格 §6.2 的失败语义。
+ *
+ * **`legendH` 无条件含 `LEGEND_PAD_TOP`**（与规格 §6.2 的公式同形）：`canvasHeight` 经 `legendTop`
+ * 本来就不分空与非空地把这 8px 算进去，高度预算里漏计它会让「空用量表 + 格像素恰好整除」那一类
+ * 合成输入多出 8px（`cellPx × rows === innerH` 时 `canvasHeight === maxEdge + 8`）。非空用量表下
+ * 两种写法逐位相等。
+ */
+export function planSheet(
+  pattern: Pattern,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  options?: PlanOptions,
+): SingleSheetPlan {
+  requirePattern(pattern);
+  requirePalette(pattern, palette);
+  const safeUsages = requireUsages(usages);
+  const maxEdge = requireMaxEdge(options, EXPORT_MAX_EDGE);
+
+  const innerW = maxEdge - 2 * SHEET_MARGIN - SHEET_RULER_LEFT;
+  if (innerW < 1) {
+    throw new Error(`画布上限 ${maxEdge} px 太小，无法生成施工图`);
+  }
+  const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0);
+  const legendH = legend.itemRows * LEGEND_BAND_ROW_H + LEGEND_PAD_TOP;
+  const innerH =
+    maxEdge - 2 * SHEET_MARGIN - SHEET_INFO_BAR_H - SHEET_RULER_TOP - legendH - SHEET_FOOTER_H;
+
+  const cellPx = Math.min(
+    EXPORT_CELL_PX_TARGET,
+    Math.floor(innerW / pattern.width),
+    Math.floor(innerH / pattern.height),
+  );
+  const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
+  if (labelFontPx < SHEET_MIN_LABEL_FONT_PX) {
+    throw new Error(
+      `画布上限 ${maxEdge} px 放不下 ${pattern.width}×${pattern.height} 的图纸：每格只有 ${cellPx} px、色号字号 ${labelFontPx} px，低于下限 ${SHEET_MIN_LABEL_FONT_PX} px`,
+    );
+  }
+
+  const gridX = SHEET_MARGIN + SHEET_RULER_LEFT;
+  const gridY = SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP;
+  const geometry = makeGridGeometry({
+    originCol: 0,
+    originRow: 0,
+    cols: pattern.width,
+    rows: pattern.height,
+    cellPx,
+    x: gridX,
+    y: gridY,
+  });
+  const legendTop = gridY + pattern.height * cellPx + LEGEND_PAD_TOP;
+  const band = { ...planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, legendTop) };
+  const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
+
+  return {
+    kind: "sheet",
+    cellPx,
+    originCol: 0,
+    originRow: 0,
+    cols: pattern.width,
+    rows: pattern.height,
+    ...geometry,
+    canvasWidth: gridX + pattern.width * cellPx + SHEET_MARGIN,
+    canvasHeight: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H + SHEET_MARGIN,
+    labelFontPx,
+    tickFontPx,
+    infoBar: { lineOneY: SHEET_MARGIN, lineTwoY: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2) },
+    legend: band,
+    footerY: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H / 2,
+  };
+}
+
+/**
  * 格坐标 → **片内**像素矩形。**分片与单张共用这一条映射**（规格 §4.2 的承重不变量）。
  *
  * 越界（不在本片范围内）与小数 / 非安全整数一律抛错，不静默取整、不夹取：静默会把「接缝错行」变成
  * 只在真机上看得出、且无法复现的手感问题。
  */
-export function cellBox(tile: SheetTilePlan, col: number, row: number): PixelRect {
+export function cellBox(tile: TileGeometry, col: number, row: number): PixelRect {
   requireSafeInteger(col, "格子列号");
   requireSafeInteger(row, "格子行号");
   if (col < tile.originCol || col >= tile.originCol + tile.cols) {
@@ -370,7 +535,7 @@ export function cellBox(tile: SheetTilePlan, col: number, row: number): PixelRec
 }
 
 /** 片范围必须落在图纸内（否则 `cellAt` 会静默返回 `EMPTY`，数出一个偏小的数）。 */
-function requireTileWithinPattern(pattern: Pattern, tile: SheetTilePlan): void {
+function requireTileWithinPattern(pattern: Pattern, tile: TileGeometry): void {
   requireSafeInteger(tile.originCol, "片起始列");
   requireSafeInteger(tile.originRow, "片起始行");
   requireSafeInteger(tile.cols, "片列数");
@@ -387,7 +552,7 @@ function requireTileWithinPattern(pattern: Pattern, tile: SheetTilePlan): void {
 }
 
 /** 本片实心格数（空格不计）。信息条与页脚用它；O(本片格数)。 */
-export function countTileBeads(pattern: Pattern, tile: SheetTilePlan): number {
+export function countTileBeads(pattern: Pattern, tile: TileGeometry): number {
   requirePattern(pattern);
   requireTileWithinPattern(pattern, tile);
   let count = 0;
@@ -456,6 +621,35 @@ function requireUsages(usages: readonly ColorUsage[]): readonly ColorUsage[] {
     seen.add(item.code);
   }
   return safe;
+}
+
+/**
+ * 用料条几何。**它只依赖「色数 + 可用宽」**，所以可以在算格像素之前算出来——这是单张施工图
+ * 能避开「图例高度依赖用色数」那个循环依赖（B4 规格 §1.4 的 D3）的原因。
+ *
+ * 只做几何：列数 = 可用宽放下几项，行数 = 色数需要几行。色块 / 色号 / 数量的落位偏移一并给出，
+ * 渲染器（`drawLegendBand`）不再自己乘除。
+ */
+export function planLegendBand(
+  usages: readonly ColorUsage[],
+  availableWidth: number,
+  top: number,
+): LegendBandPlan {
+  const safe = requireUsages(usages);
+  const width = requirePositiveInteger(availableWidth, "用料条可用宽度");
+  requireSafeInteger(top, "用料条顶边");
+  const itemCols = Math.max(1, Math.floor(width / LEGEND_BAND_ITEM_W));
+  const itemRows = safe.length === 0 ? 0 : Math.ceil(safe.length / itemCols);
+  return {
+    top,
+    itemCols,
+    itemRows,
+    itemWidth: LEGEND_BAND_ITEM_W,
+    rowHeight: LEGEND_BAND_ROW_H,
+    swatchSize: LEGEND_SWATCH_SIZE,
+    codeX: LEGEND_CODE_X,
+    countRightPad: LEGEND_COUNT_RIGHT_PAD,
+  };
 }
 
 /** 全图用量表计划（独立成图，理由见规格 §1.4：图例高度依赖用色数，留在施工图上会造成布局循环依赖）。 */

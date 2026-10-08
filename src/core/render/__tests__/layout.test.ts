@@ -7,13 +7,17 @@ import {
   EXPORT_CELL_PX_FLOOR,
   EXPORT_CELL_PX_TARGET,
   EXPORT_MAX_EDGE,
+  LEGEND_BAND_ITEM_W,
+  LEGEND_BAND_ROW_H,
   LEGEND_COLS_MAX,
   LEGEND_ITEM_W,
+  LEGEND_PAD_TOP,
   LEGEND_ROW_H,
   SHEET_FOOTER_H,
   SHEET_INFO_BAR_H,
   SHEET_LABEL_MIN_CELL_PX,
   SHEET_MARGIN,
+  SHEET_MIN_LABEL_FONT_PX,
   SHEET_RULER_LEFT,
   SHEET_RULER_TOP,
   SHEET_TICK_FONT_MIN,
@@ -26,6 +30,7 @@ import {
   countTileBeads,
   labelInk,
   planLegend,
+  planSheet,
   planShare,
   planSheets,
   rgbCss,
@@ -452,5 +457,73 @@ describe("planShare 与 shareCellBox", () => {
 
   it("上限连 4 px/格 都放不下时抛", () => {
     expect(() => planShare(makePattern(500, 500), { maxEdge: 64 })).toThrow("太小，无法生成分享图");
+  });
+});
+
+/** 221 色的色卡与用量（MARD 色卡的真实规模，用来钉住最坏情况的预算）。 */
+function makeBigPalette(count = 221): Palette {
+  return {
+    id: "test-palette",
+    name: "测试色卡",
+    source: "test",
+    accuracy: "屏幕色仅供参考，以实物为准",
+    colors: Array.from({ length: count }, (_, i) => ({
+      code: `C${i}`,
+      name: `色${i}`,
+      rgb: [i % 256, (i * 7) % 256, (i * 13) % 256] as const,
+    })),
+  };
+}
+
+function makeBigUsages(count = 221): ColorUsage[] {
+  return Array.from({ length: count }, (_, i) => ({ code: `C${i}`, name: `色${i}`, count: i + 1 }));
+}
+
+/** `CELLS_6X6` 那 33 个实心格的用量。**计数独立数一遍**（0 号 26 颗、1 号 5 颗、2 号 1 颗、3 号 1 颗），不用被测实现。 */
+function makeUsages(): ColorUsage[] {
+  return [
+    { code: "A1", name: "白", count: 26 },
+    { code: "A2", name: "黑", count: 5 },
+    { code: "A3", name: "红", count: 1 },
+    { code: "A4", name: "浅灰", count: 1 },
+  ];
+}
+
+describe("planSheet（B6：单张施工图）", () => {
+  it("116×116 + 221 色仍放得下色号，且两边都在 4096 内（常量关系契约）", () => {
+    const plan = planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages());
+    expect(plan.labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
+    expect(plan.cellPx).toBeGreaterThanOrEqual(Math.ceil(SHEET_MIN_LABEL_FONT_PX / 0.38));
+    expect(plan.canvasWidth).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
+    expect(plan.canvasHeight).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
+    expect(plan.canvasWidth).toBe(SHEET_MARGIN + SHEET_RULER_LEFT + 116 * plan.cellPx + SHEET_MARGIN);
+  });
+
+  it("小图纸取 40 px/格上限（不会被放大到画布上限）", () => {
+    const plan = planSheet(makePattern(4, 2), makePalette(), makeUsages());
+    expect(plan.cellPx).toBe(EXPORT_CELL_PX_TARGET);
+    expect(plan.labelFontPx).toBe(Math.round(EXPORT_CELL_PX_TARGET * 0.38));
+  });
+
+  it("画布上限太小 ⇒ 响亮失败（消息含图纸尺寸、格像素与字号下限）", () => {
+    expect(() =>
+      planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), { maxEdge: 1200 }),
+    ).toThrow(/放不下 116×116 的图纸/);
+  });
+
+  it("用料条的列数随可用宽变化、行数随色数变化，且 top 落在网格下沿", () => {
+    const pattern = makePattern(6, 6);
+    const plan = planSheet(pattern, makePalette(), makeUsages());
+    expect(plan.legend.itemCols).toBe(Math.floor((EXPORT_MAX_EDGE - 2 * SHEET_MARGIN) / LEGEND_BAND_ITEM_W));
+    expect(plan.legend.itemRows).toBe(Math.ceil(makeUsages().length / plan.legend.itemCols));
+    expect(plan.legend.top).toBe(plan.grid.y + plan.grid.height + LEGEND_PAD_TOP);
+    expect(plan.canvasHeight).toBe(
+      plan.legend.top + plan.legend.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H + SHEET_MARGIN,
+    );
+  });
+
+  it("色号必须经 cellBox 取位：越界格抛错（计划与渲染共用的唯一映射）", () => {
+    const plan = planSheet(makePattern(6, 6), makePalette(), makeUsages());
+    expect(() => cellBox(plan, 6, 0)).toThrow("列 6 不在本片范围 0–5 内");
   });
 });
