@@ -105,6 +105,15 @@ describe("renderSheetBlob", () => {
     resetExporterMock(exporter, target, { onStep: (what) => steps.push(what) });
   });
 
+  /**
+   * 这条用例必须**同时**钉住「三个阶段都发生了」与「自检 / 释放相对 `toBlob` 的位置」：只钉相对顺序时，
+   * 整条删掉 `assertCanvasPainted` 仍会**全绿**——`indexOf("selfcheck")` 变成 -1，而
+   * `-1 < indexOf("toBlob")` 为真（2026-10-08 变异实测，见任务 7 报告 §4 的 M4 与 §7 的 M4'）。
+   *
+   * **下面那三条 `toContain` 不是冗余**（控制者 2026-10-08 裁决：不许当冗余删掉）：它们是相对顺序断言的
+   * **前提**——被比较的阶段缺席时 `indexOf` 返回 -1，任何「顺序」断言都会静默成立。本仓记过的账正是
+   * 「断言存在 ≠ 断言有效」。
+   */
   it("自检在 toBlob 之前、释放画布在 toBlob 之后（顺序即内存与正确性契约）", async () => {
     await renderSheetBlob({
       pattern: makePattern(6, 6, CELLS_6X6),
@@ -112,6 +121,10 @@ describe("renderSheetBlob", () => {
       usages: makeUsages(),
       projectName: "测试工程",
     });
+    // 存在性先行：三个阶段缺任何一个，下面两条相对顺序断言都会假绿（`indexOf` 给 -1）。
+    expect(steps).toContain("selfcheck");
+    expect(steps).toContain("toBlob");
+    expect(steps).toContain("release:width");
     expect(steps.indexOf("selfcheck")).toBeLessThan(steps.indexOf("toBlob"));
     expect(steps.lastIndexOf("release:width")).toBeGreaterThan(steps.indexOf("toBlob"));
   });
