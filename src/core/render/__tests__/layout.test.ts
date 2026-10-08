@@ -16,6 +16,7 @@ import {
   PAGE_HEADER_H,
   PAPER_MM,
   PRINT_BEAD_PX,
+  PRINT_BOARD_SIZES,
   PRINT_DPI,
   PRINT_MARGIN_MM,
   SHEET_FOOTER_H,
@@ -44,7 +45,6 @@ import {
   rgbCss,
   shareCellBox,
 } from "../layout";
-
 /**
  * 布局只用 `palette.id` / 色号 / rgb；不需要真色卡（真色卡在 services 层，core 测试不许 import services）。
  */
@@ -575,6 +575,53 @@ describe("planBoardPage（B6：每块板一页）", () => {
     expect(boardCount(30, 1).total).toBe(2); // 两者恰好相等的场景也要能各自成立
   });
 
+  /**
+   * 枚举 / 数值守卫的**零覆盖**补齐（第 2 轮审查：这几条守卫此前一条用例都没有）。
+   *
+   * 为什么必须补：把 `requirePaper` 的两条比较删成 `return value as PrintPaper`、把 `requireBoardSize`
+   * 删成 `return value as PrintBoardSize`、把 `printBoardCount` 的 ≥1 检查删掉，全套 1319 条**一条都不会红**
+   * ——「非法输入响亮失败」是规格逐字要求，守卫本身必须被判据钉住，否则它随时可以静默消失。
+   */
+  it("非法纸张 ⇒ 抛错；合法纸张逐个放行（`paper` 守卫不许可以静默回落）", () => {
+    for (const paper of Object.keys(PAPER_MM)) {
+      expect(() =>
+        planBoardPage(makePattern(29, 29), makePalette(), makeUsages(), { boardSize: 29, paper, index: 0 }),
+      ).not.toThrow();
+    }
+    for (const paper of ["a5", "A4", "", "b5"]) {
+      expect(() =>
+        planBoardPage(makePattern(29, 29), makePalette(), makeUsages(), { boardSize: 29, paper, index: 0 }),
+      ).toThrow(/纸张/);
+    }
+  });
+
+  it("`PRINT_BOARD_SIZES` 就是运行期判据：表里每个值都放行，表外一律抛 `/板大小/`", () => {
+    for (const boardSize of PRINT_BOARD_SIZES) {
+      expect(printBoardCount(29, 29, boardSize)).toBe(1);
+    }
+    // 两条来源必须一致——改 `PRINT_BOARD_SIZES` 而不同时改 `requireBoardSize` 时这条会红
+    for (const boardSize of [1, 28, 30, 59, 0, -29, 29.5, Number.NaN]) {
+      expect(() => printBoardCount(29, 29, boardSize)).toThrow(/板大小/);
+    }
+  });
+
+  it("图纸宽高必须是 ≥1 的整数（0 / 负数 / 小数 / 非有限一律抛，不静默给出 0 页）", () => {
+    expect(() => printBoardCount(0, 0, 29)).toThrow(/图纸宽度/);
+    expect(() => printBoardCount(0, 5, 29)).toThrow(/图纸宽度/);
+    expect(() => printBoardCount(5, 0, 29)).toThrow(/图纸高度/);
+    expect(() => printBoardCount(-1, 5, 29)).toThrow(/图纸宽度/);
+    expect(() => printBoardCount(5, 2.5, 29)).toThrow(/图纸高度/);
+    expect(() => printBoardCount(Number.NaN, 5, 29)).toThrow(/图纸宽度/);
+  });
+
+  it("`mmToPx` 只收正的有限毫米数（打印页画布与页边距的唯一换算口径）", () => {
+    expect(mmToPx(25.4)).toBe(PRINT_DPI); // 1 英寸 = 该 dpi 的像素数，换算的锚点
+    expect(() => mmToPx(0)).toThrow(/毫米数/);
+    expect(() => mmToPx(-1)).toThrow(/毫米数/);
+    expect(() => mmToPx(Number.NaN)).toThrow(/毫米数/);
+    expect(() => mmToPx(Number.POSITIVE_INFINITY)).toThrow(/毫米数/);
+  });
+
   it("29 + A4：每格正好 5mm（实物大小），画布就是 A4 的 300dpi 像素", () => {
     const plan = planBoardPage(makePattern(58, 58), makePalette(), makeUsages(), {
       boardSize: 29,
@@ -680,38 +727,41 @@ describe("planBoardPage（B6：每块板一页）", () => {
   /**
    * 四种组合的**参数化**用例（设计规格 §14「永不放大超过实物」这条规则唯一的判别点）。
    *
-   * 逐字用例已分别钉住 `cellPx` / `scaleRatio`；这里补上同族里剩下的两个量：**画布 = 纸型像素**
-   * 与**四边留白 ≥ `PRINT_MARGIN_MM`**（两者都是 §14 明列的断言，逐字用例里没有）。
-   * `paper` 与 `boardSize` 不写成字面量，直接从常量表与 `BOARD_COLS` 取——重复一份值只会漂。
+   * 逐字用例已各自钉住 `cellPx` / `scaleRatio` 的部分情形；这里补上同族里剩下的量：**画布 = 纸型像素**、
+   * **四边留白 ≥ `PRINT_MARGIN_MM`**（§14 明列的断言，逐字用例里没有）、以及 **`cellPx` 的逐位真值**
+   * ——后者是第 2 轮补的：只断 `scaleRatio ≥ 0.9 / < 0.7` 时，修复前的 56 / 38 照样绿（0.9492 / 0.6441
+   * 都落在区间里），宽度预算那处修复**没有任何断言判别**。
+   *
+   * `boardSize` 从 `BOARD_COLS` 取；`paper` 只能是字面量（`it.each` 的行类型需要一个具体纸型，
+   * 而 `Object.keys(PAPER_MM)` 是 `string[]`），与 `PAPER_MM[paper]` 的取用同源。
    */
   it.each([
-    { paper: "a4" as const, boardSize: BOARD_COLS, ratioMin: 1, ratioMax: 1 },
-    { paper: "a3" as const, boardSize: BOARD_COLS, ratioMin: 1, ratioMax: 1 },
-    { paper: "a3" as const, boardSize: BOARD_COLS * 2, ratioMin: 0.9, ratioMax: 1 },
-    { paper: "a4" as const, boardSize: BOARD_COLS * 2, ratioMin: 0, ratioMax: 0.7 },
+    { paper: "a4" as const, boardSize: BOARD_COLS, expectedCellPx: 59, ratioMin: 1, ratioMax: 1 },
+    { paper: "a3" as const, boardSize: BOARD_COLS, expectedCellPx: 59, ratioMin: 1, ratioMax: 1 },
+    { paper: "a3" as const, boardSize: BOARD_COLS * 2, expectedCellPx: 55, ratioMin: 0.9, ratioMax: 1 },
+    { paper: "a4" as const, boardSize: BOARD_COLS * 2, expectedCellPx: 37, ratioMin: 0, ratioMax: 0.7 },
   ])(
     "$boardSize 格板 + $paper：画布就是纸型像素、四边留白 ≥ PRINT_MARGIN_MM，缩放比落在 [$ratioMin, $ratioMax]",
-    ({ paper, boardSize, ratioMin, ratioMax }) => {
+    ({ paper, boardSize, expectedCellPx, ratioMin, ratioMax }) => {
       const plan = planBoardPage(makePattern(boardSize * 2, boardSize * 2), makePalette(), makeUsages(), {
         boardSize,
         paper,
         index: 0,
       });
+      const marginPx = mmToPx(PRINT_MARGIN_MM);
       expect(plan.canvasWidth).toBe(mmToPx(PAPER_MM[paper].width));
       expect(plan.canvasHeight).toBe(mmToPx(PAPER_MM[paper].height));
-      // 留白 = 网格带（含左刻度带）到纸边的距离。左右**合计** ≥ 2×页边距 ⇒ 整条网格带确实落在可打印区内
-      // **不能逐边断言 ≥ 页边距**：`planBoardPage` 把「刻度带 + 网格」当一个整体居中，左刻度带占了左边一段，
-      // 于是右侧真的比 `PRINT_MARGIN_MM` 窄（58 + A3 = 98 px、58 + A4 = 106 px < 118 px）。
-      // 那是简报给定的居中口径（任务 8 不裁决），所以这里钉的是规格 §14 真正要求的「落在纸内」。
-      expect(plan.grid.x + (plan.canvasWidth - (plan.grid.x + plan.grid.width))).toBeGreaterThanOrEqual(
-        2 * mmToPx(PRINT_MARGIN_MM),
-      );
-      expect(plan.grid.x).toBeGreaterThan(0);
-      expect(plan.grid.x + plan.grid.width).toBeLessThan(plan.canvasWidth);
-      expect(plan.grid.y).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));
-      expect(plan.canvasHeight - (plan.grid.y + plan.grid.height)).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));
+      // `cellPx` 的逐位真值：钉住宽度预算那处修复（29 板两例仍是实物大小的 59、58 板两例是 55 / 37）
+      expect(plan.cellPx).toBe(expectedCellPx);
+      expect(plan.cellPx).toBeLessThanOrEqual(PRINT_BEAD_PX); // 「永不放大超过实物」在四组合下都成立
+      // **逐边**断言（第 2 轮修正）：网格带 = 左刻度带 + 网格，两端的留白都必须 ≥ 页边距。
+      // 修复前 58 板两例的右侧只有 98 / 106 px（刻度与板号落进不可打印区）——那时这两条会红。
+      expect(plan.grid.x - SHEET_RULER_LEFT).toBeGreaterThanOrEqual(marginPx);
+      expect(plan.grid.x + plan.grid.width).toBeLessThanOrEqual(plan.canvasWidth - marginPx);
+      expect(plan.grid.y).toBeGreaterThanOrEqual(marginPx);
+      expect(plan.canvasHeight - (plan.grid.y + plan.grid.height)).toBeGreaterThanOrEqual(marginPx);
       // 页眉在最上留白之内，且不压住含刻度带的网格（`PAGE_HEADER_H` 必须真的被预算用上）
-      expect(plan.infoBar.lineOneY).toBe(mmToPx(PRINT_MARGIN_MM));
+      expect(plan.infoBar.lineOneY).toBe(marginPx);
       expect(plan.grid.y).toBeGreaterThanOrEqual(plan.infoBar.lineOneY + PAGE_HEADER_H);
       expect(plan.scaleRatio).toBeGreaterThanOrEqual(ratioMin);
       expect(plan.scaleRatio).toBeLessThanOrEqual(ratioMax);

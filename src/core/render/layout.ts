@@ -144,16 +144,17 @@ export const PRINT_BEAD_PX = Math.round((BEAD_MM / 25.4) * PRINT_DPI);
 export const PAGE_HEADER_H = 72;
 
 /**
- * 毫米 → 该 dpi 下的像素（四舍五入到整数像素）。打印页画布与页边距的唯一换算口径。
+ * 毫米 → `PRINT_DPI` 下的像素（四舍五入到整数像素）。打印页画布与页边距的**唯一**换算口径。
  *
- * **`dpi` 只改光栅密度，不改物理尺寸**：打印时选「适合页面」，整张画布映射到整张纸，
- * 版面里的毫米就是纸上的毫米。`dpi` 参数存在的唯一理由是让换算可以被合成值判别，不写第二份除法。
+ * **不收 dpi 参数**：`PRINT_DPI` 是光栅密度的唯一来源，没有第二个调用方需要别的密度
+ * （规格 §7.1 的「适合页面」下，版面里的毫米就是纸上的毫米——光栅密度改了不影响物理尺寸）。
+ * 留一个没有调用方的第二参数就是留一个「传错也不报错」的失败面。
  */
-export function mmToPx(mm: number, dpi: number = PRINT_DPI): number {
+export function mmToPx(mm: number): number {
   if (!Number.isFinite(mm) || mm <= 0) {
     throw new Error(`毫米数必须是正的有限数字（当前 ${String(mm)}）`);
   }
-  return Math.round((mm / 25.4) * dpi);
+  return Math.round((mm / 25.4) * PRINT_DPI);
 }
 
 /** 一张施工图的网格几何：**格坐标 → 像素**的全部落位（网格矩形、三档线、刻度、板边界）都在这里算完。 */
@@ -329,9 +330,11 @@ function requireMaxEdge(options: PlanOptions | undefined, fallback: number): num
 /**
  * 板大小枚举守卫（`PRINT_BOARD_SIZES` 的运行期版本）。
  *
- * **逐字比较、不用 `includes`**：`PRINT_BOARD_SIZES` 的元素类型被窄成字面量联合，`includes` 需要先
- * 把入参收窄，反而要么多一次断言、要么放宽成 `readonly number[]`（那时 `PrintBoardSize` 也不再是联合）。
- * 两条比较就在这里，判据与消息都由用例钉着（`/板大小/`）。
+ * **为什么逐字比较、不用 `PRINT_BOARD_SIZES.includes(value)`**：数组的元素类型被窄成字面量联合
+ * （`readonly [29, 58]`），`includes` 要求实参也是 `29 | 58`，于是必须先断言——而断言正是这里要避免的
+ * 东西（它会把「运行期校验」变成编译期自证）。放宽成 `readonly number[]` 又要牺牲 `PrintBoardSize`。
+ * **代价：这里与 `PRINT_BOARD_SIZES` 是两个源，改数组必须同时改这两条比较**（`layout.test.ts` 有一条
+ * 断言把两者钉在一起：对 `PRINT_BOARD_SIZES` 里每个值都必须不抛、其余一律抛）。
  */
 function requireBoardSize(value: number): PrintBoardSize {
   if (value !== 29 && value !== 58) {
@@ -353,10 +356,13 @@ function requirePaper(value: string): PrintPaper {
  *
  * 它只回答「几页」，不产生任何页的身份；页身份（`boardRow` / `boardCol` / 本页格范围）由
  * `planBoardPage` 给出，调用方**不许**自己重算除法（那正是「同一件事的第二份实现」）。
+ *
+ * **宽高必须是 ≥1 的整数**（与 `boardCount` 同口径）：只查安全整数会让 `(0, 0, 29)` 静默返回 0 页
+ * ——「0 页」不是一个可展示的答案，调用方拿它去 `v-for` 只会得到一张空白页。
  */
 export function printBoardCount(width: number, height: number, boardSize: number): number {
-  requireSafeInteger(width, "图纸宽度");
-  requireSafeInteger(height, "图纸高度");
+  requirePositiveInteger(width, "图纸宽度");
+  requirePositiveInteger(height, "图纸高度");
   const size = requireBoardSize(boardSize);
   return Math.ceil(width / size) * Math.ceil(height / size);
 }
@@ -826,9 +832,8 @@ export function shareCellBox(plan: SharePlan, col: number, row: number): PixelRe
  * 画布与页边距由**纸型**决定（`planSheet` 由 `maxEdge` 决定）、格像素由「板大小 + 纸型」按
  * §7.1 算出、多出页身份（`boardRow` / `boardCol` / `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）。
  */
-export interface BoardPagePlan extends GridGeometry {
+export interface BoardPagePlan extends TileGeometry {
   readonly kind: "board-page";
-  readonly cellPx: number;
   readonly cellMm: number;
   readonly scaleRatio: number;
   readonly boardSize: PrintBoardSize;
@@ -837,10 +842,6 @@ export interface BoardPagePlan extends GridGeometry {
   readonly boardCol: number;
   readonly boardIndex: number;
   readonly boardTotal: number;
-  readonly originCol: number;
-  readonly originRow: number;
-  readonly cols: number;
-  readonly rows: number;
   readonly canvasWidth: number;
   readonly canvasHeight: number;
   readonly labelFontPx: number;
@@ -931,7 +932,9 @@ export function planBoardPage(
   // **用料条的横向落位也要有预算**：列数是按**可打印宽**算的，若复用网格偏移（`gridX − SHEET_RULER_LEFT`），
   // 29 板 + A4 + 221 色的条带右沿会到 2552 > 可打印右界 2362（越 190px、16mm），落进不可打印区。
   // 把条带在可打印区内居中，并把左沿放进计划（`LegendBandPlan.left`），渲染器照它落位。
-  // `max(色数, 1)` 与 `planSheet` 的 `min(itemCols, 色数)` 同一口径：空用量表不撑宽、也不算负宽度。
+  // `itemCols` 已经由 `planLegendBand` 夹到 ≥1；这里再夹一次是为了**空用量表**（`itemCols` 仍是
+  // `planSheet` 那种按可用宽算出的值），保证 `bandWidth` 是「真实会画出来的列数 × 项宽」而不是满宽
+  // ——否则空表 / 少色时条带会被算成满宽、`left` 偏到边上（画不出东西但计划里的数字是错的）。
   const bandCols = Math.max(1, Math.min(legendProbe.itemCols, Math.max(safeUsages.length, 1)));
   const bandWidth = bandCols * legendProbe.itemWidth;
   // **不再调第三次**：`itemCols` / `itemRows` / `itemWidth` 等几何与 `top` / `left` 无关，探针那次已经算准，

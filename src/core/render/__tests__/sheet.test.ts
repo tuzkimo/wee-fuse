@@ -911,6 +911,9 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     }));
     const manyPlan = planSheet(pattern, manyPalette, many);
     expect(manyPlan.legend.itemRows).toBe(2); // 前提：21 项在 20 列下要两行
+    // 多色 / 多列时 `left` 仍是 `SHEET_MARGIN`：单张施工图的画布宽已按用料条加宽过，**不居中**
+    // （打印页才在可打印区内居中——那里的 `left` 是 140 / 154，见 `planBoardPage` 的用例）
+    expect(manyPlan.legend.left).toBe(SHEET_MARGIN);
 
     const { target, calls } = createMockTarget();
     expect(() =>
