@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOARD_COLS } from "../../pattern/board";
+import { BEAD_MM, BOARD_COLS, boardCount } from "../../pattern/board";
 import type { ColorUsage } from "../../pattern/stats";
 import { EMPTY, type Pattern } from "../../pattern/types";
 import type { Palette } from "../../palette/types";
@@ -13,6 +13,11 @@ import {
   LEGEND_ITEM_W,
   LEGEND_PAD_TOP,
   LEGEND_ROW_H,
+  PAGE_HEADER_H,
+  PAPER_MM,
+  PRINT_BEAD_PX,
+  PRINT_DPI,
+  PRINT_MARGIN_MM,
   SHEET_FOOTER_H,
   SHEET_INFO_BAR_H,
   SHEET_LABEL_MIN_CELL_PX,
@@ -29,10 +34,13 @@ import {
   cellBox,
   countTileBeads,
   labelInk,
+  mmToPx,
+  planBoardPage,
   planLegend,
   planSheet,
   planShare,
   planSheets,
+  printBoardCount,
   rgbCss,
   shareCellBox,
 } from "../layout";
@@ -557,4 +565,127 @@ describe("planSheet（B6：单张施工图）", () => {
     const plan = planSheet(makePattern(6, 6), makePalette(), makeUsages());
     expect(() => cellBox(plan, 6, 0)).toThrow("列 6 不在本片范围 0–5 内");
   });
+});
+
+describe("planBoardPage（B6：每块板一页）", () => {
+  it("页数 = ⌈宽/板大小⌉ × ⌈高/板大小⌉（与 boardCount 不是同一个量）", () => {
+    expect(printBoardCount(116, 116, 29)).toBe(16);
+    expect(printBoardCount(116, 116, 58)).toBe(4);
+    expect(printBoardCount(30, 1, 29)).toBe(2);
+    expect(boardCount(30, 1).total).toBe(2); // 两者恰好相等的场景也要能各自成立
+  });
+
+  it("29 + A4：每格正好 5mm（实物大小），画布就是 A4 的 300dpi 像素", () => {
+    const plan = planBoardPage(makePattern(58, 58), makePalette(), makeUsages(), {
+      boardSize: 29,
+      paper: "a4",
+      index: 0,
+    });
+    expect(plan.canvasWidth).toBe(mmToPx(210));
+    expect(plan.canvasHeight).toBe(mmToPx(297));
+    expect(plan.cellPx).toBe(PRINT_BEAD_PX);
+    // **不能写 `toBeCloseTo(BEAD_MM, 5)`（更不用说 6）**：`cellMm` 由**取整后的** `cellPx` 推出
+    // （59 / 300 × 25.4 = 4.99533…），与 5 的差是 0.0047 = `PRINT_BEAD_PX` 的量化步长，
+    // 而 `toBeCloseTo` 的第 5 位要求 |Δ| < 0.5e-5。这是像素量化的**固有**上界，不是实现误差；
+    // 判据写成「1/4 像素以内」才是既通过、又真的会因换算写错（例如除成 96dpi）而红的版本。
+    expect(Math.abs(plan.cellMm - BEAD_MM)).toBeLessThan(0.25 * (25.4 / PRINT_DPI));
+    expect(plan.cellMm).toBeCloseTo((plan.cellPx / PRINT_DPI) * 25.4, 6);
+    expect(plan.scaleRatio).toBe(1);
+    expect(plan.cols).toBe(29);
+    expect(plan.rows).toBe(29);
+  });
+
+  it("29 + A3：纸更大也**不许被放大**超过实物", () => {
+    const plan = planBoardPage(makePattern(58, 58), makePalette(), makeUsages(), {
+      boardSize: 29,
+      paper: "a3",
+      index: 0,
+    });
+    expect(plan.cellPx).toBe(PRINT_BEAD_PX);
+    expect(plan.scaleRatio).toBe(1);
+  });
+
+  it("58 + A3：每格 ≥ 实物的 90%（装不下才缩，且如实给出比例）", () => {
+    const plan = planBoardPage(makePattern(116, 116), makePalette(), makeUsages(), {
+      boardSize: 58,
+      paper: "a3",
+      index: 0,
+    });
+    expect(plan.cellPx).toBeLessThan(PRINT_BEAD_PX);
+    expect(plan.scaleRatio).toBeGreaterThanOrEqual(0.9);
+    expect(plan.cellMm).toBeCloseTo((plan.cellPx / PRINT_DPI) * 25.4, 6);
+  });
+
+  it("58 + A4：每格 < 实物的 70%（只能当读码参考图）", () => {
+    const plan = planBoardPage(makePattern(116, 116), makePalette(), makeUsages(), {
+      boardSize: 58,
+      paper: "a4",
+      index: 0,
+    });
+    expect(plan.scaleRatio).toBeLessThan(0.7);
+  });
+
+  it("最后一页 / 列收窄，且页与页不重叠", () => {
+    const pattern = makePattern(100, 30);
+    const plan = planBoardPage(pattern, makePalette(), makeUsages(), { boardSize: 29, paper: "a4", index: 3 });
+    // 100 = 29×3 + 13 ⇒ 第 3 列（index 3，0 起）覆盖列 87–99，行 0–28
+    expect(plan.originCol).toBe(87);
+    expect(plan.cols).toBe(13);
+    expect(plan.originRow).toBe(0);
+    expect(plan.rows).toBe(29);
+  });
+
+  it("页索引越界 / 枚举非法 ⇒ 抛错（不静默取模、不回落默认值）", () => {
+    expect(() =>
+      planBoardPage(makePattern(30, 30), makePalette(), makeUsages(), { boardSize: 29, paper: "a4", index: 4 }),
+    ).toThrow(/页索引/);
+    expect(() =>
+      planBoardPage(makePattern(30, 30), makePalette(), makeUsages(), {
+        boardSize: 30 as unknown as 29,
+        paper: "a4",
+        index: 0,
+      }),
+    ).toThrow(/板大小/);
+  });
+
+  /**
+   * 四种组合的**参数化**用例（设计规格 §14「永不放大超过实物」这条规则唯一的判别点）。
+   *
+   * 逐字用例已分别钉住 `cellPx` / `scaleRatio`；这里补上同族里剩下的两个量：**画布 = 纸型像素**
+   * 与**四边留白 ≥ `PRINT_MARGIN_MM`**（两者都是 §14 明列的断言，逐字用例里没有）。
+   * `paper` 与 `boardSize` 不写成字面量，直接从常量表与 `BOARD_COLS` 取——重复一份值只会漂。
+   */
+  it.each([
+    { paper: "a4" as const, boardSize: BOARD_COLS, ratioMin: 1, ratioMax: 1 },
+    { paper: "a3" as const, boardSize: BOARD_COLS, ratioMin: 1, ratioMax: 1 },
+    { paper: "a3" as const, boardSize: BOARD_COLS * 2, ratioMin: 0.9, ratioMax: 1 },
+    { paper: "a4" as const, boardSize: BOARD_COLS * 2, ratioMin: 0, ratioMax: 0.7 },
+  ])(
+    "$boardSize 格板 + $paper：画布就是纸型像素、四边留白 ≥ PRINT_MARGIN_MM，缩放比落在 [$ratioMin, $ratioMax]",
+    ({ paper, boardSize, ratioMin, ratioMax }) => {
+      const plan = planBoardPage(makePattern(boardSize * 2, boardSize * 2), makePalette(), makeUsages(), {
+        boardSize,
+        paper,
+        index: 0,
+      });
+      expect(plan.canvasWidth).toBe(mmToPx(PAPER_MM[paper].width));
+      expect(plan.canvasHeight).toBe(mmToPx(PAPER_MM[paper].height));
+      // 留白 = 网格带（含左刻度带）到纸边的距离。左右**合计** ≥ 2×页边距 ⇒ 整条网格带确实落在可打印区内
+      // **不能逐边断言 ≥ 页边距**：`planBoardPage` 把「刻度带 + 网格」当一个整体居中，左刻度带占了左边一段，
+      // 于是右侧真的比 `PRINT_MARGIN_MM` 窄（58 + A3 = 98 px、58 + A4 = 106 px < 118 px）。
+      // 那是简报给定的居中口径（任务 8 不裁决），所以这里钉的是规格 §14 真正要求的「落在纸内」。
+      expect(plan.grid.x + (plan.canvasWidth - (plan.grid.x + plan.grid.width))).toBeGreaterThanOrEqual(
+        2 * mmToPx(PRINT_MARGIN_MM),
+      );
+      expect(plan.grid.x).toBeGreaterThan(0);
+      expect(plan.grid.x + plan.grid.width).toBeLessThan(plan.canvasWidth);
+      expect(plan.grid.y).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));
+      expect(plan.canvasHeight - (plan.grid.y + plan.grid.height)).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));
+      // 页眉在最上留白之内，且不压住含刻度带的网格（`PAGE_HEADER_H` 必须真的被预算用上）
+      expect(plan.infoBar.lineOneY).toBe(mmToPx(PRINT_MARGIN_MM));
+      expect(plan.grid.y).toBeGreaterThanOrEqual(plan.infoBar.lineOneY + PAGE_HEADER_H);
+      expect(plan.scaleRatio).toBeGreaterThanOrEqual(ratioMin);
+      expect(plan.scaleRatio).toBeLessThanOrEqual(ratioMax);
+    },
+  );
 });

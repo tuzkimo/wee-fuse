@@ -1,5 +1,5 @@
 import { rgbToLab } from "../color/space";
-import { BOARD_COLS } from "../pattern/board";
+import { BEAD_MM, BOARD_COLS } from "../pattern/board";
 import { cellAt } from "../pattern/edit";
 import type { ColorUsage } from "../pattern/stats";
 import { EMPTY, type Pattern } from "../pattern/types";
@@ -122,6 +122,39 @@ const LABEL_FONT_RATIO = 0.38;
  * **不要**为它造一条「看起来能判别」的用例：判不开的断言比没有断言更坏。
  */
 const TICK_FONT_RATIO = 0.3;
+
+/* ------------------------------------------------------------------ 打印页（B6） */
+
+/** 打印光栅精度。**它不影响物理尺寸**：「适合页面」下 1 格的实际毫米只由版面与纸的比例决定。 */
+export const PRINT_DPI = 300;
+/** 四边页边距（毫米）：家用打印机不可打印区常见 5mm，这里留一倍余量。 */
+export const PRINT_MARGIN_MM = 10;
+/** 纸型（毫米）。 */
+export const PAPER_MM = {
+  a4: { width: 210, height: 297 },
+  a3: { width: 297, height: 420 },
+} as const;
+export type PrintPaper = keyof typeof PAPER_MM;
+/** 可选板大小：29 = `BOARD_COLS`，58 = 拼豆店的大板（2 × `BOARD_COLS`）。 */
+export const PRINT_BOARD_SIZES = [BOARD_COLS, BOARD_COLS * 2] as const;
+export type PrintBoardSize = (typeof PRINT_BOARD_SIZES)[number];
+/** 实物大小的格像素：`BEAD_MM` 在 `PRINT_DPI` 下的像素数。**由实物参数推导，不写字面量**。 */
+export const PRINT_BEAD_PX = Math.round((BEAD_MM / 25.4) * PRINT_DPI);
+/** 页眉带高（px）：一行标题 + 一行页信息。 */
+export const PAGE_HEADER_H = 72;
+
+/**
+ * 毫米 → 该 dpi 下的像素（四舍五入到整数像素）。打印页画布与页边距的唯一换算口径。
+ *
+ * **`dpi` 只改光栅密度，不改物理尺寸**：打印时选「适合页面」，整张画布映射到整张纸，
+ * 版面里的毫米就是纸上的毫米。`dpi` 参数存在的唯一理由是让换算可以被合成值判别，不写第二份除法。
+ */
+export function mmToPx(mm: number, dpi: number = PRINT_DPI): number {
+  if (!Number.isFinite(mm) || mm <= 0) {
+    throw new Error(`毫米数必须是正的有限数字（当前 ${String(mm)}）`);
+  }
+  return Math.round((mm / 25.4) * dpi);
+}
 
 /** 一张施工图的网格几何：**格坐标 → 像素**的全部落位（网格矩形、三档线、刻度、板边界）都在这里算完。 */
 export interface GridGeometry {
@@ -286,6 +319,41 @@ function requireMaxEdge(options: PlanOptions | undefined, fallback: number): num
   // 只有 `undefined` 才算没传，其余一律交给 `requirePositiveInteger` 响亮失败。
   const raw = options?.maxEdge === undefined ? fallback : options.maxEdge;
   return requirePositiveInteger(raw, "画布上限");
+}
+
+/**
+ * 板大小枚举守卫（`PRINT_BOARD_SIZES` 的运行期版本）。
+ *
+ * **逐字比较、不用 `includes`**：`PRINT_BOARD_SIZES` 的元素类型被窄成字面量联合，`includes` 需要先
+ * 把入参收窄，反而要么多一次断言、要么放宽成 `readonly number[]`（那时 `PrintBoardSize` 也不再是联合）。
+ * 两条比较就在这里，判据与消息都由用例钉着（`/板大小/`）。
+ */
+function requireBoardSize(value: number): PrintBoardSize {
+  if (value !== 29 && value !== 58) {
+    throw new Error(`板大小必须是 29 或 58（当前 ${String(value)}）`);
+  }
+  return value;
+}
+
+function requirePaper(value: string): PrintPaper {
+  if (value !== "a4" && value !== "a3") {
+    throw new Error(`纸张必须是 "a4" 或 "a3"（当前 ${String(value)}）`);
+  }
+  return value;
+}
+
+/**
+ * 打印页数。**与 `boardCount` 是两个不同的量**：后者恒按标准板（29）算「需要几块标准板」，
+ * 这里的板大小是入参——同一张 116×116 图纸在 29 板下是 16 页、在 58 板下是 4 页。
+ *
+ * 它只回答「几页」，不产生任何页的身份；页身份（`boardRow` / `boardCol` / 本页格范围）由
+ * `planBoardPage` 给出，调用方**不许**自己重算除法（那正是「同一件事的第二份实现」）。
+ */
+export function printBoardCount(width: number, height: number, boardSize: number): number {
+  requireSafeInteger(width, "图纸宽度");
+  requireSafeInteger(height, "图纸高度");
+  const size = requireBoardSize(boardSize);
+  return Math.ceil(width / size) * Math.ceil(height / size);
 }
 
 /** 网格线档位：板边界优先于 5 格主刻度（145 这类重叠位置必须算板边界）。 */
@@ -736,4 +804,139 @@ export function shareCellBox(plan: SharePlan, col: number, row: number): PixelRe
     throw new Error(`行 ${row} 不在分享图范围 0–${plan.rows - 1} 内`);
   }
   return { x: col * plan.cellPx, y: row * plan.cellPx, width: plan.cellPx, height: plan.cellPx };
+}
+
+/**
+ * **一块板的打印页计划**（B6 新增：A4 / A3 × 29 / 58 板，每页一块板）。
+ *
+ * 字段与 `SingleSheetPlan` 同构（同一套网格 / 刻度 / 板号 / 用料条几何），差异是：
+ * 画布与页边距由**纸型**决定（`planSheet` 由 `maxEdge` 决定）、格像素由「板大小 + 纸型」按
+ * §7.1 算出、多出页身份（`boardRow` / `boardCol` / `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）。
+ */
+export interface BoardPagePlan extends GridGeometry {
+  readonly kind: "board-page";
+  readonly cellPx: number;
+  readonly cellMm: number;
+  readonly scaleRatio: number;
+  readonly boardSize: PrintBoardSize;
+  readonly paper: PrintPaper;
+  readonly boardRow: number;
+  readonly boardCol: number;
+  readonly boardIndex: number;
+  readonly boardTotal: number;
+  readonly originCol: number;
+  readonly originRow: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly labelFontPx: number;
+  readonly tickFontPx: number;
+  readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
+  readonly legend: LegendBandPlan;
+  readonly footerY: number;
+}
+
+/**
+ * 一页打印页计划。版面规则（规格 §7.1）：`1 格 = min(BEAD_MM, 可打印宽/列, 可打印高/行)`，
+ * **永不放大到超过实物**；装不下就按可打印区缩放，`scaleRatio` 如实给出。
+ *
+ * **为什么它不收 `PlanOptions`**：打印页的画布由纸型决定，没有可调的 `maxEdge`（`planSheet` 才有），
+ * 留一个用不上的参数只会变成「传了也没用」的静默陷阱。
+ *
+ * 入口校验（图纸 / 色卡 / 用量表 / 板大小 / 纸型 / 页索引）**全部内联在几何计算之前**：
+ * 页索引越界不取模、板大小与纸型不在枚举内不回落默认值。
+ */
+export function planBoardPage(
+  pattern: Pattern,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  page: { readonly boardSize: number; readonly paper: string; readonly index: number },
+): BoardPagePlan {
+  requirePattern(pattern);
+  requirePalette(pattern, palette);
+  const safeUsages = requireUsages(usages);
+  const boardSize = requireBoardSize(page.boardSize);
+  const paper = requirePaper(page.paper);
+  const boardCols = Math.ceil(pattern.width / boardSize);
+  const boardRows = Math.ceil(pattern.height / boardSize);
+  const total = boardCols * boardRows;
+  requireSafeInteger(page.index, "页索引");
+  if (page.index < 0 || page.index >= total) {
+    throw new Error(`页索引 ${page.index} 越界（本图纸共 ${total} 页）`);
+  }
+  const boardRow = Math.floor(page.index / boardCols);
+  const boardCol = page.index % boardCols;
+  const originCol = boardCol * boardSize;
+  const originRow = boardRow * boardSize;
+  // `Math.min` 是「最后一列 / 行收窄」的唯一实现，同时保证本页格范围恒落在图纸内（不写第二条守卫）
+  const cols = Math.min(boardSize, pattern.width - originCol);
+  const rows = Math.min(boardSize, pattern.height - originRow);
+
+  const sheet = PAPER_MM[paper];
+  const canvasWidth = mmToPx(sheet.width);
+  const canvasHeight = mmToPx(sheet.height);
+  const marginPx = mmToPx(PRINT_MARGIN_MM);
+  const printableW = canvasWidth - 2 * marginPx;
+  const printableH = canvasHeight - 2 * marginPx;
+
+  // 用料条高度只依赖「色数 + 可用宽」（见 `planLegendBand`），所以格像素可以在它之后定；top 先传 0 探一次
+  const legendProbe = planLegendBand(safeUsages, printableW, 0);
+  const legendH =
+    legendProbe.itemRows * LEGEND_BAND_ROW_H + (legendProbe.itemRows > 0 ? LEGEND_PAD_TOP : 0);
+  const chrome = PAGE_HEADER_H + SHEET_RULER_TOP + legendH + SHEET_FOOTER_H;
+
+  // 上限是**实物大小**：纸再大也不放大（这是「永不放大超过实物」唯一的落点）
+  const cellPx = Math.min(
+    PRINT_BEAD_PX,
+    Math.floor(printableW / cols),
+    Math.floor((printableH - chrome) / rows),
+  );
+  if (cellPx < 1) {
+    throw new Error(
+      `纸张装不下本页：板大小 ${boardSize}、纸张 ${paper}、可打印 ${printableW}×${printableH} px`,
+    );
+  }
+  const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
+  if (labelFontPx < SHEET_MIN_LABEL_FONT_PX) {
+    throw new Error(
+      `纸张装不下可读的格内色号：板大小 ${boardSize}、纸张 ${paper}、每格 ${cellPx} px、字号 ${labelFontPx} px`,
+    );
+  }
+  const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
+
+  // 网格水平居中（含左侧刻度带），垂直从页眉下方开始
+  const gridWidth = cols * cellPx;
+  const gridHeight = rows * cellPx;
+  const gridX = Math.floor((canvasWidth - (SHEET_RULER_LEFT + gridWidth)) / 2) + SHEET_RULER_LEFT;
+  const gridY = marginPx + PAGE_HEADER_H + SHEET_RULER_TOP;
+  const geometry = makeGridGeometry({ originCol, originRow, cols, rows, cellPx, x: gridX, y: gridY });
+  const legendTop = gridY + gridHeight + LEGEND_PAD_TOP;
+  // 第二次调用才是真的：此时的 top 由本页实际网格高度决定（与 `planSheet` 的两次调用同一形态）
+  const band = planLegendBand(safeUsages, printableW, legendTop);
+
+  return {
+    kind: "board-page",
+    cellPx,
+    cellMm: (cellPx / PRINT_DPI) * 25.4,
+    scaleRatio: cellPx / PRINT_BEAD_PX,
+    boardSize,
+    paper,
+    boardRow,
+    boardCol,
+    boardIndex: page.index,
+    boardTotal: total,
+    originCol,
+    originRow,
+    cols,
+    rows,
+    ...geometry,
+    canvasWidth,
+    canvasHeight,
+    labelFontPx,
+    tickFontPx,
+    infoBar: { lineOneY: marginPx, lineTwoY: marginPx + Math.round(PAGE_HEADER_H / 2) },
+    legend: band,
+    footerY: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H / 2,
+  };
 }
