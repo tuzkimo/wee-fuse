@@ -689,6 +689,9 @@ export const LEGEND_PAD_TOP = 8;
 
 export interface LegendBandPlan {
   readonly top: number;
+  /** **条带的左沿**（任务 8 的实现者实测补入）：打印页必须把条带在**可打印区**内居中，
+   *  不能复用网格偏移——29 板 + A4 + 221 色的条带右沿会越入右边距 190px（16mm），落进不可打印区。 */
+  readonly left: number;
   readonly itemCols: number;
   readonly itemRows: number;
   readonly itemWidth: number;
@@ -706,14 +709,17 @@ export function planLegendBand(
   usages: readonly ColorUsage[],
   availableWidth: number,
   top: number,
+  left: number,
 ): LegendBandPlan {
   const safe = requireUsages(usages);
   const width = requirePositiveInteger(availableWidth, "用料条可用宽度");
   requireSafeInteger(top, "用料条顶边");
+  requireSafeInteger(left, "用料条左沿");
   const itemCols = Math.max(1, Math.floor(width / LEGEND_ITEM_W));
   const itemRows = safe.length === 0 ? 0 : Math.ceil(safe.length / itemCols);
   return {
     top,
+    left,
     itemCols,
     itemRows,
     itemWidth: LEGEND_ITEM_W,
@@ -825,7 +831,7 @@ export function planSheet(
   if (innerW < 1) {
     throw new Error(`画布上限 ${maxEdge} px 太小，无法生成施工图`);
   }
-  const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0);
+  const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0, SHEET_MARGIN);
   const legendH = legend.itemRows * LEGEND_ROW_H + LEGEND_PAD_TOP;
   const innerH =
     maxEdge - 2 * SHEET_MARGIN - SHEET_INFO_BAR_H - SHEET_RULER_TOP - legendH - SHEET_FOOTER_H;
@@ -855,8 +861,9 @@ export function planSheet(
   });
   const legendTop = gridY + pattern.height * cellPx + LEGEND_PAD_TOP;
   // 用料条只调一次：`legendH` 已经用第一遍的结果算过格像素，这里补上真正的 top 即可
+  // （`left` 固定 `SHEET_MARGIN`：单张施工图的画布宽已经按用料条加宽过，左对齐即可）
   const band: LegendBandPlan = {
-    ...planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, legendTop),
+    ...planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, legendTop, SHEET_MARGIN),
   };
   const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
   // **画布宽取「网格」与「用料条」的较大者**（任务 5 审查者发现的缺陷）：`itemCols` 是按画布上限算的，
@@ -1341,7 +1348,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
     expect(boardCount(30, 1).total).toBe(2); // 两者恰好相等的场景也要能各自成立
   });
 
-  it("29 + A4：每格正好 5mm（实物大小），画布就是 A4 的 300dpi 像素", () => {
+  it("29 + A4：格像素恰为实物大小，画布就是 A4 的 300dpi 像素", () => {
     const plan = planBoardPage(makePattern(58, 58), makePalette(), makeUsages(), {
       boardSize: 29,
       paper: "a4",
@@ -1350,7 +1357,10 @@ describe("planBoardPage（B6：每块板一页）", () => {
     expect(plan.canvasWidth).toBe(mmToPx(210));
     expect(plan.canvasHeight).toBe(mmToPx(297));
     expect(plan.cellPx).toBe(PRINT_BEAD_PX);
-    expect(plan.cellMm).toBeCloseTo(BEAD_MM, 6);
+    // **不要断 `toBeCloseTo(BEAD_MM, 6)`**：cellPx 是取整后的整数，59px 反推回来是 4.99533…mm，
+    // 与 5mm 差 4.7e-3 —— 这是像素量化的固有下限，任何实现都过不了。判据取「差 ≤ 1/4 像素」。
+    expect(Math.abs(plan.cellMm - BEAD_MM)).toBeLessThanOrEqual(25.4 / PRINT_DPI / 4);
+    expect(plan.cellMm).toBeCloseTo((PRINT_BEAD_PX / PRINT_DPI) * 25.4, 6);
     expect(plan.scaleRatio).toBe(1);
     expect(plan.cols).toBe(29);
     expect(plan.rows).toBe(29);
@@ -1364,6 +1374,35 @@ describe("planBoardPage（B6：每块板一页）", () => {
     });
     expect(plan.cellPx).toBe(PRINT_BEAD_PX);
     expect(plan.scaleRatio).toBe(1);
+  });
+
+  it("刻度带 + 网格整块落在可打印区内（左右留白 ≥ 页边距）", () => {
+    // 58 板在 A3 上：把「刻度带 + 网格」当整体居中、却不把刻度带算进宽度预算时，
+    // 右留白只剩 98px < 118px（10mm）——刻度/板号会落进不可打印区。
+    const plan = planBoardPage(makePattern(116, 116), makePalette(), makeUsages(), {
+      boardSize: 58,
+      paper: "a3",
+      index: 0,
+    });
+    const marginPx = mmToPx(PRINT_MARGIN_MM);
+    expect(plan.grid.x - SHEET_RULER_LEFT).toBeGreaterThanOrEqual(marginPx);
+    expect(plan.grid.x + plan.grid.width).toBeLessThanOrEqual(plan.canvasWidth - marginPx);
+  });
+
+  it("用料条也落在可打印区内（本页色多时不许越入页边距）", () => {
+    // 29 板 + A4 + 221 色：条带按网格偏移落位时右沿 2552 > 可打印右界 2362（越 190px）。
+    const plan = planBoardPage(makePattern(116, 116), makeBigPalette(), makeBigUsages(), {
+      boardSize: 29,
+      paper: "a4",
+      index: 0,
+    });
+    const marginPx = mmToPx(PRINT_MARGIN_MM);
+    const count = makeBigUsages().length;
+    const bandRight =
+      plan.legend.left +
+      Math.min(plan.legend.itemCols, count) * plan.legend.itemWidth;
+    expect(plan.legend.left).toBeGreaterThanOrEqual(marginPx);
+    expect(bandRight).toBeLessThanOrEqual(plan.canvasWidth - marginPx);
   });
 
   it("58 + A3：每格 ≥ 实物的 90%（装不下才缩，且如实给出比例）", () => {
@@ -1532,13 +1571,14 @@ export function planBoardPage(
   const printableH = canvasHeight - 2 * marginPx;
 
   const legendProbe = planLegendBand(safeUsages, printableW, 0);
-  const legendH =
-    legendProbe.itemRows * LEGEND_ROW_H + (legendProbe.itemRows > 0 ? LEGEND_PAD_TOP : 0);
+  const legendH = legendProbe.itemRows * LEGEND_ROW_H + LEGEND_PAD_TOP;
   const chrome = PAGE_HEADER_H + SHEET_RULER_TOP + legendH + SHEET_FOOTER_H;
 
   const cellPx = Math.min(
     PRINT_BEAD_PX,
-    Math.floor(printableW / cols),
+    // **刻度带也要算进宽度预算**（任务 8 的实现者实测）：只按网格算宽度，会让「刻度带 + 网格」
+    // 整块超出可打印区——58 板在 A3 上右留白只剩 98px < 118px（10mm），刻度与板号会落进不可打印区。
+    Math.floor((printableW - SHEET_RULER_LEFT) / cols),
     Math.floor((printableH - chrome) / rows),
   );
   if (cellPx < 1) {
@@ -1554,14 +1594,24 @@ export function planBoardPage(
   }
   const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
 
-  // 网格水平居中（含左侧刻度带），垂直从页眉下方开始
+  // 网格水平居中（含左侧刻度带），垂直从页眉下方开始。
+  // `cellPx` 已经把刻度带扣进宽度预算，所以「刻度带 + 网格」整块必然落在可打印区内。
   const gridWidth = cols * cellPx;
   const gridHeight = rows * cellPx;
   const gridX = Math.floor((canvasWidth - (SHEET_RULER_LEFT + gridWidth)) / 2) + SHEET_RULER_LEFT;
   const gridY = marginPx + PAGE_HEADER_H + SHEET_RULER_TOP;
   const geometry = makeGridGeometry({ originCol, originRow, cols, rows, cellPx, x: gridX, y: gridY });
   const legendTop = gridY + gridHeight + LEGEND_PAD_TOP;
-  const band = planLegendBand(safeUsages, printableW, legendTop);
+  // **用料条的横向落位也要有预算**（同一位实现者实测的缺陷）：列数是按**可打印宽**算的，
+  // 若让渲染器复用网格偏移，29 板 + A4 + 221 色的条带右沿会到 2552 > 可打印右界 2362（越 190px、16mm）。
+  // 把条带在可打印区内居中，并把 left 放进计划（`LegendBandPlan.left`），渲染器照它落位。
+  const bandCols = Math.max(1, Math.min(legendProbe.itemCols, Math.max(safeUsages.length, 1)));
+  const bandWidth = bandCols * legendProbe.itemWidth;
+  const band: LegendBandPlan = {
+    ...legendProbe,
+    top: legendTop,
+    left: marginPx + Math.floor((printableW - bandWidth) / 2),
+  };
 
   return {
     kind: "board-page",
@@ -1734,7 +1784,9 @@ export function drawBoardPage(
   drawGridLines(target, plan);
   drawRulers(target, plan);
   drawBoardLabels(target, plan);
-  drawLegendBand(target, palette, usages, plan.legend, SHEET_MARGIN);
+  // **打印页的用料条按计划的 `left` 落位**（在可打印区内居中），不要传 `SHEET_MARGIN`：
+  // 那会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（任务 8 的实现者实测）。
+  drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
 
   // 末行三行：本页颗数 / 全图合计 + 精度声明 / 生成时间（口径与单张施工图一致）
   target.fillStyle = TEXT_INK;
