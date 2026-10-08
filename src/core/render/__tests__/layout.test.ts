@@ -56,7 +56,7 @@ function makePattern(width: number, height: number, fill = 0): Pattern {
   return { width, height, paletteId: "test-palette", cells };
 }
 
-describe("B4 布局常量", () => {
+describe("布局常量（B4 + B6）", () => {
   it("常量值就是规格 §5.1 定的那一组（改坏即红）", () => {
     expect(EXPORT_MAX_EDGE).toBe(4096);
     expect(EXPORT_CELL_PX_TARGET).toBe(40);
@@ -72,6 +72,31 @@ describe("B4 布局常量", () => {
     // 板步长必须来自 board.ts，不是另一份字面量 29
     expect(TILE_STEP).toBe(BOARD_COLS);
     expect(TILE_STEP).toBe(29);
+  });
+
+  /**
+   * B6 新增常量的**逐字**断言族。
+   *
+   * **为什么单列一条**：这些值就是契约（规格 §13 的常量变更表 / §7.1 的纸型与版面），而它们在生产
+   * 代码里大多是**互相钉住**的（`PRINT_BOARD_SIZES` ↔ `requireBoardSize`、`PRINT_BEAD_PX` 由
+   * `BEAD_MM` 与 `PRINT_DPI` 推出）——守卫与它「互钉」只能证明两者一致，**改不动其中一方**这件事
+   * 只有字面量断言读得到（例如把 `PRINT_BOARD_SIZES` 改成 `[29, 57]` 时两条会一起漂）。
+   */
+  it("B6 新增常量逐字：板大小表 / 打印精度 / 页边距 / 纸型毫米 / 色号字号下限 / 用料条 / 页眉高", () => {
+    expect(PRINT_BOARD_SIZES).toEqual([29, 58]);
+    expect(PRINT_DPI).toBe(300);
+    expect(PRINT_MARGIN_MM).toBe(10);
+    // 纸型毫米（A4 210×297、A3 297×420）：逐字写，不从 `mmToPx` 或画布尺寸反推
+    expect(PAPER_MM.a4).toEqual({ width: 210, height: 297 });
+    expect(PAPER_MM.a3).toEqual({ width: 297, height: 420 });
+    // 格内色号的硬下限：低于它 `planSheet` / `planBoardPage` 必须响亮失败（规格 §6.2）
+    expect(SHEET_MIN_LABEL_FONT_PX).toBe(10);
+    // 用料条：压缩后的项宽 / 行高（规格 §13 的常量迁移表：旧的 300 / 30 随独立用量表一起删除）
+    expect(LEGEND_ITEM_W).toBe(200);
+    expect(LEGEND_ROW_H).toBe(22);
+    expect(PAGE_HEADER_H).toBe(72);
+    // 「29 + A4 ⇒ 1 格恰为 `BEAD_MM`」这条关系：实物大小的格像素由实物参数推导，不是又一份字面量
+    expect(PRINT_BEAD_PX).toBe(Math.round((BEAD_MM / 25.4) * PRINT_DPI));
   });
 });
 
@@ -281,10 +306,21 @@ describe("planSheet（B6：单张施工图）", () => {
     expect(plan.labelFontPx).toBe(Math.round(EXPORT_CELL_PX_TARGET * 0.38));
   });
 
-  it("画布上限太小 ⇒ 响亮失败（消息含图纸尺寸、格像素与字号下限）", () => {
+  it("画布上限太小 ⇒ 响亮失败：两种失败各有专门消息，用户可见文本里不出现负数格像素", () => {
+    // ① 用料条把可用高度吃光（`innerH` 为负，格像素算出来是 -1）：消息必须直接说「放不下」，
+    //    **不许**把 `-1 px` 这种噪声写进用户可见文本（2026-10-08 修）。
+    let message = "";
+    try {
+      planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), { maxEdge: 1200 });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/放不下 116×116 的图纸（扣掉用料条后没有可用高度）/);
+    expect(message).not.toMatch(/-\d+ px/);
+    // ② 放得下、但格子小到色号不可读：这一支仍然报出格像素与字号下限（两种失败不许混成同一句）
     expect(() =>
-      planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), { maxEdge: 1200 }),
-    ).toThrow(/放不下 116×116 的图纸/);
+      planSheet(makePattern(116, 116), makePalette(), makeUsages(), { maxEdge: 3100 }),
+    ).toThrow(/每格只有 24 px、色号字号 9 px，低于下限 10 px/);
   });
 
   it("用料条的列数随可用宽变化、行数随色数变化，且 top 落在网格下沿", () => {
@@ -333,11 +369,12 @@ describe("planBoardPage（B6：每块板一页）", () => {
   });
 
   /**
-   * 枚举 / 数值守卫的**零覆盖**补齐（第 2 轮审查：这几条守卫此前一条用例都没有）。
+   * 枚举 / 数值守卫的覆盖（第 2 轮审查补入；2026-10-08 复核更正了原先那句「删掉也不会红」）。
    *
-   * 为什么必须补：把 `requirePaper` 的两条比较删成 `return value as PrintPaper`、把 `requireBoardSize`
-   * 删成 `return value as PrintBoardSize`、把 `printBoardCount` 的 ≥1 检查删掉，全套 1319 条**一条都不会红**
-   * ——「非法输入响亮失败」是规格逐字要求，守卫本身必须被判据钉住，否则它随时可以静默消失。
+   * `requireBoardSize` **一直**是被判别的：`boardSize: 30` 那条用例（文件末尾的页索引用例）
+   * 走的就是它。此前真正零覆盖的是 `requirePaper` 与 `printBoardCount` 的 ≥1 —— 删掉前者会让
+   * `paper: "a5"` 静默回落成 A4、删掉后者会让 `(0, 0, 29)` 静默返回 0 页，而当时**全套一条都不会红**。
+   * 下面两条把这两处补上；板大小那一条也一并留着（表与守卫是两个源，改表必须同时改守卫）。
    */
   it("非法纸张 ⇒ 抛错；合法纸张逐个放行（`paper` 守卫不许可以静默回落）", () => {
     for (const paper of Object.keys(PAPER_MM)) {

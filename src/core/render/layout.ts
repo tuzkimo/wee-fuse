@@ -162,7 +162,7 @@ export interface TileGeometry extends GridGeometry {
 export interface LegendBandPlan {
   readonly top: number;
   /**
-   * **条带的左沿**（任务 8 的实现者实测补入）：打印页必须把条带在**可打印区**内居中，
+   * **条带的左沿**（2026-10-08 实测补入）：打印页必须把条带在**可打印区**内居中，
    * 不能复用网格偏移——29 板 + A4 + 221 色的条带右沿会越入右边距 190px（16mm），落进不可打印区。
    */
   readonly left: number;
@@ -378,6 +378,14 @@ export function planSheet(
     Math.floor(innerW / pattern.width),
     Math.floor(innerH / pattern.height),
   );
+  // **`cellPx < 1` 单列一条**（2026-10-08）：`innerH` 为负时（用料条把可用高度吃光）下面那条字号
+  // 守卫会把 `-1 px` 这种噪声写进用户可见文本里。这里先把「根本放不下」说清楚，字号守卫只管
+  // 「放得下但格子太小」。
+  if (cellPx < 1) {
+    throw new Error(
+      `画布上限 ${maxEdge} px 放不下 ${pattern.width}×${pattern.height} 的图纸（扣掉用料条后没有可用高度）`,
+    );
+  }
   const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
   if (labelFontPx < SHEET_MIN_LABEL_FONT_PX) {
     throw new Error(
@@ -401,7 +409,7 @@ export function planSheet(
   // 这里只需把真正的顶边补上（再调一次会让 `requireUsages` 对每一项多跑一遍）。
   const band: LegendBandPlan = { ...legend, top: legendTop };
   const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
-  // **画布宽取「网格」与「用料条」的较大者**（任务 5 审查者发现的缺陷）：`itemCols` 是按画布上限算的，
+  // **画布宽取「网格」与「用料条」的较大者**（2026-10-08 实测发现的缺陷）：`itemCols` 是按画布上限算的，
   // 而网格宽度只取决于格像素——116×116 的最坏情况下用料条需要 4048 px 而网格只给 3592 px，
   // 不取 max 会让第 18–19 列（约 16% 的用料项）静默落在画布外。
   // `min(band.itemCols, safeUsages.length)` 是必需的：只按 itemCols 算会把 4 色小图纸也撑到 4048。
@@ -601,7 +609,7 @@ export interface BoardPagePlan extends TileGeometry {
   readonly tickFontPx: number;
   readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
   /**
-   * **页眉 / 页脚文字的左沿**（任务 9 的实现者实测补入）：打印页的文字必须从**可打印区**左沿起，
+   * **页眉 / 页脚文字的左沿**（2026-10-08 实测补入）：打印页的文字必须从**可打印区**左沿起，
    * 用 `SHEET_MARGIN = 24px`（2.03mm）会让页眉两行与页脚三行落进 10mm 的不可打印区被裁。
    * 单张施工图（屏幕产物）没有这个字段，它的文字左沿就是 `SHEET_MARGIN`。
    */
