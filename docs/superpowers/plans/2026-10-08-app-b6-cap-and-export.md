@@ -2532,6 +2532,20 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
 10. `src/style.css:10` 注释写「三处引用…施工图查看层标题」——任务 14 落地 `SheetViewer` 之后它才为真 ⇒ **核实**三处都在
    （图纸库卡片名、编辑页标题、查看层标题）；若查看层没接入 `.project-name`，那是一个真实缺口，按缺口处理。
 
+任务 3 的审查者挑出的次要项（注释/用例名层面，一并打包）：
+
+11. `src/core/pattern/view.ts:35-38`（`MAX_CELL_PX` 的 JSDoc）仍写「固定 64 会让小图纸出现『上界 < 下界』」——下界封顶之后这句已为假，
+   且与同文件 `maxCellScale` 的 JSDoc（已改成「固定 64 就成了 `[64, 64]` 钉死」）自相矛盾 ⇒ 照后者的口径改写（只动注释）。
+12. `src/core/pattern/view.ts:167`（`minCellScale` 的 JSDoc）称 `stores/editor.ts` 要读同一条下界，实际 `editor.ts` 只 import `defaultCellView`；
+   生产消费者只有 `zoomCellView` 的下界夹取 ⇒ 改成实情。
+13. `src/core/pattern/__tests__/view.test.ts:397` 的用例名「起止点落在同一格时是合法的 1×1」与新夹具不符（两点压在相邻格的边缘），
+   而「同格」这条路径从此没有用例 ⇒ **改名**（如「起止点各自压在格边时仍是 1×1」）**或**补一个真正的同格夹具；不许只删名字。
+14. `src/core/pattern/__tests__/view.test.ts:143` 的用例名「比例落在 (适配, MAX_CELL_PX] 内时取适配」是个环 ⇒ 改成「适配比例 ≤ `MAX_CELL_PX` 时取适配（不封顶）」。
+15. `src/core/pattern/view.ts:206` 的 `Math.min(minCellScale(...), MAX_CELL_PX)` 在下界已封顶之后是冗余（保留无害，但两处独立封顶要追两层）
+   ⇒ **可选**简化为 `const scale = minCellScale(viewport, grid);`；若简化，确认 `view.test.ts:166` 的等式与 `:119-120` 的不变量仍绿。
+16. 「适配」按钮的语义（`EditorPage.vue:189-193` 用裸 `fitTransform`）**保持不动**（规格 §5.2 要求「适配落回 `fitTransform`」原样通过，
+   「适配 = 填满视口」是既有契约）⇒ 只在该处补一句注释写清：小图纸上「适配」会放大到满屏（用户主动动作），而**默认视图**才是 `min(适配, MAX_CELL_PX)`。
+
 - [ ] **步骤 2：改索引**
 
 `docs/开发文档索引.md` 的 B6 行补上计划与构建记录两列（计划路径 `superpowers/plans/2026-10-08-app-b6-cap-and-export.md`）。
