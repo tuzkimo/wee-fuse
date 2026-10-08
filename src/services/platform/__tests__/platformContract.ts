@@ -73,7 +73,7 @@ export function runPlatformContract(label: string, makeHarness: () => PlatformHa
       const blob = new Blob([new Uint8Array([1, 2, 3])]);
       // 结算值是 `undefined` 也**必须被断言**：只 `await` 的话，把 `save` 改成 `resolve(42)` 全绿
       // （修复轮 F9 实测：`resolves.toBeUndefined()` 是唯一会红的那条）。
-      await expect(h.platform.album.save(blob, "  小猫-分享图.png \n")).resolves.toBeUndefined();
+      await expect(h.platform.album.save(blob, "  小猫-打印-r1c1.png \n")).resolves.toBeUndefined();
       expect(h.saves).toHaveLength(1);
       // **`Blob` 的字节内容，不是对象同一性**（2026-10-06 任务 2 修复轮 F4）。
       // 原来这里是 `expect(h.saves[0]?.blob).toBe(blob)`，那条断言**只有浏览器实现可能满足**：
@@ -84,7 +84,7 @@ export function runPlatformContract(label: string, makeHarness: () => PlatformHa
       // 「浏览器实现的落点同一性」里（放宽一处、补回一处，不是净损失）。
       const saved = h.saves[0]!;
       expect(Array.from(new Uint8Array(await saved.blob.arrayBuffer()))).toEqual([1, 2, 3]);
-      expect(saved.filename).toBe("小猫-分享图.png");
+      expect(saved.filename).toBe("小猫-打印-r1c1.png");
     });
 
     it("pickFromAlbum：取消返回 null（不是抛错）", async () => {

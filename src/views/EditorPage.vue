@@ -76,13 +76,14 @@ const pendingRerun = ref(false);
 const allowLeave = ref(false);
 
 /**
- * 导出面板是否打开（规格 §10.1）。
+ * 导出面板的打开形态：`null` = 关着（规格 §8 的两个入口共用这一个面板）。
  *
- * **页面只做接线**（R-4）：plan、逐项状态、渲染与下载都在 `ExportPanel` 里。页面给它的三样东西是
- * 「内存态图纸 + 页面已有的 usages + 失效通道 revision」——`usages` 直接复用**下面**那个 `usages`
- * computed（它在 `stats` 之后派生；面板因此不必再走一遍 O(格数) 的 `patternStats`，规格 §5.4 的分工）。
+ * **页面只做接线**（R-4）：计划、清单、逐项状态、渲染与落盘都在 `ExportPanel` 里。页面给它的四样
+ * 东西是「内存态图纸 + 页面已有的 usages + 打开形态 + 失效通道 revision」——`usages` 直接复用
+ * **下面**那个 `usages` computed（它在 `stats` 之后派生；面板因此不必再走一遍 O(格数) 的
+ * `patternStats`，规格 §5.4 的分工）。
  */
-const exporting = ref(false);
+const panelMode = ref<"sheet" | "print" | null>(null);
 
 /**
  * **已经载入**的 id。
@@ -555,7 +556,8 @@ function rerun(): void {
             @zoom-in="onCommand('zoom-in')"
             @zoom-out="onCommand('zoom-out')"
             @save="onCommand('save')"
-            @export="exporting = true"
+            @export="panelMode = 'sheet'"
+            @print="panelMode = 'print'"
           />
 
           <PalettePanel
@@ -626,21 +628,23 @@ function rerun(): void {
     </button>
 
     <!--
-      导出面板（规格 §10.1）。**图纸来源恒为 `editor.pattern`**（**内存态**，含未保存改动）——
-      导出不触发保存、也不读落盘记录里的图纸字段。**唯一取自落盘记录的是工程名**
-      （`:project-name`，只是文件名的前缀与图上标题；记录里的名字改了也不会改变导出的字节）。
+      导出 / 打印面板（规格 §8 的两个入口共用这一个面板）。**图纸来源恒为 `editor.pattern`**
+      （**内存态**，含未保存改动）——导出不触发保存、也不读落盘记录里的图纸字段。
+      **唯一取自落盘记录的是工程名**（`:project-name`，只是文件名的前缀与图上标题；记录里的名字改了
+      也不会改变导出的字节）。
 
       `v-if` 必须**同时**要求 `editor.pattern` 存在（契约 §2b）：少了后半句，图纸还没载入时
       面板会在渲染期抛错（`:pattern` 拿到 null）。除此之外不新增别的门。
     -->
     <ExportPanel
-      v-if="exporting && editor.pattern !== null"
+      v-if="panelMode !== null && editor.pattern !== null"
       :pattern="editor.pattern"
       :palette="palette"
       :usages="usages"
       :project-name="session.record?.meta.name ?? '图纸'"
       :revision="editor.revision"
-      @close="exporting = false"
+      :mode="panelMode"
+      @close="panelMode = null"
     />
   </main>
 </template>

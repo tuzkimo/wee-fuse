@@ -19,7 +19,7 @@ import {
   type MockExporter,
   type RecordingTarget,
 } from "@/components/editor/__tests__/exportTestKit";
-import { cellBox, planSheets } from "@/core/render/layout";
+import { cellBox, planSheet } from "@/core/render/layout";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -87,7 +87,7 @@ vi.mock("vue-router", () => ({
  * 导出面板的平台边界（任务 4）：`@/services/exporter` 的五个碰平台的函数换成替身，
  * `exportFilename` 用**真实现**（文件名的逐字格式是任务 3 用例的事）。
  *
- * 为什么不 mock `@/core/render/*`：规格 §13.2 第 1 条要的判据是「`drawSheetTile` **收到的该格
+ * 为什么不 mock `@/core/render/*`：规格 §13.2 第 1 条要的判据是「`drawSheet` **收到的该格
  * `fillRect` 颜色**是新色」——只有让真渲染器跑在记录型 target 上，`cellBox → fillRect`
  * 这条链才真的被走过（happy-dom 的 canvas 没有像素语义，CONTRACT §5.1）。
  *
@@ -102,8 +102,9 @@ const exporter = vi.hoisted(
     ({
       createCanvasStrict: vi.fn(),
       requireContext2D: vi.fn(),
-      // 面板也会调它（施工图 / 用量表；分享图按设计不调）：「在哪一项上调用、顺序如何」由
-      // `ExportPanel.test.ts` 的**同一个** `resetExporterMock` 默认实现 + 顺序表钉住。
+      // 面板自身不再直调它（渲染走 `@/services/sheetExport` 的两条 Blob 通道，由那里调用）：
+      // 「在哪一项上调用、顺序如何」由 `ExportPanel.test.ts` 的**同一个** `resetExporterMock`
+      // 默认实现 + 顺序表钉住。
       assertCanvasPainted: vi.fn(),
       canvasToBlob: vi.fn(),
       downloadBlob: vi.fn(),
@@ -1531,14 +1532,14 @@ describe("回图纸库入口（F1）", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 新增（任务 4）：导出面板的接线与端到端
+// 导出 / 打印面板的接线与端到端（任务 4 立项，任务 10 收敛成两种模式）
 //
-// 面板自己持有 plan 与逐项状态（契约 §2b / 规格 §10），页面只做三件事：`exporting` 开关、
-// 把**内存态**图纸与页面已有的 `usages` 传下去、`@close` 关掉。下面三条用例把这三件事各钉一条，
-// 第三条就是规格 §13.2 第 1 条（「导出旧图」的判别性用例）。
+// 面板自己持有清单与逐项状态（契约 §2b / 规格 §10），页面只做三件事：`panelMode` 开关、
+// 把**内存态**图纸与页面已有的 `usages` 传下去、`@close` 关掉。下面几条用例把这三件事各钉一条，
+// 最后一条就是规格 §13.2 第 1 条（「导出旧图」的判别性用例）。
 // ---------------------------------------------------------------------------
 
-describe("导出面板接线（任务 4）", () => {
+describe("导出面板接线（任务 4 / 任务 10）", () => {
   let recording: RecordingTarget;
 
   beforeEach(() => {
@@ -1550,7 +1551,7 @@ describe("导出面板接线（任务 4）", () => {
     stubObjectUrl();
   });
 
-  it("点「导出」→ 面板出现；点「关闭」→ 回编辑态（图纸与编辑态都没被丢掉）", async () => {
+  it("点「导出」→ 施工图面板出现；点「关闭」→ 回编辑态（图纸与编辑态都没被丢掉）", async () => {
     const wrapper = await mountPage();
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
 
@@ -1558,7 +1559,12 @@ describe("导出面板接线（任务 4）", () => {
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
     // 面板真的被挂起来了（不是空壳）：组件实例在，标题也在
     expect(wrapper.findComponent(ExportPanel).exists()).toBe(true);
-    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("导出图纸");
+    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("导出施工图");
+    // **sheet 模式**：摘要与唯一一项都是「施工图」，打印选项不出现
+    expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(true);
+    expect(wrapper.findAll("[data-testid^='export-item-']")).toHaveLength(1);
+    expect(wrapper.find("[data-testid='export-item-sheet']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(false);
 
     await wrapper.get("[data-testid='export-close']").trigger("click");
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
@@ -1568,20 +1574,40 @@ describe("导出面板接线（任务 4）", () => {
     expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
   });
 
+  it("点「打印」→ 以**打印模式**打开同一个面板（清单是页、不是一张施工图），关闭后回编辑态", async () => {
+    // 接线判据：`@print="panelMode = 'print'"`。只钉「面板出现」时，把 print 接到
+    // `panelMode = 'sheet'` 照样绿——而用户点的明明是「打印」。
+    const wrapper = await mountPage();
+    await wrapper.get("[data-testid='print']").trigger("click");
+
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+    expect(wrapper.get("[data-testid='export-panel']").text()).toContain("打印");
+    expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
+    // 2×1 图纸 ⇒ 29 板下恰好 1 页（页数来自 `printBoardCount`，不是常数）
+    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(1);
+    expect(wrapper.find("[data-testid='print-board-29']").exists()).toBe(true);
+
+    await wrapper.get("[data-testid='export-close']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
+  });
+
   it("面板的 `:project-name` / `:revision` 真的接了线：文件名与图上标题带记录的工程名，涂一格后该项复位", async () => {
     // 修复波 C-M2：这两条 props 原来**零断言**——把 `:revision` 钉成 0（只有画布那条用例红、面板
     // 这条不红）、把 `:project-name` 钉成常量（0 红）都能全绿，而它们是「图纸来源是内存态」这条
     // 承诺在面板这一侧的**唯一**接线。
     const wrapper = await mountPage();
     await wrapper.get("[data-testid='export']").trigger("click");
-    await wrapper.get("[data-testid='export-save-tile-0']").trigger("click");
+    await wrapper.get("[data-testid='export-save-sheet']").trigger("click");
     await flushPromises();
 
     // ① `:project-name` 取自**记录**（夹具名「小猫」）：文件名与图上信息条都必须带上它
-    expect(wrapper.get("[data-testid='export-item-tile-0']").text()).toContain("已生成");
-    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(true);
+    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("已生成");
+    expect(wrapper.find("[data-testid='export-preview-sheet']").exists()).toBe(true);
     expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
-    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("小猫-施工图-r1c1.png");
+    // 单张施工图**不带**分片序号（B6 起整图一块）
+    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("小猫-施工图.png");
     expect(
       recording.texts.some((call) => call.text.startsWith("小猫 · 2 × 1 格")),
     ).toBe(true);
@@ -1591,8 +1617,8 @@ describe("导出面板接线（任务 4）", () => {
     useEditor().setCurrentColor(2);
     await dragPaint(wrapper, [1, 0], [1, 0]);
     await flushPromises();
-    expect(wrapper.get("[data-testid='export-item-tile-0']").text()).toContain("待生成");
-    expect(wrapper.find("[data-testid='export-preview-tile-0']").exists()).toBe(false);
+    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("待生成");
+    expect(wrapper.find("[data-testid='export-preview-sheet']").exists()).toBe(false);
   });
 
   it("导出面板打开时按返回：确认条浮在覆盖层**之上**（z 序），用户看得见、也点得动", async () => {
@@ -1678,15 +1704,13 @@ describe("导出面板接线（任务 4）", () => {
     expect(storedCells(await getProjectStore().get("a"))).toEqual([0, EMPTY]);
 
     await wrapper.get("[data-testid='export']").trigger("click");
-    await wrapper.get("[data-testid='export-save-tile-0']").trigger("click");
+    await wrapper.get("[data-testid='export-save-sheet']").trigger("click");
     await flushPromises();
 
     // 判据 = 渲染器**实际收到的**那一格 `fillRect` 的颜色（规格 §13.2 第 1 条逐字）。
-    // 计划与坐标都由真 core 现算：单张施工图的 tile 覆盖全图，`(1,0)` 的片内像素由 `cellBox` 给出。
-    const plan = planSheets(pattern, palette);
-    const tile = plan.tiles[0];
-    if (tile === undefined) throw new Error("施工图计划没有分片");
-    const box = cellBox(tile, 1, 0);
+    // 计划与坐标都由真 core 现算：单张施工图覆盖全图，`(1,0)` 的像素由 `cellBox` 给出。
+    const plan = planSheet(pattern, palette, patternStats(pattern, palette).usages);
+    const box = cellBox(plan, 1, 0);
     const painted = recording.fills.filter(
       (fill) => fill.x === box.x && fill.y === box.y && fill.w === box.width && fill.h === box.height,
     );

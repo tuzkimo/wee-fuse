@@ -318,7 +318,7 @@ describe("downloadBlob", () => {
     stubUrlApi();
     stubCreateElement(() => makeCanvasStub().canvas);
 
-    expect(() => downloadBlob(new Blob([]), "图纸-分享图.png")).toThrow(
+    expect(() => downloadBlob(new Blob([]), "图纸-施工图.png")).toThrow(
       "导出内容为空（blob 大小为 0）",
     );
   });
@@ -370,11 +370,11 @@ describe("downloadBlob", () => {
 });
 
 describe("exportFilename", () => {
-  it("施工图带 r{行}c{列}（1 起），用量表 / 分享图不带序号", () => {
-    expect(exportFilename("小猫", "施工图", { rowIndex: 0, colIndex: 0 })).toBe("小猫-施工图-r1c1.png");
-    expect(exportFilename("小猫", "施工图", { rowIndex: 2, colIndex: 4 })).toBe("小猫-施工图-r3c5.png");
-    expect(exportFilename("小猫", "用量表")).toBe("小猫-用量表.png");
-    expect(exportFilename("小猫", "分享图")).toBe("小猫-分享图.png");
+  it("施工图不带序号；打印必须带 r{行}c{列}（1 起）", () => {
+    // B6 的两个内容标签：单张施工图**不带**序号（整图一块），打印页必须带头序号。
+    expect(exportFilename("小猫", "施工图")).toBe("小猫-施工图.png");
+    expect(exportFilename("小猫", "打印", { rowIndex: 0, colIndex: 0 })).toBe("小猫-打印-r1c1.png");
+    expect(exportFilename("小猫", "打印", { rowIndex: 3, colIndex: 4 })).toBe("小猫-打印-r4c5.png");
   });
 });
 
@@ -440,7 +440,7 @@ describe("downloadBlob：守卫先于副作用", () => {
     const url = stubUrlApi();
     const created = stubCreateElement(() => makeCanvasStub().canvas);
 
-    expect(() => downloadBlob(new Blob([]), "图纸-分享图.png")).toThrow(
+    expect(() => downloadBlob(new Blob([]), "图纸-施工图.png")).toThrow(
       "导出内容为空（blob 大小为 0）",
     );
 
@@ -451,54 +451,51 @@ describe("downloadBlob：守卫先于副作用", () => {
 
 describe("exportFilename：清洗与序号守卫（M13 的靶子）", () => {
   it("复用 normalizeProjectName：前后空白被清掉（不写第二份清洗）", () => {
-    expect(exportFilename("  小猫  ", "分享图")).toBe("小猫-分享图.png");
+    expect(exportFilename("  小猫  ", "施工图")).toBe("小猫-施工图.png");
   });
 
   it("名字清洗后为空 ⇒ 抛 normalizeProjectName 的原消息（不吞、不改写）", () => {
-    expect(() => exportFilename("   ", "分享图")).toThrow("工程名称不能为空");
+    expect(() => exportFilename("   ", "施工图")).toThrow("工程名称不能为空");
   });
 
   it("100 字合法、101 字抛（长度上限来自 normalizeProjectName，不在这里重写）", () => {
     const longest = "图".repeat(100);
-    expect(exportFilename(longest, "用量表")).toBe(`${longest}-用量表.png`);
-    expect(() => exportFilename("图".repeat(101), "分享图")).toThrow("工程名称不能超过 100 个字符");
+    expect(exportFilename(longest, "施工图")).toBe(`${longest}-施工图.png`);
+    expect(() => exportFilename("图".repeat(101), "施工图")).toThrow("工程名称不能超过 100 个字符");
   });
 
   it("非字符串名字 ⇒ 抛（TS 类型挡不住运行期输入）", () => {
-    expect(() => exportFilename(42 as unknown as string, "分享图")).toThrow("工程名称必须是字符串");
+    expect(() => exportFilename(42 as unknown as string, "施工图")).toThrow("工程名称必须是字符串");
   });
 
-  it("施工图缺分片序号 ⇒ 抛", () => {
-    expect(() => exportFilename("小猫", "施工图")).toThrow("施工图的分片序号缺失");
+  it("打印缺分片序号 ⇒ 抛", () => {
+    expect(() => exportFilename("小猫", "打印")).toThrow("打印的分片序号缺失");
   });
 
-  it("施工图显式传 `null` ⇒ 抛契约消息，不落裸 TypeError（修复波 A-m10）", () => {
+  it("打印显式传 `null` ⇒ 抛契约消息，不落裸 TypeError（修复波 A-m10）", () => {
     // 修复前：`tile === undefined` 判不出 `null` ⇒ 下一句 `tile.rowIndex` 抛
     // `TypeError: Cannot read properties of null (reading 'rowIndex')`——响亮，但**没有契约口径**。
     expect(() =>
-      exportFilename("小猫", "施工图", null as unknown as { rowIndex: number; colIndex: number }),
-    ).toThrow("施工图的分片序号缺失");
+      exportFilename("小猫", "打印", null as unknown as { rowIndex: number; colIndex: number }),
+    ).toThrow("打印的分片序号缺失");
   });
 
-  it("用量表 / 分享图带了 tile ⇒ 抛（静默忽略会让调用方以为自己传对了）", () => {
-    expect(() => exportFilename("小猫", "用量表", { rowIndex: 0, colIndex: 0 })).toThrow(
-      "用量表 / 分享图不带分片序号",
-    );
-    expect(() => exportFilename("小猫", "分享图", { rowIndex: 3, colIndex: 4 })).toThrow(
-      "用量表 / 分享图不带分片序号",
+  it("施工图带了 tile ⇒ 抛（静默忽略会让调用方以为自己传对了）", () => {
+    expect(() => exportFilename("小猫", "施工图", { rowIndex: 0, colIndex: 0 })).toThrow(
+      "施工图不带分片序号",
     );
     // 显式 `null` 也算「带了序号」这条语义非法（「没传」只认 `undefined`）——与 `requireMaxEdge`
     // 的「显式 null 不算没传」同源（修复波 A-m10）。
     expect(() =>
-      exportFilename("小猫", "用量表", null as unknown as { rowIndex: number; colIndex: number }),
-    ).toThrow("用量表 / 分享图不带分片序号");
+      exportFilename("小猫", "施工图", null as unknown as { rowIndex: number; colIndex: number }),
+    ).toThrow("施工图不带分片序号");
   });
 
   it("分片序号必须是 ≥0 的安全整数 ⇒ 否则抛（负数会静默产出 r0c0）", () => {
-    expect(() => exportFilename("小猫", "施工图", { rowIndex: -1, colIndex: 0 })).toThrow(
+    expect(() => exportFilename("小猫", "打印", { rowIndex: -1, colIndex: 0 })).toThrow(
       "分片序号非法：-1, 0（必须是 ≥0 的安全整数）",
     );
-    expect(() => exportFilename("小猫", "施工图", { rowIndex: 0, colIndex: 1.5 })).toThrow(
+    expect(() => exportFilename("小猫", "打印", { rowIndex: 0, colIndex: 1.5 })).toThrow(
       "分片序号非法：0, 1.5（必须是 ≥0 的安全整数）",
     );
   });
@@ -506,11 +503,11 @@ describe("exportFilename：清洗与序号守卫（M13 的靶子）", () => {
   it("非安全整数同样抛：1e21 是「≥0 的整数」但 1e21 + 1 === 1e21（F2 的靶子）", () => {
     // 判据是 Number.isSafeInteger（不是 isInteger）：片号加一之后必须真的变成另一个片号。
     // 消息里的数字是 JS 自己的 String(1e21) = "1e+21"，据实断言，不美化。
-    expect(() => exportFilename("小猫", "施工图", { rowIndex: 1e21, colIndex: 0 })).toThrow(
+    expect(() => exportFilename("小猫", "打印", { rowIndex: 1e21, colIndex: 0 })).toThrow(
       "分片序号非法：1e+21, 0（必须是 ≥0 的安全整数）",
     );
     // 最小的非安全整数（2^53）用干净的十进制写出来，免得这条覆盖吊在指数记法上。
-    expect(() => exportFilename("小猫", "施工图", { rowIndex: 0, colIndex: 2 ** 53 })).toThrow(
+    expect(() => exportFilename("小猫", "打印", { rowIndex: 0, colIndex: 2 ** 53 })).toThrow(
       "分片序号非法：0, 9007199254740992（必须是 ≥0 的安全整数）",
     );
   });

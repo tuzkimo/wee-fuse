@@ -1,52 +1,46 @@
 <script setup lang="ts">
 // src/components/editor/ExportPanel.vue
 //
-// 导出面板（B4）：把**内存里的图纸**（含未保存的涂改）渲染成三类 PNG，逐张由用户手势保存。
-// props 进、`close` 出。
+// 导出面板（B6 任务 10 收敛为**两种模式**）：`mode === "sheet"` 是单张施工图（含底部全图用料条），
+// `mode === "print"` 是打印页（每页一块 29 / 58 板，A4 / A3）。props 进、`close` 出。
 //
 // 三条纪律（契约 §2b / 规格 §10 / 计划任务 0 的 R-4 / R-5 / R-6）：
 // 1. **本组件不 import 任何 store**：它拿到什么就画什么，「图纸是哪一份」由页面（唯一装配点）决定。
 //    用例全程不建 pinia——任何 store 读取都会以「no active Pinia」在挂载期抛错，那是这条纪律的
 //    运行时证明。
-// 2. **plan 与逐项状态都由面板自持**（R-4）：页面只做接线，一行导出逻辑都不许下沉到页面里。
-// 3. **逐项导出 = 一次用户手势**（R-5）：点一次 → 渲染该张 → **画布自检** → `canvasToBlob` →
-//    立刻**经能力层落盘**（`getPlatform().album.save`：壳里进系统相册、浏览器里仍是下载）→
-//    显示预览（`<img>` 指向同一颗 blob 的 object URL）→ **即时释放画布**。
-//    不做连续多下载、不做 zip、不做 Web Share；任何一项失败只写该项的状态与中文原因，
-//    **不影响其他项**。
+// 2. **清单与逐项状态都由面板自持**（R-4）：页面只做接线，一行导出逻辑都不许下沉到页面里。
+// 3. **逐项导出 = 一次用户手势**（R-5）：点一次 → 渲染该张（`services/sheetExport.ts` 的 Blob 通道：
+//    建画布 → 渲染 → **画布自检** → `toBlob` → 释放画布）→ **立刻经能力层落盘**
+//    （`getPlatform().album.save`：壳里进系统相册、浏览器里仍是下载）→ 显示预览（`<img>` 指向
+//    同一颗 blob 的 object URL）。不做连续多下载、不做 zip、不做 Web Share；任何一项失败只写该项的
+//    状态与中文原因，**不影响其他项**。
 //
-// 与 `core/render/*` 的分工：plan 只出像素位置与尺寸，渲染器只按位置画，
-// 面板只管「建画布 → 画 → 自检 → 存 → 预览 → 释放」。导出**不乘 DPR**、
-// **不经过 `renderPatternThumbnail`**（R-6）。
+// 分页数学**只此一份**：页身份（`boardRow` / `boardCol`）取 `boardPageTile`（内部走 `planBoardPage`）、
+// 本页用量取 `usagesInRange`、页数取 `printBoardCount`——面板自己**不写除法**。
+// 导出**不乘 DPR**、**不经过 `renderPatternThumbnail`**（R-6）。
 import { computed, onUnmounted, ref, watch } from "vue";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
-import {
-  SHEET_LABEL_MIN_CELL_PX,
-  planLegend,
-  planShare,
-  planSheets,
-  type SheetTilePlan,
-} from "@/core/render/layout";
-import { drawLegend, drawSheetTile, type SheetMeta } from "@/core/render/sheet";
-import { drawShare } from "@/core/render/share";
+import { planBoardPage, planSheet, printBoardCount } from "@/core/render/layout";
+import { exportFilename } from "@/services/exporter";
 import { getPlatform } from "@/services/platform/capabilities";
 import {
-  assertCanvasPainted,
-  canvasToBlob,
-  createCanvasStrict,
-  exportFilename,
-  requireContext2D,
-  type ExportItemLabel,
-} from "@/services/exporter";
+  boardPageTile,
+  renderBoardPageBlob,
+  renderSheetBlob,
+  usagesInRange,
+} from "@/services/sheetExport";
 
 const props = defineProps<{
   pattern: Pattern;
   palette: Palette;
   usages: readonly ColorUsage[];
   projectName: string;
-  revision: number;
+  /** 打开形态（规格 §8 的两个入口共用这一个面板）：`sheet` = 施工图、`print` = 打印页。 */
+  mode: "sheet" | "print";
+  /** 编辑页传 `editor.revision`；结果页没有编辑通道，默认 0（「图纸换了」由 `pattern` 身份变化触发）。 */
+  revision?: number;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
@@ -54,134 +48,79 @@ const emit = defineEmits<{ close: [] }>();
 /* ------------------------------------------------------------------ 计划 */
 
 /**
- * 三个 plan。**它们不依赖 `revision`**（2026-10-05 控制者裁定，契约 §2b 已明写）：
- * `planSheets` / `planShare` 的输入只有图纸的**尺寸**与色卡，`planLegend` 的输入只有 `usages`
- * ——**三个都不读 `cells`**，所以「编辑一格」不改变其中任何一个。在这里写 `void props.revision;`
- * 是惰性代码，还会让后人误以为 plan 依赖编辑（于是把「plan 没跟着变」当成 bug、去查错地方）。
- *
+ * 打印选项。**它们只影响打印模式**：单张施工图的画布与格像素由 `planSheet` 从画布上限推出，
+ * 与纸张 / 板大小无关（那是屏幕产物，不是纸面产物）。
+ */
+const boardSize = ref<29 | 58>(29);
+const paper = ref<"a4" | "a3">("a4");
+
+/**
+ * 单张施工图：计划只依赖尺寸与色卡，**不依赖 `revision`**（编辑一格不改变画布尺寸与格像素）。
  * 需要跟着编辑失效的是**逐项状态**，见下面那个 `watch`。
- * 将来若真有一个 plan 开始读格值，必须**同时**改契约与这里——那是一次有意的口径变化，
- * 不是顺手加一行能解决的。
  */
-const sheetPlan = computed(() => planSheets(props.pattern, props.palette));
-const legendPlan = computed(() => planLegend(props.usages));
-const sharePlan = computed(() => planShare(props.pattern));
-
-/** 结构化提示 → 中文文案（core 只出事实，规格 §5.3 的分工）。 */
-const labelsOmitted = computed(
-  () => sheetPlan.value.warnings.find((warning) => warning.code === "labels-omitted") ?? null,
-);
-
-/* -------------------------------------------------------------- 计划摘要 */
-
-const sheetSummary = computed(() => {
-  const plan = sheetPlan.value;
-  const tail =
-    labelsOmitted.value === null
-      ? "含格内色号"
-      : `已省略格内色号（画布上限 ${labelsOmitted.value.maxEdge} px 太小）`;
-  return `共 ${plan.tiles.length} 张 · 每片最多 ${plan.tileCols}×${plan.tileRows} 格 · ${plan.cellPx} px/格 · ${tail}`;
-});
-
-const legendSummary = computed(() => {
-  const plan = legendPlan.value;
-  return `用量表 · ${plan.itemCols} 列 × ${plan.itemRows} 行 · ${plan.canvasWidth}×${plan.canvasHeight} px`;
-});
-
-const shareSummary = computed(() => {
-  const plan = sharePlan.value;
-  return `分享图 · ${plan.canvasWidth}×${plan.canvasHeight} px（纯色块，无网格无文字）`;
-});
+const sheetPlan = computed(() => planSheet(props.pattern, props.palette, props.usages));
 
 /**
- * 全图颗数与用色数由 `usages` 派生：`patternStats` 的定义就是「`usages` 恰是非空格色号的计数、
- * `colorCount === usages.length`、`total === Σ count`」，所以这两行与它逐字等价，
- * 且不必在面板里为信息条再走一次 O(格数) 遍历（页面已经算过一遍，规格 §5.4 的分工）。
+ * 本页用量：按页格范围独立统计（**不是全图用量**），打印时拿着那一页备料。
+ *
+ * **只建一次 `planBoardPage`**：几何（格范围）与用量来自同一份计划，函数内部取完 `usagesInRange`
+ * 就丢掉计划——每项重复建计划不会更正确，只会更慢。
  */
-const totalBeads = computed(() => props.usages.reduce((sum, usage) => sum + usage.count, 0));
-const colorCount = computed(() => props.usages.length);
-
-/**
- * 那句「手机上也可以长按下面的预览图存进相册」**只对浏览器成立**：壳里点「保存」就直接进系统相册 ✓，
- * 长按是多余提示（`B5-25`）。判据用渲染期读到的落点（与 `statusText` 同源 ✓）。
- * **消费者 = 模板里那句话的 `v-if`**；判别力在 `ExportPanel.test.ts`（浏览器默认落点 ⇒ 在；壳假平台 ⇒ 不在）。
- */
-const showsLongPressHint = computed(() => getPlatform().album.kind === "download");
-
-/** 渲染器只吃字符串、不读 `Date`（规格 §9 第 1 条），所以每次生成取一次就够。 */
-function makeMeta(generatedAt: string): SheetMeta {
-  return {
-    projectName: props.projectName,
-    generatedAt,
-    totalBeads: totalBeads.value,
-    colorCount: colorCount.value,
-    paletteName: props.palette.name,
-    accuracy: props.palette.accuracy,
-  };
+function pageUsages(index: number): readonly ColorUsage[] {
+  const plan = planBoardPage(props.pattern, props.palette, props.usages, {
+    boardSize: boardSize.value,
+    paper: paper.value,
+    index,
+  });
+  return usagesInRange(props.pattern, props.palette, plan);
 }
+
+/** 页数：**只问 `printBoardCount`**（它与 `planBoardPage` 是同一份分页数学的两个出口）。 */
+const pageCount = computed(() =>
+  printBoardCount(props.pattern.width, props.pattern.height, boardSize.value),
+);
 
 /* -------------------------------------------------------------- 逐项清单 */
 
 interface ExportItem {
   readonly id: string;
   readonly label: string;
-  readonly kind: "sheet" | "legend" | "share";
-  readonly tileIndex: number;
+  /** 单张模式为 -1；打印模式是该页的页索引（**唯一**的页码来源，不在别处再算一遍）。 */
+  readonly pageIndex: number;
   status: "idle" | "busy" | "done" | "error";
   error: string;
   previewUrl: string;
 }
 
 /**
- * 分片栅格的行数 / 列数。**从 `plan.tiles` 派生**，不写第二份 `ceil(height / tileRows)` 除法
- * （渲染器被明令禁止反推网格形状，面板这一层也不该再长出一份分片数学）。
+ * 清单由模式决定：单张模式一项；打印模式一页一项（`id` = `page-<页索引>`，与 `pageIndex` 同源）。
+ *
+ * **页标签的文案**用 `boardCols` 换算行列（`第 r 行 第 c 列`），而**真正的页身份**（`boardRow` /
+ * `boardCol`）由 `planBoardPage` 给出、落盘文件名取的就是它（`boardPageTile`）——两处口径一致，
+ * 但标签只是文案，不参与任何落盘决定。
  */
-const tileRowCount = computed(() =>
-  sheetPlan.value.tiles.reduce((max, tile) => Math.max(max, tile.rowIndex + 1), 0),
-);
-const tileColCount = computed(() =>
-  sheetPlan.value.tiles.reduce((max, tile) => Math.max(max, tile.colIndex + 1), 0),
-);
-
-/** 片标签的形状由契约 §2b 逐字给定。 */
-function tileLabel(tile: SheetTilePlan): string {
-  return `施工图 第 ${tile.rowIndex + 1}/${tileRowCount.value} 行 第 ${tile.colIndex + 1}/${tileColCount.value} 列`;
-}
-
-/** 渲染顺序 = 用量表 → 分享图 → 施工图各片（契约 §2b）。 */
 function makeItems(): ExportItem[] {
-  const items: ExportItem[] = [
-    {
-      id: "legend",
-      label: "用量表",
-      kind: "legend",
-      tileIndex: -1,
-      status: "idle",
-      error: "",
-      previewUrl: "",
-    },
-    {
-      id: "share",
-      label: "分享图",
-      kind: "share",
-      tileIndex: -1,
-      status: "idle",
-      error: "",
-      previewUrl: "",
-    },
-  ];
-  for (const tile of sheetPlan.value.tiles) {
-    items.push({
-      id: `tile-${tile.index}`,
-      label: tileLabel(tile),
-      kind: "sheet",
-      tileIndex: tile.index,
-      status: "idle",
-      error: "",
-      previewUrl: "",
-    });
+  if (props.mode === "sheet") {
+    return [
+      {
+        id: "sheet",
+        label: "施工图（含底部用料条）",
+        pageIndex: -1,
+        status: "idle",
+        error: "",
+        previewUrl: "",
+      },
+    ];
   }
-  return items;
+  const boardCols = Math.ceil(props.pattern.width / boardSize.value);
+  return Array.from({ length: pageCount.value }, (_, index) => ({
+    id: `page-${index}`,
+    label: `打印页 第 ${Math.floor(index / boardCols) + 1} 行 第 ${(index % boardCols) + 1} 列（第 ${index + 1}/${pageCount.value} 页）`,
+    pageIndex: index,
+    status: "idle" as const,
+    error: "",
+    previewUrl: "",
+  }));
 }
 
 /**
@@ -198,71 +137,66 @@ function revokePreview(item: ExportItem): void {
 }
 
 /**
- * 图纸一变就重建清单：所有逐项状态回 `idle`、预览一律销号后丢弃（规格 §10.1）。
- * 它比「面板打开时禁止编辑」更硬——不依赖 UI 是否真的挡住了每一个改动入口。
- * **面板打开期间真正活着的编辑通道只有窗口键盘监听**（`EditorPage` 的 `Ctrl+Z` / `Ctrl+Shift+Z`）：
- * 工具栏在覆盖层**之下**（面板是 `fixed inset-0 z-30`），所以它的按钮点不到；键盘监听挂在 `window` 上、
- * 不受 z 序影响，**撤销照常改到 `cells`**。（早期这里写「工具栏在面板之上」，与 z 序相反，已更正。）
+ * **清单代数**：`rebuildItems`（图纸变了 / 打印选项变了）与 `onUnmounted` 各 +1。
  *
- * 源是**两个**（契约 §2b 逐字规定，缺一不可）：
- * - `revision`：`cells` 原地写，只有它能让 `markRaw` 的图纸失效；
- * - `pattern` 的**对象身份**：`beginSession` 会把 `revision` 归零——从一张 `revision = 0` 的图纸
- *   换到另一张时（`/edit/a → /edit/b` 而面板恰好开着），0 → 0 那一跳**不触发**，
- *   单靠 `revision` 时清单会停在上一张图纸的片数与标签上。
- *
- * 顺序写成 `[revision, pattern]` 或 `[pattern, revision]` 都可以，**两个都必须在**：
- * 顺手删掉 `() => props.pattern` 是一条会被 `计划摘要` 那组用例抓住的静默错误（见步骤 12 的 M-rev-B）。
- */
-/**
- * **清单代数**：`rebuildItems`（图纸变了：`revision` 或 `pattern` 身份）与 `onUnmounted` 各 +1。
- *
- * 为什么需要它而不只是 `unmounted`（修复波 B-3）：一次导出唯一的异步点是 `canvasToBlob`，而
- * `await` 期间 `items` 可能被整体重建（撤销 / 切换工程），**面板却没有卸载**——此时手里那个
- * `item` 已经被丢弃，把新诞生的 object URL 写到它上面等于**永远没人回收**；更糟的是文件名若在
- * `await` **之后**读 `props.projectName`，就会产出「文件名的工程名是新的、字节是旧图纸的」这种
- * 静默错产物。代数 + 「工程名在 `await` 之前取」两条一起把这两种形态堵住。
+ * 为什么需要它而不只是 `unmounted`（修复波 B-3）：一次导出唯一的异步点是两个 `await`（渲染通道里
+ * 的 `canvasToBlob`、以及经能力层落盘的 `album.save`），而 `await` 期间 `items` 可能被整体重建
+ * （撤销 / 切换工程 / 换纸张），**面板却没有卸载**——此时手里那个 `item` 已经被丢弃，把新诞生的
+ * object URL 写到它上面等于**永远没人回收**；更糟的是文件名若在 `await` **之后**读
+ * `props.projectName`，就会产出「文件名的工程名是新的、字节是旧图纸的」这种静默错产物。
+ * 代数 + 「工程名在第一个 `await` 之前取」两条一起把这两种形态堵住。
  *
  * **声明必须在 `rebuildItems()` 首次调用之前**（`let` 的 TDZ：下面那一次调用就会读它）。
  */
 let generation = 0;
 
 function rebuildItems(): void {
-  // **代数自增**：飞行中的导出在 `await` 之后靠它判「我这一项（以及它用的 plan / tile）还在不在」。
-  // 只判 `unmounted` 挡不住「面板还在、图纸换了」——那正是「旧图纸的字节配上新工程名」的形态。
+  // **代数自增**：飞行中的导出在 `await` 之后靠它判「我这一项（以及它用的计划 / 页索引）还在不在」。
   generation += 1;
   for (const item of items.value) revokePreview(item);
   items.value = makeItems();
 }
 
-watch([() => props.revision, () => props.pattern], rebuildItems);
+/**
+ * 重建清单的**五个源**（缺一不可）：
+ * - `revision`：编辑页的 `cells` 原地写，只有它能让 `markRaw` 的图纸失效；
+ * - `pattern` 的**对象身份**：`beginSession` 会把 `revision` 归零——从一张 `revision = 0` 的图纸
+ *   换到另一张时（`/edit/a → /edit/b` 而面板恰好开着），0 → 0 那一跳**不触发**，清单会停在
+ *   上一张图纸上；结果页（任务 13）更是**只有**这一条失效通道（它没有 `revision`）；
+ * - `boardSize` / `paper`：打印的页身份与页数由它们决定（29 板 16 页 ↔ 58 板 4 页）——换选项而
+ *   不重建清单时，摘要会说 4 页、清单却仍是 16 项，且第 5 项之后点「保存」会用越界的页索引抛错；
+ * - `mode`：清单形状由它决定（一项 ↔ 一页一项）。今天的唯一装配点（`EditorPage` 的 `v-if`）
+ *   不会就地切模式，但**判据不能吊在调用方的纪律上**——真就地切了，清单停在旧形状是静默错误。
+ */
+watch([() => props.revision, () => props.pattern, () => props.mode, boardSize, paper], rebuildItems);
 rebuildItems();
 
 /**
  * **已经卸载**（修复轮 F6）。它必须早于 `onUnmounted` 注册、且用 `let` 而不是 `ref`：
- * 下面的 `onUnmounted` 只扫**当时**的 `items.value`，而一次导出可能在两步异步之间被关掉
- * （建画布 / 自检是同步的，但 `canvasToBlob` 是 `await`；关闭按钮**没有** `disabled`，用户在
- * 导出 2000×2000 那张时点「关闭」就能触发）——那个 object URL 是在面板被丢弃**之后**才诞生的，
- * 永远扫不到。用一个普通布尔量当下「是否已卸载」的判据，`downloadAndPreview` 在创建 URL 之后
- * 立刻查它。
+ * `onUnmounted` 只扫**当时**的 `items.value`，而一次导出可能在异步之间被关掉
+ * （关闭按钮**没有** `disabled`，用户在导出 2000×2000 那张时点「关闭」就能触发）——那个 object URL
+ * 是在面板被丢弃**之后**才可能诞生的，`onUnmounted` 永远扫不到。用一个普通布尔量当下「是否已卸载」
+ * 的判据，`saveItem` 在**创建 URL 之前**立刻查它。
+ *
+ * **如实记录它与代数判据的关系**：`onUnmounted` 同时把 `generation` +1，所以严格说
+ * `generationAtStart !== generation` 已经覆盖了「面板已卸载」这一支；保留显式的 `unmounted` 是因为
+ * 「面板已经卸载」在判据处读起来比「代数变了」直白，而这条语义正是一次真实泄漏的名字（B4 的既有
+ * 防线，逐字保留）。**别把它的存在当成一条独立覆盖**（本项目记过账：断言存在 ≠ 断言有效）。
  */
 let unmounted = false;
 
 /**
- * 关闭面板 = **卸载**（`EditorPage` 的 `@close` 只把 `exporting` 置假，本组件整体下树），所以
- * `rebuildItems` 与「重存同一项」这两条销号路径都**不会**在关闭时跑到：不在这里回收的话，用户
- * 反复「导出 → 关闭」会把每一张全分辨率 PNG 的 object URL 一直钉在内存里（该 URL 在页面生命周期
- * 内永不释放，blob 也无法被回收）。这是一个**真实的泄漏**，不是兜底洁癖（修复轮 F3）。
+ * 关闭面板 = **卸载**，所以 `rebuildItems` 与「重存同一项」这两条销号路径都**不会**在关闭时跑到：
+ * 不在这里回收的话，用户反复「导出 → 关闭」会把每一张全分辨率 PNG 的 object URL 一直钉在内存里
+ * （该 URL 在页面生命周期内永不释放，blob 也无法被回收）。这是一个**真实的泄漏**（修复轮 F3）。
  *
- * **复用 `revokePreview`、不新增导出**：销号的语义只有一份（「先 `revokeObjectURL` 再清空」），
- * 第二份实现正是本项目反复禁止的形态。清空 `previewUrl` 同时也让 `items` 里不再留下任何 URL。
- *
- * 它与 `unmounted` 是**两条互补的路径**，缺一漏一个方向的泄漏：这一条挡「卸载发生在 URL 已经
- * 存在之后」，`downloadAndPreview` 里那一条挡「卸载发生在 URL 诞生之前」。
+ * **复用 `revokePreview`、不新增实现**：销号的语义只有一份（「先 `revokeObjectURL` 再清空」）。
+ * 它与 `unmounted` 是**两条互补的路径**：这一条挡「卸载发生在 URL 已经存在之后」，
+ * `saveItem` 里那一条挡「卸载发生在 URL 诞生之前」。
  */
 onUnmounted(() => {
   unmounted = true;
-  // 卸载也算一次代数变化：`downloadAndPreview` 因此不必在两条判据里挑一条（`unmounted` 仍是
-  // 「不写被丢弃的项」这条语义的显式名字，读起来比 `gen !== generation` 直白）。
+  // 卸载也算一次代数变化：`saveItem` 因此不必在两条判据里挑一条。
   generation += 1;
   for (const item of items.value) revokePreview(item);
 });
@@ -274,190 +208,126 @@ function statusText(item: ExportItem): string {
   if (item.status === "busy") return "生成中…";
   if (item.status === "done") {
     // 成功文案按**落点**分叉（规格 §5.4.3 / §7.3）：壳里进系统相册、浏览器里是下载。
-    // **浏览器那一支必须逐字保持原文案**（既有用例对「已生成」有断言 ⇒ 本任务「既有断言一行不改」）；
-    // 规格 §5.4.3 / §7.3 表里给浏览器支写的是「已开始下载」，与既有断言冲突，本轮按「保既有」处置，
-    // 冲突已记进任务报告（要改成规格那一版就得动既有断言，那超出本任务边界）。
+    // **浏览器那一支必须逐字保持原文案**（既有用例对「已生成」有断言）。
     return getPlatform().album.kind === "album" ? "已保存到相册" : "已生成";
   }
   return `失败：${item.error}`;
 }
 
 /**
- * 落盘 + 出预览。两步共用**同一颗 blob**：预览就是刚落盘的那一份字节，不是重新渲染的第二份。
- *
- * 文件名的第三个实参**只在施工图上传**：契约 §3 明写「用量表 / 分享图**不带**分片序号」。
- * （`tile === undefined` 与显式传 `undefined` 在 `exportFilename` 里**完全等价**——它读的是形参，
- * 不读 `arguments.length`；`exportFilename` 另外把显式 `null` 也按「带了序号」拒绝。这里分两支只是
- * 让「哪一类产物带序号」在调用点一眼可见。）
- *
- * **`await` 前后必须用同一个「这一刻」**（修复轮 F6 + 修复波 B-3）：这条路径上有**两个**异步点
- * （`canvasToBlob`，以及任务 6 起经能力层落盘的 `album.save`），而 `await` 期间图纸 / 工程都可能已经变了。
- * 所以：
- * 1. **代数与工程名都在第一个 `await` 之前取**：`gen = generation` 判「这一项还在不在」，`projectName`
- *    保证「文件名的工程名」与「画布上那批字节」出自同一次取用（否则会出现「名字是新的、图纸是旧的」
- *    的静默错产物）；
- * 2. 两个 `await` 之后若 `gen !== generation`（清单被重建）或 `unmounted`（面板下树）⇒ **立刻销号并
- *    return**：不写 `item.previewUrl`（那是一个已经被丢弃、永远没人回收的对象）、也不把状态改成
- *    「已保存到相册」（那个 UI 已经不存在了）。
- *
- * 落盘**必须经能力层**（规格 §5.4.3）：面板不再知道具体落点（壳里 = 系统相册、浏览器 = 下载），
- * 也不自己拼第二份命名逻辑（名字走 `exportFilename`）。失败**照旧抛**（`save` 的契约是「失败必须抛」）
- * ⇒ 冒到 `saveItem` 的 `catch`，只写该项的状态与中文原因，不影响其他项。
- */
-async function downloadAndPreview(
-  item: ExportItem,
-  canvas: HTMLCanvasElement,
-  label: ExportItemLabel,
-  tile?: SheetTilePlan,
-): Promise<void> {
-  const gen = generation;
-  const projectName = props.projectName;
-  const blob = await canvasToBlob(canvas);
-  const filename =
-    tile === undefined
-      ? exportFilename(projectName, label)
-      : exportFilename(projectName, label, tile);
-  // 上一版：`downloadBlob(blob, filename);`（直调平台层之外的东西）
-  // 本任务：经能力层（规格 §5.4.3）——壳里进系统相册、浏览器里仍是下载；
-  // 面板**不再知道**具体落点，也不能再自己拼第二份命名逻辑（名字走 exportFilename）。
-  await getPlatform().album.save(blob, filename);
-  const url = URL.createObjectURL(blob);
-  if (unmounted || gen !== generation) {
-    // 先销号再返回：这一步之后 `item.previewUrl` 仍是 `""`，这个 URL 不留在任何一个 `item` 上。
-    URL.revokeObjectURL(url);
-    return;
-  }
-  revokePreview(item);
-  item.previewUrl = url;
-}
-
-/**
- * 保存一项：**渲染该张 → 自检 → 经能力层落盘 → 显示预览**（R-5）。
+ * 保存一项：**渲染该张 → 经能力层落盘 → 显示预览**（R-5）。
  *
  * 逐项独立：状态与原因都写在这一项上，抛错不冒泡到别的项（规格 §10.3）。
  * `busy` 期间按钮禁用（模板），函数自己再挡一次连点——手势可能比下一帧更快。
  *
- * 渲染完成后的两步都是**规格 §9 的防线**，顺序不能动：
- * 1. `assertCanvasPainted(canvas)`（自检，`@/services/exporter` 的导出，生产消费者就是本面板）——
- *    **只在施工图与用量表**上做：它们左上角的 `(2, 2)` 落在 `SHEET_MARGIN = 24` 的**边距**里，
- *    一定被整张白底覆盖、且该处永远没有文字（§9 第 5 条要求采样点与图纸内容无关）。
- *    **分享图故意不调用它**：分享图是纯色块、空格透明的产物，`(2, 2)` 落在透明像素上完全合法，
- *    那张图没有「必定不透明」的采样点——给它加自检会把一张合法的全透明分享图判成失败。
- * 2. 自检必须在 `canvasToBlob` **之前**：反过来的话，一张「看起来正常」的白图已经落盘了才被发现。
- * 3. 画布在 `finally` 里即时释放（§9 第 6 条：内存峰值 = 一张画布），且**晚于** `toBlob`
- *    （提前释放＝拿着 0×0 的画布去 toBlob，生产上就是一张空图）；失败路径同样要释放。
+ * 文件名的第三个实参**只在打印模式上传**（`boardPageTile` 给出本页的行列，1 起）：
+ * 单张施工图整图一块，**不带序号**（契约 §2 的两个标签各有一份命名模板）。
+ *
+ * **`await` 前后必须用同一个「这一刻」**（修复轮 F6 + 修复波 B-3）：
+ * 1. **代数与工程名都在第一个 `await` 之前取**：`generationAtStart` 判「这一项还在不在」，
+ *    `projectName` 保证「文件名的工程名」与「画布上那批字节」出自同一次取用（否则会出现
+ *    「名字是新的、图纸是旧的」这种静默错产物）；
+ * 2. 落盘之后若代数变了或已卸载 ⇒ **直接 return**：**连 object URL 都不创建**（创建了就是一个挂在
+ *    被丢弃项上、`onUnmounted` 永远扫不到的引用），也不把状态改成「已保存到相册」（那个 UI 已经
+ *    不存在了）。落盘本身**照常完成**——用户那一次手势已经点了，不该因为面板被关掉而白点。
+ *
+ * 落盘**必须经能力层**（规格 §5.4.3）：面板不知道具体落点，也不自己拼第二份命名逻辑
+ * （名字走 `exportFilename`）。失败**照旧抛** ⇒ 冒到下面的 `catch`，只写该项的状态与中文原因。
  */
 async function saveItem(item: ExportItem): Promise<void> {
   if (item.status === "busy") return;
   item.status = "busy";
   item.error = "";
-  let canvas: HTMLCanvasElement | null = null;
+  const generationAtStart = generation;
+  const projectName = props.projectName;
   try {
-    const meta = makeMeta(new Date().toLocaleString("zh-CN"));
-    if (item.kind === "legend") {
-      const plan = legendPlan.value;
-      canvas = createCanvasStrict(plan.canvasWidth, plan.canvasHeight);
-      drawLegend(requireContext2D(canvas), props.palette, props.usages, plan, meta);
-      assertCanvasPainted(canvas);
-      await downloadAndPreview(item, canvas, "用量表");
-    } else if (item.kind === "share") {
-      const plan = sharePlan.value;
-      canvas = createCanvasStrict(plan.canvasWidth, plan.canvasHeight);
-      drawShare(requireContext2D(canvas), props.pattern, props.palette, plan);
-      // **不调用 `assertCanvasPainted`**（理由见函数头）：分享图按设计是透明的。
-      await downloadAndPreview(item, canvas, "分享图");
-    } else {
-      const plan = sheetPlan.value;
-      const tile = plan.tiles[item.tileIndex];
-      if (tile === undefined) {
-        // 不可达：`tileIndex` 由本文件从 `plan.tiles` 里取。消息逐字照契约 §2b
-        // （控制者裁定 11 定稿）。
-        //
-        // **显式记为「未覆盖分支」**（任务 4 修复轮，审查者点名）：整任务**没有**任何断言能走到
-        // 这一行——`layout.ts` 保证 `tiles[i].index === i`（`makeTile` 的 `index` 就是 push 前的
-        // `tiles.length`），而 `items` 在每次 `pattern` / `revision` 变化时整体重建，所以面板拿到的
-        // `item.tileIndex` 与 `plan.tiles` 恒同源。它是一条「将来有人改成手写分片清单时能响亮失败」
-        // 的守卫，不是被覆盖的行为——**别把它的存在当成已覆盖**（本项目记过账：断言存在 ≠ 断言有效）。
-        throw new Error(`施工图分片不存在：${item.id}`);
-      }
-      canvas = createCanvasStrict(tile.canvasWidth, tile.canvasHeight);
-      drawSheetTile(requireContext2D(canvas), props.pattern, props.palette, plan, tile, meta);
-      assertCanvasPainted(canvas);
-      await downloadAndPreview(item, canvas, "施工图", tile);
-    }
+    const blob =
+      props.mode === "sheet"
+        ? await renderSheetBlob({ pattern: props.pattern, palette: props.palette, usages: props.usages, projectName })
+        : await renderBoardPageBlob(
+            {
+              pattern: props.pattern,
+              palette: props.palette,
+              usages: props.usages,
+              projectName,
+              boardSize: boardSize.value,
+              paper: paper.value,
+              pageIndex: item.pageIndex,
+            },
+            pageUsages(item.pageIndex),
+          );
+    const filename =
+      props.mode === "sheet"
+        ? exportFilename(projectName, "施工图")
+        : exportFilename(
+            projectName,
+            "打印",
+            boardPageTile(props.pattern, props.palette, props.usages, boardSize.value, paper.value, item.pageIndex),
+          );
+    await getPlatform().album.save(blob, filename);
+    // 代数 + 卸载双判据（B4 的既有防线），**排在 `createObjectURL` 之前**：URL 根本不诞生，
+    // 就没有「诞生在面板被丢弃之后、谁也回收不到」这一形态。
+    if (unmounted || generationAtStart !== generation) return;
+    revokePreview(item);
+    item.previewUrl = URL.createObjectURL(blob);
     item.status = "done";
   } catch (error) {
     item.status = "error";
     item.error = error instanceof Error ? error.message : String(error);
-  } finally {
-    // 逐张渲染、**即时释放**（规格 §9 第 6 条）：内存峰值 = 一张画布。
-    // 放在 `finally`（不是 `try` 尾部）：失败路径也释放，否则一张失败的大画布会挂到下一次 GC。
-    // 契约 §2 的 exporter 导出面里没有 release 函数（只有一个调用点，抽一个没人复用的函数正是
-    // 本项目禁止的抽象），所以这一步落在面板里。
-    if (canvas !== null) {
-      canvas.width = 0;
-      canvas.height = 0;
-    }
   }
 }
+
+/**
+ * 那句「手机上也可以长按下面的预览图存进相册」**只对浏览器成立**：壳里点「保存」就直接进系统相册 ✓，
+ * 长按是多余提示（`B5-25`）。判据用渲染期读到的落点（与 `statusText` 同源 ✓）。
+ * **消费者 = 模板里那句话的 `v-if`**；判别力在 `ExportPanel.test.ts`（浏览器默认落点 ⇒ 在；壳假平台 ⇒ 不在）。
+ */
+const showsLongPressHint = computed(() => getPlatform().album.kind === "download");
 </script>
 
 <template>
   <!--
-    面板是一个**覆盖层**（控制者裁定 10）。`data-testid` 全部照契约 §2b 的清单，**不许另造名字**：
-    根 `export-panel`、摘要 `export-summary-sheet` / `-legend` / `-share`、琥珀提示
-    `export-warning-labels`、空图纸说明 `export-empty-note`、关闭 `export-close`、
-    逐项 `export-item-*` / `export-save-*` / `export-preview-*`。
+    面板是一个**覆盖层**（控制者裁定 10）。`data-testid` 全部照契约的清单，**不许另造名字**：
+    根 `export-panel`、摘要 `export-summary-sheet` / `export-summary-print`、空图纸说明
+    `export-empty-note`、关闭 `export-close`、打印选项 `print-board-29` / `print-board-58` /
+    `print-paper-a4` / `print-paper-a3`、逐项 `export-item-*` / `export-save-*` / `export-preview-*`。
+
+    **两个模式共用这一个面板**（规格 §8）：`mode` 决定标题、摘要、选项与清单的形状，
+    其余（逐项状态机、落盘、预览、销号）在两种模式下逐字相同。
   -->
   <section data-testid="export-panel" class="fixed inset-0 z-30 overflow-y-auto bg-white p-4">
     <header class="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
-      <h2 class="text-2xl font-bold text-slate-900">导出图纸</h2>
-      <button
-        data-testid="export-close"
-        class="min-h-11 rounded border border-slate-300 px-4 text-base"
-        @click="emit('close')"
-      >
-        关闭
-      </button>
+      <h2 class="text-2xl font-bold text-slate-900">{{ mode === "sheet" ? "导出施工图" : "打印" }}</h2>
+      <button data-testid="export-close" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('close')">关闭</button>
     </header>
 
-    <!-- 计划摘要：纯计算，不建画布（规格 §10.2） -->
+    <!-- 摘要与选项：纯计算，不建画布（规格 §10.2） -->
     <div class="mx-auto mt-3 max-w-3xl space-y-1">
-      <p data-testid="export-summary-sheet" class="text-base text-slate-700">{{ sheetSummary }}</p>
-      <p v-if="labelsOmitted" data-testid="export-warning-labels" class="text-base text-amber-700">画布上限只有 {{ labelsOmitted.maxEdge }} px，格内色号画不下（每格 {{ labelsOmitted.cellPx }} px，低于 {{ SHEET_LABEL_MIN_CELL_PX }} px）；建议减少豆数或改小图纸。</p>
-      <p data-testid="export-summary-legend" class="text-base text-slate-700">{{ legendSummary }}</p>
-      <p data-testid="export-summary-share" class="text-base text-slate-700">{{ shareSummary }}</p>
+      <p v-if="mode === 'sheet'" data-testid="export-summary-sheet" class="text-base text-slate-700">
+        一张 {{ sheetPlan.canvasWidth }}×{{ sheetPlan.canvasHeight }} px 的施工图：{{ pattern.width }} × {{ pattern.height }} 格、{{ sheetPlan.cellPx }} px/格、含格内色号，底部带全图用料条。
+      </p>
+      <p v-if="mode === 'print'" data-testid="export-summary-print" class="text-base text-slate-700">
+        共 {{ pageCount }} 页（每页一块 {{ boardSize }}×{{ boardSize }} 板 · {{ paper.toUpperCase() }}）· 打印时选「适合页面」，页眉写明了每格实际毫米。
+      </p>
+      <div v-if="mode === 'print'" class="flex flex-wrap gap-2 pt-2">
+        <button data-testid="print-board-29" :aria-pressed="boardSize === 29" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="boardSize = 29">29 标准板</button>
+        <button data-testid="print-board-58" :aria-pressed="boardSize === 58" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="boardSize = 58">58 大板</button>
+        <button data-testid="print-paper-a4" :aria-pressed="paper === 'a4'" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="paper = 'a4'">A4</button>
+        <button data-testid="print-paper-a3" :aria-pressed="paper === 'a3'" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="paper = 'a3'">A3</button>
+      </div>
       <p v-if="usages.length === 0" data-testid="export-empty-note" class="text-base text-amber-700">这张图纸没有可拼的像素</p>
       <p v-if="showsLongPressHint" class="text-base text-slate-500">手机上也可以长按下面的预览图存进相册。</p>
     </div>
 
     <!-- 逐项：一项一个「保存」，互不影响 -->
     <ul class="mx-auto mt-4 max-w-3xl space-y-3">
-      <li
-        v-for="item in items"
-        :key="item.id"
-        :data-testid="`export-item-${item.id}`"
-        class="rounded border border-slate-200 p-3"
-      >
+      <li v-for="item in items" :key="item.id" :data-testid="`export-item-${item.id}`" class="rounded border border-slate-200 p-3">
         <div class="flex flex-wrap items-center gap-3">
           <span class="text-base text-slate-900">{{ item.label }}</span>
-          <button
-            :data-testid="`export-save-${item.id}`"
-            :disabled="item.status === 'busy'"
-            class="min-h-11 rounded bg-slate-900 px-6 text-base text-white disabled:opacity-50"
-            @click="saveItem(item)"
-          >
-            保存
-          </button>
+          <button :data-testid="`export-save-${item.id}`" :disabled="item.status === 'busy'" class="min-h-11 rounded bg-slate-900 px-6 text-base text-white disabled:opacity-50" @click="saveItem(item)">保存</button>
           <span class="text-base text-slate-600">{{ statusText(item) }}</span>
         </div>
-        <img
-          v-if="item.previewUrl !== ''"
-          :data-testid="`export-preview-${item.id}`"
-          :src="item.previewUrl"
-          alt="导出预览"
-          class="mt-2 max-h-64 rounded border border-slate-200"
-        />
+        <img v-if="item.previewUrl !== ''" :data-testid="`export-preview-${item.id}`" :src="item.previewUrl" alt="导出预览" class="mt-2 max-h-64 rounded border border-slate-200" />
       </li>
     </ul>
   </section>

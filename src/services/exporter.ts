@@ -20,8 +20,8 @@ import type { RenderTarget2D } from "@/core/render/types";
  * 真实判别力在规格 §14 的人工清单。
  */
 
-/** 导出的内容标签；就是文件名中段那三个词（规格 §8 / 契约 §2）。 */
-export type ExportItemLabel = "施工图" | "用量表" | "分享图";
+/** 导出的内容标签；就是文件名中段那两个词（规格 §8 / 契约 §2）。 */
+export type ExportItemLabel = "施工图" | "打印";
 
 /**
  * 自检采样点的 x / y。
@@ -31,8 +31,6 @@ export type ExportItemLabel = "施工图" | "用量表" | "分享图";
  * （信息条里有字，可能正好压在探针点上），且与图纸内容、格像素、用色数**全都无关**，所以它对一张
  * 合法图纸不可能误报；反过来「分配成功但内容全空」会让它读回 0，正是要抓的形态。选「最后一格」会
  * 选到空格上，那条自检就会对合法图纸误报（规格 §9 第 5 条点名了这条）。
- *
- * **分享图不调用自检**：它按设计是透明的，没有「必定不透明」的点（同一裁定）。
  */
 const SELF_CHECK_X = 2;
 const SELF_CHECK_Y = 2;
@@ -45,7 +43,7 @@ const SELF_CHECK_Y = 2;
  * 由上层决定怎么办（`ExportPanel` 显示失败原因；上限的真值由 `/lab/canvas` 实测后回写
  * `EXPORT_MAX_EDGE`）。校验写在**任何写操作之前**（`AGENTS.md`「入口校验」）。
  *
- * **消费者**：`ExportPanel.vue`（每张产物渲染前建画布）。
+ * **消费者**：`services/sheetExport.ts`（每张产物渲染前建画布）。
  */
 export function createCanvasStrict(width: number, height: number): HTMLCanvasElement {
   if (!Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1) {
@@ -66,9 +64,9 @@ export function createCanvasStrict(width: number, height: number): HTMLCanvasEle
  * 取 2D 上下文，返回 core 渲染器要的 `RenderTarget2D`；拿不到即抛（不静默返回 `null`，
  * 让调用方在别处裸崩成 `TypeError`）。
  *
- * **消费者**：`ExportPanel.vue` 把返回值直接传给 `core/render/sheet.ts` / `share.ts`——
- * 返回类型**就是** `RenderTarget2D`，所以 `drawSheetTile(requireContext2D(canvas), …)` 原样可编译，
- * 面板里**不散落 cast**。
+ * **消费者**：`services/sheetExport.ts` 把返回值直接传给 `core/render/sheet.ts`——
+ * 返回类型**就是** `RenderTarget2D`，所以 `drawSheet(requireContext2D(canvas), …)` 原样可编译，
+ * 调用方里**不散落 cast**。
  *
  * **为什么这里必须有一次具名窄化**（2026-10-05 由任务 3 的审查用编译器实测、控制者裁定）：
  * `CanvasRenderingContext2D` 与 `RenderTarget2D` **并不严格结构兼容**，实测**四处**不合：
@@ -118,7 +116,7 @@ function requireRawContext2D(canvas: HTMLCanvasElement): CanvasRenderingContext2
  * 自己保存了一张图。注意 happy-dom 的 `toBlob` 给的是**大小 0 的 Blob**（不是 `null`），
  * 那条路径由 `downloadBlob` 的「blob 大小为 0」守卫兜住。
  *
- * **消费者**：`ExportPanel.vue`（渲染完成后取 PNG）。
+ * **消费者**：`services/sheetExport.ts`（渲染完成后取 PNG）。
  */
 export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise<Blob>((resolve, reject) => {
@@ -173,7 +171,9 @@ const REVOKE_DELAY_MS = 1000;
  * 一个永不回收的节点）。不挂载 ⇒ 没有需要清理的节点，需要 `finally` 兜住的只剩 object URL 这一项。
  * 用例用 `anchor.parentNode === null` 钉住这条决定。
  *
- * **消费者**：`ExportPanel.vue`（用户点「保存」后）。
+ * **消费者**：`services/platform/browserPlatform.ts` 的 `album.save`（浏览器落点那一支）
+ * ——面板经能力层 `getPlatform().album.save(blob, filename)` 落盘，不直调本函数
+ * （`src/__tests__/platformGate.test.ts` 的 G4 守着这条接线）。
  */
 export function downloadBlob(blob: Blob, filename: string): void {
   // 两条守卫收敛到 `services/platform/guards.ts` 的 `requireSavableBlob`（规格 §4.4「守卫」）：
@@ -202,9 +202,9 @@ export function downloadBlob(blob: Blob, filename: string): void {
  *
  * **采样点为什么是 (2, 2)**：见 `SELF_CHECK_X` 的注释——它在左上角边距里，始终白底、不放任何文字。
  *
- * **消费者 = `ExportPanel.vue`（生产消费者，契约 §2b 已补）**：每张渲染完成之后、`canvasToBlob` 之前
- * 调用它；**面板若不调用它，它就是零消费者，属缺陷**（`AGENTS.md`「公开 API ≠ 被使用的 API」）。
- * **分享图不调用自检**——它按设计是透明的，没有「必定不透明」的点（控制者裁定 2026-10-05）。
+ * **消费者 = `services/sheetExport.ts`（生产消费者，契约 §2b 已补）**：每张渲染完成之后、
+ * `canvasToBlob` 之前调用它；**渲染通道若不调用它，它就是零消费者，属缺陷**（`AGENTS.md`
+ * 「公开 API ≠ 被使用的 API」）。
  */
 export function assertCanvasPainted(canvas: HTMLCanvasElement): void {
   const ctx = requireRawContext2D(canvas);
@@ -218,19 +218,20 @@ export function assertCanvasPainted(canvas: HTMLCanvasElement): void {
 }
 
 /**
- * 产物文件名（模板已并入契约 §2）：`<清洗后的工程名>-施工图-r{行}c{列}.png` /
- * `<清洗后的工程名>-用量表.png` / `<清洗后的工程名>-分享图.png`——**非分片项不带序号**。
- * 分片序号 **1 起**（`rowIndex + 1`），与施工图页脚「第 r/c 片」同一口径。
+ * 产物文件名（模板已并入契约 §2）：`<清洗后的工程名>-施工图.png` /
+ * `<清洗后的工程名>-打印-r{行}c{列}.png`——**单张施工图不带序号，打印页必须带**。
+ * 打印的行列序号 **1 起**（`rowIndex + 1` / `colIndex + 1`），与打印页页眉「第 r 行 第 c 列」同一口径。
  *
  * **清洗复用 `normalizeProjectName`，不写第二份**（规格 §8 明写）：它同时给出「非空」与
  * 「≤ `PROJECT_NAME_MAX` 字」两条约束，并在非法时抛它自己的中文消息——本函数**不吞、不改写**，
  * 让「名字非法」在导出这一步与在保存工程那一步是同一句话。
  *
- * 四个运行期守卫（TS 类型挡不住 `JSON.parse` / 强转 / 运行期拼接）：内容标签必须是三值之一
- * （否则会静默产出一个 `X-海报.png`）；`用量表` / `分享图` 带了 `tile` 即抛（静默忽略会让调用方
- * 以为自己传对了）；施工图必须有分片序号；序号必须是 **≥0 的安全整数**（负数或小数会静默产出 `r0c0`
- * 或 `r1c2.5`，看起来完全正常；判据用 `Number.isSafeInteger` 而不是 `Number.isInteger`——`1e21` 是
- * 「≥0 的整数」但 `1e21 + 1 === 1e21`，加一之后仍是同一张片号，消息因此也逐字写「安全整数」，
+ * 四个运行期守卫（TS 类型挡不住 `JSON.parse` / 强转 / 运行期拼接）：内容标签必须是两值之一
+ * （否则会静默产出一个 `X-海报.png`）；`施工图` 带了 `tile` 即抛（静默忽略会让调用方以为自己
+ * 传对了）；`打印` 必须有分片序号（缺了会静默把每一页都命名成同一张图，覆盖前一张）；
+ * 序号必须是 **≥0 的安全整数**（负数或小数会静默产出 `r0c0` 或 `r1c2.5`，看起来完全正常；
+ * 判据用 `Number.isSafeInteger` 而不是 `Number.isInteger`——`1e21` 是「≥0 的整数」但
+ * `1e21 + 1 === 1e21`，加一之后仍是同一张片号，消息因此也逐字写「安全整数」，
  * 2026-10-05 按任务 3 审查的 F2 更正）。
  *
  * **消费者**：`ExportPanel.vue`（生成每个产物的下载文件名）。
@@ -241,14 +242,14 @@ export function exportFilename(
   tile?: { rowIndex: number; colIndex: number },
 ): string {
   const safeName = normalizeProjectName(projectName);
-  if (item !== "施工图" && item !== "用量表" && item !== "分享图") {
+  if (item !== "施工图" && item !== "打印") {
     throw new Error(`导出内容标签非法：${item}`);
   }
-  if (item !== "施工图") {
+  if (item === "施工图") {
     // 「没传」只认 `undefined`；显式传进来的 `null`（`JSON.parse` / 强转都能给）同样算「带了序号」
     // 这条语义非法——与 `requireMaxEdge` 里「显式 `null` 不算没传」同源（2026-10-05 修复波 A-m10）。
     if (tile !== undefined) {
-      throw new Error("用量表 / 分享图不带分片序号");
+      throw new Error("施工图不带分片序号");
     }
     return `${safeName}-${item}.png`;
   }
@@ -256,7 +257,7 @@ export function exportFilename(
   // （`JSON.parse` / 强转都能给），下一步 `tile.rowIndex` 会落成一句**裸 TypeError**
   //（`Cannot read properties of null`）——那是没有契约口径的失败。这里按契约消息响亮拒绝。
   if (tile === undefined || tile === null) {
-    throw new Error("施工图的分片序号缺失");
+    throw new Error("打印的分片序号缺失");
   }
   if (
     !Number.isSafeInteger(tile.rowIndex) ||

@@ -7,8 +7,9 @@
 // 分层：core 不许碰 DOM，所以建画布与 toBlob 只能在这一层；本文件不读 store、不做落盘
 //（落盘经 `getPlatform().album.save`，由调用方决定），也不拼文件名（走 `exportFilename`）。
 import type { Palette } from "@/core/palette/types";
+import { cellAt } from "@/core/pattern/edit";
 import type { ColorUsage } from "@/core/pattern/stats";
-import type { Pattern } from "@/core/pattern/types";
+import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { planBoardPage, planSheet } from "@/core/render/layout";
 import { drawBoardPage, drawSheet, type SheetMeta } from "@/core/render/sheet";
 import type { RenderTarget2D } from "@/core/render/types";
@@ -118,4 +119,55 @@ export async function renderBoardPageBlob(
 /** `meta.generatedAt` 的唯一来源（壳里与浏览器里都是本地时间的中文格式）。 */
 export function nowText(): string {
   return new Date().toLocaleString("zh-CN");
+}
+
+/**
+ * 一页范围内的用量（O(本页格数)）。空格不计；结果按**色卡下标升序**排列。
+ *
+ * **为什么按色卡下标排、而不是按用量降序**（与 `patternStats` 的差别，如实写明）：用料条只列
+ * 本页要用的色，顺序稳定、可回归比「哪个色多」更重要——同一页两次导出的用料条必须逐位相同。
+ * 两个函数相同的地方是「只数非空格、`code` / `name` / `count` 的取值口径」。
+ *
+ * **它是唯一一份「按格范围统计用量」的实现**：面板的 `pageUsages` 只调它，不自己走格循环。
+ * 色号不在色卡里时响亮失败（静默跳过会让用料条少一行、而图看起来完全正常）。
+ */
+export function usagesInRange(
+  pattern: Pattern,
+  palette: Palette,
+  plan: { readonly originCol: number; readonly originRow: number; readonly cols: number; readonly rows: number },
+): readonly ColorUsage[] {
+  const counts = new Map<number, number>();
+  for (let row = plan.originRow; row < plan.originRow + plan.rows; row += 1) {
+    for (let col = plan.originCol; col < plan.originCol + plan.cols; col += 1) {
+      const value = cellAt(pattern, col, row);
+      if (value === EMPTY) continue;
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([value, count]) => {
+      const color = palette.colors[value];
+      if (color === undefined) throw new Error(`色卡里没有下标 ${value} 的颜色`);
+      return { code: color.code, name: color.name, count };
+    });
+}
+
+/**
+ * 某一页在文件名里的分片序号（0 起）。**行 / 列取自 `planBoardPage`**，不是在调用方重算除法。
+ *
+ * **为什么它必须在这里**（B6 任务 10）：页身份（`boardRow` / `boardCol`）与页数（`printBoardCount`）
+ * 是同一份分页数学的两个出口；调用方各自写一遍 `Math.floor(index / cols)` 就是第二份实现——
+ * 它不会报错，只会在某一天与 `planBoardPage` 的网格口径漂移，而文件名看起来完全正常。
+ */
+export function boardPageTile(
+  pattern: Pattern,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  boardSize: 29 | 58,
+  paper: "a4" | "a3",
+  pageIndex: number,
+): { readonly rowIndex: number; readonly colIndex: number } {
+  const plan = planBoardPage(pattern, palette, usages, { boardSize, paper, index: pageIndex });
+  return { rowIndex: plan.boardRow, colIndex: plan.boardCol };
 }

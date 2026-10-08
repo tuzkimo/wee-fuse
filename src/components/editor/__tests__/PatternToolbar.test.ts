@@ -231,11 +231,11 @@ describe("触控目标与字号", () => {
   });
 });
 
-describe("导出入口", () => {
-  // 契约 §2b / 规格 §13.1：工具栏**只加**一个 `export` 事件与一颗按钮，既有语义不动。
+describe("导出与打印入口", () => {
+  // 契约 §2b / 规格 §13.1：工具栏**只加** `export` / `print` 两个事件与两颗按钮，既有语义不动。
   //
-  // 尺寸类名也在这里断：上面那条既有用例的 testid 清单是**硬编码**的、不含 B4 新增的 `export`，
-  // 而它属于「既有断言，一行不许改」——新增的这颗按钮否则没有任何尺寸类断言。
+  // 尺寸类名也在这里断：上面那条既有用例的 testid 清单是**硬编码**的、不含 B4 新增的 `export`
+  // 与 B6 新增的 `print`，而它属于「既有断言，一行不许改」——新增的这两颗按钮否则没有任何尺寸类断言。
   // （控制者裁定 5 采纳本处置；把新按钮加进那条清单需要改既有断言，如实记为**延后 Minor**，
   //   见报告清单第 8 条。）
   it("点导出按钮 emit 一次空载荷的 export，且触控目标 ≥44px、字号 ≥16px", async () => {
@@ -248,8 +248,27 @@ describe("导出入口", () => {
     await button.trigger("click");
     // 断言的是**载荷**：`toEqual([[]])` 同时钉住「只 emit 一次」与「是空载荷」
     expect(wrapper.emitted("export")).toEqual([[]]);
-    // 串台守卫：复制粘贴漏改事件名（emit `save`）时这里红
+    // 串台守卫：复制粘贴漏改事件名（emit `save` / `print`）时这里红
     expect(wrapper.emitted("save")).toBeUndefined();
+    expect(wrapper.emitted("print")).toBeUndefined();
+  });
+
+  /**
+   * B6 任务 10：工具栏多一个「打印」入口（规格 §8 的两个入口共用 `EditorPage` 那一个面板）。
+   *
+   * 两条断言缺一不可：`print` 被 emit（接线对）**且** `export` 没被 emit（复制粘贴漏改事件名
+   * 时，「点打印结果打开的是施工图面板」不会报任何错）。
+   */
+  it("点打印 emit 一次 print", async () => {
+    const wrapper = mountToolbar();
+    const button = wrapper.get("[data-testid='print']");
+    expect(button.text()).toContain("打印");
+    expect(button.classes()).toContain("min-h-11"); // 2.75rem = 44px
+    expect(button.classes()).toContain("text-base"); // 1rem = 16px
+
+    await button.trigger("click");
+    expect(wrapper.emitted("print")).toEqual([[]]);
+    expect(wrapper.emitted("export")).toBeUndefined();
   });
 });
 
@@ -259,7 +278,7 @@ const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
   ["history", ["undo", "redo"]],
   ["display", ["toggle-grid", "toggle-labels"]],
   ["view", ["zoom-fit", "zoom-in", "zoom-out"]],
-  ["output", ["export", "editor-save"]],
+  ["output", ["export", "print", "editor-save"]],
 ];
 
 describe("五行分组", () => {
@@ -267,13 +286,49 @@ describe("五行分组", () => {
     const wrapper = mountToolbar();
     for (const [row, testids] of TOOLBAR_ROWS) {
       const container = wrapper.get(`[data-testid='toolbar-row-${row}']`);
+      // **同时收 button 与 `span[data-testid]`**：那颗「未保存」指示是 `span`（下面单独一条用例
+      // 在 `dirty: true` 下钉它的归属），只遍历 `button` 时它落在哪一行完全不可观察。
       const found = container
-        .findAll("button")
-        .map((button) => button.attributes("data-testid"))
+        .findAll("button, span[data-testid]")
+        .map((element) => element.attributes("data-testid"))
         .filter((id): id is string => id !== undefined);
       expect(found).toEqual([...testids]);
     }
     // 恰好 5 行：多一行说明有人顺手加了没归类的按钮
     expect(wrapper.findAll("[data-testid^='toolbar-row-']")).toHaveLength(TOOLBAR_ROWS.length);
+  });
+
+  /**
+   * **行与行之间的顺序**（任务 4 的审查者点名的覆盖缺口）：上面那条用例钉的是「行内 testid 序列」
+   * 与「恰好 5 行」——把 `history` 与 `display` 两行**对调**仍然全绿，而规格 §5.1 是**位置口径**
+   * （用户找按钮靠位置）。这条把行本身的顺序钉死。
+   */
+  it("行的顺序是产品口径：tools → history → display → view → output", () => {
+    const wrapper = mountToolbar();
+    expect(
+      wrapper
+        .findAll("[data-testid^='toolbar-row-']")
+        .map((row) => row.attributes("data-testid")),
+    ).toEqual([
+      "toolbar-row-tools",
+      "toolbar-row-history",
+      "toolbar-row-display",
+      "toolbar-row-view",
+      "toolbar-row-output",
+    ]);
+  });
+
+  /**
+   * **`editor-dirty` 的归属**：它是 `<span>`，落在哪一行原先没有被任何断言钉住（遍历 `button`
+   * 的写法看不见它）。`dirty: true` 时 output 行必须是 `export / print / editor-save / editor-dirty`
+   * ——把指示挪到别的行、或挪到「保存」之前，都会在这里红。
+   */
+  it("output 行在 dirty 时同时收 button 与 span：export / print / editor-save / editor-dirty", () => {
+    const wrapper = mountToolbar({ dirty: true });
+    const found = wrapper
+      .get("[data-testid='toolbar-row-output']")
+      .findAll("button, span[data-testid]")
+      .map((element) => element.attributes("data-testid"));
+    expect(found).toEqual(["export", "print", "editor-save", "editor-dirty"]);
   });
 });

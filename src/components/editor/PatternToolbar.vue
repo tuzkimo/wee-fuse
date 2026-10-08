@@ -39,6 +39,7 @@ const emit = defineEmits<{
   "zoom-out": [];
   save: [];
   export: [];
+  print: [];
 }>();
 
 /** 三个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
@@ -123,8 +124,13 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
     </div>
 
     <div data-testid="toolbar-row-output" class="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
+      <!-- 导出 / 打印面板都由 `EditorPage` 渲染（唯一装配点）：本组件只知道用户点了哪一个，
+           不持有面板状态、也不 import 任何 store。 -->
       <button data-testid="export" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('export')">
         导出
+      </button>
+      <button data-testid="print" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('print')">
+        打印
       </button>
       <button
         data-testid="editor-save"
