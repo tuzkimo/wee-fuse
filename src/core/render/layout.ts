@@ -490,8 +490,18 @@ export function planSheet(
     y: gridY,
   });
   const legendTop = gridY + pattern.height * cellPx + LEGEND_PAD_TOP;
-  const band = { ...planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, legendTop) };
+  // 用料条**只调一次** `planLegendBand`：`itemCols` / `itemRows` 与 `top` 无关，上面那次已经把它们算准了，
+  // 这里只需把真正的顶边补上（再调一次会让 `requireUsages` 对每一项多跑一遍）。
+  const band: LegendBandPlan = { ...legend, top: legendTop };
   const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
+  // **画布宽取「网格」与「用料条」的较大者**（任务 5 审查者发现的缺陷）：`itemCols` 是按画布上限算的，
+  // 而网格宽度只取决于格像素——116×116 的最坏情况下用料条需要 4048 px 而网格只给 3592 px，
+  // 不取 max 会让第 18–19 列（约 16% 的用料项）静默落在画布外。
+  // `min(band.itemCols, safeUsages.length)` 是必需的：只按 itemCols 算会把 4 色小图纸也撑到 4048。
+  const bandWidth =
+    safeUsages.length === 0
+      ? 0
+      : SHEET_MARGIN + Math.min(band.itemCols, safeUsages.length) * band.itemWidth + SHEET_MARGIN;
 
   return {
     kind: "sheet",
@@ -501,10 +511,12 @@ export function planSheet(
     cols: pattern.width,
     rows: pattern.height,
     ...geometry,
-    canvasWidth: gridX + pattern.width * cellPx + SHEET_MARGIN,
+    canvasWidth: Math.max(gridX + pattern.width * cellPx + SHEET_MARGIN, bandWidth),
     canvasHeight: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H + SHEET_MARGIN,
     labelFontPx,
     tickFontPx,
+    // `lineOneY` / `lineTwoY` 是**文本顶边**（渲染器用 `textBaseline = "top"`）；
+    // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY ∓ LEGEND_FOOTER_LINE_H`。
     infoBar: { lineOneY: SHEET_MARGIN, lineTwoY: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2) },
     legend: band,
     footerY: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H / 2,

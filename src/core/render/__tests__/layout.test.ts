@@ -479,7 +479,7 @@ function makeBigUsages(count = 221): ColorUsage[] {
   return Array.from({ length: count }, (_, i) => ({ code: `C${i}`, name: `色${i}`, count: i + 1 }));
 }
 
-/** `CELLS_6X6` 那 33 个实心格的用量。**计数独立数一遍**（0 号 26 颗、1 号 5 颗、2 号 1 颗、3 号 1 颗），不用被测实现。 */
+/** 33 个实心格的用量（26 + 5 + 1 + 1 = 33）。**计数独立数一遍**，不用被测实现。 */
 function makeUsages(): ColorUsage[] {
   return [
     { code: "A1", name: "白", count: 26 },
@@ -490,13 +490,44 @@ function makeUsages(): ColorUsage[] {
 }
 
 describe("planSheet（B6：单张施工图）", () => {
-  it("116×116 + 221 色仍放得下色号，且两边都在 4096 内（常量关系契约）", () => {
+  it("116×116 + 221 色的最坏预算逐字钉住（30 / 11 / 4048 / 3996）", () => {
     const plan = planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages());
-    expect(plan.labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
-    expect(plan.cellPx).toBeGreaterThanOrEqual(Math.ceil(SHEET_MIN_LABEL_FONT_PX / 0.38));
+    // **字面量**，不是松上界：只断「>= / <=」的话，实现算出 27 / 3480 / 3800 也照样绿
+    expect(plan.cellPx).toBe(30);
+    expect(plan.labelFontPx).toBe(11);
+    expect(plan.canvasWidth).toBe(4048);
+    expect(plan.canvasHeight).toBe(3996);
     expect(plan.canvasWidth).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     expect(plan.canvasHeight).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
-    expect(plan.canvasWidth).toBe(SHEET_MARGIN + SHEET_RULER_LEFT + 116 * plan.cellPx + SHEET_MARGIN);
+    // 判据与实现的守卫同源（`round(cellPx × 0.38) ≥ 10`）；写成 `cellPx ≥ ceil(10/0.38)` 是更强但碰巧成立的伪关系
+    expect(Math.round(plan.cellPx * 0.38)).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
+  });
+
+  it("每一项用料都落在画布内（画布宽必须取「网格」与「用料条」的较大者）", () => {
+    const usages = makeBigUsages();
+    const plan = planSheet(makePattern(116, 116), makeBigPalette(), usages);
+    for (let i = 0; i < usages.length; i += 1) {
+      const left = SHEET_MARGIN + (i % plan.legend.itemCols) * plan.legend.itemWidth;
+      // 数量是右对齐的：右端 = 项左沿 + 项宽 − 右内缩
+      expect(left + plan.legend.itemWidth - plan.legend.countRightPad).toBeLessThanOrEqual(
+        plan.canvasWidth,
+      );
+    }
+    expect(plan.canvasWidth).toBe(
+      Math.max(
+        SHEET_MARGIN + SHEET_RULER_LEFT + 116 * plan.cellPx + SHEET_MARGIN,
+        SHEET_MARGIN + Math.min(plan.legend.itemCols, usages.length) * plan.legend.itemWidth + SHEET_MARGIN,
+      ),
+    );
+    // 小图纸不许被用料条无谓撑宽：4 色 1 行 ⇒ 只按用到的 4 列算
+    const small = planSheet(makePattern(4, 2), makePalette(), makeUsages());
+    expect(small.canvasWidth).toBe(
+      Math.max(
+        SHEET_MARGIN + SHEET_RULER_LEFT + 4 * small.cellPx + SHEET_MARGIN,
+        SHEET_MARGIN + Math.min(small.legend.itemCols, 4) * small.legend.itemWidth + SHEET_MARGIN,
+      ),
+    );
+    expect(small.canvasWidth).toBeLessThan(1000);
   });
 
   it("小图纸取 40 px/格上限（不会被放大到画布上限）", () => {
