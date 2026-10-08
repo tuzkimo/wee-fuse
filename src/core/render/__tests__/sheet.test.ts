@@ -833,12 +833,16 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     const { target, calls } = createMockTarget();
     drawSheet(target, pattern, palette, usages, plan, makeMeta());
 
+    // **左沿取自 `plan.legend.left`，不写 `SHEET_MARGIN`**：渲染器读的是计划给的字段，
+    // 断言里写死常量的话，把渲染器改成「自己用 SHEET_MARGIN」也照样绿（打印页的 `left` 不是 SHEET_MARGIN）。
+    // 单张施工图这一步顺带钉住「计划给的 left 就是 SHEET_MARGIN」——这正是「行为不变」的判据。
+    expect(plan.legend.left).toBe(SHEET_MARGIN);
     // 色块：每个色号一颗 `plan.legend.swatchSize` 的方块，y = 带内该行的中线 − 半个色块
     for (let i = 0; i < usages.length; i += 1) {
       const col = i % plan.legend.itemCols;
       const row = Math.floor(i / plan.legend.itemCols);
       const centerY = plan.legend.top + row * plan.legend.rowHeight + plan.legend.rowHeight / 2;
-      const swatch = fillAt(calls, SHEET_MARGIN + col * plan.legend.itemWidth, centerY - plan.legend.swatchSize / 2);
+      const swatch = fillAt(calls, plan.legend.left + col * plan.legend.itemWidth, centerY - plan.legend.swatchSize / 2);
       expect(swatch?.w).toBe(plan.legend.swatchSize);
       expect(swatch?.fillStyle).toBe(rgbCss(palette.colors[i]!.rgb));
     }
@@ -848,7 +852,7 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     const firstCenterY = plan.legend.top + plan.legend.rowHeight / 2;
     expect(codes[0]).toMatchObject({
       textAlign: "left",
-      x: SHEET_MARGIN + plan.legend.codeX,
+      x: plan.legend.left + plan.legend.codeX,
       y: firstCenterY,
     });
     const count = calls.texts.find(
@@ -856,7 +860,7 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
     );
     expect(count).toMatchObject({
       textAlign: "right",
-      x: SHEET_MARGIN + plan.legend.itemWidth - plan.legend.countRightPad,
+      x: plan.legend.left + plan.legend.itemWidth - plan.legend.countRightPad,
     });
   });
 

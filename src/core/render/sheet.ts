@@ -572,10 +572,10 @@ export function drawLegend(
 /**
  * 用料条（B6 起嵌在单张施工图 / 打印页的网格下沿）：色块 + 色号 + 数量的多列排布。
  *
- * **几何全部来自 `LegendBandPlan`**（`top` / `itemCols` / `itemWidth` / `rowHeight` / `swatchSize` /
+ * **几何全部来自 `LegendBandPlan`**（`left` / `top` / `itemCols` / `itemWidth` / `rowHeight` / `swatchSize` /
  * `codeX` / `countRightPad`，由 `planLegendBand` 算出）——渲染器不自己乘除，也不读本文件里那套旧独立
  * 用量表的私有常量（`LEGEND_SWATCH_SIZE = 20` / `LEGEND_CODE_X = 28` / `LEGEND_RIGHT_PAD`，任务 11 删）。
- * `left` 是带的左边距（单张施工图与打印页都给 `SHEET_MARGIN`）。
+ * `left` 是带的左沿：单张施工图是 `SHEET_MARGIN`（画布宽已按条带加宽过），打印页是「可打印区内居中」。
  *
  * **`usages` 是入参**：单张施工图传全图用量，打印页传**本页**用量——同一个函数服务两者，所以它不能从
  * plan 里读（plan 是纯数据，不含用量的副本）。
@@ -677,7 +677,10 @@ export function drawSheet(
   drawGridLines(target, plan);
   drawRulers(target, plan);
   drawBoardLabels(target, plan);
-  drawLegendBand(target, palette, usages, plan.legend, SHEET_MARGIN);
+  // **用料条的横向落位来自计划的 `left`**，不要传 `SHEET_MARGIN`：打印页的条带必须在**可打印区**内居中，
+  // 复用 `SHEET_MARGIN` 会让 29 板 + A4 + 221 色的条带右沿越入右边距 190px（落进不可打印区，任务 8 实测
+  // ——见 `LegendBandPlan.left` 的 JSDoc）。单张施工图的 `left` 恰好就是 `SHEET_MARGIN`，行为不变。
+  drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
 
   // 末行三行，`plan.footerY` 是页脚带的**中线**：`SHEET_FOOTER_H = 44` 正好放得下三行 12px
   target.fillStyle = TEXT_INK;

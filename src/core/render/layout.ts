@@ -208,6 +208,11 @@ export interface SheetPlan {
 /** 底部用料条带的几何（B6 新增）。 */
 export interface LegendBandPlan {
   readonly top: number;
+  /**
+   * **条带的左沿**（任务 8 的实现者实测补入）：打印页必须把条带在**可打印区**内居中，
+   * 不能复用网格偏移——29 板 + A4 + 221 色的条带右沿会越入右边距 190px（16mm），落进不可打印区。
+   */
+  readonly left: number;
   readonly itemCols: number;
   readonly itemRows: number;
   readonly itemWidth: number;
@@ -529,7 +534,8 @@ export function planSheet(
   if (innerW < 1) {
     throw new Error(`画布上限 ${maxEdge} px 太小，无法生成施工图`);
   }
-  const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0);
+  // `left` 固定 `SHEET_MARGIN`：单张施工图的画布宽已经按用料条加宽过，左对齐即可
+  const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0, SHEET_MARGIN);
   const legendH = legend.itemRows * LEGEND_BAND_ROW_H + LEGEND_PAD_TOP;
   const innerH =
     maxEdge - 2 * SHEET_MARGIN - SHEET_INFO_BAR_H - SHEET_RULER_TOP - legendH - SHEET_FOOTER_H;
@@ -709,19 +715,26 @@ function requireUsages(usages: readonly ColorUsage[]): readonly ColorUsage[] {
  *
  * 只做几何：列数 = 可用宽放下几项，行数 = 色数需要几行。色块 / 色号 / 数量的落位偏移一并给出，
  * 渲染器（`drawLegendBand`）不再自己乘除。
+ *
+ * **`left` 是入参而不是按 `top` 同理回填**：单张施工图的画布宽已经按用料条加宽过，左对齐即可
+ * （传 `SHEET_MARGIN`）；打印页的画布被纸型锁死，必须自己算「在可打印区内居中」的左沿
+ * （见 `planBoardPage`）。两种口径都必须由计划给出，渲染器不许自己决定横向落位。
  */
 export function planLegendBand(
   usages: readonly ColorUsage[],
   availableWidth: number,
   top: number,
+  left: number,
 ): LegendBandPlan {
   const safe = requireUsages(usages);
   const width = requirePositiveInteger(availableWidth, "用料条可用宽度");
   requireSafeInteger(top, "用料条顶边");
+  requireSafeInteger(left, "用料条左沿");
   const itemCols = Math.max(1, Math.floor(width / LEGEND_BAND_ITEM_W));
   const itemRows = safe.length === 0 ? 0 : Math.ceil(safe.length / itemCols);
   return {
     top,
+    left,
     itemCols,
     itemRows,
     itemWidth: LEGEND_BAND_ITEM_W,
@@ -880,16 +893,18 @@ export function planBoardPage(
   const printableW = canvasWidth - 2 * marginPx;
   const printableH = canvasHeight - 2 * marginPx;
 
-  // 用料条高度只依赖「色数 + 可用宽」（见 `planLegendBand`），所以格像素可以在它之后定；top 先传 0 探一次
-  const legendProbe = planLegendBand(safeUsages, printableW, 0);
-  const legendH =
-    legendProbe.itemRows * LEGEND_BAND_ROW_H + (legendProbe.itemRows > 0 ? LEGEND_PAD_TOP : 0);
+  // 用料条高度只依赖「色数 + 可用宽」（见 `planLegendBand`），所以格像素可以在它之后定；
+  // 横向落位要到「网格落位之后」才知道，所以这里只探一次高度（`top` / `left` 都是占位）
+  const legendProbe = planLegendBand(safeUsages, printableW, 0, 0);
+  const legendH = legendProbe.itemRows * LEGEND_BAND_ROW_H + LEGEND_PAD_TOP;
   const chrome = PAGE_HEADER_H + SHEET_RULER_TOP + legendH + SHEET_FOOTER_H;
 
   // 上限是**实物大小**：纸再大也不放大（这是「永不放大超过实物」唯一的落点）
   const cellPx = Math.min(
     PRINT_BEAD_PX,
-    Math.floor(printableW / cols),
+    // **刻度带也要算进宽度预算**：只按网格算宽度，会让「刻度带 + 网格」整块超出可打印区——
+    // 58 板在 A3 上右留白只剩 98px < 118px（10mm），刻度与板号会落进不可打印区。
+    Math.floor((printableW - SHEET_RULER_LEFT) / cols),
     Math.floor((printableH - chrome) / rows),
   );
   if (cellPx < 1) {
@@ -905,15 +920,27 @@ export function planBoardPage(
   }
   const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
 
-  // 网格水平居中（含左侧刻度带），垂直从页眉下方开始
+  // 网格水平居中（含左侧刻度带），垂直从页眉下方开始。
+  // `cellPx` 已经把刻度带扣进宽度预算，所以「刻度带 + 网格」整块必然落在可打印区内。
   const gridWidth = cols * cellPx;
   const gridHeight = rows * cellPx;
   const gridX = Math.floor((canvasWidth - (SHEET_RULER_LEFT + gridWidth)) / 2) + SHEET_RULER_LEFT;
   const gridY = marginPx + PAGE_HEADER_H + SHEET_RULER_TOP;
   const geometry = makeGridGeometry({ originCol, originRow, cols, rows, cellPx, x: gridX, y: gridY });
   const legendTop = gridY + gridHeight + LEGEND_PAD_TOP;
-  // 第二次调用才是真的：此时的 top 由本页实际网格高度决定（与 `planSheet` 的两次调用同一形态）
-  const band = planLegendBand(safeUsages, printableW, legendTop);
+  // **用料条的横向落位也要有预算**：列数是按**可打印宽**算的，若复用网格偏移（`gridX − SHEET_RULER_LEFT`），
+  // 29 板 + A4 + 221 色的条带右沿会到 2552 > 可打印右界 2362（越 190px、16mm），落进不可打印区。
+  // 把条带在可打印区内居中，并把左沿放进计划（`LegendBandPlan.left`），渲染器照它落位。
+  // `max(色数, 1)` 与 `planSheet` 的 `min(itemCols, 色数)` 同一口径：空用量表不撑宽、也不算负宽度。
+  const bandCols = Math.max(1, Math.min(legendProbe.itemCols, Math.max(safeUsages.length, 1)));
+  const bandWidth = bandCols * legendProbe.itemWidth;
+  // **不再调第三次**：`itemCols` / `itemRows` / `itemWidth` 等几何与 `top` / `left` 无关，探针那次已经算准，
+  // 这里只把真正的 `top` / `left` 补上（再调一次会让 `requireUsages` 对每一项多跑一遍）。
+  const band: LegendBandPlan = {
+    ...legendProbe,
+    top: legendTop,
+    left: marginPx + Math.floor((printableW - bandWidth) / 2),
+  };
 
   return {
     kind: "board-page",

@@ -587,9 +587,9 @@ describe("planBoardPage（B6：每块板一页）", () => {
     // **不能写 `toBeCloseTo(BEAD_MM, 5)`（更不用说 6）**：`cellMm` 由**取整后的** `cellPx` 推出
     // （59 / 300 × 25.4 = 4.99533…），与 5 的差是 0.0047 = `PRINT_BEAD_PX` 的量化步长，
     // 而 `toBeCloseTo` 的第 5 位要求 |Δ| < 0.5e-5。这是像素量化的**固有**上界，不是实现误差；
-    // 判据写成「1/4 像素以内」才是既通过、又真的会因换算写错（例如除成 96dpi）而红的版本。
-    expect(Math.abs(plan.cellMm - BEAD_MM)).toBeLessThan(0.25 * (25.4 / PRINT_DPI));
-    expect(plan.cellMm).toBeCloseTo((plan.cellPx / PRINT_DPI) * 25.4, 6);
+    // 判据写成「差 ≤ 1/4 像素」才是既通过、又真的会因换算写错（例如除成 96dpi）而红的版本。
+    expect(Math.abs(plan.cellMm - BEAD_MM)).toBeLessThanOrEqual(25.4 / PRINT_DPI / 4);
+    expect(plan.cellMm).toBeCloseTo((PRINT_BEAD_PX / PRINT_DPI) * 25.4, 6);
     expect(plan.scaleRatio).toBe(1);
     expect(plan.cols).toBe(29);
     expect(plan.rows).toBe(29);
@@ -603,6 +603,35 @@ describe("planBoardPage（B6：每块板一页）", () => {
     });
     expect(plan.cellPx).toBe(PRINT_BEAD_PX);
     expect(plan.scaleRatio).toBe(1);
+  });
+
+  it("刻度带 + 网格整块落在可打印区内（左右留白 ≥ 页边距）", () => {
+    // 58 板在 A3 上：把「刻度带 + 网格」当整体居中、却不把刻度带算进宽度预算时，
+    // 右留白只剩 98px < 118px（10mm）——刻度/板号会落进不可打印区。
+    const plan = planBoardPage(makePattern(116, 116), makePalette(), makeUsages(), {
+      boardSize: 58,
+      paper: "a3",
+      index: 0,
+    });
+    const marginPx = mmToPx(PRINT_MARGIN_MM);
+    expect(plan.grid.x - SHEET_RULER_LEFT).toBeGreaterThanOrEqual(marginPx);
+    expect(plan.grid.x + plan.grid.width).toBeLessThanOrEqual(plan.canvasWidth - marginPx);
+  });
+
+  it("用料条也落在可打印区内（本页色多时不许越入页边距）", () => {
+    // 29 板 + A4 + 221 色：条带按网格偏移落位时右沿 2552 > 可打印右界 2362（越 190px）。
+    const plan = planBoardPage(makePattern(116, 116), makeBigPalette(), makeBigUsages(), {
+      boardSize: 29,
+      paper: "a4",
+      index: 0,
+    });
+    const marginPx = mmToPx(PRINT_MARGIN_MM);
+    const count = makeBigUsages().length;
+    const bandRight =
+      plan.legend.left +
+      Math.min(plan.legend.itemCols, count) * plan.legend.itemWidth;
+    expect(plan.legend.left).toBeGreaterThanOrEqual(marginPx);
+    expect(bandRight).toBeLessThanOrEqual(plan.canvasWidth - marginPx);
   });
 
   it("58 + A3：每格 ≥ 实物的 90%（装不下才缩，且如实给出比例）", () => {
