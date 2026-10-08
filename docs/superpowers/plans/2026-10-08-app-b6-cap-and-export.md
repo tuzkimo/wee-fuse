@@ -1830,7 +1830,15 @@ export interface BoardPageRenderInput extends SheetRenderInput {
   readonly pageIndex: number;
 }
 
-/** 一页 A4/A3 打印页（每页一块板 + 本页用料）。`usages` 传的是**本页**用量，不是全图。 */
+/**
+ * 一页 A4/A3 打印页（每页一块板 + 本页用料）。
+ *
+ * **两个用量口径不能混**（控制者裁决 2026-10-08，任务 9 的审查者发现旧措辞会让调用方接错）：
+ * - `input.usages` = **全图**用量：`sheetMeta` 的 `totalBeads` / `colorCount` 与页脚那句
+ *   「全图 M 颗（K 种色）」都取自它。把本页用量填进来会把页脚的全图数静默标成本页数。
+ * - 第二个实参 `pageUsages` = **本页**用量：用料条取自它；「本页 N 颗」的 N 由渲染器
+ *   `countTileBeads` 数格子得出、不来自数组。缺省值就是 `input.usages`（不分页 / 整图那一支）。
+ */
 export async function renderBoardPageBlob(
   input: BoardPageRenderInput,
   pageUsages: readonly ColorUsage[] = input.usages,
@@ -1841,10 +1849,9 @@ export async function renderBoardPageBlob(
     index: input.pageIndex,
   });
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
-    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, {
-      ...sheetMeta(input, nowText()),
-      totalBeads: input.usages.reduce((sum, usage) => sum + usage.count, 0),
-    });
+    // **不要在这里覆写 `totalBeads`**：`sheetMeta` 内部就是对同一个 `input.usages` 折叠求和，
+    // 写第二遍是同一件事的第二份实现（口径一旦分叉，页脚与信息条会各说各话）。
+    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, sheetMeta(input, nowText()));
   });
 }
 ```
@@ -2256,6 +2263,10 @@ git grep -l 'LEGEND_BAND_ITEM_W\|LEGEND_BAND_ROW_H' -- src | ForEach-Object { (G
 
 改完必须：`grep` 全仓零命中 `SingleSheetPlan` / `LEGEND_BAND_`；`npm run test` 与 `npm run build` 全绿；
 终态常量取值与规格 §13 一致（`LEGEND_ITEM_W = 200`、`LEGEND_ROW_H = 22`）。
+
+**顺手去重一处逐字重复**（任务 9 的审查者点名）：`drawSheet` 与 `drawBoardPage` 里的「用料条与本图不符」同源校验是同一段代码写了两遍
+（`sheet.ts` 的两处 `if (plan.legend.itemRows !== Math.ceil(usages.length / plan.legend.itemCols))`）⇒ 抽成模块私有 `requireLegendSameSource(usages, plan)`，
+两处都调它（两条既有用例都还在，改完必须仍绿）。
 
 - [ ] **步骤 4：运行测试验证通过 + 全量构建**
 
@@ -2747,8 +2758,12 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
 23. **扩 `layoutGate` 的扫描面（或改注释措辞）**（任务 8 的复审者点名）：`TileGeometry.cellPx` 的契约注释说「渲染器读它就是缺陷（词法闸门会红）」，
    但 `layoutGate.test.ts` 的 glob 只有 `../{sheet,share}.ts` ⇒ 将来若有独立的打印页渲染器文件，它读 `plan.cellPx` 不会被任何闸门抓到。
    任务 9 的 `drawBoardPage` 落在 `sheet.ts`（所以今天是被覆盖的），任务 11 删 `share.ts` 时**顺手把 glob 改成覆盖 `core/render/` 下所有渲染器文件**，或把那条注释收窄成「本文件所属的渲染器」。
-24. `src/core/render/__tests__/layout.test.ts:581-583` 的注释声称「把 `requireBoardSize` 删成 `return value as PrintBoardSize` ⇒ 全套一条都不会红」——
+24. `src/core/render/__tests__/layout.test.ts` 的注释声称「把 `requireBoardSize` 删成 `return value as PrintBoardSize` ⇒ 全套一条都不会红」——
    不实（`:714-725` 那条 `boardSize: 30` 的用例正是靠它判别）；真正零覆盖的是 `requirePaper` 与 `printBoardCount` 的 ≥1 ⇒ 据实改写这句注释。
+25. `src/services/__tests__/sheetExport.test.ts:194` 的标题写「本页用量只影响用料条」，但断言只看页脚（用料条那一半由 `sheet.test.ts` 覆盖）
+   ⇒ 把标题收窄到「页脚的全图颗数/色数取自 `input.usages`」，或补一条用料条断言。
+26. 任务 6–9 新增的注释里用了「任务 N 的实现者实测」这种**任务编号式**引用（如 `sheet.ts:763`、`layout.ts:850-854`）⇒
+   改成只写事实与日期（「2026-10-08 实测」），任务编号在代码里没有意义、且会随文档重排失效。
 18. `src/core/render/__tests__/sheet.test.ts` 里新增的第一条 `drawSheet` 用例，标题写「旧口径下会被降级的尺寸照样画」，但 6×6 夹具下
    `cellPx = 40`（远超旧的 32px 阈值）、那条断言其实与降级无关（任务 6 的实现者自报）⇒ 把标题改成它真正验证的东西
    （「网格内每颗实心格都画了色号：33 颗 ⇒ 33 条文字」），不要把一句不成立的因果留在用例名里。
