@@ -1,0 +1,140 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as exporterModule from "@/services/exporter";
+import {
+  createRecordingTarget,
+  resetExporterMock,
+  type MockExporter,
+} from "@/components/editor/__tests__/exportTestKit";
+import { planSheet } from "@/core/render/layout";
+import type { Palette } from "@/core/palette/types";
+import type { ColorUsage } from "@/core/pattern/stats";
+import { EMPTY, type Pattern } from "@/core/pattern/types";
+import { renderSheetBlob } from "@/services/sheetExport";
+
+/**
+ * `@/services/exporter` 的替身。**声明必须走 `vi.hoisted`**：`vi.mock` 的工厂被提升到所有 import
+ * 之前，工厂里引用模块顶层的 `const` 会在模块初始化之前取值（`exportTestKit.ts` 的文件头记了这次实测
+ * 崩溃：`ReferenceError: Cannot access 'exporter' before initialization`）。
+ *
+ * **刻意用 `satisfies` 而不是 `as`**：`satisfies` 让五个替身的签名对着真 `@/services/exporter` 校验，
+ * 同时保留对象字面量的 Mock 类型（`.mockImplementation` 可直接用）。
+ */
+const exporter = vi.hoisted(
+  () =>
+    ({
+      createCanvasStrict: vi.fn(),
+      requireContext2D: vi.fn(),
+      assertCanvasPainted: vi.fn(),
+      canvasToBlob: vi.fn(),
+      downloadBlob: vi.fn(),
+    }) satisfies MockExporter,
+);
+
+vi.mock("@/services/exporter", async (importOriginal) => {
+  const actual = await importOriginal<typeof exporterModule>();
+  return { ...actual, ...exporter };
+});
+
+/* ------------------------------------------------------------------ 夹具 */
+/*
+ * 以下四个夹具（`CELLS_6X6` / `makePalette` / `makePattern` / `makeUsages`）**抄自
+ * `src/core/render/__tests__/sheet.test.ts`，与之同源**：跨 `.test.ts` 文件互相 import 会让 vitest
+ * 把两个文件当成同一个用例集跑，所以只能抄一份。`makeUsages` 在 `layout.test.ts` 里也有一份同值的。
+ *
+ * ⇒ **改一处必须改两处（抄了这份就是三处）**：夹具的值（空格位置、实心格数、各色颗数）是这些用例
+ * 期望值的来源，任何一处漂移都会让「期望值与被测实现同源」这类假绿重新出现。
+ */
+
+/**
+ * 夹具：6×6、33 个实心格、3 个空格（(2,0) / (4,2) / (4,5)）、4 种颜色。
+ * 颜色刻意含**纯白与纯黑**：格内色号的墨色（`labelInk`）只有这两端能被无歧义断言。
+ */
+const CELLS_6X6: readonly number[] = [
+  0, 0, EMPTY, 0, 0, 0,
+  0, 1, 1, 1, 1, 1,
+  2, 0, 0, 0, EMPTY, 0,
+  0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, EMPTY, 3,
+];
+
+function makePalette(): Palette {
+  return {
+    id: "test-palette",
+    name: "测试色卡",
+    source: "test",
+    accuracy: "屏幕色仅供参考，以实物为准",
+    colors: [
+      { code: "A1", name: "白", rgb: [255, 255, 255] },
+      { code: "A2", name: "黑", rgb: [0, 0, 0] },
+      { code: "A3", name: "红", rgb: [255, 0, 0] },
+      { code: "A4", name: "浅灰", rgb: [200, 200, 210] },
+    ],
+  };
+}
+
+function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
+  const cells = new Uint16Array(width * height);
+  if (values !== undefined) cells.set(values);
+  return { width, height, paletteId: "test-palette", cells };
+}
+
+/**
+ * 33 个实心格的用量（26 + 5 + 1 + 1 = 33），与 `CELLS_6X6` 的用色一一对应（下标顺序 = 色卡下标顺序）。
+ * **计数独立数一遍**，不与被测实现同源。
+ */
+function makeUsages(): ColorUsage[] {
+  return [
+    { code: "A1", name: "白", count: 26 },
+    { code: "A2", name: "黑", count: 5 },
+    { code: "A3", name: "红", count: 1 },
+    { code: "A4", name: "浅灰", count: 1 },
+  ];
+}
+
+describe("renderSheetBlob", () => {
+  /**
+   * 顺序表：`selfcheck` / `toBlob` / `release:width` 三种步由 `resetExporterMock` 的替身推进来。
+   * **它是本文件唯一能观察到「谁先谁后」的仪器**——只断言「释放过没有」证不出释放发生在 `toBlob`
+   * 之后，而提前释放（拿着 0×0 的画布去编码）在生产路径上就是一张空图。
+   */
+  const steps: string[] = [];
+  beforeEach(() => {
+    steps.length = 0;
+    const { target } = createRecordingTarget();
+    resetExporterMock(exporter, target, { onStep: (what) => steps.push(what) });
+  });
+
+  it("自检在 toBlob 之前、释放画布在 toBlob 之后（顺序即内存与正确性契约）", async () => {
+    await renderSheetBlob({
+      pattern: makePattern(6, 6, CELLS_6X6),
+      palette: makePalette(),
+      usages: makeUsages(),
+      projectName: "测试工程",
+    });
+    expect(steps.indexOf("selfcheck")).toBeLessThan(steps.indexOf("toBlob"));
+    expect(steps.lastIndexOf("release:width")).toBeGreaterThan(steps.indexOf("toBlob"));
+  });
+
+  it("失败路径也要释放画布（渲染抛错时不能把大画布留给 GC）", async () => {
+    exporter.requireContext2D.mockImplementation(() => {
+      throw new Error("拿不到上下文");
+    });
+    await expect(
+      renderSheetBlob({
+        pattern: makePattern(6, 6, CELLS_6X6),
+        palette: makePalette(),
+        usages: makeUsages(),
+        projectName: "测试工程",
+      }),
+    ).rejects.toThrow("拿不到上下文");
+    expect(steps).toContain("release:width");
+  });
+
+  it("画布尺寸取自 planSheet（不是自己算的）", async () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    await renderSheetBlob({ pattern, palette: makePalette(), usages: makeUsages(), projectName: "测试工程" });
+    const plan = planSheet(pattern, makePalette(), makeUsages());
+    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(plan.canvasWidth, plan.canvasHeight);
+  });
+});
