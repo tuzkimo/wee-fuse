@@ -480,6 +480,31 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     expect(recording.texts.map((call) => call.text)).toContain("本页 1 颗 · 全图 900 颗（1 种色）");
   });
 
+  it("打印页的用料条只列本页用到的色：本页独有的色号出现、只在别的页的色号不出现", async () => {
+    // **把面板的 `pageUsages` 换成 `snapshot.usages`（全图用量）时这条必红**：条带会多出「只在
+    // 别的页」的色号。页脚那一半（全图颗数 / 色数取自 `input.usages`）由
+    // `services/__tests__/sheetExport.test.ts` 钉着，这里补的是**面板层的用料条**——
+    // 此前 `usagesInRange` 的结果只经 `fillText` 落到画布，没有任何断言观察过它。
+    const pattern = makePattern(58, 58); // 58 = 2 × 29 ⇒ 4 页
+    pattern.cells.fill(EMPTY); // `makePattern` 的默认值是 0（= A1 实心），这里要一张几乎全空的图纸
+    pattern.cells[0] = 1; // (0,0) = A2：**第 1 页独有**
+    pattern.cells[40 * 58 + 40] = 2; // (40,40) = A3：第 4 页（行 / 列 29–57 那块板）才有
+    const fullUsages = patternStats(pattern, palette).usages;
+    // 反向前提：全图用量里**两种色都有**——少了 A3 的话，下面那句 `not.toContain` 恒真、没有判别力。
+    expect(fullUsages.map((usage) => usage.code)).toEqual(["A2", "A3"]);
+
+    const wrapper = mountPanel("print", { pattern, usages: fullUsages });
+    await saveAndSettle(wrapper, "page-0");
+
+    // 用料条的色号是**左对齐的独立文字**（`drawLegendBand` 的 `usage.code`）；格内色号是 `center`、
+    // 页眉页脚是整句 ⇒ 这条过滤把网格里成千上万条「A2」全部排掉，只剩条带那一份。
+    const leftAligned = recording.texts
+      .filter((call) => call.textAlign === "left")
+      .map((call) => call.text);
+    expect(leftAligned).toContain("A2");
+    expect(leftAligned).not.toContain("A3");
+  });
+
   it("任一项生成中时四个打印选项禁用（改选项会重建清单、把飞行中那一项丢掉）", async () => {
     // 缺陷的可达入口就是这四颗按钮：飞行窗口里点一下，清单重建、飞行中的项被丢弃。
     // `disabled` 是「将来的时序错误不再可达」这条防线；判别力在下面两个方向的断言里。

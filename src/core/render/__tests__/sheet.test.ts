@@ -5,14 +5,17 @@ import { EMPTY, type Pattern } from "../../pattern/types";
 import {
   PRINT_MARGIN_MM,
   SHEET_MARGIN,
+  cellBox,
+  labelInk,
   mmToPx,
   planBoardPage,
   planSheet,
   rgbCss,
+  type SheetPlan,
   type TileGeometry,
 } from "../layout";
 import { drawBoardPage, drawSheet, type SheetMeta } from "../sheet";
-import { createMockTarget, type MockCalls } from "./helpers";
+import { createMockTarget, type MockCalls, type PathOp } from "./helpers";
 
 /**
  * 夹具：6×6、33 个实心格、3 个空格（(2,0) / (4,2) / (4,5)）、4 种颜色。
@@ -247,6 +250,221 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
       "用量表里的色号不在色卡里：Z9",
     );
     expect(calls.fills).toEqual([]);
+  });
+});
+
+/**
+ * `drawSheet` 的**共用步骤函数**回补覆盖（2026-10-08）。
+ *
+ * 任务 11 按「`sheet.test.ts` 只保留任务 6/9 两组」删掉旧用例时，有一部分守的是**仍然存活**的行为
+ * （`paintCells` / `drawGridLines` / `drawRulers` / `drawBoardLabels` / `drawLegendBand` 都没删），
+ * 判别力不该跟着用例一起消失。这里以 `drawSheet` 为对象逐类补回（夹具沿用上面的 6×6：33 实心格 /
+ * 3 空格 / 4 色）。
+ *
+ * **判据是「对已删用例所守的行为有等价判别力」**，不是「加了几条」：把 `sheet.ts` 对应的那一步改坏，
+ * 下面每一条都会变红（其中至少 3 条做过变异实测，见 `task-15b-report.md`）。⑤ 的 `save` / `restore`
+ * 配平由上面那条保留用例守着，不重复。
+ */
+describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
+  /** `CELLS_6X6` 里三个空格的格坐标（顺序无关，下面只用集合语义）。 */
+  const EMPTY_CELLS: readonly (readonly [number, number])[] = [
+    [2, 0],
+    [4, 2],
+    [4, 5],
+  ];
+
+  /** 3×3 之外的实心格坐标 → 期望的色号与墨色（两端的墨色是**字面量**，不靠 `labelInk` 自证）。 */
+  const LABEL_CASES: readonly {
+    readonly col: number;
+    readonly row: number;
+    readonly code: string;
+    readonly ink: string;
+  }[] = [
+    { col: 0, row: 0, code: "A1", ink: "rgb(0, 0, 0)" }, // A1 白 → 黑字
+    { col: 1, row: 1, code: "A2", ink: "rgb(255, 255, 255)" }, // A2 黑 → 白字
+    { col: 0, row: 2, code: "A3", ink: "rgb(0, 0, 0)" }, // A3 红（L* ≈ 53）
+    { col: 5, row: 5, code: "A4", ink: "rgb(0, 0, 0)" }, // A4 浅灰（L* ≈ 80）
+  ];
+
+  /** 某一档网格线**逐位落位**的期望操作序列（坐标全部取自 plan，期望值这边不写算术）。 */
+  function gridOps(plan: SheetPlan, kind: "thin" | "major" | "board"): PathOp[] {
+    const ops: PathOp[] = [];
+    for (const line of plan.vLines.filter((line) => line.kind === kind)) {
+      ops.push({ op: "moveTo", x: line.at, y: plan.grid.y });
+      ops.push({ op: "lineTo", x: line.at, y: plan.grid.y + plan.grid.height });
+    }
+    for (const line of plan.hLines.filter((line) => line.kind === kind)) {
+      ops.push({ op: "moveTo", x: plan.grid.x, y: line.at });
+      ops.push({ op: "lineTo", x: plan.grid.x + plan.grid.width, y: line.at });
+    }
+    ops.push({ op: "stroke" });
+    return ops;
+  }
+
+  /** 跑一次 `drawSheet`（6×6 夹具 + 4 色色卡），返回目标桩的调用记录与那份计划。 */
+  function drawFixture(): { readonly calls: MockCalls; readonly plan: SheetPlan } {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const usages = makeUsages();
+    const plan = planSheet(pattern, palette, usages);
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, palette, usages, plan, makeMeta());
+    return { calls, plan };
+  }
+
+  it("① 空格斜线：三个空格各一条左上→右下的对角线，收集在一条路径里、只 stroke 一次", () => {
+    const { calls, plan } = drawFixture();
+    // 斜线路径 = 恰好 3 对 moveTo/lineTo（网格三档的线数是 10 / 2 / 2 个 moveTo，不会撞上这个形状）
+    const diagonal = calls.paths.filter(
+      (path) => path.ops.filter((op) => op.op === "moveTo").length === EMPTY_CELLS.length,
+    );
+    expect(diagonal).toHaveLength(1);
+    const ops = diagonal[0]?.ops ?? [];
+    // **只 stroke 一次**：三条斜线共用一条路径（逐格 beginPath/stroke 会让这里数到 3）
+    expect(ops.filter((op) => op.op === "stroke")).toHaveLength(1);
+    expect(ops).toHaveLength(EMPTY_CELLS.length * 2 + 1);
+    for (const [col, row] of EMPTY_CELLS) {
+      const box = cellBox(plan, col, row);
+      expect(ops).toContainEqual({ op: "moveTo", x: box.x, y: box.y });
+      expect(ops).toContainEqual({ op: "lineTo", x: box.x + box.width, y: box.y + box.height });
+    }
+  });
+
+  it("② 三档网格线：逐位落位取自 plan 的 vLines/hLines，且按「细 → 5 格 → 板边界」各画一次", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const plan = planSheet(pattern, makePalette(), makeUsages());
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, makePalette(), makeUsages(), plan, makeMeta());
+
+    // 路径顺序 = 空格斜线 → 细 → 主 → 板（`GRID_GROUPS` 的顺序就是判据；反序会在这里红）
+    expect(calls.paths.map((path) => path.lineWidth)).toEqual([1, 1, 2, 3]);
+    const [, thin, major, board] = calls.paths;
+    expect(thin?.ops).toEqual(gridOps(plan, "thin"));
+    expect(major?.ops).toEqual(gridOps(plan, "major"));
+    expect(board?.ops).toEqual(gridOps(plan, "board"));
+    // 前提：三档在 6×6 夹具下**都非空**（某一档为空时，对应的期望序列会退化成「只有一次 stroke」）
+    for (const kind of ["thin", "major", "board"] as const) {
+      expect(gridOps(plan, kind).length).toBeGreaterThan(2);
+    }
+    // **板边界优先于 5 格主刻度**（0 处两者重叠）：那一条只能算板边界——优先序反了这条会红
+    expect(plan.vLines[0]).toEqual({ at: plan.grid.x, kind: "board" });
+    expect(plan.vLines.filter((line) => line.kind === "major").map((line) => line.at)).not.toContain(
+      plan.grid.x,
+    );
+  });
+
+  it("③ 刻度与板号的字号都**显式**取自 plan.tickFontPx（在两者之间被改掉也不会跟着变）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const plan = planSheet(pattern, makePalette(), makeUsages());
+    const { target, calls } = createMockTarget();
+    // **判别力来自这一层包装**：最后一条列刻度画完（`textBaseline === "bottom"`）就把 target 的 font
+    // 改成诱饵——板号若靠继承而不是重新赋值，记录到的就是诱饵 ⇒ 红（「不靠继承」这句注释的判据）。
+    // 诱饵只在**全部**列刻度之后放：刻度段自己也只设一次 `font`，中途换掉会把后面的刻度一起记错。
+    const originalFillText = target.fillText.bind(target);
+    let bottomSeen = 0;
+    target.fillText = (text, x, y) => {
+      originalFillText(text, x, y);
+      if (target.textBaseline === "bottom") {
+        bottomSeen += 1;
+        if (bottomSeen === plan.colTicks.length) target.font = "1px 诱饵";
+      }
+    };
+    drawSheet(target, pattern, makePalette(), makeUsages(), plan, makeMeta());
+
+    const expected = `${plan.tickFontPx}px sans-serif`;
+    expect(plan.tickFontPx).not.toBe(1); // 前提：诱饵与期望值不同
+    // 列刻度（baseline bottom）与板号（「第 N 块板」）两类文字
+    const ticks = calls.texts.filter((text) => text.textBaseline === "bottom");
+    const boards = calls.texts.filter(
+      (text) => text.text.startsWith("第 ") && text.text.endsWith(" 块板"),
+    );
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(boards.length).toBeGreaterThan(0);
+    for (const text of [...ticks, ...boards]) expect(text.font).toBe(expected);
+  });
+
+  it("④ `strayOps` 为空：每条路径都以 `beginPath` 开头", () => {
+    const { calls } = drawFixture();
+    // 桩在 `stroke()` 之后复位 `hasPath`，所以**每一组**漏写 `beginPath` 都会被记下来
+    expect(calls.strayOps).toEqual([]);
+    // 前提：这条路径真的画过东西（一条路径都没有时上面那句恒真）
+    expect(calls.paths.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("⑥ 格内色块：坐标取自 `cellBox`、颜色取自色卡（背景白与邻近格都不许串色）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const plan = planSheet(pattern, palette, makeUsages());
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, palette, makeUsages(), plan, makeMeta());
+
+    // 三种不同的真色、三个不同的落位：(0,0) 白、(1,1) 黑、(0,2) 红
+    const cases = [
+      { col: 0, row: 0, index: 0 },
+      { col: 1, row: 1, index: 1 },
+      { col: 0, row: 2, index: 2 },
+    ];
+    for (const item of cases) {
+      const box = cellBox(plan, item.col, item.row);
+      const fill = fillAt(calls, box.x, box.y);
+      expect(fill?.fillStyle).toBe(rgbCss(palette.colors[item.index]?.rgb ?? [0, 0, 0]));
+      expect([fill?.w, fill?.h]).toEqual([box.width, box.height]);
+    }
+    // 格内色块**不描边**（格线统一在第 5 步画）：`strokeRect` 只属于用料条色块，恰好 4 个
+    expect(calls.strokeRects).toHaveLength(makeUsages().length);
+    expect(
+      calls.strokeRects.every(
+        (rect) => rect.w === plan.legend.swatchSize && rect.h === plan.legend.swatchSize,
+      ),
+    ).toBe(true);
+  });
+
+  it("⑦ 格内色号：字号取 `labelFontPx`、墨色取 `labelInk`、位置取 `cellBox` 中心", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const plan = planSheet(pattern, palette, makeUsages());
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, palette, makeUsages(), plan, makeMeta());
+
+    // 前提：格内字号与信息条（18）/ 用料条（14）/ 页脚（12）都不同——靠继承会在这里红
+    expect(plan.labelFontPx).toBe(Math.round(plan.cellPx * 0.38));
+    expect([18, 14, 12]).not.toContain(plan.labelFontPx);
+    for (const item of LABEL_CASES) {
+      const box = cellBox(plan, item.col, item.row);
+      const label = calls.texts.find(
+        (text) => text.x === box.x + box.width / 2 && text.y === box.y + box.height / 2,
+      );
+      expect(label?.text).toBe(item.code);
+      expect(label).toMatchObject({
+        font: `${plan.labelFontPx}px sans-serif`,
+        fillStyle: item.ink,
+        textAlign: "center",
+        textBaseline: "middle",
+      });
+    }
+    // 两端墨色**确实不同**（相同的话「墨色取 labelInk」这条断言没有判别力）
+    expect(labelInk(palette.colors[0]?.rgb ?? [0, 0, 0])).not.toBe(
+      labelInk(palette.colors[1]?.rgb ?? [0, 0, 0]),
+    );
+  });
+
+  it("⑧ 第一步：整张画布先填白（`fills[0]` 从 (0,0) 铺满 `canvasWidth` × `canvasHeight`）", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const plan = planSheet(pattern, makePalette(), makeUsages());
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, makePalette(), makeUsages(), plan, makeMeta());
+
+    expect(calls.fills[0]).toEqual({
+      x: 0,
+      y: 0,
+      w: plan.canvasWidth,
+      h: plan.canvasHeight,
+      fillStyle: "#ffffff",
+      smoothing: true,
+    });
+    // 前提：画布真的比网格大（否则「铺满画布」与「铺满网格」判不开）
+    expect(plan.canvasWidth).toBeGreaterThan(plan.grid.x + plan.grid.width);
+    expect(plan.canvasHeight).toBeGreaterThan(plan.grid.y + plan.grid.height);
   });
 });
 
