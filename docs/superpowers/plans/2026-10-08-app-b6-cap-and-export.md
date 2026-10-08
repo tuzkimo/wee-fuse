@@ -330,7 +330,10 @@ git commit -m "fix(app): 工程名统一两行省略口径，手机上图库与�
  * 封到 `MAX_CELL_PX` 避免「满屏一块色块」。
  *
  * **只在第一次量到视口尺寸时**调用它；之后容器尺寸变化只重新夹取（`clampView`），否则用户刚调好的
- * 位置与比例会被横竖屏切换重置（规格 §4.2 末段）。缩放范围（`minCellScale` / `maxCellScale`）不变。
+ * 位置与比例会被横竖屏切换重置（规格 §4.2 末段）。
+ *
+ * **与缩放范围下界的关系**：`minCellScale` 同时被收窄成 `min(适配比例, MAX_CELL_PX)`（见下），
+ * 于是本函数取的就是那条下界，不变量 `minCellScale ≤ defaultCellView ≤ maxCellScale` 由用例守着。
  *
  * **为何公开**：`stores/editor.ts` 的 `onViewport` 是它唯一的生产消费者。
  */
@@ -349,6 +352,31 @@ export function defaultCellView(viewport: Size, grid: Size): ViewTransform {
 ```
 
 `MIN_CELL_PX` 的 JSDoc 里对「± 缩放」的引用（若 `zoomCellView` 的注释提到它）改成 `minCellScale`。
+
+**同时必须收窄缩放范围的下界**（2026-10-08 由本任务的实现者实测发现、控制者裁决补入；规格 §5.2 已同步）：
+
+```ts
+/**
+ * 缩放范围的**下界**：大图纸上就是适配比例（整图可见）；小图纸上压到 `MAX_CELL_PX`。
+ *
+ * **为什么必须压**（B6 实测缺陷）：小图纸的适配比例可能远大于 64（2×1 在 800×600 里是 400），
+ * 而新默认比例是 `min(适配, 64) = 64`——若下界仍是适配比例，默认视图就落在 `[下界, 上界]` **之外**，
+ * `zoomCellView` 的第一次夹取会把比例猛地拉到适配比例：真机上表现为「按**缩小**反而把图放大 6.25 倍」。
+ * 压到 64 之后不变量 `minCellScale ≤ defaultCellView ≤ maxCellScale` 成立。
+ *
+ * `maxCellScale`（上界 = `max(MAX_CELL_PX, 适配 × 2)`）与缩放 / 平移的其余数学**一行不改**。
+ */
+export function minCellScale(viewport: Size, grid: Size): number {
+  return Math.min(fitTransform(viewport, grid).scale, MAX_CELL_PX);
+}
+```
+
+配套用例（`view.test.ts`）：
+
+- 原「`minCellScale` 就是适配比例（长边贴住视口）」那条：大图纸夹具不变；补一条小图纸夹具（`V1000 × GRID_10`，适配 80 > 64）断言下界现在是 `MAX_CELL_PX`。
+- **新增不变量用例**（承重，旧实现下必红）：对 `V100 × GRID_800`、`V1000 × GRID_10`、`V_FRAC × GRID_8`、`V100 × GRID_8x6` 逐组断言
+  `minCellScale(v, g) <= defaultCellView(v, g).scale` 且 `defaultCellView(v, g).scale <= maxCellScale(v, g)`。
+- `EditorPage.test.ts` 的 ± 倍率用例**按原断言**通过（不许改成「先点适配再验倍率」——那会掩盖这次缺陷）。
 
 - [ ] **步骤 4：运行测试验证通过**
 

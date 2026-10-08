@@ -136,12 +136,21 @@
   - 小图纸：适配比例可能远大于 64（如 2×1 在两个方向上是 400px/格），压到 `MAX_CELL_PX = 64`，避免
     「满屏一块色块」——这是与「适配」并列的第二个诉求，两害相权取 64。
 - **删除 `MIN_CELL_PX`**：新口径下它零消费者，按 `AGENTS.md`「公开 API ≠ 被使用的 API」不应留。
-- 缩放范围（`minCellScale` / `maxCellScale`）与 `zoomCellView` / `panCellView` **一行不改**。
+- **缩放范围的**下界**必须同时收窄**（2026-10-08 由任务 3 的实现者发现、控制者裁决补入）：
+  `minCellScale` 由「适配比例」改为 `min(适配比例, MAX_CELL_PX)`。理由是一个自相矛盾的状态——
+  小图纸（适配 > 64）下默认比例 64 **低于**「适配比例」这个下界，于是默认视图落在 `[下界, 上界]` 之外，
+  `zoomCellView` 的第一次夹取会把比例猛地拉到适配比例（2×1 在 800×600 里表现为「按缩小反而放大 6.25 倍」，
+  既有用例 `EditorPage.test.ts` 的 ± 倍率断言当场红）。
+  - 大图纸（适配 ≤ 64）：下界仍是适配比例，「整图可见」的语义与旧口径逐字一致。
+  - 小图纸（适配 > 64）：下界压到 64（= 默认比例）；上界仍是 `max(MAX_CELL_PX, 适配 × 2)`。
+  - 承重不变量（新增用例守）：`minCellScale ≤ defaultCellView(…) ≤ maxCellScale`。
+  - `maxCellScale` / `zoomCellView` / `panCellView` **一行不改**。
 - `stores/editor.ts` 的 `onViewport` **一行不改**（它只是调 `defaultCellView` / `clampView`）。
 
-断言改动（D10 已确认）：`core/pattern/__tests__/view.test.ts`（`defaultCellView` 三条 + `MIN_CELL_PX` 常量断言）、
+断言改动（D10 已确认）：`core/pattern/__tests__/view.test.ts`（`defaultCellView` 三条 + `MIN_CELL_PX` 常量断言 +
+**新增不变量用例** `minCellScale ≤ defaultCellView ≤ maxCellScale`）、
 `stores/__tests__/editor.test.ts`（`onViewport` 首支）、`views/__tests__/EditorPage.test.ts`（两处
-`toEqual(defaultCellView(...))` 的用例改夹具后自动跟着变，但要确认夹具仍能判别）。
+`toEqual(defaultCellView(...))` 的用例改夹具后自动跟着变，但要确认夹具仍能判别；± 倍率那条**按原断言**通过，不许改成「先点适配」）。
 
 ## §6 导出：单张施工图（问题 5 前半）
 
