@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BEAD_MM, BOARD_COLS, BOARD_ROWS, beadsToCm, boardCount, formatCm } from "../board";
+import { MAX_LONG_SIDE } from "../types";
 
 /**
  * 这一组数字是**产品规格**，不是算法（规格 §14「主规格 R5 的状态更新」）：
@@ -49,11 +50,10 @@ describe("boardCount", () => {
     expect(boardCount(59, 59)).toEqual({ cols: 3, rows: 3, total: 9 });
   });
 
-  // 规格允许的最大图纸（`MAX_LONG_SIDE = 500`）：既钉住「入口不设隐性上限」，
-  // 也让 18 这个值真的被读过——此前最大只到 59，一个静默封顶（如 `Math.min(x, 5)`）
-  // 的实现能全绿。
-  it("最大合法图纸 500×500 = 18×18 = 324 块板", () => {
-    expect(boardCount(500, 500)).toEqual({ cols: 18, rows: 18, total: 324 });
+  // 规格允许的最大图纸（`MAX_LONG_SIDE = 116 = 4 × 29`，见 types.ts）：116 正好是整 4 块板，
+  // 于是「最大合法图纸要几块板」这个乘积（4×4 = 16）真的被读过一次——此前最大只到 59（3×3）。
+  it("最大合法图纸 116×116 = 4×4 = 16 块板", () => {
+    expect(boardCount(MAX_LONG_SIDE, MAX_LONG_SIDE)).toEqual({ cols: 4, rows: 4, total: 16 });
   });
 
   it("非正方形图纸按各自方向算", () => {

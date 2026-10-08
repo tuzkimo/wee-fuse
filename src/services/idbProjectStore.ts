@@ -19,7 +19,7 @@ const STORE_PROJECTS = "projects";
  * 与 `projects` 同一份 meta 的**第二副本**，只给 `list()` 读。
  *
  * 为什么不直接从 `projects` 里 `getAll()` 再把 `doc` 丢掉：那样 `grid` 已经被整条读进内存了。
- * 长边 500 的图纸 grid 是 25 万个数，几十个工程就是数十 MB 的瞬时分配——而 §4.4 冗余字段
+ * 长边 116 的图纸 grid 是 1.3 万个数，几十个工程就是数 MB 的瞬时分配——而 §4.4 冗余字段
  * （`meta.width/height/colorCount`）存在的**全部理由**就是让列表页不必载入 grid（规格 §7.1）。
  * 两份 meta 在同一事务里写，因此不会漂移。
  */

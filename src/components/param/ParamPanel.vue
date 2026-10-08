@@ -16,11 +16,6 @@ import { MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/typ
 
 /** 常用长边快捷值（设计规格 §4.6；B1 的临时入口用的就是 58 / 116）。 */
 const LONG_SIDE_PRESETS = [29, 58, 116] as const;
-/**
- * 超过这个豆数只提示「导出会分片」，不阻止生成（设计规格 §4.6 / 主规格 §8）。
- * 触发条件是**严格大于**：300 本身不提示。
- */
-const SPLIT_HINT_LONG_SIDE = 300;
 
 /**
  * 用色档位的三个选项。`<select>` 的 value 恒为**字符串**，所以「不限」（`MaxColors` 的 `null`）
@@ -113,13 +108,6 @@ const summary = computed(() => {
   };
 });
 
-/** 分片提示：只提示、不阻止（`disabled` 不看它）。 */
-const splitHint = computed(() =>
-  parsed.value !== null && parsed.value > SPLIT_HINT_LONG_SIDE
-    ? `长边超过 ${SPLIT_HINT_LONG_SIDE} 颗，导出时会分片成多张图。`
-    : "",
-);
-
 /**
  * 自己的输入错误优先，其次是父级的原因。
  *
@@ -166,10 +154,6 @@ function onMaxColorsChange(event: Event): void {
         {{ n }} 颗
       </button>
     </div>
-
-    <p v-if="splitHint" data-testid="split-hint" class="rounded bg-amber-50 p-3 text-base text-amber-800">
-      {{ splitHint }}
-    </p>
 
     <label class="block text-lg text-slate-800">
       用几种颜色

@@ -120,22 +120,22 @@ describe("validateProjectDocument", () => {
     ).toThrow(/宽度/);
   });
 
-  it("width / height 不得超过 500（与长边豆数上限同口径，同时挡住宽高相乘溢出成 Infinity）", () => {
-    expect(() => validateProjectDocument({ ...validDoc(), width: 501 }, palette)).toThrow(/宽度/);
-    expect(() => validateProjectDocument({ ...validDoc(), height: 501 }, palette)).toThrow(/高度/);
-    // 边界值本身必须放行（否则「1–500」被实现成了「1–499」也不会有人发现）。
+  it("width / height 不得超过 116（与长边豆数上限同口径，同时挡住宽高相乘溢出成 Infinity）", () => {
+    expect(() => validateProjectDocument({ ...validDoc(), width: 117 }, palette)).toThrow(/宽度/);
+    expect(() => validateProjectDocument({ ...validDoc(), height: 117 }, palette)).toThrow(/高度/);
+    // 边界值本身必须放行（否则「1–116」被实现成了「1–115」也不会有人发现）。
     const atLimit = validateProjectDocument(
       {
         ...validDoc(),
-        width: 500,
-        height: 500,
-        grid: new Array<number>(500 * 500).fill(0),
+        width: 116,
+        height: 116,
+        grid: new Array<number>(116 * 116).fill(0),
       },
       palette,
     );
-    expect(atLimit.width).toBe(500);
-    expect(atLimit.height).toBe(500);
-    expect(atLimit.grid.length).toBe(250000);
+    expect(atLimit.width).toBe(116);
+    expect(atLimit.height).toBe(116);
+    expect(atLimit.grid.length).toBe(13456);
   });
 
   it("grid 长度必须等于 width*height", () => {
@@ -263,8 +263,8 @@ describe("validateProjectDocument", () => {
     ).not.toThrow();
   });
 
-  it("params.longSide 必须是 1–500 的整数", () => {
-    for (const bad of [0, -1, 501, 1.5, Number.NaN]) {
+  it("params.longSide 必须是 1–116 的整数", () => {
+    for (const bad of [0, -1, 117, 1.5, Number.NaN]) {
       expect(() =>
         validateProjectDocument(
           { ...validDoc(), params: { ...(validDoc().params as object), longSide: bad } },
@@ -282,7 +282,7 @@ describe("validateProjectDocument", () => {
       ).toThrow(/长边/);
     }
     // 两端边界本身必须放行
-    for (const good of [1, 500]) {
+    for (const good of [1, 116]) {
       expect(() =>
         validateProjectDocument(
           { ...validDoc(), params: { ...(validDoc().params as object), longSide: good } },

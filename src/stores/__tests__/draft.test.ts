@@ -300,10 +300,10 @@ describe("setSourceSize：原图尺寸落地的唯一入口", () => {
 });
 
 describe("其他入口校验（规格 §12）", () => {
-  it("长边必须 1–500 的整数", () => {
+  it("长边必须 1–116 的整数", () => {
     const draft = seedImage();
-    for (const bad of [0, 501, 1.5, Number.NaN]) {
-      expect(() => draft.setLongSide(bad)).toThrow(/长边/);
+    for (const bad of [0, 117, 1.5, Number.NaN]) {
+      expect(() => draft.setLongSide(bad)).toThrow(/长边豆数必须是 1–116 的整数/);
     }
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadPalette } from "../../palette/registry";
+import { BOARD_COLS } from "../board";
 import {
   buildPattern,
   buildPatternFromImage,
@@ -94,9 +95,9 @@ describe("computeGridSize（追加：长边落在哪一维、四舍五入方向�
 
   it("长边恰为 MIN/MAX 时合法，越界一律抛错（含负值与 NaN）", () => {
     expect(computeGridSize(10, 10, MIN_LONG_SIDE)).toEqual({ width: 1, height: 1 });
-    expect(computeGridSize(10, 10, MAX_LONG_SIDE)).toEqual({ width: 500, height: 500 });
+    expect(computeGridSize(10, 10, MAX_LONG_SIDE)).toEqual({ width: 116, height: 116 });
     expect(() => computeGridSize(10, 10, -1)).toThrow(/长边豆数/);
-    expect(() => computeGridSize(10, 10, 500.5)).toThrow(/长边豆数/);
+    expect(() => computeGridSize(10, 10, 116.5)).toThrow(/长边豆数/);
     expect(() => computeGridSize(10, 10, Number.NaN)).toThrow(/长边豆数/);
   });
 
@@ -154,9 +155,13 @@ describe("关键常量", () => {
     expect(EMPTY).toBeGreaterThan(220); // MARD221 的最大下标 220
   });
 
-  it("长边豆数范围是 1–500", () => {
+  it("长边豆数范围是 1–116（= 4 × 29，四块板）", () => {
     expect(MIN_LONG_SIDE).toBe(1);
-    expect(MAX_LONG_SIDE).toBe(500);
+    expect(MAX_LONG_SIDE).toBe(116);
+    // 与 board.ts 同源：不写字面量 116 的第二份解释
+    expect(MAX_LONG_SIDE).toBe(4 * BOARD_COLS);
+    expect(computeGridSize(10, 10, MAX_LONG_SIDE)).toEqual({ width: 116, height: 116 });
+    expect(() => computeGridSize(10, 10, 117)).toThrow(/长边豆数/);
   });
 });
 

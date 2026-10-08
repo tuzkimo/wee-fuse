@@ -129,33 +129,20 @@ describe("长边输入", () => {
     await wrapper.get("[data-testid='long-side']").setValue(bad);
 
     expect(wrapper.emitted("update:longSide")).toBeUndefined();
-    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("1–500");
+    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("1–116");
     expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
   });
 
-  // 【修复轮 1】上面那条只断言 0 / 501 **被拒**，1 与 500 这两个边界值从未被断言「**接受**」：
+  // 【修复轮 1】上面那条只断言 0 / 501 **被拒**，1 与 116 这两个边界值从未被断言「**接受**」：
   // 把 `value <= MAX_LONG_SIDE` 改成 `<`（或把 `>= MIN_LONG_SIDE` 改成 `>`）后 20 条用例全绿。
-  // 边界是规格 §4.6 / 关键常量「长边豆数范围 1–500」的端点，被拒就是功能缺失。
-  it.each([1, 500])("边界值 %i 被接受（emit、有摘要、可生成）", async (value) => {
+  // 边界是规格 §4.6 / 关键常量「长边豆数范围 1–116」的端点，被拒就是功能缺失。
+  it.each([1, 116])("边界值 %i 被接受（emit、有摘要、可生成）", async (value) => {
     const wrapper = mountPanel();
     await wrapper.get("[data-testid='long-side']").setValue(String(value));
 
     expect(wrapper.emitted("update:longSide")?.at(-1)).toEqual([value]);
     expect(wrapper.get("[data-testid='summary']").text()).toContain(`${value} × ${value} 颗`);
     expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeUndefined();
-  });
-
-  // 300 本身不提示（严格大于）；提示不该顺带禁用生成。
-  it("超过 300 颗时提示导出会分片，但不阻止生成", async () => {
-    const wrapper = mountPanel();
-    const input = wrapper.get("[data-testid='long-side']");
-
-    await input.setValue("300");
-    expect(wrapper.find("[data-testid='split-hint']").exists()).toBe(false);
-
-    await input.setValue("400");
-    expect(wrapper.get("[data-testid='split-hint']").text()).toContain("分片");
     expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeUndefined();
   });
 });
@@ -235,7 +222,7 @@ describe("生成按钮", () => {
     const reason = () => wrapper.get("[data-testid='blocked-reason']").text();
 
     await input.setValue("0");
-    expect(reason()).toContain("1–500");
+    expect(reason()).toContain("1–116");
     expect(reason()).not.toContain("选区 50 × 50");
 
     // 同一实例上把输入改回合法：父级原因全程都在，只是刚才被本地那条压住了——
