@@ -1090,7 +1090,9 @@ export function drawSheet(
   drawGridLines(target, plan);
   drawRulers(target, plan);
   drawBoardLabels(target, plan);
-  drawLegendBand(target, palette, usages, plan.legend, SHEET_MARGIN);
+  // **第 5 实参取 `plan.legend.left`**（任务 8 修复轮追认）：几何只有一个来源，
+  // 单张施工图那一支 `planSheet` 写进去的就是 `SHEET_MARGIN`，两者逐位相等。
+  drawLegendBand(target, palette, usages, plan.legend, plan.legend.left);
 
   // 末行三行，`plan.footerY` 是页脚带的**中线**：`SHEET_FOOTER_H = 44` 正好放得下三行 12px
   target.fillStyle = TEXT_INK;
