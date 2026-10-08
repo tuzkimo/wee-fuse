@@ -1532,6 +1532,10 @@ export interface BoardPagePlan extends GridGeometry {
   readonly labelFontPx: number;
   readonly tickFontPx: number;
   readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
+  /** **页眉 / 页脚文字的左沿**（任务 9 的实现者实测补入）：打印页的文字必须从**可打印区**左沿起，
+   *  用 `SHEET_MARGIN = 24px`（2.03mm）会让页眉两行与页脚三行落进 10mm 的不可打印区被裁。
+   *  单张施工图（屏幕产物）没有这个字段，它的文字左沿就是 `SHEET_MARGIN`。 */
+  readonly textLeft: number;
   readonly legend: LegendBandPlan;
   readonly footerY: number;
 }
@@ -1636,6 +1640,8 @@ export function planBoardPage(
     labelFontPx,
     tickFontPx,
     infoBar: { lineOneY: marginPx, lineTwoY: marginPx + Math.round(PAGE_HEADER_H / 2) },
+    // 页眉 / 页脚文字的左沿 = 可打印区左沿（不是 SHEET_MARGIN：那是屏幕产物的边距）
+    textLeft: marginPx,
     legend: band,
     footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,
   };
@@ -1770,6 +1776,15 @@ export function drawBoardPage(
   if (pattern.paletteId !== palette.id) {
     throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
   }
+  // **守卫顺序：`requireUsagesInPalette` 必须在同源校验之前**（任务 9 的实现者实测）：反过来的话，
+  // 非数组 usages 会先撞同源校验——字符串的 `.length` 让消息变成「按 12 项应为 2 行」（失实），
+  // `null` 更是直接 TypeError。这与 `drawSheet` 的落地顺序同口径。
+  requireUsagesInPalette(palette, usages);
+  if (plan.legend.itemRows !== Math.ceil(usages.length / plan.legend.itemCols)) {
+    throw new Error(
+      `用料条与本图不符：计划 ${plan.legend.itemRows} 行、按 ${usages.length} 项应为 ${Math.ceil(usages.length / plan.legend.itemCols)} 行`,
+    );
+  }
   const beads = countTileBeads(pattern, plan);
 
   target.fillStyle = SHEET_BACKGROUND;
@@ -1780,8 +1795,10 @@ export function drawBoardPage(
   target.font = `${INFO_FONT_PX}px sans-serif`;
   target.textAlign = "left";
   target.textBaseline = "top";
-  target.fillText(lineOne, SHEET_MARGIN, plan.infoBar.lineOneY);
-  target.fillText(lineTwo, SHEET_MARGIN, plan.infoBar.lineTwoY);
+  // **文字左沿取 `plan.textLeft`（= 可打印区左沿 118px）**，不是 `SHEET_MARGIN`（24px = 2.03mm）：
+  // 后者会让页眉两行与页脚三行落进 10mm 的不可打印区被裁（任务 9 的实现者实测）。
+  target.fillText(lineOne, plan.textLeft, plan.infoBar.lineOneY);
+  target.fillText(lineTwo, plan.textLeft, plan.infoBar.lineTwoY);
 
   drawCellsAndLabels(target, pattern, palette, plan);
   drawGridLines(target, plan);
@@ -1796,9 +1813,9 @@ export function drawBoardPage(
   target.font = `${LEGEND_FOOTER_FONT_PX}px sans-serif`;
   target.textAlign = "left";
   target.textBaseline = "middle";
-  target.fillText(`本页 ${beads} 颗 · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色）`, SHEET_MARGIN, plan.footerY - LEGEND_FOOTER_LINE_H);
-  target.fillText(meta.accuracy, SHEET_MARGIN, plan.footerY);
-  target.fillText(`生成时间：${meta.generatedAt}`, SHEET_MARGIN, plan.footerY + LEGEND_FOOTER_LINE_H);
+  target.fillText(`本页 ${beads} 颗 · 全图 ${meta.totalBeads} 颗（${meta.colorCount} 种色）`, plan.textLeft, plan.footerY - LEGEND_FOOTER_LINE_H);
+  target.fillText(meta.accuracy, plan.textLeft, plan.footerY);
+  target.fillText(`生成时间：${meta.generatedAt}`, plan.textLeft, plan.footerY + LEGEND_FOOTER_LINE_H);
 }
 ```
 
@@ -1833,6 +1850,12 @@ export async function renderBoardPageBlob(
 ```
 
 `services/exporter.ts` **本任务不动**（`ExportItemLabel` 收窄与 `exportFilename` 改写在任务 10；理由见本任务开头的顺序修正）。
+
+**另需两条用例**（任务 9 的实现者实测发现的两处，控制者裁决 2026-10-08）：
+
+1. **文字落位**：`drawBoardPage` 画出的**全部文字**的 x 必须 ≥ `mmToPx(PRINT_MARGIN_MM)`（页眉两行与页脚三行的左沿取 `plan.textLeft`，不是 `SHEET_MARGIN` = 2.03mm，否则落进 10mm 不可打印区被裁）。断言写成
+   `for (const text of calls.texts) expect(text.x).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));`，并单独断言页眉两行的 x **恰好**等于 `plan.textLeft`。
+2. **守卫顺序**：把非数组 `usages` 传进 `drawBoardPage` 时，抛的必须是数组守卫的消息（`用量表必须是数组（当前 …）`），**不是**同源校验的「按 N 项应为 M 行」——后者对字符串的 `.length` 会给出失实的数字，对 `null` 直接 TypeError。
 
 - [ ] **步骤 4：运行测试验证通过**
 

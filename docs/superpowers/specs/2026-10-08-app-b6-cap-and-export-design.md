@@ -318,8 +318,10 @@ interface SheetPlan {
   必须分清，不许共用同一个名字。
 - 每页覆盖一个「板大小 × 板大小」的格范围（最后一行 / 列可能更小），页与页**不重叠**。
 - 页内自上而下：页眉（工程名 · 板大小与纸型 · 第 r 行 第 c 列 · 第 N/总数 块板 · 本页 列 a–b 行 c–d ·
-  `1 格 = 4.7mm（实物的 95%）`）→ 板网格（刻度是**全局**格号，板号标注保留）→ **本页用料条**
+  `1 格 = 4.7mm（实物的 93%）`）→ 板网格（刻度是**全局**格号，板号标注保留）→ **本页用料条**
   （这块板用到的色与数量）→ 末行（全图合计 N 颗 / 精度声明 / 生成时间）。
+  **页眉两行与页脚三行的左沿取 `plan.textLeft`（= 可打印区左沿 118px）**，不是 `SHEET_MARGIN`（24px = 2.03mm）——
+  后者会让这些文字落进 10mm 的不可打印区、打印时被裁（2026-10-08 由任务 9 的实现者实测补入）。
 - 高度预算（最坏情况：**A3 + 58 板 + 本页用满 221 色**）：板网格 58×56 = 3248px；用料条每行
   `⌊(3508 − 2×118) / 200⌋ = 16` 项 ⇒ `⌈221/16⌉ = 14` 行 × 22 = 308px；合计
   `118 + 72 + 44 + 3248 + 308 + 44 + 118 = 3952 ≤ 4961`，余量 1009px。
@@ -330,9 +332,11 @@ interface SheetPlan {
 - `planBoardPage(pattern, palette, usages, page: { boardSize: 29 | 58; paper: "a4" | "a3"; index: number }, options?): BoardPagePlan`：
   字段与 `SheetPlan` 同构（相同的网格 / 刻度 / 板号 / 用料条字段），差异是：画布尺寸与边距由纸型决定、
   格像素由「板大小 + 纸型」按 §7.1 的规则算出、多出页身份（`boardSize` / `paper` / `boardRow` / `boardCol` /
-  `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）。
-- `drawBoardPage(target, pattern, palette, plan, meta)`：与 `drawSheet` 共用内部步骤函数（信息条 / 格 / 网格 /
-  刻度 / 板号 / 用料条 / 末行），只是页眉文案不同、用料条数据是本页的。
+  `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）与 **`textLeft`**（页眉 / 页脚文字的左沿 = 页边距）。
+- `drawBoardPage(target, pattern, palette, usages, plan, meta)`：与 `drawSheet` 共用内部步骤函数（格 / 网格 /
+  刻度 / 板号 / 用料条 / 末行），只是页眉文案不同（`boardPageHeader`）、用料条数据是本页的、文字左沿取 `plan.textLeft`。
+- **入口守卫的顺序**：`kind` → 色卡一致性 → `requireUsagesInPalette` → 用料条同源校验 → `countTileBeads`。
+  反过来先做同源校验的话，非数组 `usages` 会先撞它（字符串的 `.length` 给出失实的项数、`null` 直接 TypeError）。
 - 守卫：`page.index` 必须是 `[0, 总页数)` 的安全整数；`boardSize` / `paper` 必须是枚举内取值（运行期查，
   与 `setTool` 同一口径）；本页格范围必须落在图纸内。越界一律抛错，不静默取模 / 不回落默认值。
 
