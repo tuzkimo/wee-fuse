@@ -15,19 +15,19 @@ import type {
 } from "./types";
 
 /**
- * B4 导出的**唯一几何来源**：画布尺寸、格像素、色号阈值、分片、格子→像素映射、刻度与板边界位置。
+ * B6 导出的**唯一几何来源**：画布尺寸、格像素、格子→像素映射、刻度、板边界与用料条位置。
  *
- * **为什么全部位置都在这里算完**：主规格 §7.3 把分片自述为「本功能最易出 bug 的地方（坐标偏移、接缝错行、
- * 图例重复）」。唯一能结构性消灭它的做法是让渲染器**没有坐标可算**——`sheet.ts` / `share.ts` 只按 plan 给的
- * 像素位置调用 `fillRect` / `lineTo`，连格子中心都不自己推。这条由 `__tests__/layoutGate.test.ts` 的词法闸门
- * 守着（渲染器里出现 `cellPx` 即红）。
+ * **为什么全部位置都在这里算完**：图纸最易出 bug 的地方是坐标偏移（接缝错行、刻度错位、用料条越界）。
+ * 唯一能结构性消灭它的做法是让渲染器**没有坐标可算**——`sheet.ts` 只按 plan 给的像素位置调用
+ * `fillRect` / `lineTo`，连格子中心都不自己推。这条由 `__tests__/layoutGate.test.ts` 的词法闸门守着
+ * （渲染器里出现 `cellPx` 即红）。
  *
- * **只有一层坐标**：格坐标是全图全局的 `(col, row)`；分片只体现在 tile 的 `originCol` / `originRow` 上。
- * `cellBox(tile, col, row)` 是两者之间唯一的映射，且满足承重不变量：**只要两次计划的 `cellPx` 相同，
- * 同一格在单张计划与任一分片计划里得到的片内像素逐位相等**（分片只是"换个原点"，不是另一套数学）。
+ * **只有一层坐标**：格坐标是全局的 `(col, row)`；计划把「本片格范围」记在 `originCol` / `originRow` /
+ * `cols` / `rows` 上。`cellBox(plan, col, row)` 是两者之间唯一的映射——单张施工图的 `origin` 恒为 0，
+ * **原点非零的映射由打印页（`planBoardPage`）承担**（`layout.test.ts` 的落位用例钉着它）。
  *
  * **为什么 `maxEdge` 是入参而不是只读常量**：平台上限（主规格 R2）只能真机实测，而「上限很小」这一整类
- * 降级分支在 CI 里必须能被判别——把上限做成入参，就能用合成值（如 1143、320）确定性地走过每一条分支。
+ * 分支在 CI 里必须能被判别——把上限做成入参，就能用合成值确定性地走过每一条分支。
  */
 
 /** 产物画布单边上限。**4096 是主规格 §7.3 所给区间的保守下界**，探针页 `/lab/canvas` 实测后调整。 */
@@ -35,21 +35,9 @@ export const EXPORT_MAX_EDGE = 4096;
 /**
  * 施工图的目标格像素（色号可读、文件不至于过大）。
  *
- * **隐含前提：它必须 ≥ `SHEET_LABEL_MIN_CELL_PX`**（当前 40 ≥ 32）。`planSheets` 的 `labels`
- * 判据按 `SHEET_LABEL_MIN_CELL_PX` 算（「32 px 才画得下色号」），而最终格像素是
- * `min(rawCellPx, EXPORT_CELL_PX_TARGET)` ⇒ 把这个上限调到 32 以下时，`labels` 仍会是真、
- * 面板摘要会说「含格内色号」，实际格像素却低于可读阈值。`layout.test.ts` 有一条常量关系断言守着它。
+ * 它是 `planSheet` 算格像素时的**上界**之一（另两个上界由可用宽 / 高给出）：小图纸不会被放大到它之上。
  */
 export const EXPORT_CELL_PX_TARGET = 40;
-/**
- * 格内色号阈值，同时是默认降级下限（主规格 §7.2 的 32px）。
- *
- * **命名刻意避开 `core/pattern/view.ts` 的 `CELL_LABEL_MIN_CELL_PX`（= 28）**：那是屏幕上「这格是什么色号」
- * 的即时提示阈值，这里是纸面输出阈值，两处语义不同。同名不同义的量传错不会报错——本项目已为此记过账。
- */
-export const SHEET_LABEL_MIN_CELL_PX = 32;
-/** 最终兜底格像素（主规格 §7.3）。走到这里意味着 `labels = false`。 */
-export const EXPORT_CELL_PX_FLOOR = 8;
 /** 四周边距。 */
 export const SHEET_MARGIN = 24;
 /** 左刻度带宽（行号 + 板号）。 */
@@ -58,27 +46,33 @@ export const SHEET_RULER_LEFT = 64;
 export const SHEET_RULER_TOP = 44;
 /** 顶部信息条高（两行）。 */
 export const SHEET_INFO_BAR_H = 108;
-/** 页脚高（片范围）。 */
+/** 页脚带高（三行 12px 文字 + 行距，`drawSheet` / `drawBoardPage` 的末行共用）。 */
 export const SHEET_FOOTER_H = 44;
-/** 用量表每项宽。 */
-export const LEGEND_ITEM_W = 300;
-/** 用量表每行高。 */
-export const LEGEND_ROW_H = 30;
-/** 用量表列数上限护栏（当前 4096 上限下实际列数是 13）。 */
-export const LEGEND_COLS_MAX = 15;
+/**
+ * 用料条（B6 新增：它嵌在产物底部，不再是独立成图）的**压缩几何**。
+ *
+ * 规格 §13 的常量迁移表：独立用量表时代的 300 / 30 随那套图一起删除，这对名字改为用料条
+ * 自己的取值（200 / 22）——同一个文件里不留「同一件事的第二份解释」。
+ *
+ * 随后四个（`LEGEND_SWATCH_SIZE` / `LEGEND_CODE_X` / `LEGEND_COUNT_RIGHT_PAD` / `LEGEND_PAD_TOP`）
+ * 从来只服务用料条，名字里没有第二个含义需要收敛，故原样保留。
+ */
+export const LEGEND_ITEM_W = 200;
+export const LEGEND_ROW_H = 22;
+export const LEGEND_SWATCH_SIZE = 16;
+export const LEGEND_CODE_X = 26;
+export const LEGEND_COUNT_RIGHT_PAD = 8;
+/** 用料条顶边与本带首行的间距；**`canvasHeight` 无条件含它**（见 `planSheet` 的高度预算）。 */
+export const LEGEND_PAD_TOP = 8;
 /** 三档线宽：每格 / 每 5 格 / 每 29 格。 */
 export const SHEET_LINE_WIDTHS: LineWidths = { thin: 1, major: 2, board: 3 };
 /** 刻度数字最小字号。 */
 export const SHEET_TICK_FONT_MIN = 12;
-/** 分享图长边上限（手机内存与文件体积；分享图是「看轮廓」的图，不需逐格可辨）。 */
-export const SHARE_MAX_EDGE = 2048;
-export const SHARE_CELL_PX_MIN = 4;
-export const SHARE_CELL_PX_MAX = 64;
 /** 坐标刻度间隔（格）。 */
 export const TICK_EVERY = 5;
 /**
- * 分片步长 = 一块拼豆板的格数。**取自 `board.ts`，不写第二份字面量 29**——图纸分区与界面上
- * 「需要几块板」必须是同一组数字。
+ * 板步长 = 一块拼豆板的格数（网格的粗档与板号边界都按它取模）。**取自 `board.ts`，不写第二份
+ * 字面量 29**——图纸分区与界面上「需要几块板」必须是同一组数字。
  */
 export const TILE_STEP = BOARD_COLS;
 
@@ -86,38 +80,20 @@ export const TILE_STEP = BOARD_COLS;
 export const SHEET_MIN_LABEL_FONT_PX = 10;
 
 /**
- * 底部用料条的几何（B6 新增：它嵌在产物底部，不再是独立成图）。
- *
- * **为什么这两个名字带 `BAND_` 前缀**（**过渡状态，任务 11 收口**）：上面那对 `LEGEND_ITEM_W` /
- * `LEGEND_ROW_H`（= 300 / 30）现在仍被即将删除的**独立用量表图**（`planLegend` / `drawLegend`）使用，
- * 而用料条要用压缩几何（= 200 / 22，规格 §13 的常量迁移表）。同一个文件里一对常量不能有两个值，
- * 所以本任务**只做加法**：旧的 300 / 30 原样留在原地（既有 `planLegend` 的用例因此一条都不红），
- * 压缩几何另起名字挂在用料条上。
- * **任务 11 删掉 `planLegend` / `drawLegend` 时，把这两个名字改回 `LEGEND_ITEM_W` / `LEGEND_ROW_H`**
- * ——届时旧的 300 / 30 随 `planLegend` 一起消失，不留「同一件事的第二份解释」。
- */
-export const LEGEND_BAND_ITEM_W = 200;
-export const LEGEND_BAND_ROW_H = 22;
-export const LEGEND_SWATCH_SIZE = 16;
-export const LEGEND_CODE_X = 26;
-export const LEGEND_COUNT_RIGHT_PAD = 8;
-/** 用料条顶边与本带首行的间距；**`canvasHeight` 无条件含它**（见 `planSheet` 的高度预算）。 */
-export const LEGEND_PAD_TOP = 8;
-
-/**
  * 格内色号字号比例（0.38 × cellPx）。
  *
- * **刻意不与 `core/pattern/view.ts` 共享**：那里是屏幕即时提示、这里是纸面输出，两处阈值（28 / 32）
- * 本就不同；共享一个比例常量会把「改一处观感影响两处语义」变成静默耦合。真要合并，必须同时改两处用例。
+ * **刻意不与 `core/pattern/view.ts` 共享**：那里是屏幕即时提示、这里是纸面输出，两处阈值
+ * （屏幕的 28 px 格 / 纸面的字号下限 `SHEET_MIN_LABEL_FONT_PX`）本就不同；共享一个比例常量会把
+ * 「改一处观感影响两处语义」变成静默耦合。真要合并，必须同时改两处用例。
  */
 const LABEL_FONT_RATIO = 0.38;
 /**
  * 刻度数字字号比例（0.3 × cellPx，下限 `SHEET_TICK_FONT_MIN`）。
  *
- * **在当前常量域内它与下限同值、行为上不可观测**：`cellPx ≤ hi ≤ EXPORT_CELL_PX_TARGET = 40` ⇒
- * `round(0.3 × cellPx) ≤ 12 = SHEET_TICK_FONT_MIN` ⇒ `tickFontPx` 恒等于 `SHEET_TICK_FONT_MIN`
- * （`cellPx` 最小的 8 px 格也只给出 2，同样被下限抬到 12）。保留它是因为它编码了「刻度字号随格子缩放」
- * 的意图——提高 `EXPORT_CELL_PX_TARGET` 后立刻生效；与 `services/patternThumbnail.ts` 的
+ * **它在当前常量域内的可观测性随计划而变**：单张施工图的 `cellPx ≤ EXPORT_CELL_PX_TARGET = 40`
+ * ⇒ `round(0.3 × cellPx) ≤ 12 = SHEET_TICK_FONT_MIN`（与下限同值、行为上不可观测）；打印页的
+ * `cellPx` 可以取到 `PRINT_BEAD_PX = 59`（17.7 → 18 px，**在下限之上**），那里它真的生效。
+ * 保留它是因为它编码了「刻度字号随格子缩放」的意图；与 `services/patternThumbnail.ts` 的
  * `RESULT_PREVIEW_MAX_EDGE`（同样当前不可观测、保留并写明）是同一个先例。
  * **不要**为它造一条「看起来能判别」的用例：判不开的断言比没有断言更坏。
  */
@@ -170,8 +146,8 @@ export interface GridGeometry {
 }
 
 /**
- * 网格几何 + **本片格范围**。`cellBox` / `countTileBeads` 只要这么多就够——所以分片计划
- * （`SheetTilePlan`）与单张计划（`SingleSheetPlan`）**共用同一条格↔像素映射**（规格 §4.2 的承重不变量）。
+ * 网格几何 + **本片格范围**。`cellBox` / `countTileBeads` 只要这么多就够——单张施工图计划与
+ * 打印页计划**共用同一条格↔像素映射**（规格 §4.2 的承重不变量）。
  */
 export interface TileGeometry extends GridGeometry {
   readonly originCol: number;
@@ -180,30 +156,6 @@ export interface TileGeometry extends GridGeometry {
   readonly rows: number;
   /** **只给 `cellBox` / `countTileBeads` 与计划自洽用**；渲染器读它就是缺陷（词法闸门会红）。 */
   readonly cellPx: number;
-}
-
-/** 一张施工图分片。字段与契约 §2 逐字一致；**plan 是纯数据**（不含函数 / 闭包）。 */
-export interface SheetTilePlan extends TileGeometry {
-  readonly index: number;
-  readonly rowIndex: number;
-  readonly colIndex: number;
-  readonly canvasWidth: number;
-  readonly canvasHeight: number;
-  readonly labelFontPx: number;
-  readonly tickFontPx: number;
-}
-
-/**
- * **自动分片**计划（B4）。**任务 11 删除**（116 上限下分片恒为 1 片）；单张施工图请用 `SingleSheetPlan`。
- */
-export interface SheetPlan {
-  readonly kind: "sheet";
-  readonly cellPx: number;
-  readonly labels: boolean;
-  readonly tileCols: number;
-  readonly tileRows: number;
-  readonly tiles: readonly SheetTilePlan[];
-  readonly warnings: readonly ExportWarning[];
 }
 
 /** 底部用料条带的几何（B6 新增）。 */
@@ -226,14 +178,9 @@ export interface LegendBandPlan {
 /**
  * **单张施工图的计划**（B6 新增：整张图纸一块 + 底部用料条）。
  *
- * **为什么现在叫 `SingleSheetPlan` 而不是 `SheetPlan`**（**过渡名，任务 11 收口**）：`SheetPlan` 这个名字
- * 现在被上面的**自动分片**计划占着（`planSheets(...): SheetPlan`，含 `tiles` / `labels` / `warnings`），
- * 而 `core/render/sheet.ts` 的既有渲染器（`drawSheetTile`，本任务不碰）正是按那个形状读 `plan.tiles`。
- * 本任务只做加法 ⇒ 旧类型原样留在原地、新形状另起名字。
- * **任务 11 删掉 `planSheets` / `SheetTilePlan` / 分片版 `SheetPlan` 时，把这个名字改回 `SheetPlan`**
- * ——任务 6 的 `drawSheet` 与任务 9 的 `drawBoardPage` 都吃这个形状（它们的简报里写的就是 `SheetPlan`）。
+ * `drawSheet` 吃这个形状（整图一块、不分片），`BoardPagePlan` 与它同构、差异只在页身份与几何来源。
  */
-export interface SingleSheetPlan extends TileGeometry {
+export interface SheetPlan extends TileGeometry {
   readonly kind: "sheet";
   readonly canvasWidth: number;
   readonly canvasHeight: number;
@@ -244,38 +191,8 @@ export interface SingleSheetPlan extends TileGeometry {
   readonly footerY: number;
 }
 
-/** 结构化提示：core 只出事实，中文文案在视图层（与 `formatCm` 的既有分工一致）。 */
-export type ExportWarning = {
-  readonly code: "labels-omitted";
-  readonly maxEdge: number;
-  readonly cellPx: number;
-};
-
-export interface LegendPlan {
-  readonly kind: "legend";
-  readonly itemCols: number;
-  readonly itemRows: number;
-  readonly canvasWidth: number;
-  readonly canvasHeight: number;
-  readonly itemWidth: number;
-  readonly rowHeight: number;
-  readonly headerY: number;
-  readonly tableTop: number;
-  /** 页脚三行的起点（三行落在 `+2` / `+16` / `+30`，合计 44 = `SHEET_FOOTER_H` 正好放下）。 */
-  readonly totalY: number;
-}
-
-export interface SharePlan {
-  readonly kind: "share";
-  readonly cellPx: number;
-  readonly cols: number;
-  readonly rows: number;
-  readonly canvasWidth: number;
-  readonly canvasHeight: number;
-}
-
 export interface PlanOptions {
-  /** 产物画布单边上限；缺省取 `EXPORT_MAX_EDGE`（`planShare` 取 `SHARE_MAX_EDGE`）。 */
+  /** 产物画布单边上限；缺省取 `EXPORT_MAX_EDGE`。 */
   readonly maxEdge?: number;
 }
 
@@ -377,9 +294,9 @@ function kindOf(index: number): GridLine["kind"] {
 /**
  * 网格几何：由「格范围 + 原点像素 + 格像素」算出网格矩形、三档线、刻度与板边界。
  *
- * **坐标口径是全局格号**（`vLines` 的 `at` 里那个 `− originCol` 是唯一的分片痕迹），由
- * `layout.test.ts` 的落位用例钉着（刻度取全局坐标、板边界档位、`cellBox` 的跨计划不变量）。
- * `planSheets` 的分片与 `planSheet` 的单张共用它——**六个循环不写第二份**。
+ * **坐标口径是全局格号**（`vLines` 的 `at` 里那个 `− originCol` 是唯一的「原点」痕迹），由
+ * `layout.test.ts` 的落位用例钉着（原点为 0 的那组 + 板页那组原点非零的）。
+ * 单张施工图（`planSheet`）与打印页（`planBoardPage`）共用它——**六个循环不写第二份**。
  */
 function makeGridGeometry(input: {
   readonly originCol: number;
@@ -423,96 +340,6 @@ function makeGridGeometry(input: {
   return { grid, vLines, hLines, colTicks, rowTicks, colBoards, rowBoards, lineWidths: SHEET_LINE_WIDTHS };
 }
 
-function makeTile(input: {
-  index: number; rowIndex: number; colIndex: number;
-  originCol: number; originRow: number; cols: number; rows: number;
-  cellPx: number; labelFontPx: number; tickFontPx: number;
-}): SheetTilePlan {
-  const { index, rowIndex, colIndex, originCol, originRow, cols, rows, cellPx } = input;
-  return {
-    index, rowIndex, colIndex, originCol, originRow, cols, rows,
-    canvasWidth: 2 * SHEET_MARGIN + SHEET_RULER_LEFT + cols * cellPx,
-    canvasHeight: 2 * SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP + rows * cellPx + SHEET_FOOTER_H,
-    ...makeGridGeometry({
-      originCol, originRow, cols, rows, cellPx,
-      x: SHEET_MARGIN + SHEET_RULER_LEFT,
-      y: SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP,
-    }),
-    labelFontPx: input.labelFontPx, tickFontPx: input.tickFontPx, cellPx,
-  };
-}
-
-/**
- * 施工图分片计划。
- *
- * 算法与它的收敛性证明见规格 §5.2：先按「色号可读的最小格像素」定每片几块板，再由两轴取小定格像素，
- * 最后划片。**不含循环依赖、不需要迭代试错**——任何一张产物的两边都 ≤ `maxEdge`。
- */
-export function planSheets(pattern: Pattern, palette: Palette, options?: PlanOptions): SheetPlan {
-  requirePattern(pattern);
-  requirePalette(pattern, palette);
-  const maxEdge = requireMaxEdge(options, EXPORT_MAX_EDGE);
-
-  const innerW = maxEdge - 2 * SHEET_MARGIN - SHEET_RULER_LEFT;
-  const innerH = maxEdge - 2 * SHEET_MARGIN - SHEET_INFO_BAR_H - SHEET_RULER_TOP - SHEET_FOOTER_H;
-  if (innerW < 1 || innerH < 1) {
-    throw new Error(`画布上限 ${maxEdge} px 太小，无法生成施工图`);
-  }
-
-  const kc = Math.floor(innerW / (TILE_STEP * SHEET_LABEL_MIN_CELL_PX));
-  const kr = Math.floor(innerH / (TILE_STEP * SHEET_LABEL_MIN_CELL_PX));
-  const tileCols = Math.min(pattern.width, TILE_STEP * Math.max(kc, 1));
-  const tileRows = Math.min(pattern.height, TILE_STEP * Math.max(kr, 1));
-  // `labels` 按**实际片格数**判，不是按「几块板」判：图纸小于一块板时（如 20×20），
-  // 整板粒度会算出 `kr = 0` 而**误降级**（丢色号、格像素被压到 27），
-  // 而实际片宽 `tileCols × 32` 明明放得下。两轴各判一次，无需循环。
-  const labels =
-    tileCols * SHEET_LABEL_MIN_CELL_PX <= innerW && tileRows * SHEET_LABEL_MIN_CELL_PX <= innerH;
-
-  const rawCellPx = Math.min(Math.floor(innerW / tileCols), Math.floor(innerH / tileRows));
-  if (!labels && rawCellPx < EXPORT_CELL_PX_FLOOR) {
-    throw new Error(`画布上限 ${maxEdge} px 连 ${EXPORT_CELL_PX_FLOOR} px/格 都放不下`);
-  }
-  // **不需要 `clamp(rawCellPx, lo, hi)`**——那两个界在当前判据下都是死代码，可证：
-  // - `labels ⟺ tileCols × 32 ≤ innerW ∧ tileRows × 32 ≤ innerH`，而
-  //   `rawCellPx = min(⌊innerW / tileCols⌋, ⌊innerH / tileRows⌋)` ⇒ **`labels` 成立时 `rawCellPx ≥ 32`**
-  //   ⇒ 下界 `SHEET_LABEL_MIN_CELL_PX` 是死的（`max(raw, 32) === raw`），只剩上界 `EXPORT_CELL_PX_TARGET` 有活；
-  // - `!labels` ⇒ 至少一轴 `tileCols × 32 > innerW` ⇒ `⌊innerW / tileCols⌋ ≤ 31` ⇒ **`rawCellPx ≤ 31`**
-  //   ⇒ 上界 `SHEET_LABEL_MIN_CELL_PX − 1 = 31` 也是死的（`min(raw, 31) === raw`），下界另有
-  //   `EXPORT_CELL_PX_FLOOR` 的前置守卫兜着（`!labels && rawCellPx < 8` 已经抛在上一条）。
-  const cellPx = labels ? Math.min(rawCellPx, EXPORT_CELL_PX_TARGET) : rawCellPx;
-  const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
-  const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
-
-  const tiles: SheetTilePlan[] = [];
-  let rowIndex = 0;
-  for (let originRow = 0; originRow < pattern.height; originRow += tileRows) {
-    let colIndex = 0;
-    for (let originCol = 0; originCol < pattern.width; originCol += tileCols) {
-      tiles.push(
-        makeTile({
-          index: tiles.length, rowIndex, colIndex, originCol, originRow,
-          cols: Math.min(tileCols, pattern.width - originCol),
-          rows: Math.min(tileRows, pattern.height - originRow),
-          cellPx, labelFontPx, tickFontPx,
-        }),
-      );
-      colIndex += 1;
-    }
-    rowIndex += 1;
-  }
-
-  return {
-    kind: "sheet",
-    cellPx,
-    labels,
-    tileCols,
-    tileRows,
-    tiles,
-    warnings: labels ? [] : [{ code: "labels-omitted", maxEdge, cellPx }],
-  };
-}
-
 /**
  * 单张施工图计划：整张图纸一块（B6 起不再分片），底部嵌一条用料条。
  *
@@ -530,7 +357,7 @@ export function planSheet(
   palette: Palette,
   usages: readonly ColorUsage[],
   options?: PlanOptions,
-): SingleSheetPlan {
+): SheetPlan {
   requirePattern(pattern);
   requirePalette(pattern, palette);
   const safeUsages = requireUsages(usages);
@@ -542,7 +369,7 @@ export function planSheet(
   }
   // `left` 固定 `SHEET_MARGIN`：单张施工图的画布宽已经按用料条加宽过，左对齐即可
   const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0, SHEET_MARGIN);
-  const legendH = legend.itemRows * LEGEND_BAND_ROW_H + LEGEND_PAD_TOP;
+  const legendH = legend.itemRows * LEGEND_ROW_H + LEGEND_PAD_TOP;
   const innerH =
     maxEdge - 2 * SHEET_MARGIN - SHEET_INFO_BAR_H - SHEET_RULER_TOP - legendH - SHEET_FOOTER_H;
 
@@ -592,14 +419,14 @@ export function planSheet(
     rows: pattern.height,
     ...geometry,
     canvasWidth: Math.max(gridX + pattern.width * cellPx + SHEET_MARGIN, bandWidth),
-    canvasHeight: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H + SHEET_MARGIN,
+    canvasHeight: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H + SHEET_MARGIN,
     labelFontPx,
     tickFontPx,
     // `lineOneY` / `lineTwoY` 是**文本顶边**（渲染器用 `textBaseline = "top"`）；
     // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY ∓ LEGEND_FOOTER_LINE_H`。
     infoBar: { lineOneY: SHEET_MARGIN, lineTwoY: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2) },
     legend: band,
-    footerY: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H / 2,
+    footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,
   };
 }
 
@@ -736,99 +563,25 @@ export function planLegendBand(
   const width = requirePositiveInteger(availableWidth, "用料条可用宽度");
   requireSafeInteger(top, "用料条顶边");
   requireSafeInteger(left, "用料条左沿");
-  const itemCols = Math.max(1, Math.floor(width / LEGEND_BAND_ITEM_W));
+  const itemCols = Math.max(1, Math.floor(width / LEGEND_ITEM_W));
   const itemRows = safe.length === 0 ? 0 : Math.ceil(safe.length / itemCols);
   return {
     top,
     left,
     itemCols,
     itemRows,
-    itemWidth: LEGEND_BAND_ITEM_W,
-    rowHeight: LEGEND_BAND_ROW_H,
+    itemWidth: LEGEND_ITEM_W,
+    rowHeight: LEGEND_ROW_H,
     swatchSize: LEGEND_SWATCH_SIZE,
     codeX: LEGEND_CODE_X,
     countRightPad: LEGEND_COUNT_RIGHT_PAD,
   };
 }
 
-/** 全图用量表计划（独立成图，理由见规格 §1.4：图例高度依赖用色数，留在施工图上会造成布局循环依赖）。 */
-export function planLegend(usages: readonly ColorUsage[], options?: PlanOptions): LegendPlan {
-  const safe = requireUsages(usages);
-  const maxEdge = requireMaxEdge(options, EXPORT_MAX_EDGE);
-  const itemCols = Math.min(
-    Math.max(Math.floor((maxEdge - 2 * SHEET_MARGIN) / LEGEND_ITEM_W), 1),
-    LEGEND_COLS_MAX,
-  );
-  const itemRows = Math.ceil(safe.length / itemCols);
-  const canvasWidth = 2 * SHEET_MARGIN + itemCols * LEGEND_ITEM_W;
-  const canvasHeight = 2 * SHEET_MARGIN + SHEET_INFO_BAR_H + itemRows * LEGEND_ROW_H + SHEET_FOOTER_H;
-  if (canvasWidth > maxEdge || canvasHeight > maxEdge) {
-    throw new Error(`画布上限 ${maxEdge} px 太小，无法生成用量表`);
-  }
-  const tableTop = SHEET_MARGIN + SHEET_INFO_BAR_H;
-  return {
-    kind: "legend",
-    itemCols,
-    itemRows,
-    canvasWidth,
-    canvasHeight,
-    itemWidth: LEGEND_ITEM_W,
-    rowHeight: LEGEND_ROW_H,
-    headerY: SHEET_MARGIN,
-    tableTop,
-    totalY: tableTop + itemRows * LEGEND_ROW_H,
-  };
-}
-
-/** 分享图计划：纯色块、无边距无文字、**不分片**（分享图不是施工图，不需要逐格可辨）。 */
-export function planShare(pattern: Pattern, options?: PlanOptions): SharePlan {
-  requirePattern(pattern);
-  const maxEdge = requireMaxEdge(options, SHARE_MAX_EDGE);
-  const longEdge = Math.max(pattern.width, pattern.height);
-  const cellPx = Math.min(
-    Math.max(Math.floor(maxEdge / longEdge), SHARE_CELL_PX_MIN),
-    SHARE_CELL_PX_MAX,
-  );
-  const canvasWidth = pattern.width * cellPx;
-  const canvasHeight = pattern.height * cellPx;
-  if (canvasWidth > maxEdge || canvasHeight > maxEdge) {
-    throw new Error(`画布上限 ${maxEdge} px 太小，无法生成分享图`);
-  }
-  return { kind: "share", cellPx, cols: pattern.width, rows: pattern.height, canvasWidth, canvasHeight };
-}
-
-/**
- * 分享图的格坐标 → 像素矩形。**与 `cellBox` 同一条口径**（安全整数、越界抛错、不夹取）。
- *
- * **为什么必须有它**（2026-10-05 由任务 2 的起草者发现的洞）：`SharePlan` 不含 `SheetTilePlan`，
- * 而渲染器按闸门又不许读 `cellPx` ⇒ 分享图的格像素本来**没有合法来源**，起草者当时只能拿
- * `canvasWidth / pattern.width` 反推——那正是「自己乘格像素」这条要消灭的形态。
- *
- * **它同时是计划自洽性的入口**（修复波 A-m11）：`plan.cellPx` 的合法性在这里守（**≥1 的安全整数**）。
- * 放在这里的理由有两条：① 渲染器按闸门第 1 条不许出现 `cellPx` 标识符，而它是唯一的格↔像素映射；
- * ② 坏格像素会让 `fillRect` 收到 0×0 / `NaN` 尺寸——真实 canvas **不抛错**，于是静默产出一张全透明
- * 的「分享图」（它按设计就是透明的，所以连"看起来不对"都没有）。`drawShare` 因此在动笔前先问一次
- * `shareCellBox(plan, 0, 0)`。
- */
-export function shareCellBox(plan: SharePlan, col: number, row: number): PixelRect {
-  requireSafeInteger(col, "格子列号");
-  requireSafeInteger(row, "格子行号");
-  if (!Number.isSafeInteger(plan.cellPx) || plan.cellPx < 1) {
-    throw new Error(`分享图计划的格像素非法：${String(plan.cellPx)}（必须是 ≥1 的安全整数）`);
-  }
-  if (col < 0 || col >= plan.cols) {
-    throw new Error(`列 ${col} 不在分享图范围 0–${plan.cols - 1} 内`);
-  }
-  if (row < 0 || row >= plan.rows) {
-    throw new Error(`行 ${row} 不在分享图范围 0–${plan.rows - 1} 内`);
-  }
-  return { x: col * plan.cellPx, y: row * plan.cellPx, width: plan.cellPx, height: plan.cellPx };
-}
-
 /**
  * **一块板的打印页计划**（B6 新增：A4 / A3 × 29 / 58 板，每页一块板）。
  *
- * 字段与 `SingleSheetPlan` 同构（同一套网格 / 刻度 / 板号 / 用料条几何），差异是：
+ * 字段与 `SheetPlan` 同构（同一套网格 / 刻度 / 板号 / 用料条几何），差异是：
  * 画布与页边距由**纸型**决定（`planSheet` 由 `maxEdge` 决定）、格像素由「板大小 + 纸型」按
  * §7.1 算出、多出页身份（`boardRow` / `boardCol` / `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）。
  */
@@ -903,7 +656,7 @@ export function planBoardPage(
   // 用料条高度只依赖「色数 + 可用宽」（见 `planLegendBand`），所以格像素可以在它之后定；
   // 横向落位要到「网格落位之后」才知道，所以这里只探一次高度（`top` / `left` 都是占位）
   const legendProbe = planLegendBand(safeUsages, printableW, 0, 0);
-  const legendH = legendProbe.itemRows * LEGEND_BAND_ROW_H + LEGEND_PAD_TOP;
+  const legendH = legendProbe.itemRows * LEGEND_ROW_H + LEGEND_PAD_TOP;
   const chrome = PAGE_HEADER_H + SHEET_RULER_TOP + legendH + SHEET_FOOTER_H;
 
   // 上限是**实物大小**：纸再大也不放大（这是「永不放大超过实物」唯一的落点）
@@ -975,6 +728,6 @@ export function planBoardPage(
     // 页眉 / 页脚文字的左沿 = 可打印区左沿（不是 `SHEET_MARGIN`：那是屏幕产物的边距）
     textLeft: marginPx,
     legend: band,
-    footerY: legendTop + band.itemRows * LEGEND_BAND_ROW_H + SHEET_FOOTER_H / 2,
+    footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,
   };
 }

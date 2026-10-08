@@ -121,9 +121,8 @@ export function createRecordingTarget(): RecordingTarget {
     textAlign: "center",
     textBaseline: "middle",
     // **与真实 ctx 的默认值一致（`true`）**，也与 `core/render/__tests__/helpers.ts` 的桩一致
-    // （修复波 C-m4）：两个共享桩的初值不一致时，将来谁在面板侧断「分享图关了插值」都是**恒真**
-    // （桩自己给的 `false`），而不是被测行为。`drawShare` 把它改成 `false` 这件事由
-    // `share.test.ts` 的「关插值」用例负责（那边先断言初值 `true`）。
+    // （修复波 C-m4）：两个共享桩的初值不一致时，任何「渲染器把插值关掉了」的面板侧断言都会变成
+    // **恒真**（桩自己给的 `false`），而不是被测行为。
     imageSmoothingEnabled: true,
     fillRect: (x, y, w, h) => {
       fills.push({ x, y, w, h, fillStyle: target.fillStyle });
