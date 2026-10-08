@@ -301,7 +301,7 @@ function storedCells(record: ProjectRecord | null): number[] {
 
 /**
  * 在画布上派发一次指针事件。坐标由**视图自身**算出（`offset + 格坐标 × scale`），
- * 再补上 rect 的 left / top——用例因此不硬编码任何屏幕常量，也不会随 `MIN_CELL_PX` 漂移。
+ * 再补上 rect 的 left / top——用例因此不硬编码任何屏幕常量，也不会随默认视图口径漂移。
  */
 async function pointerAtCell(
   wrapper: ReturnType<typeof mount>,
@@ -562,10 +562,9 @@ describe("装配：载入 → 播种 store → 视图落定", () => {
   it("视图由画布的 measure 落定：等于按容器尺寸算出的默认视图", async () => {
     await mountPage();
     const editor = useEditor();
-    // 800×600 的容器 + 2×1 的格阵：等价于「适配比例与 24px/格取大者」。期望值由纯函数现算，
-    // **不写死数字**——写死数字会在 MIN_CELL_PX / 缩放口径调整时变成一条需要人工同步的断言
-    // （简报草稿在这里写了 `toBe(64)`：2×1 放进 800×600 的适配比例是 400，不是 MAX_CELL_PX
-    //  = 64，`defaultCellView` 对小图纸**不设上界**。见报告 §从简报代码块里改掉的缺陷 D2）。
+    // 800×600 的容器 + 2×1 的格阵：2×1 的适配比例是 min(400, 600) = 400，B6 新口径下它被
+    // **封到 `MAX_CELL_PX = 64`**（「避免满屏一块色块」那一支；B6 之前这里是不设上界的）。
+    // 期望值仍由纯函数现算、**不写死数字**——写死数字会在缩放口径调整时变成一条需要人工同步的断言。
     expect(editor.view).toEqual(defaultCellView({ width: 800, height: 600 }, { width: 2, height: 1 }));
     // 占位视图（`{ scale: 1, offsetX: 0, offsetY: 0 }`）不满足上面那条 toEqual，
     // 这里再钉一次「确实落定过」这个状态本身。
@@ -843,8 +842,9 @@ describe("B1-8：/edit/a → /edit/b 重载", () => {
     expect(editor.pattern?.height).toBe(4);
     // `history.clear()` 之后不许还能撤销上一条图纸的改动（跨图纸撤销会改错数据）
     expect(editor.history.canUndo).toBe(false);
-    // 视图按 **b 的尺寸**重算：4×4 放进 800×600 的视图与 2×1 的那个（比例 400）逐项不同。
-    // 期望值同样由纯函数现算（简报草稿在这里写了 `toBe(64)`，实际是 150——见报告 D2）。
+    // 视图按 **b 的尺寸**重算：4×4（适配 150）与 2×1（适配 400）的比例都被封到 `MAX_CELL_PX = 64`，
+    // 但偏移不同——4×4 的图像 256×256、2×1 的是 128×64，所以「沿用 A 的视图」一定红。
+    // 期望值同样由纯函数现算，不写死数字。
     expect(editor.view).toEqual(defaultCellView({ width: 800, height: 600 }, { width: 4, height: 4 }));
   });
 
@@ -1043,7 +1043,13 @@ describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适�
   it("缩放与适配：+ 让比例 ×1.25、− 原路退回，适配落回 fitTransform", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
+
+    // 起点取**「适配」**而不是载入后的默认视图：2×1 的适配比例是 400，远大于 `MAX_CELL_PX = 64`，
+    // 默认视图被封在 64，而缩放范围仍是 `[适配, 适配 × 2] = [400, 800]`（B6 冻结了 `zoomCellView`
+    // 与缩放范围）⇒ 站在默认视图上按 ± 会被夹到 400。倍率本身要在范围内才验得出来，所以先落到下界。
+    await wrapper.get("[data-testid='zoom-fit']").trigger("click");
     const before = editor.view;
+    expect(before.scale).toBe(400);
 
     await wrapper.get("[data-testid='zoom-in']").trigger("click");
     // 1.25 是控制者批准的常量（裁决 6）：写成别的档位这里就红。
@@ -1460,8 +1466,8 @@ describe("端到端 ③：/edit/a → /edit/b", () => {
     expect(editor.history.canRedo).toBe(false);
 
     // ③ 视图按 b 重算，而且**确实与 A 的视图不同**（`savedView` 是切 id 之前 A 的视图）。
-    // 期望值由纯函数现算，不写死数字（简报草稿那句「沿用 A 的 2×1 会算出 128×64」是错的：
-    // 2×1 在 800×600 里是比例 400、偏移 (0, 100)，`defaultCellView` 对小图纸不设上界——同 D2）。
+    // 期望值由纯函数现算，不写死数字：两者都被封到 `MAX_CELL_PX = 64`（2×1 的适配 400 与 4×4 的 150
+    // 都超过上限），差别在偏移——2×1 是 (336, 268)、4×4 是 (272, 172)，所以「沿用 A 的视图」必红。
     expect(editor.view).toEqual(defaultCellView({ width: 800, height: 600 }, { width: 4, height: 4 }));
     expect(editor.view).not.toEqual(savedView);
   });

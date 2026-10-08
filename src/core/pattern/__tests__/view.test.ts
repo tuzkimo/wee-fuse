@@ -6,7 +6,6 @@ import {
   CELL_LABEL_MIN_CELL_PX,
   GRID_LINE_MIN_CELL_PX,
   MAX_CELL_PX,
-  MIN_CELL_PX,
   cellRectFromScreen,
   cellsAlongLine,
   defaultCellView,
@@ -24,10 +23,10 @@ import {
  * （规格 §4.1 的构造性免疫警告）在这一层同样适用。
  *
  * 两个数字是刻意选的，别改：
- * - 800×600 放进 100×100 ⇒ 适配比例 100/800 = **0.125**（远小于 `MIN_CELL_PX = 24`），
- *   默认视图必须**抬到 24**，这是「大图纸走 MIN_CELL_PX 那一支」的判别夹具；
- * - 10×10 放进 1000×800 ⇒ 适配比例 **80 > 64**，是「小图纸不退化」那一支的判别夹具
- *   （若上界固定成 64，会出现 `上界 64 < 下界 80`）。
+ * - 800×600 放进 100×100 ⇒ 适配比例 100/800 = **0.125**，B6 新口径下**这就是默认比例**
+ *   （旧口径会抬到 24 px/格），是「大图纸整图可见」那一支的判别夹具；
+ * - 10×10 放进 1000×800 ⇒ 适配比例 **80 > `MAX_CELL_PX = 64`**，默认视图封到 64，是「小图纸封顶」
+ *   那一支的判别夹具（缩放上界仍是 `max(64, 适配 × 2) = 160`，所以不会出现 `上界 < 下界`）。
  *
  * **`V_FRAC` 是结构性防线**：真实浏览器的 `getBoundingClientRect()` 返回的就是小数，
  * 而 `viewport` 与 `grid` 的静态类型都是 `Size`——实参对调 TS 查不出来。让每个吃 `viewport`
@@ -41,7 +40,7 @@ const GRID_800 = { width: 800, height: 600 };
 const GRID_480 = { width: 480, height: 360 };
 const GRID_10 = { width: 10, height: 10 };
 const GRID_8 = { width: 8, height: 8 };
-/** 8×6：适配比例 12.5 会被 `MIN_CELL_PX` 抬到 24，而缩放上界是 `MAX_CELL_PX = 64`——留给「先放大、再捏合」三个不同比例。 */
+/** 8×6：适配比例 12.5 = 缩放下限（B6 起不再抬升），而缩放上界是 `MAX_CELL_PX = 64`——留给「先放大、再捏合」三个不同比例。 */
 const GRID_8x6 = { width: 8, height: 6 };
 const V1000 = { width: 1000, height: 800 };
 
@@ -57,9 +56,8 @@ function expectEightConnected(path: readonly CellPoint[]): void {
   }
 }
 
-describe("四个公开常量（§4.2 / §4.5）", () => {
-  it("初始缩放与缩放上界、两个显示阈值逐字钉死", () => {
-    expect(MIN_CELL_PX).toBe(24);
+describe("三个公开常量（§4.2 / §4.5）", () => {
+  it("缩放上界与两个显示阈值逐字钉死", () => {
     expect(MAX_CELL_PX).toBe(64);
     expect(GRID_LINE_MIN_CELL_PX).toBe(6);
     expect(CELL_LABEL_MIN_CELL_PX).toBe(28);
@@ -108,24 +106,30 @@ describe("缩放范围（§4.2）", () => {
 });
 
 describe("defaultCellView（§4.2）", () => {
-  it("大图纸抬到 MIN_CELL_PX 并居中", () => {
-    // 适配 0.125 → 抬到 24；图像 19200×14400，偏移 = (100 − 19200) / 2 与 (100 − 14400) / 2。
-    expect(defaultCellView(V100, GRID_800)).toEqual(V(24, -9550, -7150));
-    // 非整数视口：适配 0.188125 < 24 ⇒ 同样抬到 24，偏移随视口重算（图像仍是 19200×14400）。
-    expect(defaultCellView(V_FRAC, GRID_800)).toEqual(V(24, -9524.75, -7139.875));
+  it("大图纸按适配比例（整图可见），不再抬到 24 px/格", () => {
+    // 800×600 放进 100×100：适配 = min(100/800, 100/600) = 0.125；图像 100×75 ⇒ 偏移 (0, 12.5)
+    expect(defaultCellView(V100, GRID_800)).toEqual(V(0.125, 0, 12.5));
   });
 
-  it("小图纸取适配比例铺满，不被 MIN_CELL_PX 抬走", () => {
-    // 10×10 放进 1000×800：适配 80 > 24 取 80；图像 800×800 在 1000×800 里 x 轴居中（偏移 100）、y 轴贴边。
-    expect(defaultCellView(V1000, GRID_10)).toEqual(V(80, 100, 0));
+  it("小图纸按适配比例铺满，但不超过 MAX_CELL_PX（避免满屏一块色块）", () => {
+    // 10×10 放进 1000×800：适配 = min(100, 80) = 80 > MAX_CELL_PX = 64 ⇒ 封到 64；图像 640×640 ⇒ 偏移 (180, 80)
+    expect(defaultCellView(V1000, GRID_10)).toEqual(V(MAX_CELL_PX, 180, 80));
   });
 
-  it("适配比例恰等于 24 时取 24（阈值两侧各有判别夹具）", () => {
-    // 480×360 放进 24×24 ⇒ 适配 = 24，`Math.max(24, 24)` 取 24（不是 48），偏移仍居中。
-    expect(defaultCellView({ width: 24, height: 24 }, GRID_480)).toEqual(V(24, -5748, -4308));
+  it("比例落在 (适配, MAX_CELL_PX] 内时取适配，偏移居中后过夹取", () => {
+    // 40×24 放进 1000×800：适配 = min(25, 33.3) = 25 < 64；图像 1000×600 ⇒ 偏移 (0, 100)
+    const viewport = { width: 1000, height: 800 };
+    const grid = { width: 40, height: 24 };
+    expect(defaultCellView(viewport, grid)).toEqual(V(25, 0, 100));
   });
 
-  it("默认视图总是落在自己的缩放范围里，且图像中心落在视口中心", () => {
+  it("适配比例远小于 MAX_CELL_PX 时取适配（480×360 放进 24×24 ⇒ 0.05）", () => {
+    // 旧口径这条是「适配比例恰等于 24 时取 24」的阈值夹具：B6 删掉「初始缩放下限」那个常量后
+    // 阈值不存在了，夹具与闭式解随之重算——适配 = 24/480 = 0.05（< 64 取适配），图像 24×18 ⇒ 偏移 (0, 3)。
+    expect(defaultCellView({ width: 24, height: 24 }, GRID_480)).toEqual(V(0.05, 0, 3));
+  });
+
+  it("默认视图的比例是 min(适配比例, MAX_CELL_PX)，图像中心落在视口中心，且已过夹取", () => {
     const cases: readonly (readonly [Size, Size])[] = [
       [V100, GRID_800],
       [V1000, GRID_10],
@@ -133,7 +137,10 @@ describe("defaultCellView（§4.2）", () => {
     ];
     for (const [viewport, grid] of cases) {
       const view = defaultCellView(viewport, grid);
-      expect(view.scale).toBeGreaterThanOrEqual(minCellScale(viewport, grid));
+      // 新口径（B6）：默认比例 = `min(适配比例, MAX_CELL_PX)`。小图纸（适配 80 > 64）时会**低于**
+      // `minCellScale`（= 80）——封顶 64 是有意的（避免满屏一块色块），所以这里不能再断言「默认视图
+      // 落在缩放范围里」；上界那条仍然成立：`min(适配, 64) ≤ max(64, 适配 × 2)`。
+      expect(view.scale).toBe(Math.min(minCellScale(viewport, grid), MAX_CELL_PX));
       expect(view.scale).toBeLessThanOrEqual(maxCellScale(viewport, grid));
       expect(orientedToScreen({ x: grid.width / 2, y: grid.height / 2 }, view)).toEqual({
         x: viewport.width / 2,
@@ -151,19 +158,29 @@ describe("defaultCellView（§4.2）", () => {
 
 describe("zoomCellView 的锚点不变量（§4.3）", () => {
   it("夹取不生效时，锚点屏幕坐标处的格子坐标缩放前后不变", () => {
-    const view = defaultCellView(V100, GRID_800); // V(24, −9550, −7150)
+    // 起点是**显式视图**：图像 800×20 = 16000、600×20 = 12000，在 100×100 视口里居中即 (−7950, −5950)。
+    // B6 起默认视图的比例就等于适配比例（= 缩放下限 0.125），拿它当起点会把「缩放真的改变了视图」
+    // 与下界焊死（下界上的任何缩小都会被夹回去），所以这里改用**严格大于下界**的比例 20。
+    const view = V(20, -7950, -5950);
     const anchor: Point = { x: 10, y: 20 };
     const before = screenToOriented(anchor, view);
     const zoomed = zoomCellView(view, V100, GRID_800, 48, anchor);
     expect(zoomed.scale).toBe(48);
-    // 期望偏移 = 锚点 − (锚点 − 偏移) × 2，逐轴闭式解：10 − (10 + 9550) × 2 = −19110、
-    // 20 − (20 + 7150) × 2 = −14320。如实记录：本组数值下夹取**不改变结果**
-    // （−19110 ∈ [−38300, 0]、−14320 ∈ [−28700, 0]），所以这条钉的是**锚点公式**，不是夹取。
-    expect(zoomed).toEqual(V(48, -19110, -14320));
+    // 期望偏移 = 锚点 − (锚点 − 偏移) × (48 / 20)，逐轴闭式解：10 − (10 + 7950) × 2.4 = −19094、
+    // 20 − (20 + 5950) × 2.4 = −14308。如实记录：本组数值下夹取**不改变结果**
+    // （−19094 ∈ [−38300, 0]、−14308 ∈ [−28700, 0]），所以这条钉的是**锚点公式**，不是夹取。
+    expect(zoomed).toEqual(V(48, -19094, -14308));
     expect(screenToOriented(anchor, zoomed)).toEqual(before);
 
-    // 非整数视口：默认视图 V(24, −9524.75, −7139.875)，闭式解随之重算，夹取同样不生效。
-    const fracView = defaultCellView(V_FRAC, GRID_800);
+    // 非整数视口的起点（`V_FRAC` = 150.5×120.25 这类真实 `getBoundingClientRect()` 值）：显式视图
+    // V(24, −9524.75, −7139.875) = 图像 19200×14400 在 150.5×120.25 视口里居中即为此值，
+    // 依旧带非整数偏移。为什么不用 `defaultCellView(V_FRAC, GRID_800)`：新口径下它的比例是适配比例
+    // 150.5/800 = 0.188125，**不是二进制有限小数**，居中偏移因此带上 ~1e-14 的浮点噪声
+    // （实跑 3.687500000000007，手算 3.6875）——那种噪声没有判别力，非整数视口这一支由
+    // `defaultCellView(V_FRAC, GRID_8)`（适配 15.03125，精确）覆盖。
+    // 比例 24 → 48（比值恰为 2 ⇒ 闭式解落在整数上），夹取同样不生效
+    // （图像 38400×28800，合法偏移 x ∈ [−38249.5, 0]、y ∈ [−28679.75, 0]）。
+    const fracView = V(24, -9524.75, -7139.875);
     const fracBefore = screenToOriented(anchor, fracView);
     const fracZoomed = zoomCellView(fracView, V_FRAC, GRID_800, 48, anchor);
     expect(fracZoomed).toEqual(V(48, -19059.5, -14299.75));
@@ -178,17 +195,18 @@ describe("zoomCellView 的锚点不变量（§4.3）", () => {
   });
 
   it("缩放比例先夹进 [minCellScale, maxCellScale]：两向都夹", () => {
-    const big = defaultCellView(V100, GRID_800); // 比例 24，范围 [0.125, 64]
+    const big = defaultCellView(V100, GRID_800); // 比例 0.125 = 下界，范围 [0.125, 64]
     expect(zoomCellView(big, V100, GRID_800, 0.01, { x: 50, y: 50 }).scale).toBe(minCellScale(V100, GRID_800));
     expect(zoomCellView(big, V100, GRID_800, 9999, { x: 50, y: 50 }).scale).toBe(maxCellScale(V100, GRID_800));
-    // 小图纸：上界是适配 ×2 = 160 而不是固定的 64——固定 64 会把视图钉死在下界 80 之下。
-    const small = defaultCellView(V1000, GRID_10); // 比例 80，范围 [80, 160]
+    // 小图纸：封顶后默认比例是 64，**低于**下界 80（适配 80），范围仍是 [80, 160]——上界取「适配 × 2」
+    // 而不是固定的 64，正是为了不出现「上界 < 下界」把视图钉死。
+    const small = defaultCellView(V1000, GRID_10); // 比例 64，范围 [80, 160]
     expect(zoomCellView(small, V1000, GRID_10, 0.5, { x: 500, y: 400 }).scale).toBe(minCellScale(V1000, GRID_10));
     expect(zoomCellView(small, V1000, GRID_10, 9999, { x: 500, y: 400 }).scale).toBe(maxCellScale(V1000, GRID_10));
   });
 
   it("小图纸能缩放到适配 ×2 的上界 160（上界不被 64 卡住）", () => {
-    const view = defaultCellView(V1000, GRID_10); // V(80, 100, 0)
+    const view = defaultCellView(V1000, GRID_10); // V(64, 180, 80)：比例封在 MAX_CELL_PX 而非下界 80
     const anchor: Point = { x: 500, y: 400 };
     const before = screenToOriented(anchor, view);
     const zoomed = zoomCellView(view, V1000, GRID_10, 160, anchor);
@@ -361,11 +379,12 @@ describe("cellRectFromScreen（§4.7）", () => {
       width: 1,
       height: 1,
     });
-    // 非整数视口产出的视图（defaultCellView(V_FRAC, GRID_8) = V(24, −20.75, −35.875)）：
-    // 两个屏幕点都落在格子 (1,1) 的边界上，闭式解随之重算。
+    // 非整数视口产出的视图（`defaultCellView(V_FRAC, GRID_8)` = V(15.03125, 15.125, 0)，比例 = 120.25/8）：
+    // 两个屏幕点由**视图自身**算出（`屏幕 = 偏移 + 格子坐标 × 比例`），分别压在格子 (1,1) 与 (2,2) 的
+    // 左 / 上边缘上，闭式解随之重算。
     const fracView = defaultCellView(V_FRAC, GRID_8);
-    expect(fracView).toEqual(V(24, -20.75, -35.875));
-    expect(cellRectFromScreen({ x: 3.25, y: -11.875 }, { x: 27.25, y: 12.125 }, fracView, GRID_8)).toEqual({
+    expect(fracView).toEqual(V(15.03125, 15.125, 0));
+    expect(cellRectFromScreen({ x: 30.15625, y: 15.03125 }, { x: 45.1875, y: 30.0625 }, fracView, GRID_8)).toEqual({
       x: 1,
       y: 1,
       width: 1,
@@ -534,19 +553,26 @@ describe("cellsAlongLine（§4.6）", () => {
 
 describe("端到端：默认视图 → 平移 → 缩放 → 可见范围 → 框选 → 补格（§4 各节串起来）", () => {
   it("8×8 小图纸在 100×100 视口里：默认视图、可见范围、框选矩形、补格四者互相自洽", () => {
-    const view = defaultCellView(V100, GRID_8); // 适配 12.5 被抬到 24，图像 192×192 居中
-    expect(view).toEqual(V(24, -46, -46));
-    expect(visibleCellRange(view, V100, GRID_8)).toEqual({ x0: 1, y0: 1, x1: 7, y1: 7 });
+    const view = defaultCellView(V100, GRID_8); // 适配 12.5 = 下界（不再抬到 24），图像 100×100 正好铺满
+    expect(view).toEqual(V(12.5, 0, 0));
+    // B6 的诉求落地：默认视图可见的就是**整张图纸**（旧口径 24 时只有 [1, 7]² 那块）
+    expect(visibleCellRange(view, V100, GRID_8)).toEqual({ x0: 0, y0: 0, x1: 7, y1: 7 });
 
-    const panned = panCellView(view, V100, GRID_8, 30, 0);
-    expect(panned).toEqual(V(24, -16, -46));
+    // 默认比例 = 适配比例 ⇒ 图像不会大于视口 ⇒ `clampView` 两轴都走居中锁定、平移必然被吸收。
+    // 想验「平移真的生效」必须先**放大**：下面的 20 严格大于下界 12.5（图像 160×160 居中）。
+    expect(panCellView(view, V100, GRID_8, 30, 0)).toEqual(V(12.5, 0, 0));
+    const zoomedIn = zoomCellView(view, V100, GRID_8, 20, { x: 50, y: 50 });
+    expect(zoomedIn).toEqual(V(20, -30, -30));
+
+    const panned = panCellView(zoomedIn, V100, GRID_8, 30, 0);
+    expect(panned).toEqual(V(20, 0, -30)); // 位移逐轴落到偏移上（x 轴恰好顶到上界 0），没有被夹取吃掉
     expect(visibleCellRange(panned, V100, GRID_8)).toEqual({ x0: 0, y0: 1, x1: 5, y1: 7 });
 
     const zoomed = zoomCellView(panned, V100, GRID_8, 48, { x: 50, y: 50 });
     expect(zoomed.scale).toBe(48);
     expect(zoomed.scale).toBeLessThanOrEqual(maxCellScale(V100, GRID_8));
-    expect(zoomed).toEqual(V(48, -82, -142));
-    // 视图左上角映射回格坐标 (1.708, 2.958) ⇒ 框选左上 (1, 2)；右下角 (3.792, 5.042) ⇒ 右下 (4, 6)。
+    expect(zoomed).toEqual(V(48, -70, -142));
+    // 视图左上角映射回格坐标 (1.458, 2.958) ⇒ 框选左上 (1, 2)；右下角 (3.542, 5.042) ⇒ 右下 (4, 6)。
     const selection: Rect = { x: 1, y: 2, width: 3, height: 4 };
     expect(cellRectFromScreen({ x: 0, y: 0 }, { x: 100, y: 100 }, zoomed, GRID_8)).toEqual(selection);
     // 同一次拖动的补格序列：每一格都落在框选矩形内（含端点）。
@@ -581,8 +607,8 @@ describe("端到端：默认视图 → 平移 → 缩放 → 可见范围 → �
   });
 
   it("载入后先落默认视图、再放大一次，然后做一次真正的捏合（非零平移 + 缩放）：两指中点处的格子坐标不变", () => {
-    const view = defaultCellView(V100, GRID_8x6); // 适配 12.5 被抬到 24，图像 192×144
-    expect(view).toEqual(V(24, -46, -22));
+    const view = defaultCellView(V100, GRID_8x6); // 适配 12.5 = 下界（不再抬升），图像 100×75（x 铺满、y 居中）
+    expect(view).toEqual(V(12.5, 0, 12.5));
     // 捏合的起始态：先放大到 32。**必须在放大之后平移**——默认视图下两个方向都被 clampView 居中
     // 锁定，任何 dx / dy 都会被丢弃（这正是上一版这条用例空转的原因）。
     const base = zoomCellView(view, V100, GRID_8x6, 32, { x: 50, y: 50 });

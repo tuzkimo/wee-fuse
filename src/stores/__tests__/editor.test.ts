@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { isReactive } from "vue";
+import { clampView } from "@/core/crop/view";
 import { toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
@@ -44,7 +45,7 @@ function makePattern(cells: readonly number[] = BASE): Pattern {
   return { width: 4, height: 3, paletteId: PALETTE.id, cells: Uint16Array.from(cells) };
 }
 
-/** 40×30 的大图纸：适配比例落在 `MIN_CELL_PX`（24）之下，用来验 `onViewport` 的第一支。 */
+/** 40×30 的大图纸：800×600 视口里的适配比例 20 落在 `MAX_CELL_PX` 之下，用来验 `onViewport` 的第一支。 */
 function makeBigPattern(): Pattern {
   return { width: 40, height: 30, paletteId: PALETTE.id, cells: new Uint16Array(1200) };
 }
@@ -242,15 +243,15 @@ describe("reset：把会话清回初始态", () => {
 });
 
 describe("onViewport：首次落默认缩放，其后只夹取（规格 §4.2）", () => {
-  it("第一次量到尺寸落 defaultCellView：比例抬到 MIN_CELL_PX，偏移居中后过夹取", () => {
+  it("第一次量到尺寸落 defaultCellView（适配比例），偏移居中后过夹取", () => {
     const { editor, session } = seedEditor();
     editor.beginSession(makeBigPattern(), COLOR_COUNT);
 
     editor.onViewport({ width: 800, height: 600 });
 
-    // 适配比例 = min(800/40, 600/30) = 20 < 24 ⇒ 抬到 24；偏移 (800-960)/2、(600-720)/2；
-    // 40*24=960 > 800 与 30*24=720 > 600，夹取是空操作。
-    expect(editor.view).toEqual({ scale: 24, offsetX: -80, offsetY: -60 });
+    // 40×30 放进 800×600：适配 = min(800/40, 600/30) = 20 = 默认比例（B6 起不再抬到 24）；
+    // 40×20 = 800 与 30×20 = 600 正好等于视口 ⇒ 偏移 (0, 0)，夹取是空操作。
+    expect(editor.view).toEqual({ scale: 20, offsetX: 0, offsetY: 0 });
     expect(editor.viewInitialized).toBe(true);
     // 视图不是图纸参数：不刷 revision / lastDirty，也不置脏
     expect(editor.revision).toBe(0);
@@ -262,25 +263,29 @@ describe("onViewport：首次落默认缩放，其后只夹取（规格 §4.2）
     const { editor } = seedEditor();
     editor.beginSession(makeBigPattern(), COLOR_COUNT);
     editor.onViewport({ width: 800, height: 600 });
-    expect(editor.view).toEqual({ scale: 24, offsetX: -80, offsetY: -60 });
+    expect(editor.view).toEqual({ scale: 20, offsetX: 0, offsetY: 0 });
 
-    // 860×640 下 960×720 的图仍大于视口、且旧偏移仍在合法区间内 ⇒ clampView 是空操作。
-    // 丢掉 `viewInitialized`、再落一次 defaultCellView 会得到 { 24, -50, -40 }：这条断言必红。
-    editor.onViewport({ width: 860, height: 640 });
+    // 换成更小的 200×150：图像 800×600 仍大于视口、且旧偏移 (0, 0) 仍在合法区间 [−600, 0] × [−450, 0] 内
+    // ⇒ `clampView` 是空操作。丢掉 `viewInitialized`、再落一次 defaultCellView 会得到 { 5, 0, 0 }
+    // （200×150 的适配比例是 5）：这条断言必红。
+    editor.onViewport({ width: 200, height: 150 });
 
-    expect(editor.view).toEqual({ scale: 24, offsetX: -80, offsetY: -60 });
+    expect(editor.view).toEqual(
+      clampView({ scale: 20, offsetX: 0, offsetY: 0 }, { width: 200, height: 150 }, { width: 40, height: 30 }),
+    );
+    expect(editor.view.scale).toBe(20);
   });
 
-  it("其后尺寸变化只夹取：缩放也必须保持（适配比例高于 MIN_CELL_PX 的那一支）", () => {
+  it("其后尺寸变化只夹取：缩放也必须保持（适配比例落在上限之下的那一支）", () => {
     const { editor } = seedEditor();
     editor.beginSession(makeBigPattern(), COLOR_COUNT);
-    // 1000×750 恰好是图纸比例：适配 25 > 24，取 25，偏移 0、0
+    // 1000×750 恰好是图纸比例：适配 25 < 64，取 25，偏移 0、0
     editor.onViewport({ width: 1000, height: 750 });
     expect(editor.view).toEqual({ scale: 25, offsetX: 0, offsetY: 0 });
 
     editor.onViewport({ width: 600, height: 450 });
 
-    // 重落默认缩放会得到 { 24, -180, -135 }（适配 15 被抬到 24）：比例与偏移两条都红。
+    // 重落默认缩放会得到 { 15, 0, 0 }（600×450 的适配比例是 15）：比例一条就红（偏移恰好都是 (0, 0)）。
     expect(editor.view).toEqual({ scale: 25, offsetX: 0, offsetY: 0 });
   });
 
@@ -291,8 +296,8 @@ describe("onViewport：首次落默认缩放，其后只夹取（规格 §4.2）
 
     editor.onViewport({ width: 2000, height: 1500 });
 
-    // 960×720 的图小于新视口 ⇒ clampView 把它居中：(2000-960)/2、(1500-720)/2
-    expect(editor.view).toEqual({ scale: 24, offsetX: 520, offsetY: 390 });
+    // 800×600 的图小于新视口 ⇒ clampView 把它居中：(2000-800)/2、(1500-600)/2
+    expect(editor.view).toEqual({ scale: 20, offsetX: 600, offsetY: 450 });
   });
 
   it("还没载入图纸时安静返回（`useCanvasSurface` 挂载期先 measure 一次是常态，规格 §12）", () => {
@@ -316,7 +321,7 @@ describe("onViewport：首次落默认缩放，其后只夹取（规格 §4.2）
 
     editor.onViewport({ width: 800, height: 600 });
     expect(() => editor.onViewport({ width: Number.NaN, height: 600 })).toThrow(/视口宽度/);
-    expect(editor.view).toEqual({ scale: 24, offsetX: -80, offsetY: -60 });
+    expect(editor.view).toEqual({ scale: 20, offsetX: 0, offsetY: 0 });
   });
 });
 

@@ -30,23 +30,14 @@ import type { Rect } from "../image/types";
  */
 
 /**
- * 初始缩放的**下限**：编辑器默认放大到每格 ≥ 24 CSS px。
- *
- * **关键取舍**：一颗豆在屏幕上常常只有几个像素，手指点不准，所以初始视图宁可放大、把图纸推到
- * 视口之外，也不让用户对着 3px 的格子戳。它是**初始缩放**的下限，不是缩放范围的下限——
- * 缩放范围的下限是适配比例（规格 §4.2 的表）。
- *
- * **为何公开**：`PatternCanvas.vue`（任务 5）的格内色号 / 网格线显示判定要读同一组阈值，
- * store 与用例也直接引用它，不许各自硬编码 24。
- */
-export const MIN_CELL_PX = 24;
-
-/**
  * 缩放范围的**上界基准**：一颗豆 64 CSS px 已远大于指尖，再放大拿不到更多信息。
  *
  * **关键取舍**：它只是上界的**基准**，真正的上界是 `max(MAX_CELL_PX, 适配比例 × 2)`
  * ——固定 64 会让 8×8 这类小图纸出现「上界 < 下界」，视图被钉死成一个不可缩放的单一比例
- * （规格 §4.2）。**为何公开**：工具栏的 ± 缩放与 store 的边界断言共用它。
+ * （规格 §4.2）。B6 起它同时是 `defaultCellView` 的**封顶值**（`min(适配比例, MAX_CELL_PX)`，
+ * 规格 §5.2：小图纸的适配比例可能远大于 64，不封顶就是「满屏一块色块」）。
+ *
+ * **为何公开**：工具栏的 ± 缩放与 store 的边界断言共用它。
  */
 export const MAX_CELL_PX = 64;
 
@@ -184,18 +175,25 @@ export function maxCellScale(viewport: Size, grid: Size): number {
 }
 
 /**
- * 默认视图：比例 `max(适配比例, MIN_CELL_PX)`、偏移居中、最后过 `clampView`。
+ * 默认视图：比例 `min(适配比例, MAX_CELL_PX)`、偏移居中、最后过 `clampView`。
  *
- * **关键取舍**：「默认每格 ≥24px」与「小尺寸图自动放大铺满」要同时成立——小图的适配比例本来
- * 就 > 24，取它即铺满，所以是 `max` 而不是「一律 24」。**只在第一次量到视口尺寸时**调用它；
- * 之后容器尺寸变化只重新夹取（`clampView`），否则用户刚调好的位置与比例会被横竖屏切换重置
- * （规格 §4.2 末段，横竖屏不丢状态）。
+ * **B6 改口径（原先是 `max(适配比例, 24)`）**：原口径保证「一进来每格 ≥24px」，代价是大图纸
+ * （116 格）在手机上只能看到十几格——用户实测的第一诉求就是「一进来要看到整张图纸」。
+ * 新口径两头都合理：大图纸整图可见；小图纸的适配比例可能远大于 64（2×1 在 800×600 里是 400），
+ * 封到 `MAX_CELL_PX` 避免「满屏一块色块」。
  *
- * **为何公开**：`stores/editor.ts` 的 `onViewport` 是它唯一的生产消费者；也是「工具 → 视图」
- * 这条链上唯一允许决定初始比例的地方（组件不许自己算）。
+ * **如实记录一个后果**：封顶之后，小图纸（适配比例 > 64）的默认比例会**低于**缩放范围的下界
+ * `minCellScale`，而 `zoomCellView` 仍按 `[minCellScale, maxCellScale]` 夹取——于是站在这种默认视图
+ * 上按「放大」或「缩小」都会被夹到适配比例（一次跳变）。封顶 64 是规格 §5.2 定的取舍，下游 ± 按钮的
+ * 观感不在本模块内，这里只把后果记下来。
+ *
+ * **只在第一次量到视口尺寸时**调用它；之后容器尺寸变化只重新夹取（`clampView`），否则用户刚调好的
+ * 位置与比例会被横竖屏切换重置（规格 §4.2 末段）。缩放范围（`minCellScale` / `maxCellScale`）不变。
+ *
+ * **为何公开**：`stores/editor.ts` 的 `onViewport` 是它唯一的生产消费者。
  */
 export function defaultCellView(viewport: Size, grid: Size): ViewTransform {
-  const scale = Math.max(minCellScale(viewport, grid), MIN_CELL_PX);
+  const scale = Math.min(minCellScale(viewport, grid), MAX_CELL_PX);
   return clampView(
     {
       scale,
