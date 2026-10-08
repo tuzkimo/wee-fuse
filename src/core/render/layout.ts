@@ -381,9 +381,13 @@ export function planSheet(
   // **`cellPx < 1` 单列一条**（2026-10-08）：`innerH` 为负时（用料条把可用高度吃光）下面那条字号
   // 守卫会把 `-1 px` 这种噪声写进用户可见文本里。这里先把「根本放不下」说清楚，字号守卫只管
   // 「放得下但格子太小」。
+  // **消息不写具体是谁不够**（2026-10-08 收口）：`cellPx < 1` 既可能来自高度被吃光，也可能来自
+  // 「高度够但装不下这么多行」（如 116×116 + `maxEdge: 300` 时 `innerH = 26 > 0`），也可能来自宽度
+  // ——`min` 的三个上界谁先归零都算放不下，写死一种原因会失实。宽度完全不够那一支另有更早的
+  // 「画布上限太小」守卫。
   if (cellPx < 1) {
     throw new Error(
-      `画布上限 ${maxEdge} px 放不下 ${pattern.width}×${pattern.height} 的图纸（扣掉用料条后没有可用高度）`,
+      `画布上限 ${maxEdge} px 的可用区域放不下 ${pattern.width}×${pattern.height} 的图纸`,
     );
   }
   const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));

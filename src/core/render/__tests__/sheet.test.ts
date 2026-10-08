@@ -5,6 +5,7 @@ import { EMPTY, type Pattern } from "../../pattern/types";
 import {
   PRINT_MARGIN_MM,
   SHEET_MARGIN,
+  SHEET_MIN_LABEL_FONT_PX,
   cellBox,
   labelInk,
   mmToPx,
@@ -465,6 +466,27 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     // 前提：画布真的比网格大（否则「铺满画布」与「铺满网格」判不开）
     expect(plan.canvasWidth).toBeGreaterThan(plan.grid.x + plan.grid.width);
     expect(plan.canvasHeight).toBeGreaterThan(plan.grid.y + plan.grid.height);
+  });
+
+  it("⑨ 旧口径会判降级的那一档（cellPx = 27、labelFontPx = 10）照样画满格内色号", () => {
+    const pattern = makePattern(6, 6, CELLS_6X6);
+    const palette = makePalette();
+    const usages = makeUsages();
+    // `maxEdge = 460` 是本文件实测出的那一档（规格 §14 要求「夹具里含一个旧口径下会被降级的尺寸」）：
+    // 用料条 2 行 ⇒ `innerH = 460 − 48 − 108 − 44 − 52 − 44 = 164` ⇒ `cellPx = floor(164 / 6) = 27`、
+    // `labelFontPx = round(27 × 0.38) = 10`（恰在下限上，故计划阶段不抛）。旧的降级判据
+    // `SHEET_LABEL_MIN_CELL_PX = 32`（已随降级链删除）在这一档判 `labels = false`；而本文件其余夹具的
+    // `cellPx = 40` 在 32 之上 ⇒ **只有这一档能证伪「按旧阈值跳过格内色号」**（变异实测见报告）。
+    const plan = planSheet(pattern, palette, usages, { maxEdge: 460 });
+    expect(plan.cellPx).toBe(27);
+    expect(plan.labelFontPx).toBe(SHEET_MIN_LABEL_FONT_PX);
+
+    const { target, calls } = createMockTarget();
+    drawSheet(target, pattern, palette, usages, plan, makeMeta());
+    // 实心格数**独立数一遍**（36 − 3 个空格），不与渲染器的自报数同源
+    const solidCount = CELLS_6X6.filter((value) => value !== EMPTY).length;
+    expect(solidCount).toBe(33);
+    expect(textsInGrid(calls, plan)).toHaveLength(solidCount);
   });
 });
 

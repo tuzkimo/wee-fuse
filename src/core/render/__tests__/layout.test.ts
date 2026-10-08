@@ -307,15 +307,18 @@ describe("planSheet（B6：单张施工图）", () => {
   });
 
   it("画布上限太小 ⇒ 响亮失败：两种失败各有专门消息，用户可见文本里不出现负数格像素", () => {
-    // ① 用料条把可用高度吃光（`innerH` 为负，格像素算出来是 -1）：消息必须直接说「放不下」，
-    //    **不许**把 `-1 px` 这种噪声写进用户可见文本（2026-10-08 修）。
+    // ① `cellPx < 1`（本用例走的是「用料条把可用高度吃光 ⇒ `innerH` 为负」那一支）：消息必须直接说
+    //    「放不下」，**不许**把 `-1 px` 这种噪声写进用户可见文本（2026-10-08 修）。
+    //    **括注只许中性**（2026-10-08 收口）：同一分支还有「高度够但装不下这么多行」的入口
+    //    （116×116 + `maxEdge: 300` ⇒ `innerH = 26 > 0`），写死一种原因会失实 ⇒ 判据收在中性措辞上。
     let message = "";
     try {
       planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), { maxEdge: 1200 });
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toMatch(/放不下 116×116 的图纸（扣掉用料条后没有可用高度）/);
+    expect(message).toMatch(/^画布上限 1200 px 的可用区域放不下 116×116 的图纸$/);
+    expect(message).not.toMatch(/扣掉用料条|没有可用高度/);
     expect(message).not.toMatch(/-\d+ px/);
     // ② 放得下、但格子小到色号不可读：这一支仍然报出格像素与字号下限（两种失败不许混成同一句）
     expect(() =>

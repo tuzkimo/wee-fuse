@@ -1,7 +1,10 @@
 import type { RenderTarget2D } from "../types";
 
 /**
- * 三个渲染器用例共用的**普通对象桩** + 调用记录。
+ * `core/render/` 的渲染器用例共用的**普通对象桩** + 调用记录。
+ *
+ * **消费者只有 `sheet.test.ts` 一个**：那里的 `drawSheet` / `drawBoardPage` 两个渲染器用例共用它
+ * （`core/render/` 现在也只有这两个渲染器——`draw*` 的第三处随分享图在 B6 下线）。
  *
  * **为什么不用 `document.createElement("canvas")`**：happy-dom 的 canvas 是无像素语义的桩
  * （`getContext("2d")` 在本仓返回 null，见 `services/__tests__/patternThumbnail.test.ts` 的实测），
@@ -73,8 +76,10 @@ export interface MockCalls {
    */
   readonly strayOps: string[];
   /**
-   * `save()` / `restore()` 的调用次数。当前两个渲染器一次都不调（都是 0），但**配平是必须保持的
-   * 不变量**（不配平会泄漏 target 的全局状态），由三个 `draw*` 用例各一条 `saves === restores` 守着。
+   * `save()` / `restore()` 的调用次数。当前两个渲染器（`drawSheet` / `drawBoardPage`）一次都不调
+   * （都是 0），但**配平是必须保持的不变量**（不配平会泄漏 target 的全局状态）。`core/render/` 下
+   * 现在只剩**一条** `saves === restores` 断言（`sheet.test.ts` 里 `drawSheet` 那条；`drawBoardPage`
+   * 的用例没有它），所以这条不变量眼下就压在这一条上。
    * 计数成对增长是有意的：只记一个数就判不出「多了一次 save」，也无法允许将来正当的成对使用。
    */
   saves: number;
