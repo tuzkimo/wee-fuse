@@ -24,6 +24,9 @@ vi.mock("@/services/sheetExport", () => ({
   renderSheetBlob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
 }));
 
+/** `URL.createObjectURL` 的序号（见 `beforeEach` 里的桩：每次调用给一个**不同**的串）。 */
+let createObjectUrlSeq = 0;
+
 describe("LibraryPage", () => {
   beforeEach(async () => {
     push.mockClear();
@@ -32,6 +35,14 @@ describe("LibraryPage", () => {
     await store.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
     await store.put(makeRecord("b", "小狗", "2026-10-03T05:00:00.000Z"));
     setProjectStore(store);
+    // object URL 桩：`SheetViewer` 会为现算出来的 blob 建 URL，而 happy-dom 下这两个方法可能
+    // 不存在（手法同 `exportTestKit.stubObjectUrl`）。**按调用序号给不同的串**：下面「换工程要重挂」
+    // 那条用例靠「src 从 `blob:sheet-1` 变成 `blob:sheet-2`」读「`onMounted` 又真的跑了一次」。
+    createObjectUrlSeq = 0;
+    URL.createObjectURL = vi.fn(
+      () => `blob:sheet-${(createObjectUrlSeq += 1)}`,
+    ) as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL;
   });
 
   it("列出全部工程，按 updatedAt 倒序", async () => {
@@ -344,6 +355,48 @@ describe("LibraryPage", () => {
     await flushPromises();
     await wrapper.get("[data-testid='sheet-close']").trigger("click");
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
+  });
+
+  it("查看层开着时点另一条工程的「施工图」，查看层按新工程**重新挂载**（`:key` 焊住的不变量）", async () => {
+    // 两个工程都用**内置色卡**造 doc：`SheetViewer` 用 `getBuiltinPalette()` 解析记录，
+    // 而 `makeRecord` 那份 "fake" 色卡的 doc 会被 `fromProjectDocument` 拒绝（色卡 id 不一致）。
+    const store = await createMemoryProjectStore();
+    for (const [id, name, updatedAt] of [
+      ["p1", "小猫", "2026-10-08T05:00:00.000Z"],
+      ["p2", "小狗", "2026-10-08T01:00:00.000Z"],
+    ] as const) {
+      await store.put({
+        meta: {
+          id, name,
+          createdAt: "2026-10-08T00:00:00.000Z", updatedAt,
+          thumbnail: "", width: 58, height: 58, colorCount: 12,
+        },
+        doc: toProjectDocument(
+          { width: 2, height: 1, paletteId: getBuiltinPalette().id, cells: new Uint16Array([0, 0]) },
+          getBuiltinPalette(),
+          { longSide: 58, maxColors: null, crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
+        ),
+        source: null,
+      });
+    }
+    setProjectStore(store);
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    // 列表按 updatedAt 倒序 ⇒ [0] 是「小猫」（05:00），[1] 是「小狗」（01:00）
+    const buttons = wrapper.findAll("[data-testid='view-sheet']");
+    await buttons[0]?.trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小猫 · 施工图");
+    expect(wrapper.get("[data-testid='sheet-preview']").attributes("src")).toBe("blob:sheet-1");
+
+    // 查看层是 `fixed inset-0`，视觉上盖住了列表，但事件仍可派发——这正是「今天不可达、明天多一个
+    // 入口就漏」的那条缝：没有 `:key` 时 Vue 复用同一实例、`onMounted` 不再跑，屏幕上会**留着上一条
+    // 工程的施工图**（预览还是 `blob:sheet-1`）。
+    await buttons[1]?.trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
+    expect(wrapper.get("[data-testid='sheet-preview']").attributes("src")).toBe("blob:sheet-2");
   });
 });
 

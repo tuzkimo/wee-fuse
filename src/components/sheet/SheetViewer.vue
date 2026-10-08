@@ -32,6 +32,15 @@ const blobUrl = ref("");
 const error = ref("");
 const busy = ref(true);
 const saveState = ref("");
+/**
+ * 有保存挂在飞行中（修复轮，控制者裁定）。
+ *
+ * **为什么必须是一个真的状态、而不是只靠按钮的 `:disabled`**：同一 tick 里的两次 `click`
+ * （真机双击、或测试里连着两次派发）都会进 handler——那一刻 `:disabled` 还没被渲染刷新，
+ * 于是壳里往相册写两份、浏览器触发两次下载（用户不会想要第二份）。所以判据写在 `save()` 的**入口**，
+ * `:disabled` 只是视觉上的那一半（让用户看到「点了，正在存」）。
+ */
+const saving = ref(false);
 
 /** 现算完成前用缩略图垫场；算完换成施工图。 */
 const previewSrc = computed(() => blobUrl.value || props.thumbnail);
@@ -63,12 +72,18 @@ onUnmounted(() => {
 
 async function save(): Promise<void> {
   const blob = sheetBlob.value;
-  if (blob === null) return;
+  // `saving` 早退是**判据**，`blobUrl === ''` 那个 `disabled` 只是视觉：同一 tick 的第二次点击
+  // 会在 `disabled` 刷新之前进来（见 `saving` 的 JSDoc）。
+  if (blob === null || saving.value) return;
+  saving.value = true;
   try {
     await getPlatform().album.save(blob, exportFilename(props.name, "施工图"));
     saveState.value = getPlatform().album.kind === "album" ? "已保存到相册" : "已开始下载";
   } catch (e) {
     saveState.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    // **失败也要放行**：卡在 `saving = true` 等于「错一次就再也存不了」，而失败原因已经显示出来了。
+    saving.value = false;
   }
 }
 </script>
@@ -80,7 +95,7 @@ async function save(): Promise<void> {
       <div class="flex flex-wrap gap-3">
         <button
           data-testid="sheet-save"
-          :disabled="blobUrl === ''"
+          :disabled="blobUrl === '' || saving"
           class="min-h-11 rounded bg-slate-900 px-6 text-base text-white disabled:opacity-50"
           @click="save"
         >

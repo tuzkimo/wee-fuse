@@ -200,4 +200,36 @@ describe("SheetViewer", () => {
     expect(text).toBe("已开始下载");
     expect(text).not.toContain("已保存到相册");
   });
+
+  it("保存进行中时按钮禁用，同一 tick 连点两次只落盘一次", async () => {
+    await seedRecord();
+    // 把第一次保存**挂在飞行中**：能力层替身返回一颗由用例控制何时 resolve 的 promise，
+    // 这样「进行中」这个状态在用例里是**可观察、可停留**的（真实现里它只存在几毫秒）。
+    let release: () => void = () => undefined;
+    albumSave.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const wrapper = mount(SheetViewer, { props: { projectId: "p1", name: "小猫", thumbnail: "" } });
+    await flushPromises();
+
+    const button = wrapper.get("[data-testid='sheet-save']");
+    // **两次派发之间不 await**：`trigger` 内部是「同步 `dispatchEvent` + 返回 `nextTick()`」，
+    // 不等就派第二次时 DOM 上的 `disabled` 还没被渲染刷新，所以第二次点击**真的会进 handler**
+    // ——这正是「防连点」必须写在 `save()` 里的原因（只靠 `:disabled` 挡不住同一 tick 的第二次）。
+    await Promise.all([button.trigger("click"), button.trigger("click")]);
+
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    // 飞行中：按钮禁用（否则用户以为没反应，会一直点）
+    expect((button.element as HTMLButtonElement).disabled).toBe(true);
+
+    release();
+    await flushPromises();
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    expect(wrapper.get("[data-testid='sheet-save-state']").text()).toBe("已保存到相册");
+    // 落地后必须**放行**（卡死成永久禁用的话，失败一次就再也存不了）
+    expect((button.element as HTMLButtonElement).disabled).toBe(false);
+  });
 });

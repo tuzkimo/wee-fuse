@@ -47,6 +47,11 @@ const pendingDelete = ref<ProjectMeta | null>(null);
  * 正在「查看施工图」的那一条（B6 任务 14）。整条 `meta` 而不是只存 id：查看层要的三样
  * （id / name / thumbnail）在这一刻全在手上，只存 id 就得再回库查一次——而查看层自己
  * **还要**回库拿 `doc`，那会变成同一份记录查两遍。
+ *
+ * 挂载处给了 `:key="sheetTarget.id"`（修复轮，控制者裁定）：查看层是 `fixed inset-0` 盖住列表，
+ * 所以「开着的时候换一条工程」今天**不可达**；但只有 `v-if` 时 Vue 会复用实例、`onMounted`
+ * 不再跑，屏幕上会**留着上一条工程的施工图**（预览还是旧的 object URL）——`:key` 把这条不变量
+ * 焊死，不必指望「唯一的出口是关闭」。用例：`查看层开着时点另一条工程的「施工图」…`。
  */
 const sheetTarget = ref<ProjectMeta | null>(null);
 
@@ -220,6 +225,7 @@ function open(id: string): void {
 
     <SheetViewer
       v-if="sheetTarget !== null"
+      :key="sheetTarget.id"
       :project-id="sheetTarget.id"
       :name="sheetTarget.name"
       :thumbnail="sheetTarget.thumbnail"
