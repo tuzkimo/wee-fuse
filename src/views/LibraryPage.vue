@@ -147,12 +147,12 @@ function open(id: string): void {
       还没有图纸。点右上角「新建图纸」选一张图片开始吧。
     </p>
 
-    <ul class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ul class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <li
         v-for="meta in projects"
         :key="meta.id"
         data-testid="project-card"
-        class="rounded-lg bg-white p-4 shadow"
+        class="min-w-0 rounded-lg bg-white p-4 shadow"
       >
         <img
           v-if="meta.thumbnail"
@@ -182,7 +182,7 @@ function open(id: string): void {
         </template>
 
         <template v-else>
-          <p data-testid="project-name" class="truncate text-lg font-semibold text-slate-900">
+          <p data-testid="project-name" class="project-name text-lg font-semibold text-slate-900">
             {{ meta.name }}
           </p>
           <p class="mt-1 text-base text-slate-500">{{ meta.width }} × {{ meta.height }} · {{ meta.colorCount }} 种颜色</p>

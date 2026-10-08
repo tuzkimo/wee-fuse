@@ -251,6 +251,50 @@ describe("LibraryPage", () => {
     expect(second.find("[data-testid='project-card'] img").exists()).toBe(false);
     expect(second.find("[data-testid='project-card']").text()).toContain("没有封面");
   });
+
+  // -------------------------------------------------------------------------
+  // 长工程名不撑宽页面（B6 任务 2）。**弱断言**：只挡「类名被删」，挡不住「CSS 写错」
+  // （happy-dom 没有布局语义）——真布局判别力在规格 §15 的人工清单里。
+  // 这里断言的是根因的**两处**：手机断点下 `ul` 缺显式列模板 ⇒ 隐式 `auto` 轨道按 max-content
+  // 定尺；卡片 `li` 缺 `min-w-0` ⇒ 轨道里的卡片不肯收缩；名字用 `truncate`（`nowrap`）⇒ 只能
+  // 裁自己、拦不住轨道被撑开。
+  // -------------------------------------------------------------------------
+
+  it("长工程名不撑宽卡片：名字用 .project-name，列表与卡片允许收缩", async () => {
+    // 沿用本文件已有的写法：塞一个只实现 list() 的普通对象（`LibraryPage` 只调 list / estimateUsage）
+    setProjectStore({
+      list: async () => [
+        {
+          id: "p1",
+          name: "IMG_20240101_1234567890_edited_edited_edited_final_version",
+          createdAt: "2026-10-08T00:00:00.000Z",
+          updatedAt: "2026-10-08T00:00:00.000Z",
+          thumbnail: "",
+          width: 58,
+          height: 58,
+          colorCount: 12,
+        },
+      ],
+      get: async () => null,
+      put: async () => undefined,
+      remove: async () => undefined,
+      rename: async () => {
+        throw new Error("本用例不需要改名");
+      },
+      estimateUsage: async () => null,
+    });
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    const list = wrapper.get("ul");
+    expect(list.classes()).toContain("grid-cols-1");
+    const card = wrapper.get("[data-testid='project-card']");
+    expect(card.classes()).toContain("min-w-0");
+    const name = wrapper.get("[data-testid='project-name']");
+    expect(name.classes()).toContain("project-name");
+    // 旧的 truncate（nowrap）正是撑宽隐式 auto 轨道的根因，不许留
+    expect(name.classes()).not.toContain("truncate");
+  });
 });
 
 describe("存储失败的两种语义（B2 规格 §8）", () => {

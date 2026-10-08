@@ -479,7 +479,7 @@ function rerun(): void {
         >
           ← 回图纸库
         </RouterLink>
-        <h1 class="text-3xl font-bold text-slate-900">{{ session.record.meta.name }}</h1>
+        <h1 class="project-name text-3xl font-bold text-slate-900">{{ session.record.meta.name }}</h1>
       </div>
       <!-- 尺寸与用色数读**图纸**（规格 §8.3），不是 `meta` 的冗余字段 -->
       <p v-if="editor.pattern" data-testid="editor-size" class="mt-2 text-lg text-slate-600">

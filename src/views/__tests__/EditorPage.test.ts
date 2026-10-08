@@ -1698,3 +1698,27 @@ describe("导出面板接线（任务 4）", () => {
     expect(painted).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 长工程名不撑宽页面（B6 任务 2）。标题在 `flex flex-wrap` 容器里：`h1` 既没有截断也没有断行
+// 约束，而文件名派生出的名字是无空格长串 ⇒ 页面被横向撑开、手机上要左右滑。
+//
+// **弱断言**：只挡「类名被删」，挡不住「CSS 写错」（happy-dom 没有布局语义）；真布局判别力在
+// 规格 §15 的人工清单里。
+// ---------------------------------------------------------------------------
+
+describe("长工程名不撑宽页面（B6 任务 2）", () => {
+  it("标题用 .project-name：长工程名不撑宽页面", async () => {
+    // 复用该文件已有的 `makeEditorRecord()` + `setProjectStore(...)` + `await mountPage()` 三件套，
+    // 导入后把 meta.name 换成超长无空格串
+    const record = makeEditorRecord({ withSource: true });
+    const store = await createMemoryProjectStore();
+    await store.put({
+      ...record,
+      meta: { ...record.meta, name: "IMG_20240101_1234567890_edited_edited_edited_final_version" },
+    });
+    setProjectStore(store);
+    const wrapper = await mountPage();
+    expect(wrapper.get("h1").classes()).toContain("project-name");
+  });
+});

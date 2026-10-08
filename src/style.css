@@ -1,1 +1,19 @@
 @import "tailwindcss";
+
+/*
+ * 工程名的展示口径（B6，唯一一份）：最多两行、超出省略，且**允许被压缩到 1 个字符宽**。
+ *
+ * 为什么不是 Tailwind 的 `truncate`：它是 `white-space: nowrap`，而手机断点下图纸库的 `ul` 没有显式
+ * 列模板 ⇒ 隐式 `auto` 轨道按 max-content 定尺，`truncate` 只能裁自己、拦不住轨道被撑开（页面横向滚）。
+ * `overflow-wrap: anywhere` 把 min-content 缩到 1 字符，轨道因此不会再被长文件名撑开。
+ *
+ * 三处引用：图纸库卡片名、编辑页标题、施工图查看层标题。改这里就是改三处。
+ */
+.project-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
