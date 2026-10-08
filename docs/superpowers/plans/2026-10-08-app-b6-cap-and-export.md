@@ -1687,8 +1687,9 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     expect(texts.some((t) => t.includes("58") && t.includes("A3"))).toBe(true);
     expect(texts.some((t) => t.includes("第 1/4 块板"))).toBe(true);
     expect(texts.some((t) => t.includes("列 1–58") && t.includes("行 1–58"))).toBe(true);
-    // 页眉里的实际毫米与缩放比是「无空格」写法（与实现逐字一致：`4.7mm`，不是 `4.7 mm`）
-    expect(texts.some((t) => /1 格 = 4\.7mm（实物的 95%）/.test(t))).toBe(true);
+    // 页眉里的实际毫米与缩放比是「无空格」写法（与实现逐字一致：`4.7mm`，不是 `4.7 mm`）；
+    // 58+A3 的比率是 **93%**（宽度预算扣掉刻度带之后 cellPx = 55 / 59 = 0.9322）
+    expect(texts.some((t) => /1 格 = 4\.7mm（实物的 93%）/.test(t))).toBe(true);
   });
 
   it("用料条只画本页用到的色（传进来的 usages 就是本页那一份）", () => {
@@ -2720,6 +2721,11 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
    ⇒ 一次性给这些新常量各补一条字面量断言：`PRINT_BOARD_SIZES`、`PRINT_DPI`、`PRINT_MARGIN_MM`、`PAPER_MM`（a4/a3 的毫米）、
    `SHEET_MIN_LABEL_FONT_PX`、`LEGEND_ITEM_W` / `LEGEND_ROW_H`（任务 11 改回终态名之后）、`PAGE_HEADER_H`。
    放在这里而不是各任务里，是因为它们同属「常量值就是契约」这一类。
+23. **扩 `layoutGate` 的扫描面（或改注释措辞）**（任务 8 的复审者点名）：`TileGeometry.cellPx` 的契约注释说「渲染器读它就是缺陷（词法闸门会红）」，
+   但 `layoutGate.test.ts` 的 glob 只有 `../{sheet,share}.ts` ⇒ 将来若有独立的打印页渲染器文件，它读 `plan.cellPx` 不会被任何闸门抓到。
+   任务 9 的 `drawBoardPage` 落在 `sheet.ts`（所以今天是被覆盖的），任务 11 删 `share.ts` 时**顺手把 glob 改成覆盖 `core/render/` 下所有渲染器文件**，或把那条注释收窄成「本文件所属的渲染器」。
+24. `src/core/render/__tests__/layout.test.ts:581-583` 的注释声称「把 `requireBoardSize` 删成 `return value as PrintBoardSize` ⇒ 全套一条都不会红」——
+   不实（`:714-725` 那条 `boardSize: 30` 的用例正是靠它判别）；真正零覆盖的是 `requirePaper` 与 `printBoardCount` 的 ≥1 ⇒ 据实改写这句注释。
 18. `src/core/render/__tests__/sheet.test.ts` 里新增的第一条 `drawSheet` 用例，标题写「旧口径下会被降级的尺寸照样画」，但 6×6 夹具下
    `cellPx = 40`（远超旧的 32px 阈值）、那条断言其实与降级无关（任务 6 的实现者自报）⇒ 把标题改成它真正验证的东西
    （「网格内每颗实心格都画了色号：33 颗 ⇒ 33 条文字」），不要把一句不成立的因果留在用例名里。
