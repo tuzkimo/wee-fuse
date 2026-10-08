@@ -5,6 +5,7 @@ import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { defaultProjectName, setProjectStore } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
+import ExportPanel from "@/components/editor/ExportPanel.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import SetupPage from "@/views/SetupPage.vue";
 
@@ -1045,6 +1046,27 @@ describe("结果阶段", () => {
     // 「找得到吗」），也因此与本文件其余断言的写法一致。
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(true);
+
+    // ---- 接线断言（第 1 轮修复追加）---------------------------------------------------------
+    // 上面三条只钉住「面板挂上来了」，面板**收到什么**一条都没读：把 `:usages="resultUsages"`
+    // 改成 `:usages="[]"`，上面三条照样全绿（面板只是多渲染一行 `export-empty-note`）——正是本项目
+    // 记过账的「两端各自正确、错在接线」。下面两条一起把这条接线钉死：
+    // ① 反向：`ExportPanel` 只在 `usages.length === 0` 时渲染 `export-empty-note`，接空必红；
+    // ② 正向：面板收到的用量条数 = 结果面板**当场写给用户看的**那一个用色数（同一次生成的产物）。
+    //    任一夹具下都分得开「接空」（0 ≠ N）、「接了别的量」（条数对不上）与「接对」。
+    expect(wrapper.find("[data-testid='export-empty-note']").exists()).toBe(false);
+    const shownColors = /实际用了 (\d+) 种颜色/.exec(
+      wrapper.get("[data-testid='result-stats']").text(),
+    )?.[1];
+    expect(shownColors).toBeDefined();
+    expect(wrapper.findComponent(ExportPanel).props("usages")).toHaveLength(Number(shownColors));
+
+    // ---- `@close` 接线（同上，今天也完全没被钉住）-------------------------------------------
+    // 关闭 = 卸载面板：`ExportPanel` 的 `onUnmounted` 靠这次卸载回收 object URL（任务 10 的 F3）。
+    // 删掉 `@close="exporting = false"`，这一条立刻红（面板留在屏幕上，用户再也退不出导出态）。
+    await wrapper.get("[data-testid='export-close']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
   });
 
   it("平板结果阶段能页内回选区（左栏当场换回画布）", async () => {
