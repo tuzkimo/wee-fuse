@@ -164,15 +164,61 @@ describe("SheetViewer", () => {
 
   it("现算失败时显示中文原因，不静默也不留白屏", async () => {
     await seedRecord();
-    // 真实形态：旧工程超出当前上限时，渲染通道（`planSheet`）抛的就是这句
-    renderSheetBlob.mockRejectedValueOnce(new Error("图纸宽度必须在 1–116 之间"));
+    // 渲染通道替身抛错（真实形态有好几种：画布被浏览器钳制、内容自检失败、色号不在色卡里…）。
+    // **注意**：规格里举的那个「图纸宽度必须在 1–116 之间」**不属于这一支**——它来自
+    // `fromProjectDocument` 的工程校验（见下面那条用真 >116 的 doc 驱动的用例）；
+    // 渲染通道自己的宽度消息是「画布宽高必须是 ≥1 的整数…」/「图纸宽度必须是 ≥1 的整数…」。
+    renderSheetBlob.mockRejectedValueOnce(new Error("画布尺寸被浏览器钳制：期望 8000×12000，实际 0×0"));
     const wrapper = mount(SheetViewer, { props: { projectId: "p1", name: "测试工程", thumbnail: "" } });
     await flushPromises();
-    expect(wrapper.get("[data-testid='sheet-error']").text()).toContain("图纸宽度必须在 1–116 之间");
+    // 中文包裹（第 2 轮修复）：非 Error 来源（例如 IndexedDB 的 `DOMException`）以前会露出裸英文，
+    // 现在无论来源是什么，前缀都在。
+    expect(wrapper.get("[data-testid='sheet-error']").text()).toBe(
+      "图纸生成失败：画布尺寸被浏览器钳制：期望 8000×12000，实际 0×0",
+    );
     // 失败后不能还挂着「正在生成施工图…」（`finally` 里那句 `busy = false` 此前无人读）
     expect(wrapper.find("[data-testid='sheet-loading']").exists()).toBe(false);
     // 没有 blob ⇒ 保存按钮不可点（否则用户点一下、什么也没发生、也没有解释）
     expect((wrapper.get("[data-testid='sheet-save']").element as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("非 Error 来源（如 DOMException）也译成中文，不露裸英文", async () => {
+    await seedRecord();
+    // 真实形态：`getProjectStore().get()` 底下的 IndexedDB 抛 `DOMException`
+    //（`e instanceof Error` 为真但 `name` 是英文，或直接抛字符串/普通对象）。
+    renderSheetBlob.mockRejectedValueOnce({ name: "UnknownError", message: "An unknown error occurred" });
+    const wrapper = mount(SheetViewer, { props: { projectId: "p1", name: "测试工程", thumbnail: "" } });
+    await flushPromises();
+    const text = wrapper.get("[data-testid='sheet-error']").text();
+    expect(text.startsWith("图纸生成失败：")).toBe(true);
+  });
+
+  it("记录里的图纸超出上限时，原因来自工程解析（真 >116 的 doc），渲染通道根本没被走到", async () => {
+    // 规格举的例子在这里有**真实来源**：`validateProjectDocument`（`core/project/types.ts:97`）的
+    // 上界是 `MAX_LONG_SIDE`(=116)，而 `toProjectDocument` 自己拒绝 >116 ⇒ 只能手工把一份合法 doc
+    // 的 width 撑到 117。宽度校验排在 grid / 色卡校验**之前**，所以这份 doc 抛的就是那一句。
+    const store = await createMemoryProjectStore();
+    const base = toProjectDocument(
+      { width: 2, height: 1, paletteId: palette.id, cells: new Uint16Array([0, 0]) },
+      palette,
+      { longSide: 58, maxColors: null, crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
+    );
+    await store.put({
+      meta: {
+        id: "too-wide", name: "超宽工程",
+        createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z",
+        thumbnail: "", width: 117, height: 1, colorCount: 1,
+      },
+      doc: { ...base, width: 117, grid: [...base.grid, ...new Array<number>(115).fill(0)] },
+      source: null,
+    });
+    setProjectStore(store);
+
+    const wrapper = mount(SheetViewer, { props: { projectId: "too-wide", name: "超宽工程", thumbnail: "" } });
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-error']").text()).toContain("图纸宽度必须在 1–116 之间");
+    // 这一句是本条用例的重点：**错误不是渲染通道给的**（`renderSheetBlob` 的宽度消息是另一句）。
+    expect(renderSheetBlob).not.toHaveBeenCalled();
   });
 
   it("保存失败时显示中文原因，不冒充「已保存到相册」", async () => {
@@ -216,10 +262,16 @@ describe("SheetViewer", () => {
     await flushPromises();
 
     const button = wrapper.get("[data-testid='sheet-save']");
-    // **两次派发之间不 await**：`trigger` 内部是「同步 `dispatchEvent` + 返回 `nextTick()`」，
-    // 不等就派第二次时 DOM 上的 `disabled` 还没被渲染刷新，所以第二次点击**真的会进 handler**
-    // ——这正是「防连点」必须写在 `save()` 里的原因（只靠 `:disabled` 挡不住同一 tick 的第二次）。
-    await Promise.all([button.trigger("click"), button.trigger("click")]);
+    // 第一次点击用 `trigger`；**第二次点击直接 `dispatchEvent`**（第 2 轮修复）：`@vue/test-utils`
+    // 的 `trigger` 对 `disabled` 元素会静默跳过，直接派发绕开那层跳过。
+    // **两次之间不 await**：`disabled` 是渲染刷新的产物，这一 tick 里它还没生效 ⇒ 第二次事件
+    // **真的会进 handler** —— 于是「同一 tick 连点两次」这件事只可能由 `save()` 入口的早退挡住。
+    // （真机上先到的那次由 `:disabled` 拦；这条用例测的是拦不住的那一瞬。）
+    // 实测：把入口的 `|| saving.value` 去掉（保留 `saving.value = true` 与 `:disabled`），
+    // 本用例转红——见报告 §9.4 的 P2。
+    const first = button.trigger("click");
+    button.element.dispatchEvent(new MouseEvent("click"));
+    await first;
 
     expect(albumSave).toHaveBeenCalledTimes(1);
     // 飞行中：按钮禁用（否则用户以为没反应，会一直点）
@@ -231,5 +283,60 @@ describe("SheetViewer", () => {
     expect(wrapper.get("[data-testid='sheet-save-state']").text()).toBe("已保存到相册");
     // 落地后必须**放行**（卡死成永久禁用的话，失败一次就再也存不了）
     expect((button.element as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("重试保存时会先清掉上一轮的结果（飞行中不挂着旧的「保存失败」）", async () => {
+    await seedRecord();
+    albumSave.mockRejectedValueOnce(new Error("相册写入被拒绝"));
+    // 第二次保存挂在飞行中，好让「入口清空」这个动作在用例里可停留
+    let settle: () => void = () => undefined;
+    albumSave.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const wrapper = mount(SheetViewer, { props: { projectId: "p1", name: "小猫", thumbnail: "" } });
+    await flushPromises();
+    const button = wrapper.get("[data-testid='sheet-save']");
+
+    await button.trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-save-state']").text()).toContain("保存失败：相册写入被拒绝");
+
+    // 重试：那句话必须先消失——留着它，用户重试时看到的仍是上一轮的失败原因，
+    // 会以为**这次**也失败了（而这次可能成功）。
+    await button.trigger("click");
+    expect(wrapper.find("[data-testid='sheet-save-state']").exists()).toBe(false);
+
+    settle();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-save-state']").text()).toBe("已保存到相册");
+  });
+
+  it("卸载发生在现算结算之前时不再建 object URL（否则整颗位图钉到页面生命周期结束）", async () => {
+    await seedRecord();
+    // 「关闭」按钮没有 `disabled`：用户完全可能在现算完成前就关掉（换工程重挂时，旧实例同理）。
+    let settle: (blob: Blob) => void = () => undefined;
+    renderSheetBlob.mockImplementationOnce(
+      () => new Promise<Blob>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    const wrapper = mount(SheetViewer, {
+      props: { projectId: "p1", name: "测试工程", thumbnail: "data:image/png;base64,AAAA" },
+    });
+    // 让 `getProjectStore().get()` 结算，停在 `renderSheetBlob` 的飞行中
+    await flushPromises();
+    expect(renderSheetBlob).toHaveBeenCalledTimes(1);
+    expect(createObjectUrl).not.toHaveBeenCalled();
+
+    wrapper.unmount(); // 用户在现算结算前点了「关闭」/ 换了一条工程
+    settle(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+    await flushPromises();
+
+    // 已死实例上不许再建 URL：`onUnmounted` 已经跑过，**没有任何人会再 revoke 它**
+    expect(createObjectUrl).not.toHaveBeenCalled();
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 });

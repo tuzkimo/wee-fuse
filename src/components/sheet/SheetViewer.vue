@@ -41,6 +41,19 @@ const saveState = ref("");
  * `:disabled` 只是视觉上的那一半（让用户看到「点了，正在存」）。
  */
 const saving = ref(false);
+/**
+ * 实例已卸载（第 2 轮修复，审查者指出的**真实泄漏**）。
+ *
+ * 「关闭」按钮没有 `disabled`：用户完全可以在现算结算**之前**就关掉（换工程重挂时，旧实例同理）。
+ * 那种情况下 `onUnmounted` 已经跑过（当时 `blobUrl` 还是 `""`，没有任何东西可 revoke），
+ * 之后那颗 blob 才 resolve——若不拦，`URL.createObjectURL` 会在**已死实例**上诞生一个
+ * **永远不会被回收**的 object URL，把整颗全分辨率位图（116 格单张约 60MB）钉到页面生命周期结束，
+ * 每次「打开 → 早关」漏一份。
+ *
+ * 判据必须排在 `createObjectURL` **之前**（与 `ExportPanel.vue` 的 `unmounted` 闸同款，
+ * 那里注释逐字写着「关闭按钮没有 disabled…这是一个真实的泄漏」）。
+ */
+let disposed = false;
 
 /** 现算完成前用缩略图垫场；算完换成施工图。 */
 const previewSrc = computed(() => blobUrl.value || props.thumbnail);
@@ -55,16 +68,22 @@ onMounted(async () => {
     const { pattern } = fromProjectDocument(record.doc, palette);
     const usages = patternStats(pattern, palette).usages;
     const blob = await renderSheetBlob({ pattern, palette, usages, projectName: record.meta.name });
+    // **卸载判据排在任何副作用之前**（见 `disposed` 的 JSDoc）：这里是这颗 blob 唯一的注册点，
+    // 一旦放过，已死实例上生出来的 object URL 再没有人能销号。
+    if (disposed) return;
     sheetBlob.value = blob;
     blobUrl.value = URL.createObjectURL(blob);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    // 中文包裹（第 2 轮修复）：`String(e)` 对非 Error 来源（IndexedDB 的 `DOMException`、
+    // 被抛出的字符串 / 普通对象）会露出裸英文，而**「失败必须给出中文原因」对所有来源成立**。
+    error.value = `图纸生成失败：${e instanceof Error ? e.message : String(e)}`;
   } finally {
     busy.value = false;
   }
 });
 
 onUnmounted(() => {
+  disposed = true;
   if (blobUrl.value !== "") URL.revokeObjectURL(blobUrl.value);
   blobUrl.value = "";
   sheetBlob.value = null;
@@ -76,6 +95,9 @@ async function save(): Promise<void> {
   // 会在 `disabled` 刷新之前进来（见 `saving` 的 JSDoc）。
   if (blob === null || saving.value) return;
   saving.value = true;
+  // **入口清空**（第 2 轮修复）：不清的话，重试期间屏幕上还挂着上一轮的「保存失败：…」，
+  // 用户会以为**这次**也失败了（而这次可能成功）。
+  saveState.value = "";
   try {
     await getPlatform().album.save(blob, exportFilename(props.name, "施工图"));
     saveState.value = getPlatform().album.kind === "album" ? "已保存到相册" : "已开始下载";
