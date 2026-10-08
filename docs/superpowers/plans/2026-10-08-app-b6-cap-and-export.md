@@ -882,7 +882,8 @@ export function planSheet(
     labelFontPx,
     tickFontPx,
     // `lineOneY` / `lineTwoY` 是**文本顶边**（渲染器用 `textBaseline = "top"`）；
-    // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY ∓ LEGEND_FOOTER_LINE_H`。
+    // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY − 14` / `footerY` / `footerY + 14`
+    //（14 就是渲染器 `sheet.ts` 里那个模块私有常量 `LEGEND_FOOTER_LINE_H`——**不要在本文件引用它，它没有导出**）。
     infoBar: { lineOneY: SHEET_MARGIN, lineTwoY: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2) },
     legend: band,
     footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,
@@ -1078,7 +1079,7 @@ export function drawSheet(
   target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
 
   drawInfoBar(target, pattern, meta, beads, plan.infoBar.lineOneY, plan.infoBar.lineTwoY);
-  drawCellsAndLabels(target, pattern, palette, plan, true);
+  drawCellsAndLabels(target, pattern, palette, plan);
   drawGridLines(target, plan);
   drawRulers(target, pattern, plan);
   drawBoardLabels(target, plan);
@@ -2621,6 +2622,8 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
    ⇒ **可选**简化为 `const scale = minCellScale(viewport, grid);`；若简化，确认 `view.test.ts:166` 的等式与 `:119-120` 的不变量仍绿。
 16. 「适配」按钮的语义（`EditorPage.vue:189-193` 用裸 `fitTransform`）**保持不动**（规格 §5.2 要求「适配落回 `fitTransform`」原样通过，
    「适配 = 填满视口」是既有契约）⇒ 只在该处补一句注释写清：小图纸上「适配」会放大到满屏（用户主动动作），而**默认视图**才是 `min(适配, MAX_CELL_PX)`。
+17. `planSheet` 在可用高度为负时抛出的消息里会出现 `-1 px` 这种噪声（任务 5 的实现者与审查者都点名，抛错语义正确、只是措辞）⇒ 在字号下限守卫之前加一条
+   `cellPx < 1` 的专门分支，消息写「画布上限 X px 放不下 N×M 的图纸（扣掉用料条后没有可用高度）」，不要让负数格像素出现在用户可见文本里。
 
 - [ ] **步骤 2：改索引**
 
