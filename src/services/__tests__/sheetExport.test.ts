@@ -4,6 +4,7 @@ import {
   createRecordingTarget,
   resetExporterMock,
   type MockExporter,
+  type TextCall,
 } from "@/components/editor/__tests__/exportTestKit";
 import { planSheet } from "@/core/render/layout";
 import type { Palette } from "@/core/palette/types";
@@ -158,9 +159,16 @@ describe("renderSheetBlob", () => {
  * 依赖上面那个 describe 的 `beforeEach` 会在「用例顺序变了 / 单跑一条」时静默失去替身实现。
  */
 describe("renderBoardPageBlob", () => {
+  /**
+   * 本 describe 的画布文字记录口：`beforeEach` 装替身时一并留下。
+   * 页脚的「本页 / 全图」口径只能经 `fillText` 观察到（`SheetMeta` 没有别的出口）。
+   */
+  let texts: readonly TextCall[] = [];
+
   beforeEach(() => {
-    const { target } = createRecordingTarget();
-    resetExporterMock(exporter, target);
+    const recording = createRecordingTarget();
+    texts = recording.texts;
+    resetExporterMock(exporter, recording.target);
   });
 
   it("renderBoardPageBlob 的画布就是纸型像素（A4 = 2480×3508）", async () => {
@@ -175,5 +183,29 @@ describe("renderBoardPageBlob", () => {
       pageIndex: 0,
     });
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
+  });
+
+  /**
+   * **两个用量入参的语义分工**（2026-10-08 控制者裁决）：`input.usages` 是**全图**用量
+   * （`sheetMeta` 的 `totalBeads` / `colorCount` 与页脚那句「… 全图 M 颗（K 种色）」都取自它），
+   * 第二个实参才是**本页**用量（用料条）。把本页用量塞进 `input.usages` 会让页脚**静默**把本页数
+   * 标成全图数——这条用例就是那个接线错误的判据。
+   */
+  it("页脚的全图颗数 / 色数取自 input.usages（本页用量只影响用料条）", async () => {
+    const pattern = makePattern(58, 58, undefined); // 全 A1 实心：本页 29×29 = 841 颗
+    await renderBoardPageBlob(
+      {
+        pattern,
+        palette: makePalette(),
+        usages: makeUsages(), // 全图：26 + 5 + 1 + 1 = 33 颗、4 种色
+        projectName: "测试工程",
+        boardSize: 29,
+        paper: "a4",
+        pageIndex: 0,
+      },
+      [{ code: "A2", name: "黑", count: 7 }], // 本页：只有一种色、7 颗（不进页脚的全图口径）
+    );
+    const footer = texts.map((text) => text.text).filter((text) => text.includes("· 全图"));
+    expect(footer).toEqual(["本页 841 颗 · 全图 33 颗（4 种色）"]);
   });
 });

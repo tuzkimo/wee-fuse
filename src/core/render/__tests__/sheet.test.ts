@@ -972,6 +972,30 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     expect(texts.some((t) => /1 格 = 4\.7mm（实物的 93%）/.test(t))).toBe(true);
   });
 
+  it("页身份按 index 分行列（index 1 ⇒ 第 1 行 第 2 列、本页列 30–58；行/列对调即红）", () => {
+    // **为什么必须有这条**：上面那条只造 `index: 0`，而 0 的 `boardRow` 与 `boardCol` **都是 0** ⇒
+    // 把页眉里的「第 N 行 第 M 列」两个取值写反也照样绿。这里用 index 1 把两者判开。
+    const pattern = makePattern(116, 116, undefined);
+    const palette = makePalette();
+    const usages = [{ code: "A1", name: "白", count: 10 }];
+    const plan = planBoardPage(pattern, palette, usages, { boardSize: 29, paper: "a4", index: 1 });
+    // 前提：116 格 + 29 板 ⇒ 每行 4 块板 ⇒ index 1 是第 1 行第 2 列，覆盖列 30–58
+    expect(plan.boardRow).toBe(0);
+    expect(plan.boardCol).toBe(1);
+    expect(plan.originCol).toBe(29);
+    expect(plan.originRow).toBe(0);
+
+    const { target, calls } = createMockTarget();
+    drawBoardPage(target, pattern, palette, usages, plan, makeMeta());
+    const texts = calls.texts.map((t) => t.text);
+    expect(texts.some((t) => t.includes("第 1 行 第 2 列"))).toBe(true);
+    expect(texts.some((t) => t.includes("第 2/16 块板"))).toBe(true);
+    // 本页格范围取的是**本页原点**（第 2 块板 ⇒ 列 30–58），不是 1–29
+    expect(texts.some((t) => t.includes("列 30–58") && t.includes("行 1–29"))).toBe(true);
+    // 顺带覆盖 `percent === 100` 那一支（上面那条是 93% 那支）：29 板 + A4 就是实物大小
+    expect(texts.some((t) => t.includes("1 格 = 5.0mm（实物大小）"))).toBe(true);
+  });
+
   it("用料条只画本页用到的色（传进来的 usages 就是本页那一份）", () => {
     const pattern = makePattern(58, 58);
     const palette = makePalette();

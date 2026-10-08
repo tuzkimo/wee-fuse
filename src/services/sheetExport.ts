@@ -68,6 +68,11 @@ export async function renderSheetBlob(input: SheetRenderInput): Promise<Blob> {
 /**
  * 打印页通道的入参：在 `SheetRenderInput` 之上补三个版面参数。
  *
+ * **`usages` 的语义是「全图」**（继承 `SheetRenderInput`，与单张施工图同一个入口语义）：
+ * `sheetMeta` 的 `totalBeads` / `colorCount`、以及页脚那句「… 全图 M 颗（K 种色）」都取自它。
+ * **本页用量不走这里**，走 `renderBoardPageBlob` 的第二个实参（见它的 JSDoc）。
+ * 把本页用量填进 `usages` 会**静默**把页脚的全图数标成本页数——`sheetExport.test.ts` 有一条用例钉着这个分工。
+ *
  * **`boardSize` / `paper` 是与 core 的 `PrintBoardSize` / `PrintPaper` 同值的字面量联合**：这里有意的
  * 第二个写处（core 的枚举是运行期判据，这里是调用方的编译期接口）。漂移是**响的**而不是静默的——
  * `planBoardPage` 收到表外的值一律抛（`requireBoardSize` / `requirePaper` 由 `layout.test.ts` 与
@@ -80,11 +85,16 @@ export interface BoardPageRenderInput extends SheetRenderInput {
 }
 
 /**
- * 一页 A4/A3 打印页（每页一块板 + 本页用料）。`usages` 传的是**本页**用量，不是全图。
+ * 一页 A4/A3 打印页（每页一块板 + 本页用料）。
  *
- * 第二参数 `pageUsages` 缺省取 `input.usages`：视图层已经按页算好本页用量时显式传（它的行数必须与
- * `planBoardPage` 收到的那份一致，否则 `drawBoardPage` 的同源守卫会抛）；只有一张图 / 全图一份用量时
- * 不必重复写一遍。`meta.totalBeads` 用**全图**用量求和（页脚写的是「本页 N 颗 · 全图 M 颗」）。
+ * **两个用量入参的语义必须分清**（2026-10-08 控制者裁决，接线前先读这段）：
+ * - `input.usages` = **全图**用量：`meta.totalBeads` / `meta.colorCount` 由 `sheetMeta` 从它算，
+ *   页脚写的是「本页 N 颗 · 全图 M 颗（K 种色）」；
+ * - 第二个实参 `pageUsages` = **本页**用量：用料条取自它（「本页 N 颗」那个 N 由渲染器
+ *   `countTileBeads` 数格子得出，**不**来自这个数组）。缺省值就是 `input.usages`，即「不分页 / 整图」那一支。
+ *
+ * `pageUsages` 的行数必须与 `planBoardPage` 收到的那份一致（同一份用量同时喂给计划与渲染器），
+ * 否则 `drawBoardPage` 的同源守卫会抛；视图层按页算好用量时显式传第二个实参，只有一张图时不必重复写。
  *
  * `draw` 回调必须是**同步**的（`renderWithPlan` 只 `await` 它之后的 `canvasToBlob`）：渲染器一页要写
  * 上万次目标，没有一处需要异步。
@@ -99,10 +109,9 @@ export async function renderBoardPageBlob(
     index: input.pageIndex,
   });
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
-    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, {
-      ...sheetMeta(input, nowText()),
-      totalBeads: input.usages.reduce((sum, usage) => sum + usage.count, 0),
-    });
+    // `totalBeads` / `colorCount` 全部由 `sheetMeta` 从 `input.usages`（全图）算，**这里不再覆写**：
+    // 覆写是对同一个数组做同一次求和（逐位相同），只会多出一个「将来与 sheetMeta 口径漂移」的写处。
+    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, sheetMeta(input, nowText()));
   });
 }
 
