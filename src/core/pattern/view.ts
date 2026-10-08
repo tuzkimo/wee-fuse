@@ -148,25 +148,36 @@ function requireGridSize(grid: Size): Size {
 // ---------------------------------------------------------------------------
 
 /**
- * 缩放范围的**下限** = 适配比例（整图可见）。再缩下去 `clampView` 会把两个方向都居中锁定，
- * 观感上什么都没变（规格 §4.2）。
+ * 缩放范围的**下限** = `min(适配比例, MAX_CELL_PX)`（整图可见；小图纸封顶）。
  *
- * **关键取舍**：不新增「适配比例」这个概念的第二份实现——直接调 `fitTransform` 取 `scale`，
+ * **① 大图纸（适配比例 ≤ `MAX_CELL_PX`）下它就是适配比例**：再缩下去 `clampView` 会把两个方向都
+ * 居中锁定，观感上什么都没变（规格 §4.2）。这一支与旧口径逐字一致。
+ *
+ * **② 小图纸（适配比例 > `MAX_CELL_PX`）下必须压到 `MAX_CELL_PX`**：默认视图的比例就是
+ * `min(适配比例, MAX_CELL_PX)`，下界若仍是适配比例（2×1 在 800×600 里是 400），默认视图就落在
+ * `[下界, 上界]` **之外**，`zoomCellView` 的第一次夹取会把比例猛地拉到适配比例——真机上表现为
+ * 「按缩小反而把图放大」（B6 修复项；`view.test.ts` 的承重不变量用例与 `EditorPage.test.ts` 的
+ * ± 用例是靶点）。
+ *
+ * **③ 由此得到承重不变量**：`minCellScale ≤ defaultCellView(…).scale ≤ maxCellScale`，由用例守着。
+ *
+ * **关键取舍**：不新增「适配比例」这个概念的第二份实现——仍直接调 `fitTransform` 取 `scale` 再封顶，
  * 于是视口与图纸的守卫、以及 contain 口径都与 B2 的选区页逐字一致。
  *
  * **为何公开**：`stores/editor.ts`（任务 4）与工具栏的 ± 缩放要读同一个下界；`defaultCellView`
  * 与 `zoomCellView` 也由它定义，用例据此断言「上下界不退化」。
  */
 export function minCellScale(viewport: Size, grid: Size): number {
-  return fitTransform(viewport, grid).scale;
+  return Math.min(fitTransform(viewport, grid).scale, MAX_CELL_PX);
 }
 
 /**
  * 缩放范围的**上界** = `max(MAX_CELL_PX, 适配比例 × 2)`。
  *
- * **关键取舍（两个量取大是必须的）**：8×8 的图纸在 800×600 视口里适配比例约 75px/格，
- * 若上界固定成 64 就会出现 `上界 < 下界`，视图被钉死成一个不可缩放的单一比例；给小图一倍余量即可。
- * 由定义保证 `下界 ≤ 上界`，所以「先把 `nextScale` 夹进 `[下界, 上界]`」没有次序歧义。
+ * **关键取舍（两个量取大是必须的）**：8×8 的图纸在 800×600 视口里适配比例约 75px/格，而
+ * `minCellScale` 已把下界压到 `MAX_CELL_PX`（= 64）；上界若也固定成 64，`[64, 64]` 就把视图钉死成
+ * 一个不可缩放的单一比例。由定义保证 `下界 ≤ 上界`（下界 ≤ `MAX_CELL_PX` ≤ 上界），所以
+ * 「先把 `nextScale` 夹进 `[下界, 上界]`」没有次序歧义。
  *
  * **为何公开**：同 `minCellScale`——store 的夹取路径与工具栏按钮都要读它。
  */
@@ -182,13 +193,12 @@ export function maxCellScale(viewport: Size, grid: Size): number {
  * 新口径两头都合理：大图纸整图可见；小图纸的适配比例可能远大于 64（2×1 在 800×600 里是 400），
  * 封到 `MAX_CELL_PX` 避免「满屏一块色块」。
  *
- * **如实记录一个后果**：封顶之后，小图纸（适配比例 > 64）的默认比例会**低于**缩放范围的下界
- * `minCellScale`，而 `zoomCellView` 仍按 `[minCellScale, maxCellScale]` 夹取——于是站在这种默认视图
- * 上按「放大」或「缩小」都会被夹到适配比例（一次跳变）。封顶 64 是规格 §5.2 定的取舍，下游 ± 按钮的
- * 观感不在本模块内，这里只把后果记下来。
+ * **与缩放范围对齐（B6 修复）**：`minCellScale` 也取 `min(适配比例, MAX_CELL_PX)`，于是默认视图正好
+ * 落在 `[minCellScale, maxCellScale]` 里。原先下界仍是适配比例，小图纸的默认视图（封在 64）会落在
+ * 缩放范围**之外**，`zoomCellView` 的第一次夹取把比例猛地拉到适配比例——真机上是「按缩小反而放大」。
  *
  * **只在第一次量到视口尺寸时**调用它；之后容器尺寸变化只重新夹取（`clampView`），否则用户刚调好的
- * 位置与比例会被横竖屏切换重置（规格 §4.2 末段）。缩放范围（`minCellScale` / `maxCellScale`）不变。
+ * 位置与比例会被横竖屏切换重置（规格 §4.2 末段）。
  *
  * **为何公开**：`stores/editor.ts` 的 `onViewport` 是它唯一的生产消费者。
  */

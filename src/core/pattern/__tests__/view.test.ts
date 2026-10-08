@@ -25,8 +25,9 @@ import {
  * 两个数字是刻意选的，别改：
  * - 800×600 放进 100×100 ⇒ 适配比例 100/800 = **0.125**，B6 新口径下**这就是默认比例**
  *   （旧口径会抬到 24 px/格），是「大图纸整图可见」那一支的判别夹具；
- * - 10×10 放进 1000×800 ⇒ 适配比例 **80 > `MAX_CELL_PX = 64`**，默认视图封到 64，是「小图纸封顶」
- *   那一支的判别夹具（缩放上界仍是 `max(64, 适配 × 2) = 160`，所以不会出现 `上界 < 下界`）。
+ * - 10×10 放进 1000×800 ⇒ 适配比例 **80 > `MAX_CELL_PX = 64`**，默认视图与缩放**下界**都封到 64
+ *   （上界是 `max(64, 适配 × 2) = 160`），是「小图纸封顶」那一支的判别夹具——下界不封顶的话默认视图
+ *   会落在 `[下界, 上界]` 之外，「按缩小反而放大」。
  *
  * **`V_FRAC` 是结构性防线**：真实浏览器的 `getBoundingClientRect()` 返回的就是小数，
  * 而 `viewport` 与 `grid` 的静态类型都是 `Size`——实参对调 TS 查不出来。让每个吃 `viewport`
@@ -65,7 +66,7 @@ describe("三个公开常量（§4.2 / §4.5）", () => {
 });
 
 describe("缩放范围（§4.2）", () => {
-  it("minCellScale 就是适配比例（长边贴住视口）", () => {
+  it("minCellScale = min(适配比例, MAX_CELL_PX)（长边贴住视口；小图纸封顶）", () => {
     // 800×600 放进 100×100：min(100/800, 100/600) = 0.125，且与 fitTransform 完全同源。
     expect(minCellScale(V100, GRID_800)).toBe(0.125);
     expect(minCellScale(V100, GRID_800)).toBe(fitTransform(V100, GRID_800).scale);
@@ -73,6 +74,9 @@ describe("缩放范围（§4.2）", () => {
     // 若把 viewport 误传进 grid，整数守卫会拒绝 150.5，而不是静默换一个轴算。
     expect(minCellScale(V_FRAC, GRID_800)).toBe(150.5 / 800);
     expect(minCellScale(V_FRAC, GRID_800)).toBe(fitTransform(V_FRAC, GRID_800).scale);
+    // 小图纸（10×10 放进 1000×800 ⇒ 适配 80 > 64）：下界**必须**封到 MAX_CELL_PX，否则默认视图
+    // （= min(适配, 64) = 64）会落在缩放范围之外，「按缩小反而放大」。见下一条承重不变量。
+    expect(minCellScale(V1000, GRID_10)).toBe(MAX_CELL_PX);
   });
 
   it("适配比例 ≤ 32 时上界取 MAX_CELL_PX", () => {
@@ -83,8 +87,9 @@ describe("缩放范围（§4.2）", () => {
   });
 
   it("适配比例 > 64 时上界取适配 ×2（小图纸不退化）", () => {
-    // 10×10 放进 1000×800，适配 80 > 64：固定上界 64 会造成 上界 < 下界（80），视图被钉死。
-    expect(minCellScale(V1000, GRID_10)).toBe(80);
+    // 10×10 放进 1000×800，适配 80 > 64：下界封到 64、上界取适配 ×2 = 160——两边都留了缩放余量，
+    // 既不会「上界 < 下界」把视图钉死，也不会让默认视图掉到范围之外。
+    expect(minCellScale(V1000, GRID_10)).toBe(MAX_CELL_PX);
     expect(maxCellScale(V1000, GRID_10)).toBe(160);
   });
 
@@ -95,6 +100,25 @@ describe("缩放范围（§4.2）", () => {
     // 远低于边界的那一侧：480×360 放进 240×240 ⇒ 适配 240/480 = 0.5，适配 ×2 = 1 < 64。
     expect(minCellScale({ width: 240, height: 240 }, GRID_480)).toBe(0.5);
     expect(maxCellScale({ width: 240, height: 240 }, GRID_480)).toBe(MAX_CELL_PX);
+  });
+
+  it("承重不变量：minCellScale ≤ defaultCellView(…).scale ≤ maxCellScale", () => {
+    // B6 修复项的**靶点**：小图纸（适配 80 > 64）若下界仍是适配比例，默认视图（封在 64）就落在
+    // [下界, 上界] 之外——`zoomCellView` 的第一次夹取会把比例猛地拉到适配比例，真机上表现为
+    // 「按缩小反而把图放大」。这条用例在修 `minCellScale` 之前必红。
+    const cases: readonly (readonly [Size, Size])[] = [
+      [V100, GRID_800], // 大图纸：适配 0.125 远低于上限，下界 = 适配比例
+      [V1000, GRID_10], // 小图纸：适配 80 > 64，下界与默认视图都被封到 64
+      [V_FRAC, GRID_8], // 非整数视口：适配 120.25/8 = 15.03125
+      [V100, GRID_8x6], // 8×6：适配 12.5 = 下界，上界 64
+    ];
+    for (const [viewport, grid] of cases) {
+      const lower = minCellScale(viewport, grid);
+      const upper = maxCellScale(viewport, grid);
+      const scale = defaultCellView(viewport, grid).scale;
+      expect(lower).toBeLessThanOrEqual(scale);
+      expect(scale).toBeLessThanOrEqual(upper);
+    }
   });
 
   it("两个缩放边界都复用既有守卫（非法视口 / 非法图纸响亮失败）", () => {
@@ -129,7 +153,7 @@ describe("defaultCellView（§4.2）", () => {
     expect(defaultCellView({ width: 24, height: 24 }, GRID_480)).toEqual(V(0.05, 0, 3));
   });
 
-  it("默认视图的比例是 min(适配比例, MAX_CELL_PX)，图像中心落在视口中心，且已过夹取", () => {
+  it("默认视图的比例 = minCellScale（= min(适配比例, MAX_CELL_PX)），图像中心落在视口中心，且已过夹取", () => {
     const cases: readonly (readonly [Size, Size])[] = [
       [V100, GRID_800],
       [V1000, GRID_10],
@@ -137,10 +161,9 @@ describe("defaultCellView（§4.2）", () => {
     ];
     for (const [viewport, grid] of cases) {
       const view = defaultCellView(viewport, grid);
-      // 新口径（B6）：默认比例 = `min(适配比例, MAX_CELL_PX)`。小图纸（适配 80 > 64）时会**低于**
-      // `minCellScale`（= 80）——封顶 64 是有意的（避免满屏一块色块），所以这里不能再断言「默认视图
-      // 落在缩放范围里」；上界那条仍然成立：`min(适配, 64) ≤ max(64, 适配 × 2)`。
-      expect(view.scale).toBe(Math.min(minCellScale(viewport, grid), MAX_CELL_PX));
+      // 新口径（B6）：默认比例 = `min(适配比例, MAX_CELL_PX)`，**恰好等于缩放范围的下界**
+      // `minCellScale`（下界对同一个量封顶，两处口径必须同源）；范围本身由「承重不变量」那条用例守着。
+      expect(view.scale).toBe(minCellScale(viewport, grid));
       expect(view.scale).toBeLessThanOrEqual(maxCellScale(viewport, grid));
       expect(orientedToScreen({ x: grid.width / 2, y: grid.height / 2 }, view)).toEqual({
         x: viewport.width / 2,
@@ -198,15 +221,15 @@ describe("zoomCellView 的锚点不变量（§4.3）", () => {
     const big = defaultCellView(V100, GRID_800); // 比例 0.125 = 下界，范围 [0.125, 64]
     expect(zoomCellView(big, V100, GRID_800, 0.01, { x: 50, y: 50 }).scale).toBe(minCellScale(V100, GRID_800));
     expect(zoomCellView(big, V100, GRID_800, 9999, { x: 50, y: 50 }).scale).toBe(maxCellScale(V100, GRID_800));
-    // 小图纸：封顶后默认比例是 64，**低于**下界 80（适配 80），范围仍是 [80, 160]——上界取「适配 × 2」
-    // 而不是固定的 64，正是为了不出现「上界 < 下界」把视图钉死。
-    const small = defaultCellView(V1000, GRID_10); // 比例 64，范围 [80, 160]
+    // 小图纸：默认比例 64 就是下界（下界对 min(适配 80, 64) 封顶），范围 [64, 160]——上界取
+    // 「适配 × 2」而不是固定的 64，小图纸才有放大余量（下界 64 + 上界 64 会把视图钉死）。
+    const small = defaultCellView(V1000, GRID_10); // 比例 64 = 下界，范围 [64, 160]
     expect(zoomCellView(small, V1000, GRID_10, 0.5, { x: 500, y: 400 }).scale).toBe(minCellScale(V1000, GRID_10));
     expect(zoomCellView(small, V1000, GRID_10, 9999, { x: 500, y: 400 }).scale).toBe(maxCellScale(V1000, GRID_10));
   });
 
   it("小图纸能缩放到适配 ×2 的上界 160（上界不被 64 卡住）", () => {
-    const view = defaultCellView(V1000, GRID_10); // V(64, 180, 80)：比例封在 MAX_CELL_PX 而非下界 80
+    const view = defaultCellView(V1000, GRID_10); // V(64, 180, 80)：比例 = 下界 = MAX_CELL_PX
     const anchor: Point = { x: 500, y: 400 };
     const before = screenToOriented(anchor, view);
     const zoomed = zoomCellView(view, V1000, GRID_10, 160, anchor);

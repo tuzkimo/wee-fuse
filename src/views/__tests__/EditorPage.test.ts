@@ -1043,13 +1043,7 @@ describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适�
   it("缩放与适配：+ 让比例 ×1.25、− 原路退回，适配落回 fitTransform", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
-
-    // 起点取**「适配」**而不是载入后的默认视图：2×1 的适配比例是 400，远大于 `MAX_CELL_PX = 64`，
-    // 默认视图被封在 64，而缩放范围仍是 `[适配, 适配 × 2] = [400, 800]`（B6 冻结了 `zoomCellView`
-    // 与缩放范围）⇒ 站在默认视图上按 ± 会被夹到 400。倍率本身要在范围内才验得出来，所以先落到下界。
-    await wrapper.get("[data-testid='zoom-fit']").trigger("click");
     const before = editor.view;
-    expect(before.scale).toBe(400);
 
     await wrapper.get("[data-testid='zoom-in']").trigger("click");
     // 1.25 是控制者批准的常量（裁决 6）：写成别的档位这里就红。
