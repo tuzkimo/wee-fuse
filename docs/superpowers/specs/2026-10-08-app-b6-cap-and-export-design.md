@@ -176,6 +176,19 @@
                 ⌊(maxEdge − 2×margin − infoBar − rulerTop − legendH − footer) / height⌋)
   ```
 
+- **画布宽度取「网格需要」与「用料条需要」的较大者**（2026-10-08 由任务 5 的审查者发现、控制者裁决补入）：
+
+  ```
+  canvasWidth = max( margin + rulerLeft + width × cellPx + margin,
+                     margin + min(itemCols, 色数) × itemWidth + margin )
+  ```
+
+  理由：`itemCols` 是按**画布上限**（`maxEdge − 2 × margin`）算出来的，而网格宽度只取决于格像素——
+  116×116 的最坏情况下用料条需要 `24 + 20×200 + 24 = 4048 px`，而网格只给出 3592 px，
+  于是第 18–19 列（约 16% 的用料项）静默落在画布外。取 `max` 之后最坏情况 4048 ≤ 4096，仍在上限内；
+  小图纸（色数少）只按**实际用到的列数**加宽（如 4 色 1 行 ⇒ 848 px），不会无谓地撑到 4096。
+  `min(itemCols, 色数)` 是必需的：只按 `itemCols` 算会让 4 色的小图纸也撑到 4048。
+
 - 各带高度沿用现有常量（`SHEET_MARGIN` / `SHEET_INFO_BAR_H` / `SHEET_RULER_LEFT` / `SHEET_RULER_TOP` / `SHEET_FOOTER_H`）；
   用料条改用压缩几何（它不是独立成图，信息密度可以提高）：`LEGEND_ITEM_W = 200`、`LEGEND_ROW_H = 22`、色块 16px。
 - **字号下限守卫**：`labelFontPx = round(cellPx × LABEL_FONT_RATIO)` 必须 ≥ `SHEET_MIN_LABEL_FONT_PX = 10`，
@@ -218,8 +231,13 @@ interface SheetPlan {
 2. `canvasWidth ≤ 4096 && canvasHeight ≤ 4096`。
 
 实测预算（写进用例注释，便于日后核对）：用料条 221 项 / 每行 `⌊(4096−48)/200⌋ = 20` 项 = 12 行 × 22 = 264px；
-宽 `24 + 64 + 116×30 + 24 = 3592`；高 `24 + 108 + 44 + 116×30 + (264 + 8) + 44 + 24 = 3996`（`+8` 是 `LEGEND_PAD_TOP`）。
+宽 `max(24 + 64 + 116×30 + 24, 24 + 20×200 + 24) = max(3592, 4048) = 4048`；
+高 `24 + 108 + 44 + 116×30 + (264 + 8) + 44 + 24 = 3996`（`+8` 是 `LEGEND_PAD_TOP`）。
 ⇒ 最坏情况下 `cellPx = 30`（宽方向本可到 34，被高度压住）、字号 11px，**两个方向都留在 4096 内**。
+
+**这四条数字（30 / 11 / 4048 / 3996）必须由用例以 `toBe` 字面量钉住**，而不只是断言松上界——
+否则实现算出 `cellPx = 27`、`canvasWidth = 3480` 也照样全绿，预算契约就没有判别力。
+另外必须有一条**几何自洽性**断言：对每一项用料，`margin + (i % itemCols) × itemWidth + itemWidth − countRightPad ≤ canvasWidth`。
 
 > **零用色的边界（任务 5 实测补入）**：`legendH` 的 `+ LEGEND_PAD_TOP` 是**无条件**的。写成「`itemRows > 0` 才加」
 > 会让 0 项时少算 8px，107×107 的图纸 `canvasHeight` 冲到 4104 > 4096 且不抛错（静默越界）。
