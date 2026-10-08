@@ -1081,7 +1081,7 @@ export function drawSheet(
   drawInfoBar(target, pattern, meta, beads, plan.infoBar.lineOneY, plan.infoBar.lineTwoY);
   drawCellsAndLabels(target, pattern, palette, plan);
   drawGridLines(target, plan);
-  drawRulers(target, pattern, plan);
+  drawRulers(target, plan);
   drawBoardLabels(target, plan);
   drawLegendBand(target, palette, usages, plan.legend, SHEET_MARGIN);
 
@@ -1109,6 +1109,12 @@ export function drawSheet(
 1. 步骤函数 `drawInfoBar`（**只有单张施工图用**：打印页的页眉是两行不同的文案）/ `drawCellsAndLabels` / `drawGridLines` / `drawRulers` / `drawBoardLabels`（后四个**两者共用**）的实现，就是把现有
    `drawSheetTile` 的第 2–7 步**逐字搬过来**（`tile` → `plan`、`tile.grid` → `plan.grid`、`plan.labels` 的判断改成恒真），
    `drawSheetTile` 改成调这五个函数（任务 11 再删它）。搬的时候**不要顺手改任何坐标算式**：落位由既有用例钉着。
+   **实参形状按任务 6 的实际落地为准**（控制者裁决 2026-10-08）：`drawInfoBar(target, pattern, meta, beads, lineOneY, lineTwoY)`、
+   `paintCells(target, pattern, palette, plan)`、`drawLabels(target, palette, plan)`、`drawCellsAndLabels(target, pattern, palette, plan)`、
+   `drawGridLines(target, plan)`、`drawRulers(target, plan)`（第 6 步不需要 `pattern`，带未用形参会撞 `noUnusedParameters`）、
+   `drawBoardLabels(target, plan)`。五个步骤函数保持**模块私有**（`drawBoardPage` 同在 `sheet.ts`，够用）。
+   **`plan.labels` 的降级分支只留在 `drawSheetTile` 里**（它由任务 11 删除）：`drawSheetTile` 第 3/4 步分别调 `paintCells` + `drawLabels`，
+   而共用的 `drawCellsAndLabels` 恒画、零分支——这是「色号恒画」与「既有 `labels=false` 用例不许红」两条约束的唯一两全解。
 2. `countTileBeads(pattern, tile)` 的入参类型同样放宽成 `TileGeometry`（它只读 `originCol/originRow/cols/rows` 与 `cells.length` 的校验）。
 3. `LEGEND_FOOTER_FONT_PX` / `LEGEND_FOOTER_LINE_H` 是 `sheet.ts` 里已有的私有常量（任务 11 删掉独立用量表后它们仍被这里用，**不许删**）。
 
@@ -1701,9 +1707,9 @@ export function drawBoardPage(
   target.fillText(lineOne, SHEET_MARGIN, plan.infoBar.lineOneY);
   target.fillText(lineTwo, SHEET_MARGIN, plan.infoBar.lineTwoY);
 
-  drawCellsAndLabels(target, pattern, palette, plan, true);
+  drawCellsAndLabels(target, pattern, palette, plan);
   drawGridLines(target, plan);
-  drawRulers(target, pattern, plan);
+  drawRulers(target, plan);
   drawBoardLabels(target, plan);
   drawLegendBand(target, palette, usages, plan.legend, SHEET_MARGIN);
 
@@ -2624,6 +2630,9 @@ git commit -m "feat(library): 首页可现算查看施工图（缩略图垫场 +
    「适配 = 填满视口」是既有契约）⇒ 只在该处补一句注释写清：小图纸上「适配」会放大到满屏（用户主动动作），而**默认视图**才是 `min(适配, MAX_CELL_PX)`。
 17. `planSheet` 在可用高度为负时抛出的消息里会出现 `-1 px` 这种噪声（任务 5 的实现者与审查者都点名，抛错语义正确、只是措辞）⇒ 在字号下限守卫之前加一条
    `cellPx < 1` 的专门分支，消息写「画布上限 X px 放不下 N×M 的图纸（扣掉用料条后没有可用高度）」，不要让负数格像素出现在用户可见文本里。
+18. `src/core/render/__tests__/sheet.test.ts` 里新增的第一条 `drawSheet` 用例，标题写「旧口径下会被降级的尺寸照样画」，但 6×6 夹具下
+   `cellPx = 40`（远超旧的 32px 阈值）、那条断言其实与降级无关（任务 6 的实现者自报）⇒ 把标题改成它真正验证的东西
+   （「网格内每颗实心格都画了色号：33 颗 ⇒ 33 条文字」），不要把一句不成立的因果留在用例名里。
 
 - [ ] **步骤 2：改索引**
 
