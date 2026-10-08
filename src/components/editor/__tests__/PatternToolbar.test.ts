@@ -252,3 +252,28 @@ describe("导出入口", () => {
     expect(wrapper.emitted("save")).toBeUndefined();
   });
 });
+
+/** 五行分组：行 id → 该行应出现的 testid（顺序即 DOM 顺序）。产品口径见规格 §5.1。 */
+const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
+  ["tools", ["tool-brush", "tool-select", "tool-pick"]],
+  ["history", ["undo", "redo"]],
+  ["display", ["toggle-grid", "toggle-labels"]],
+  ["view", ["zoom-fit", "zoom-in", "zoom-out"]],
+  ["output", ["export", "editor-save"]],
+];
+
+describe("五行分组", () => {
+  it("每行一个容器，行内 testid 集合逐字相符（顺序也相符）", () => {
+    const wrapper = mountToolbar();
+    for (const [row, testids] of TOOLBAR_ROWS) {
+      const container = wrapper.get(`[data-testid='toolbar-row-${row}']`);
+      const found = container
+        .findAll("button")
+        .map((button) => button.attributes("data-testid"))
+        .filter((id): id is string => id !== undefined);
+      expect(found).toEqual([...testids]);
+    }
+    // 恰好 5 行：多一行说明有人顺手加了没归类的按钮
+    expect(wrapper.findAll("[data-testid^='toolbar-row-']")).toHaveLength(TOOLBAR_ROWS.length);
+  });
+});
