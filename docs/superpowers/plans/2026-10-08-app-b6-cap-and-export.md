@@ -23,6 +23,14 @@
 - 不新增依赖、不改依赖版本、不建 `.npmrc`；提交信息用 Conventional Commits + 中文描述。
 - 验证命令：`npm run test`（vitest run）、`npm run build`（vue-tsc --noEmit + vite build）。
 - 步骤里的行号是**当前工作树**的行号；改完一处后行号会漂，按内容定位。
+- **过渡期命名（控制者裁决 2026-10-08，任务 5 落地）**：新的「单张施工图计划」类型在过渡期叫 **`SingleSheetPlan`**，
+  因为旧的分片 `SheetPlan` 还被 `core/render/sheet.ts` 按 `plan.tiles` / `plan.labels` 读着（那个文件归任务 6/11）。
+  同理，底部用料条的两个几何常量过渡期叫 **`LEGEND_BAND_ITEM_W = 200` / `LEGEND_BAND_ROW_H = 22`**，
+  旧的 `LEGEND_ITEM_W = 300` / `LEGEND_ROW_H = 30` 原样留着（它们随独立用量表在任务 11 一起删）。
+  **任务 11 负责把这两个过渡名换回规格里的终态名**（`SingleSheetPlan` → `SheetPlan`、`LEGEND_BAND_*` → `LEGEND_ITEM_W` / `LEGEND_ROW_H`），
+  与删除旧符号同一个提交。任务 6–10 一律**沿用过渡名**，不要各自改名。
+- **空 `usages` 的边界**：`legendH` 用规格 §6.2 的**无条件** `+ LEGEND_PAD_TOP`（任务 5 实测：条件式在 0 项时会让 107×107 的
+  `canvasHeight` 冲到 4104 > 4096 且不抛错）。凡涉及带高的算式，一律以规格 §6.2 为准。
 
 ---
 
@@ -2080,6 +2088,18 @@ git rm src/core/render/share.ts src/core/render/__tests__/share.test.ts
 `makeTile` 若在任务 5 已被 `makeGridGeometry` + 两个 plan 取代，一并删除。
 `sheet.ts` 删除 `drawSheetTile` / `drawLegend` 与只被它们用到的私有函数（保留下来的步骤函数必须仍被 `drawSheet` / `drawBoardPage` 用到）。
 `layoutGate.test.ts` 里针对 `shareCellBox` 的那条词法规则删掉；`drawSheetTile` 的文件级规则改成覆盖 `sheet.ts` 全部导出。
+
+**最后做两处过渡名改回终态名**（控制者裁决 2026-10-08 的收尾；删除完成之后旧名字才空闲出来）：
+
+```bash
+# ① 单张计划类型：SingleSheetPlan → SheetPlan（旧 SheetPlan 此刻已随 planSheets/drawSheetTile 删掉）
+git grep -l 'SingleSheetPlan' -- src | ForEach-Object { (Get-Content $_ -Encoding UTF8) -replace 'SingleSheetPlan','SheetPlan' | Set-Content $_ -Encoding UTF8 }
+# ② 用料条常量：LEGEND_BAND_ITEM_W / LEGEND_BAND_ROW_H → LEGEND_ITEM_W / LEGEND_ROW_H（旧 300/30 已随 planLegend 删掉）
+git grep -l 'LEGEND_BAND_ITEM_W\|LEGEND_BAND_ROW_H' -- src | ForEach-Object { (Get-Content $_ -Encoding UTF8) -replace 'LEGEND_BAND_ITEM_W','LEGEND_ITEM_W' -replace 'LEGEND_BAND_ROW_H','LEGEND_ROW_H' | Set-Content $_ -Encoding UTF8 }
+```
+
+改完必须：`grep` 全仓零命中 `SingleSheetPlan` / `LEGEND_BAND_`；`npm run test` 与 `npm run build` 全绿；
+终态常量取值与规格 §13 一致（`LEGEND_ITEM_W = 200`、`LEGEND_ROW_H = 22`）。
 
 - [ ] **步骤 4：运行测试验证通过 + 全量构建**
 
