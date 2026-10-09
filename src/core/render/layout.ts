@@ -233,6 +233,11 @@ export interface PageChromePlan {
   readonly titleLeft: number;
   /** 图上的标题字号；写进计划是为了渲染器不读常量。 */
   readonly titleFontPx: number;
+  /**
+   * 格内色号字号。**它住在「带」这一层**：两个渲染器的取值口径完全一致，都由 `planGridScale` 给；
+   * 渲染器不许自己按格像素算字号（那会变成第二份「色号多大」的数学）。
+   */
+  readonly labelFontPx: number;
   readonly ruler: RulerBandPlan;
   readonly legend: LegendBandPlan;
   /** 用料条首行顶边。 */
@@ -248,7 +253,6 @@ export interface SheetPlan extends TileGeometry, PageChromePlan {
   readonly kind: "sheet";
   readonly canvasWidth: number;
   readonly canvasHeight: number;
-  readonly labelFontPx: number;
 }
 
 export interface PlanOptions {
@@ -762,7 +766,6 @@ export interface BoardPagePlan extends TileGeometry, PageChromePlan {
   readonly boardTotal: number;
   readonly canvasWidth: number;
   readonly canvasHeight: number;
-  readonly labelFontPx: number;
 }
 
 /**

@@ -21,6 +21,7 @@ import ExportPanel from "@/components/editor/ExportPanel.vue";
 import PalettePanel from "@/components/editor/PalettePanel.vue";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
+import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import { getBuiltinPalette } from "@/services/palette";
 import { renderPatternThumbnail } from "@/services/patternThumbnail";
 import { useDraft } from "@/stores/draft";
@@ -76,14 +77,18 @@ const pendingRerun = ref(false);
 const allowLeave = ref(false);
 
 /**
- * 导出面板的打开形态：`null` = 关着（规格 §8 的两个入口共用这一个面板）。
+ * 两个覆盖层的打开状态：`panelMode` 是打印面板（`null` = 关着）、`sheetOpen` 是查看施工图。
  *
- * **页面只做接线**（R-4）：计划、清单、逐项状态、渲染与落盘都在 `ExportPanel` 里。页面给它的四样
- * 东西是「内存态图纸 + 页面已有的 usages + 打开形态 + 失效通道 revision」——`usages` 直接复用
- * **下面**那个 `usages` computed（它在 `stats` 之后派生；面板因此不必再走一遍 O(格数) 的
- * `patternStats`，规格 §5.4 的分工）。
+ * **C7 起「导出」按钮被删除**（人类伙伴 2026-10-09 裁定）：单张施工图原本有两个出口——打印面板的
+ * sheet 模式与「查看施工图」，两者是同一张图。现在只剩「查看施工图」一个，打印面板只服务打印页。
+ *
+ * **页面只做接线**（R-4）：计划、清单、逐项状态、渲染与落盘都在两个组件里。页面给它们的四样东西是
+ * 「内存态图纸 + 页面已有的 usages + 打开形态 + 失效通道 revision」——`usages` 直接复用**下面**那个
+ * `usages` computed（它在 `stats` 之后派生；面板因此不必再走一遍 O(格数) 的 `patternStats`）。
  */
-const panelMode = ref<"sheet" | "print" | null>(null);
+const panelMode = ref<"print" | null>(null);
+/** 查看施工图（吃内存态图纸，**含未保存改动**；不读落盘记录里的图纸字段）。 */
+const sheetOpen = ref(false);
 
 /**
  * **已经载入**的 id。
@@ -563,7 +568,7 @@ function rerun(): void {
             @zoom-in="onCommand('zoom-in')"
             @zoom-out="onCommand('zoom-out')"
             @save="onCommand('save')"
-            @export="panelMode = 'sheet'"
+            @view-sheet="sheetOpen = true"
             @print="panelMode = 'print'"
           />
 
@@ -635,10 +640,9 @@ function rerun(): void {
     </button>
 
     <!--
-      导出 / 打印面板（规格 §8 的两个入口共用这一个面板）。**图纸来源恒为 `editor.pattern`**
-      （**内存态**，含未保存改动）——导出不触发保存、也不读落盘记录里的图纸字段。
-      **唯一取自落盘记录的是工程名**（`:project-name`，只是文件名的前缀与图上标题；记录里的名字改了
-      也不会改变导出的字节）。
+      打印面板（C7 起只剩打印页一种形态）。**图纸来源恒为 `editor.pattern`**（**内存态**，
+      含未保存改动）——打印不触发保存、也不读落盘记录里的图纸字段。
+      **唯一取自落盘记录的是工程名**（`:project-name`，只是文件名的前缀与图上标题）。
 
       `v-if` 必须**同时**要求 `editor.pattern` 存在（契约 §2b）：少了后半句，图纸还没载入时
       面板会在渲染期抛错（`:pattern` 拿到 null）。除此之外不新增别的门。
@@ -650,8 +654,19 @@ function rerun(): void {
       :usages="usages"
       :project-name="session.record?.meta.name ?? '图纸'"
       :revision="editor.revision"
-      :mode="panelMode"
       @close="panelMode = null"
+    />
+
+    <!--
+      查看施工图（C7 起是单张施工图的**唯一**出口，自带保存）。同样吃**内存态**图纸：
+      编辑器里刚改的格子直接反映到图上，不需要先保存。
+    -->
+    <SheetViewer
+      v-if="sheetOpen && editor.pattern !== null"
+      :pattern="editor.pattern"
+      :palette="palette"
+      :name="session.record?.meta.name ?? '图纸'"
+      @close="sheetOpen = false"
     />
   </main>
 </template>

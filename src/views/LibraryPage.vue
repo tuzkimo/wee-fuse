@@ -2,6 +2,10 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
+import { fromProjectDocument } from "@/core/project/file";
+import type { Palette } from "@/core/palette/types";
+import type { Pattern } from "@/core/pattern/types";
+import { getBuiltinPalette } from "@/services/palette";
 import {
   getProjectStore,
   PROJECT_NAME_MAX,
@@ -54,6 +58,27 @@ const pendingDelete = ref<ProjectMeta | null>(null);
  * 焊死，不必指望「唯一的出口是关闭」。用例：`查看层开着时点另一条工程的「施工图」…`。
  */
 const sheetTarget = ref<ProjectMeta | null>(null);
+/**
+ * 查看层要的图纸与色卡：**由本页从记录里读出来**（C7 起 `SheetViewer` 吃 `pattern` 入参，
+ * 不再自己回库读——那条路径会让编辑器与结果页的**内存态**图纸进不来）。
+ *
+ * 与 `sheetTarget` 同步读：打开那一刻读一次记录（`get`），拿到 `doc` 之后经
+ * `fromProjectDocument` 还原成 `pattern`。读不到就把 `sheetPattern` 留在 `null`，模板自然不挂查看层。
+ */
+const sheetPattern = ref<Pattern | null>(null);
+const palette: Palette = getBuiltinPalette();
+
+async function openSheet(meta: ProjectMeta): Promise<void> {
+  sheetTarget.value = meta;
+  sheetPattern.value = null;
+  try {
+    const record = await getProjectStore().get(meta.id);
+    if (record === null) return;
+    sheetPattern.value = fromProjectDocument(record.doc, palette).pattern;
+  } catch (cause) {
+    error.value = `打不开这条工程（${cause instanceof Error ? cause.message : String(cause)}）`;
+  }
+}
 
 const hasProjects = computed(() => projects.value.length > 0);
 
@@ -205,7 +230,7 @@ function open(id: string): void {
             <button data-testid="open-project" class="min-h-12 flex-1 rounded bg-slate-900 px-4 text-white" @click="open(meta.id)">
               打开
             </button>
-            <button data-testid="view-sheet" class="min-h-12 rounded border border-slate-300 px-4" @click="sheetTarget = meta">
+            <button data-testid="view-sheet" class="min-h-12 rounded border border-slate-300 px-4" @click="openSheet(meta)">
               施工图
             </button>
             <button data-testid="rename-project" class="min-h-12 rounded border border-slate-300 px-4" @click="startRename(meta)">
@@ -224,12 +249,16 @@ function open(id: string): void {
     </p>
 
     <SheetViewer
-      v-if="sheetTarget !== null"
+      v-if="sheetTarget !== null && sheetPattern !== null"
       :key="sheetTarget.id"
-      :project-id="sheetTarget.id"
+      :pattern="sheetPattern"
+      :palette="palette"
       :name="sheetTarget.name"
       :thumbnail="sheetTarget.thumbnail"
-      @close="sheetTarget = null"
+      @close="
+        sheetTarget = null;
+        sheetPattern = null;
+      "
     />
 
     <div

@@ -18,6 +18,7 @@ import { EMPTY } from "@/core/pattern/types";
 import { toProjectDocument } from "@/core/project/file";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
+import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import { createDomBitmapPlatform, createExactDecoder, createFastDecoder } from "@/services/decoders";
 import { loadImageSource } from "@/services/imageSource";
@@ -116,16 +117,26 @@ const blockedReason = computed(() => {
   return "";
 });
 
+/** 结果预览缩略图（结果面板的那张小图，也是查看施工图现算完成前的垫场图）。 */
 const resultImage = computed(() =>
   session.pattern === null ? "" : renderPatternThumbnail(session.pattern, palette, RESULT_PREVIEW_MAX_EDGE),
 );
+/** 与 `resultImage` 同一个值，名字按「给查看层的垫场图」这一用途取（避免调用点读成另一种意思）。 */
+const resultThumbnail = computed(() => resultImage.value);
 
 const resultStats = computed(() =>
   session.pattern === null ? null : patternStats(session.pattern, palette),
 );
 
-/** 导出面板是否打开（就地打开，不跳编辑器：结果页已经有图纸与用量，跳走反而打断「改参数再生成」这条路）。 */
+/**
+ * 打印面板 / 查看施工图是否打开（就地打开，不跳编辑器：结果页已经有图纸与用量，跳走反而打断
+ * 「改参数再生成」这条路）。
+ *
+ * **C7 起「导出」按钮被删除**：单张施工图原本有两个出口（本页的导出面板与查看施工图），
+ * 现在是同一个组件 ⇒ 结果页也走「查看施工图」。
+ */
 const exporting = ref(false);
+const sheetOpen = ref(false);
 const resultUsages = computed(() => resultStats.value?.usages ?? []);
 
 /**
@@ -433,11 +444,18 @@ function resetCrop(): void {
             改选区
           </button>
           <button
-            data-testid="result-export"
+            data-testid="result-view-sheet"
+            class="min-h-12 rounded border border-slate-300 px-4 text-base"
+            @click="sheetOpen = true"
+          >
+            查看施工图
+          </button>
+          <button
+            data-testid="result-print"
             class="min-h-12 rounded border border-slate-300 px-4 text-base"
             @click="exporting = true"
           >
-            导出
+            打印
           </button>
           <button
             data-testid="open-editor"
@@ -505,7 +523,19 @@ function resetCrop(): void {
     :palette="palette"
     :usages="resultUsages"
     :project-name="session.record?.meta.name ?? '图纸'"
-    mode="sheet"
     @close="exporting = false"
+  />
+
+  <!--
+    查看施工图（C7 起是单张施工图的唯一出口）。吃 `session.pattern`（结果页刚生成的那一份），
+    不读落盘记录里的图纸字段——用户可能还没保存就点了它。
+  -->
+  <SheetViewer
+    v-if="sheetOpen && session.pattern !== null"
+    :pattern="session.pattern"
+    :palette="palette"
+    :name="session.record?.meta.name ?? '图纸'"
+    :thumbnail="resultThumbnail"
+    @close="sheetOpen = false"
   />
 </template>

@@ -38,7 +38,7 @@ const emit = defineEmits<{
   "zoom-in": [];
   "zoom-out": [];
   save: [];
-  export: [];
+  "view-sheet": [];
   print: [];
 }>();
 
@@ -124,10 +124,12 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
     </div>
 
     <div data-testid="toolbar-row-output" class="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
-      <!-- 导出 / 打印面板都由 `EditorPage` 渲染（唯一装配点）：本组件只知道用户点了哪一个，
-           不持有面板状态、也不 import 任何 store。 -->
-      <button data-testid="export" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('export')">
-        导出
+      <!-- 「查看施工图」与「打印」都由 `EditorPage` 渲染（唯一装配点）：本组件只知道用户点了哪一个，
+           不持有面板状态、也不 import 任何 store。
+           **C7 起「导出」按钮被删除**（人类伙伴 2026-10-09 裁定）：它与「查看施工图」是同一张图的
+           两个出口，一个有保存、一个有落盘，用户分不清该点哪个 ⇒ 收敛成「查看施工图」一个。 -->
+      <button data-testid="view-sheet" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('view-sheet')">
+        查看施工图
       </button>
       <button data-testid="print" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('print')">
         打印

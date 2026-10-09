@@ -1,36 +1,38 @@
 <script setup lang="ts">
 // src/components/editor/ExportPanel.vue
 //
-// 导出面板（B6 任务 10 收敛为**两种模式**）：`mode === "sheet"` 是单张施工图（含底部全图用料条），
-// `mode === "print"` 是打印页（每页一块 29 / 58 板，A4 / A3）。props 进、`close` 出。
+// 打印面板（C7 起只剩**打印页**一种模式）：每页一块 29 / 58 板，A4 / A3。props 进、`close` 出。
+//
+// **为什么删掉 `mode="sheet"`**（人类伙伴 2026-10-09 裁定）：单张施工图原本有两个出口——
+// 本面板的 sheet 模式（点「导出」打开）与首页/编辑器的「查看施工图」（`SheetViewer`）。
+// 两者是同一张图，一个有保存、一个有落盘，用户分不清该点哪个。现在**只有一个出口**：
+// 查看施工图（它自带保存）。本面板只服务打印页——那件事 `SheetViewer` 做不了。
 //
 // 三条纪律（契约 §2b / 规格 §10 / 计划任务 0 的 R-4 / R-5 / R-6）：
 // 1. **本组件不 import 任何 store**：它拿到什么就画什么，「图纸是哪一份」由页面（唯一装配点）决定。
 //    用例全程不建 pinia——任何 store 读取都会以「no active Pinia」在挂载期抛错，那是这条纪律的
 //    运行时证明。
 // 2. **清单与逐项状态都由面板自持**（R-4）：页面只做接线，一行导出逻辑都不许下沉到页面里。
-// 3. **逐项导出 = 一次用户手势**（R-5）：点一次 → 渲染该张（`services/sheetExport.ts` 的 Blob 通道：
+// 3. **逐项导出 = 一次用户手势**（R-5）：点一次 → 渲染该页（`services/sheetExport.ts` 的 Blob 通道：
 //    建画布 → 渲染 → **画布自检** → `toBlob` → 释放画布）→ **立刻经能力层落盘**
-//    （`getPlatform().album.save`：壳里进系统相册、浏览器里仍是下载）→ 显示预览（`<img>` 指向
-//    同一颗 blob 的 object URL）。不做连续多下载、不做 zip、不做 Web Share；任何一项失败只写该项的
-//    状态与中文原因，**不影响其他项**。
+//    （`getPlatform().album.save`）→ 显示预览（`<img>` 指向同一颗 blob 的 object URL）。
+//    不做连续多下载、不做 zip、不做 Web Share；任何一项失败只写该项的状态与中文原因，
+//    **不影响其他项**。
 //
 // 分页数学**只此一份**：页身份（`boardRow` / `boardCol`）取 `boardPageTile`（内部走 `planBoardPage`）、
 // 本页用量取 `usagesInRange`、页数取 `printBoardCount`、页标签的列数取 `printBoardCols`——面板自己
-// **不写除法**（2026-10-08 收口：`printBoardCols` 就是为了把面板里那份 `Math.ceil(width / boardSize)`
-// 收进 layout.ts 才导出的）。
+// **不写除法**。
 // 导出**不乘 DPR**、**不经过 `renderPatternThumbnail`**（R-6）。
 import { computed, onUnmounted, ref, watch } from "vue";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
-import { planBoardPage, planSheet, printBoardCols, printBoardCount } from "@/core/render/layout";
+import { planBoardPage, printBoardCols, printBoardCount } from "@/core/render/layout";
 import { exportFilename } from "@/services/exporter";
 import { getPlatform } from "@/services/platform/capabilities";
 import {
   boardPageTile,
   renderBoardPageBlob,
-  renderSheetBlob,
   usagesInRange,
   type SheetRenderInput,
 } from "@/services/sheetExport";
@@ -40,8 +42,6 @@ const props = defineProps<{
   palette: Palette;
   usages: readonly ColorUsage[];
   projectName: string;
-  /** 打开形态（规格 §8 的两个入口共用这一个面板）：`sheet` = 施工图、`print` = 打印页。 */
-  mode: "sheet" | "print";
   /** 编辑页传 `editor.revision`；结果页没有编辑通道，默认 0（「图纸换了」由 `pattern` 身份变化触发）。 */
   revision?: number;
 }>();
@@ -51,17 +51,13 @@ const emit = defineEmits<{ close: [] }>();
 /* ------------------------------------------------------------------ 计划 */
 
 /**
- * 打印选项。**它们只影响打印模式**：单张施工图的画布与格像素由 `planSheet` 从画布上限推出，
- * 与纸张 / 板大小无关（那是屏幕产物，不是纸面产物）。
+ * 打印选项：板大小与纸张。
+ *
+ * **单张施工图不再有选项**——它的画布与格像素由 `planSheet` 从画布上限推出（C7 规格 §3.4），
+ * 与纸张 / 板大小无关；那张图现在只在「查看施工图」里出现。
  */
 const boardSize = ref<29 | 58>(29);
 const paper = ref<"a4" | "a3">("a4");
-
-/**
- * 单张施工图：计划只依赖尺寸与色卡，**不依赖 `revision`**（编辑一格不改变画布尺寸与格像素）。
- * 需要跟着编辑失效的是**逐项状态**，见下面那个 `watch`。
- */
-const sheetPlan = computed(() => planSheet(props.pattern, props.palette, props.usages));
 
 /** 页数：**只问 `printBoardCount`**（它与 `planBoardPage` 是同一份分页数学的两个出口）。 */
 const pageCount = computed(() =>
@@ -73,7 +69,7 @@ const pageCount = computed(() =>
 interface ExportItem {
   readonly id: string;
   readonly label: string;
-  /** 单张模式为 -1；打印模式是该页的页索引（**唯一**的页码来源，不在别处再算一遍）。 */
+  /** 该页的页索引（**唯一**的页码来源，不在别处再算一遍）。 */
   readonly pageIndex: number;
   status: "idle" | "busy" | "done" | "error";
   error: string;
@@ -81,25 +77,13 @@ interface ExportItem {
 }
 
 /**
- * 清单由模式决定：单张模式一项；打印模式一页一项（`id` = `page-<页索引>`，与 `pageIndex` 同源）。
+ * 清单一页一项（`id` = `page-<页索引>`，与 `pageIndex` 同源）。
  *
  * **页标签的文案**用 `printBoardCols` 给出的列数换算行列（`第 r 行 第 c 列`），而**真正的页身份**
  * （`boardRow` / `boardCol`）由 `planBoardPage` 给出、落盘文件名取的就是它（`boardPageTile`）
  * ——两处口径同源（面板自己**不写除法**），但标签只是文案，不参与任何落盘决定。
  */
 function makeItems(): ExportItem[] {
-  if (props.mode === "sheet") {
-    return [
-      {
-        id: "sheet",
-        label: "施工图（含底部用料条）",
-        pageIndex: -1,
-        status: "idle",
-        error: "",
-        previewUrl: "",
-      },
-    ];
-  }
   const boardCols = printBoardCols(props.pattern.width, boardSize.value);
   return Array.from({ length: pageCount.value }, (_, index) => ({
     id: `page-${index}`,
@@ -155,17 +139,17 @@ function rebuildItems(): void {
 }
 
 /**
- * 重建清单的**五个源**（缺一不可）：
+ * 重建清单的**四个源**（缺一不可）：
  * - `revision`：编辑页的 `cells` 原地写，只有它能让 `markRaw` 的图纸失效；
  * - `pattern` 的**对象身份**：`beginSession` 会把 `revision` 归零——从一张 `revision = 0` 的图纸
  *   换到另一张时（`/edit/a → /edit/b` 而面板恰好开着），0 → 0 那一跳**不触发**，清单会停在
- *   上一张图纸上；结果页（任务 13）更是**只有**这一条失效通道（它没有 `revision`）；
- * - `boardSize` / `paper`：打印的页身份与页数由它们决定（29 板 16 页 ↔ 58 板 4 页）——换选项而
- *   不重建清单时，摘要会说 4 页、清单却仍是 16 项，且第 5 项之后点「保存」会用越界的页索引抛错；
- * - `mode`：清单形状由它决定（一项 ↔ 一页一项）。今天的唯一装配点（`EditorPage` 的 `v-if`）
- *   不会就地切模式，但**判据不能吊在调用方的纪律上**——真就地切了，清单停在旧形状是静默错误。
+ *   上一张图纸上；结果页更是**只有**这一条失效通道（它没有 `revision`）；
+ * - `boardSize` / `paper`：页身份与页数由它们决定（29 板 16 页 ↔ 58 板 4 页）——换选项而
+ *   不重建清单时，摘要会说 4 页、清单却仍是 16 项，且第 5 项之后点「保存」会用越界的页索引抛错。
+ *
+ * **C7 起删掉了 `mode` 那个源**：面板只剩打印一种形态，清单形状不再由 prop 决定。
  */
-watch([() => props.revision, () => props.pattern, () => props.mode, boardSize, paper], rebuildItems);
+watch([() => props.revision, () => props.pattern, boardSize, paper], rebuildItems);
 rebuildItems();
 
 /**
@@ -224,7 +208,6 @@ function statusText(item: ExportItem): string {
  * （工程名那条纪律由 B-3 立下，这里只是把它推广到全部入参）。
  */
 interface SaveSnapshot {
-  readonly mode: "sheet" | "print";
   readonly pattern: Pattern;
   readonly palette: Palette;
   readonly usages: readonly ColorUsage[];
@@ -273,7 +256,6 @@ async function saveItem(item: ExportItem): Promise<void> {
   // ---- 快照：这一行之后，落盘路径**不再读 `props` / `ref`** -------------------------------
   const generationAtStart = generation;
   const snapshot: SaveSnapshot = {
-    mode: props.mode,
     pattern: props.pattern,
     palette: props.palette,
     usages: props.usages,
@@ -289,33 +271,27 @@ async function saveItem(item: ExportItem): Promise<void> {
   };
   try {
     // 名字**先算**（不依赖 blob）：它读的每一个量都来自上面那份快照。
-    const filename =
-      snapshot.mode === "sheet"
-        ? exportFilename(snapshot.projectName, "施工图")
-        : exportFilename(
-            snapshot.projectName,
-            "打印",
-            boardPageTile(
-              snapshot.pattern,
-              snapshot.palette,
-              snapshot.usages,
-              snapshot.boardSize,
-              snapshot.paper,
-              item.pageIndex,
-            ),
-          );
-    const blob =
-      snapshot.mode === "sheet"
-        ? await renderSheetBlob(sheetInput)
-        : await renderBoardPageBlob(
-            {
-              ...sheetInput,
-              boardSize: snapshot.boardSize,
-              paper: snapshot.paper,
-              pageIndex: item.pageIndex,
-            },
-            pageUsages(snapshot, item.pageIndex),
-          );
+    const filename = exportFilename(
+      snapshot.projectName,
+      "打印",
+      boardPageTile(
+        snapshot.pattern,
+        snapshot.palette,
+        snapshot.usages,
+        snapshot.boardSize,
+        snapshot.paper,
+        item.pageIndex,
+      ),
+    );
+    const blob = await renderBoardPageBlob(
+      {
+        ...sheetInput,
+        boardSize: snapshot.boardSize,
+        paper: snapshot.paper,
+        pageIndex: item.pageIndex,
+      },
+      pageUsages(snapshot, item.pageIndex),
+    );
     await getPlatform().album.save(blob, filename);
     // 代数 + 卸载双判据（B4 的既有防线），**排在 `createObjectURL` 之前**：URL 根本不诞生，
     // 就没有「诞生在面板被丢弃之后、谁也回收不到」这一形态。
@@ -339,30 +315,27 @@ const showsLongPressHint = computed(() => getPlatform().album.kind === "download
 
 <template>
   <!--
-    面板是一个**覆盖层**（控制者裁定 10）。`data-testid` 全部照契约的清单，**不许另造名字**：
-    根 `export-panel`、摘要 `export-summary-sheet` / `export-summary-print`、空图纸说明
-    `export-empty-note`、关闭 `export-close`、打印选项 `print-board-29` / `print-board-58` /
-    `print-paper-a4` / `print-paper-a3`、逐项 `export-item-*` / `export-save-*` / `export-preview-*`。
+    面板是一个**覆盖层**。`data-testid` 全部照契约的清单，**不许另造名字**：
+    根 `export-panel`、摘要 `export-summary-print`、空图纸说明 `export-empty-note`、关闭 `export-close`、
+    打印选项 `print-board-29` / `print-board-58` / `print-paper-a4` / `print-paper-a3`、
+    逐项 `export-item-*` / `export-save-*` / `export-preview-*`。
 
-    **两个模式共用这一个面板**（规格 §8）：`mode` 决定标题、摘要、选项与清单的形状，
-    其余（逐项状态机、落盘、预览、销号）在两种模式下逐字相同。
+    **C7 起只剩打印这一种形态**：单张施工图走「查看施工图」（`SheetViewer`），不再有
+    `export-summary-sheet` 与 sheet 模式的清单。
   -->
   <section data-testid="export-panel" class="fixed inset-0 z-30 overflow-y-auto bg-white p-4">
     <header class="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
-      <h2 class="text-2xl font-bold text-slate-900">{{ mode === "sheet" ? "导出施工图" : "打印" }}</h2>
+      <h2 class="text-2xl font-bold text-slate-900">打印</h2>
       <button data-testid="export-close" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('close')">关闭</button>
     </header>
 
     <!-- 摘要与选项：纯计算，不建画布（规格 §10.2） -->
     <div class="mx-auto mt-3 max-w-3xl space-y-1">
-      <p v-if="mode === 'sheet'" data-testid="export-summary-sheet" class="text-base text-slate-700">
-        一张 {{ sheetPlan.canvasWidth }}×{{ sheetPlan.canvasHeight }} px 的施工图：{{ pattern.width }} × {{ pattern.height }} 格、{{ sheetPlan.cellPx }} px/格、含格内色号，底部带全图用料条。
-      </p>
-      <p v-if="mode === 'print'" data-testid="export-summary-print" class="text-base text-slate-700">
-        共 {{ pageCount }} 页（每页一块 {{ boardSize }}×{{ boardSize }} 板 · {{ paper.toUpperCase() }}）· 打印时选「适合页面」，页眉写明了每格实际毫米。
+      <p data-testid="export-summary-print" class="text-base text-slate-700">
+        共 {{ pageCount }} 页（每页一块 {{ boardSize }}×{{ boardSize }} 板 · {{ paper.toUpperCase() }}）· 打印时选「适合页面」，标题行写明了每格实际毫米。
       </p>
       <!-- 选项按钮在**任一项生成中**禁用：改选项会重建清单、把飞行中那一项丢掉（时序与可达性是一对）。 -->
-      <div v-if="mode === 'print'" class="flex flex-wrap gap-2 pt-2">
+      <div class="flex flex-wrap gap-2 pt-2">
         <button data-testid="print-board-29" :aria-pressed="boardSize === 29" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="boardSize = 29">29 标准板</button>
         <button data-testid="print-board-58" :aria-pressed="boardSize === 58" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="boardSize = 58">58 大板</button>
         <button data-testid="print-paper-a4" :aria-pressed="paper === 'a4'" :disabled="busy" class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50" @click="paper = 'a4'">A4</button>
