@@ -238,25 +238,28 @@ describe("导出与打印入口", () => {
   // 与 B6 新增的 `print`，而它属于「既有断言，一行不许改」——新增的这两颗按钮否则没有任何尺寸类断言。
   // （控制者裁定 5 采纳本处置；把新按钮加进那条清单需要改既有断言，如实记为**延后 Minor**，
   //   见报告清单第 8 条。）
-  it("点导出按钮 emit 一次空载荷的 export，且触控目标 ≥44px、字号 ≥16px", async () => {
+  it("点「查看施工图」emit 一次空载荷的 view-sheet，且触控目标 ≥44px、字号 ≥16px", async () => {
     const wrapper = mountToolbar();
-    const button = wrapper.get("[data-testid='export']");
-    expect(button.text()).toContain("导出");
+    const button = wrapper.get("[data-testid='view-sheet']");
+    expect(button.text()).toContain("查看施工图");
     expect(button.classes()).toContain("min-h-11"); // 2.75rem = 44px
     expect(button.classes()).toContain("text-base"); // 1rem = 16px
 
     await button.trigger("click");
     // 断言的是**载荷**：`toEqual([[]])` 同时钉住「只 emit 一次」与「是空载荷」
-    expect(wrapper.emitted("export")).toEqual([[]]);
+    expect(wrapper.emitted("view-sheet")).toEqual([[]]);
     // 串台守卫：复制粘贴漏改事件名（emit `save` / `print`）时这里红
     expect(wrapper.emitted("save")).toBeUndefined();
     expect(wrapper.emitted("print")).toBeUndefined();
+    // **C7 起不再有「导出」按钮**：它与「查看施工图」是同一张图的两个出口
+    expect(wrapper.find("[data-testid='export']").exists()).toBe(false);
+    expect(wrapper.emitted("export")).toBeUndefined();
   });
 
   /**
    * B6 任务 10：工具栏多一个「打印」入口（规格 §8 的两个入口共用 `EditorPage` 那一个面板）。
    *
-   * 两条断言缺一不可：`print` 被 emit（接线对）**且** `export` 没被 emit（复制粘贴漏改事件名
+   * 两条断言缺一不可：`print` 被 emit（接线对）**且** `view-sheet` 没被 emit（复制粘贴漏改事件名
    * 时，「点打印结果打开的是施工图面板」不会报任何错）。
    */
   it("点打印 emit 一次 print", async () => {
@@ -278,7 +281,7 @@ const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
   ["history", ["undo", "redo"]],
   ["display", ["toggle-grid", "toggle-labels"]],
   ["view", ["zoom-fit", "zoom-in", "zoom-out"]],
-  ["output", ["export", "print", "editor-save"]],
+  ["output", ["view-sheet", "print", "editor-save"]],
 ];
 
 describe("五行分组", () => {
@@ -329,6 +332,6 @@ describe("五行分组", () => {
       .get("[data-testid='toolbar-row-output']")
       .findAll("button, span[data-testid]")
       .map((element) => element.attributes("data-testid"));
-    expect(found).toEqual(["export", "print", "editor-save", "editor-dirty"]);
+    expect(found).toEqual(["view-sheet", "print", "editor-save", "editor-dirty"]);
   });
 });

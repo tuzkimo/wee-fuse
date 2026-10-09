@@ -53,73 +53,77 @@
 
 - [ ] **步骤 1：写失败的测试**
 
-在 `src/core/render/__tests__/layout.test.ts` 里新增（沿用文件里既有的 `makePattern` / `makePalette` 等 helper；若 helper 名不同，用文件里已有的等价物）：
+在 `src/core/render/__tests__/layout.test.ts` 里新增一段（**用文件里既有的 helper**：
+`makePattern(width, height, fill)` 与 `makePalette(count)`，不要新造 helper）。
+顶部 import 里把 `EXPORT_CELL_PX_TARGET` / `SHEET_INFO_BAR_H` / `SHEET_FOOTER_H` / `SHEET_TICK_FONT_MIN`
+换成 `EXPORT_CELL_MAX_PX` / `SHEET_TITLE_H` / `SHEET_RULER_FONT_MIN_PX`：
 
 ```ts
 describe("C7：内容驱动的施工图几何", () => {
+  const usages = (count: number): ColorUsage[] =>
+    Array.from({ length: count }, (_, i) => ({ code: `A${i + 1}`, name: `色 ${i + 1}`, count: 10 }));
+
   it("用料条永远不撑宽画布：29x25 + 13 色时，用料条右沿不超过网格右沿加右刻度带", () => {
-    const plan = planSheet(pattern29x25(), palette221(), usages13());
-    const band = plan.legend;
-    const bandRight = band.left + Math.min(band.itemCols, 13) * band.itemWidth;
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    const bandRight = plan.legend.left + plan.legend.itemCols * plan.legend.itemWidth;
     const gridRight = plan.grid.x + plan.grid.width;
-    // 用料条可以伸进右刻度带，但不得让画布宽度由它决定
     expect(bandRight).toBeLessThanOrEqual(gridRight + SHEET_RULER_LEFT + 1);
   });
 
-  it("网格占画布宽度不少于 85%（旧实现是 29%）", () => {
-    const plan = planSheet(pattern29x25(), palette221(), usages13());
+  it("网格占画布宽度不少于 85%（旧实现是 47%）", () => {
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
     expect(plan.grid.width / plan.canvasWidth).toBeGreaterThanOrEqual(0.85);
   });
 
   it("底部刻度带与用料条不重叠：用料条顶边 ≥ 网格下沿 + 刻度带高 + 间隔", () => {
-    const plan = planSheet(pattern29x25(), palette221(), usages13());
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
     const gridBottom = plan.grid.y + plan.grid.height;
-    expect(plan.legendTop).toBeGreaterThanOrEqual(gridBottom + SHEET_RULER_TOP + LEGEND_PAD_TOP);
     expect(plan.ruler.bottomY).toBe(gridBottom);
+    expect(plan.legendTop).toBeGreaterThanOrEqual(gridBottom + SHEET_RULER_TOP + LEGEND_PAD_TOP);
   });
 
   it("画布高度含上下两条刻度带（漏算底部会让用料条压住刻度数字）", () => {
-    const plan = planSheet(pattern29x25(), palette221(), usages13());
-    const expected =
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    expect(plan.canvasHeight).toBe(
       SHEET_MARGIN +
-      SHEET_TITLE_H +
-      SHEET_RULER_TOP +
-      plan.grid.height +
-      SHEET_RULER_TOP +
-      LEGEND_PAD_TOP +
-      plan.legend.itemRows * LEGEND_ROW_H +
-      SHEET_MARGIN;
-    expect(plan.canvasHeight).toBe(expected);
+        SHEET_TITLE_H +
+        SHEET_RULER_TOP +
+        plan.grid.height +
+        SHEET_RULER_TOP +
+        LEGEND_PAD_TOP +
+        plan.legend.itemRows * LEGEND_ROW_H +
+        SHEET_MARGIN,
+    );
   });
 
   it("标题行在网格上方，且标题行底边不侵入上刻度带", () => {
-    const plan = planSheet(pattern29x25(), palette221(), usages13());
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
     expect(plan.titleY).toBe(SHEET_MARGIN);
     expect(plan.grid.y).toBe(SHEET_MARGIN + SHEET_TITLE_H + SHEET_RULER_TOP);
+    expect(plan.ruler.topY).toBe(plan.grid.y - SHEET_RULER_TOP);
   });
 
-  it("29 格这类常用尺寸的格像素取到上限 96", () => {
-    const plan = planSheet(pattern29x25(), palette221(), usages13());
+  it("29x25 这类常用尺寸的格像素取到上限 96", () => {
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
     expect(plan.cellPx).toBe(EXPORT_CELL_MAX_PX);
   });
 
   it("大图纸仍受画布上限约束，且色号字号不低于下限", () => {
-    const plan = planSheet(pattern116x116(), palette221(), usages24());
-    expect(plan.grid.width).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
+    const plan = planSheet(makePattern(116, 116), makePalette(24), usages(24));
+    expect(plan.canvasWidth).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     expect(plan.canvasHeight).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     expect(plan.labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
   });
 
-  it("116 宽 + maxEdge 300 放不下就响亮失败，且消息说清是放不下", () => {
-    expect(() => planSheet(pattern116x116(), palette221(), usages24(), { maxEdge: 300 })).toThrow(
-      /放不下/,
-    );
+  it("116 宽 + maxEdge 300 放不下就响亮失败（两条守卫的消息各不相同，只断言「抛」）", () => {
+    expect(() => planSheet(makePattern(116, 116), makePalette(24), usages(24), { maxEdge: 300 })).toThrow();
   });
 
-  it("用料条按网格宽换行：网格窄到只放得下 1 列时，行数等于色数", () => {
-    // 4x4 网格 + 96px 格 ⇒ 网格宽 384 ⇒ 只放得下 3 列（LEGEND_ITEM_W = 120）
-    const plan = planSheet(patternNxN(4), palette221(), usagesN(8));
-    expect(plan.legend.itemCols).toBe(Math.max(1, Math.floor(plan.grid.width / LEGEND_ITEM_W)));
+  it("用料条按网格宽换行：网格宽 384 时列数为 floor(384 / LEGEND_ITEM_W)", () => {
+    // 4x4 网格 ⇒ 格像素取上限 96 ⇒ 网格宽 384 ⇒ 列数 3、行数 ceil(8 / 3) = 3
+    const plan = planSheet(makePattern(4, 4), makePalette(8), usages(8));
+    expect(plan.cellPx).toBe(EXPORT_CELL_MAX_PX);
+    expect(plan.legend.itemCols).toBe(Math.floor(plan.grid.width / LEGEND_ITEM_W));
     expect(plan.legend.itemRows).toBe(Math.ceil(8 / plan.legend.itemCols));
   });
 });

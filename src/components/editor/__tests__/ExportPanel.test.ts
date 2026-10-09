@@ -224,7 +224,7 @@ describe("打印页清单（C7 起本面板只剩打印这一种形态）", () =
 
     // C7：`mode="sheet"` 被删除 ⇒ 摘要只剩打印那一条，且四个打印选项在
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='export-item-sheet']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='export-item-page-0']").exists()).toBe(true);
     expect(wrapper.get("h2").text()).toBe("打印");
     expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='print-board-29']").exists()).toBe(true);
@@ -266,8 +266,7 @@ describe("打印页清单（C7 起本面板只剩打印这一种形态）", () =
     expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("第 1/16 页");
     expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("适合页面");
     expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("29×29 板");
-    // 打印模式没有「一张施工图」那一项，也没有 sheet 模式的摘要
-    expect(wrapper.find("[data-testid='export-item-sheet']").exists()).toBe(false);
+    // 本面板没有「一张施工图」那一项，也没有 sheet 模式的摘要（C7：那张图改走「查看施工图」）
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
   });
 
@@ -313,24 +312,10 @@ describe("打印页清单（C7 起本面板只剩打印这一种形态）", () =
     );
   });
 
-  it("mode 就地切换也重建清单（判据不吊在调用方的 `v-if` 上）", async () => {
-    // 今天的唯一装配点（`EditorPage`）用 `v-if` 按模式挂载，所以「就地切模式」不是生产路径；
-    // 但清单形状由 `mode` 决定，判据留在组件里比留在调用方的纪律上便宜——真就地切了，
-    // 清单停在旧形状（施工图面板下表里却是打印页）不会有任何报错。
-    const pattern = makePattern(116, 116, undefined);
-    const wrapper = mountPanel({ pattern, usages: patternStats(pattern, palette).usages });
-    expect(wrapper.findAll("[data-testid^='export-item-']")).toHaveLength(1);
-
-    await wrapper.setProps({ mode: "print" });
-    await flushPromises();
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(16);
-    expect(wrapper.find("[data-testid='export-item-sheet']").exists()).toBe(false);
-  });
-
   it("`revision` 可以不给（结果页没有编辑通道）：缺省 0，`pattern` 身份变化仍然重建清单", async () => {
-    // 任务 13 的结果页只有 `pattern` 这一条失效通道，所以 `revision` 必须是可选 prop。
+    // 结果页只有 `pattern` 这一条失效通道，所以 `revision` 必须是可选 prop。
     const wrapper = mount(ExportPanel, {
-      props: { pattern: makePattern(6, 6, CELLS_6X6), palette, usages, projectName: "测试工程", mode: "print" },
+      props: { pattern: makePattern(6, 6, CELLS_6X6), palette, usages, projectName: "测试工程" },
     });
     expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(1);
 
@@ -416,12 +401,12 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     // `saveItem` 里的 `revokePreview(item)` 若被删掉（只覆盖 `previewUrl`），旧 object URL 永久泄漏，
     // 而其余用例照样全绿（B4 修复波 C-M1 的靶子，本任务逐字保留这条防线）。
     const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "sheet");
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
+    await saveAndSettle(wrapper, "page-0");
 
     expect(createdUrls).toEqual(["blob:test-1", "blob:test-2"]);
     expect(revokedUrls).toEqual([createdUrls[0]]);
-    expect(wrapper.get("[data-testid='export-preview-sheet']").attributes("src")).toBe(createdUrls[1]);
+    expect(wrapper.get("[data-testid='export-preview-page-0']").attributes("src")).toBe(createdUrls[1]);
   });
 
   it("打印页：画布就是纸型像素，文件名带**本页**的行列（r4c4，不是 r1c1）", async () => {
@@ -446,7 +431,7 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     expect(exporter.downloadBlob.mock.calls[1]?.[1]).toBe("测试工程-打印-r2c2.png");
   });
 
-  it("打印页的末列 / 末行收窄真的走到落盘（30×30：第 2 页 r1c2、第 4 页 r2c2，页脚按收窄后的格数）", async () => {
+  it("打印页的末列 / 末行收窄真的走到落盘（30×30：第 2 页 r1c2、第 4 页 r2c2）", async () => {
     // 整除夹具下「本页格范围」恒等于整块板，所以 `usagesInRange` / `countTileBeads` 的**收窄**从未
     // 被走过。30×30 + 29 板：第 2 页 = 列 29–29（1 列）× 行 0–28（29 行）、第 4 页 = 1×1。
     const pattern = makePattern(30, 30, undefined);
@@ -454,19 +439,19 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
 
     await saveAndSettle(wrapper, "page-1");
     expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("测试工程-打印-r1c2.png");
-    // 页脚的两半来自两个不同的源：**本页**由收窄后的格范围现数（29）、**全图**来自 `input.usages`（900）
-    expect(recording.texts.map((call) => call.text)).toContain("本页 29 颗 · 全图 900 颗（1 种色）");
+    // **本页的格范围**写在标题行里（C7 起页脚三行删除，那一半信息进了标题行）
+    const texts = recording.texts.map((call) => call.text);
+    expect(texts.some((text) => text.includes("本页 列 30–30 行 1–29"))).toBe(true);
 
     await saveAndSettle(wrapper, "page-3");
     expect(exporter.downloadBlob.mock.calls[1]?.[1]).toBe("测试工程-打印-r2c2.png");
-    expect(recording.texts.map((call) => call.text)).toContain("本页 1 颗 · 全图 900 颗（1 种色）");
+    const textsAfterSecondSave = recording.texts.map((call) => call.text);
+    expect(textsAfterSecondSave.some((text) => text.includes("本页 列 30–30 行 30–30"))).toBe(true);
   });
 
   it("打印页的用料条只列本页用到的色：本页独有的色号出现、只在别的页的色号不出现", async () => {
     // **把面板的 `pageUsages` 换成 `snapshot.usages`（全图用量）时这条必红**：条带会多出「只在
-    // 别的页」的色号。页脚那一半（全图颗数 / 色数取自 `input.usages`）由
-    // `services/__tests__/sheetExport.test.ts` 钉着，这里补的是**面板层的用料条**——
-    // 此前 `usagesInRange` 的结果只经 `fillText` 落到画布，没有任何断言观察过它。
+    // 别的页」的色号。用料条的接线此前只经 `fillText` 落到画布，没有任何断言观察过它。
     const pattern = makePattern(58, 58); // 58 = 2 × 29 ⇒ 4 页
     pattern.cells.fill(EMPTY); // `makePattern` 的默认值是 0（= A1 实心），这里要一张几乎全空的图纸
     pattern.cells[0] = 1; // (0,0) = A2：**第 1 页独有**
@@ -478,13 +463,13 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     const wrapper = mountPanel({ pattern, usages: fullUsages });
     await saveAndSettle(wrapper, "page-0");
 
-    // 用料条的色号是**左对齐的独立文字**（`drawLegendBand` 的 `usage.code`）；格内色号是 `center`、
-    // 页眉页脚是整句 ⇒ 这条过滤把网格里成千上万条「A2」全部排掉，只剩条带那一份。
+    // 条带里每项是**一条** `色号 (颗数)`、左对齐；格内色号是 `center`、标题行是整句
+    // ⇒ 这条过滤把网格里成千上万条「A2」全部排掉，只剩条带那一份。
     const leftAligned = recording.texts
       .filter((call) => call.textAlign === "left")
       .map((call) => call.text);
-    expect(leftAligned).toContain("A2");
-    expect(leftAligned).not.toContain("A3");
+    expect(leftAligned).toContain("A2 (1)");
+    expect(leftAligned.some((text) => text.startsWith("A3 "))).toBe(false);
   });
 
   it("任一项生成中时四个打印选项禁用（改选项会重建清单、把飞行中那一项丢掉）", async () => {
@@ -542,26 +527,19 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
     expect(revokedUrls).toEqual(createdUrls);
   });
 
-  it("渲染完先自检、再 toBlob、最后释放画布（两种模式走同一条 Blob 通道）", async () => {
-    const sheet = mountPanel();
-    await saveAndSettle(sheet, "sheet");
+  it("渲染完先自检、再 toBlob、最后释放画布", async () => {
+    const wrapper = mountPanel();
+    await saveAndSettle(wrapper, "page-0");
     // 顺序断言（`steps` 由假画布与两个桩按真实发生顺序记下）：自检必须**早于** toBlob——
     // 反过来的话，一张「看起来正常」的白图已经落盘了才被发现（规格 §9 第 5 条的整条目的）。
     expect(steps).toEqual(["selfcheck", "toBlob", "release:width", "release:height"]);
     expect(exporter.assertCanvasPainted).toHaveBeenCalledTimes(1);
     expect(exporter.assertCanvasPainted).toHaveBeenCalledWith(canvases[0]?.canvas);
-
-    // 打印页**同样**要自检（它也是白底 + 不透明内容，左上角采样点同样有效）
-    const print = mountPanel(printOverrides());
-    steps = [];
-    await saveAndSettle(print, "page-0");
-    expect(steps).toEqual(["selfcheck", "toBlob", "release:width", "release:height"]);
-    expect(exporter.assertCanvasPainted).toHaveBeenCalledTimes(2);
   });
 
   it("逐张渲染后即时释放画布：成功与失败两条路径都写回 0，且释放晚于 toBlob", async () => {
     const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
     expect(canvases).toHaveLength(1);
     // 顺序与内容一起断：**toBlob 之后**才释放（提前释放＝拿着 0×0 的画布去 toBlob，生产上就是空图）
     expect(steps).toEqual(["selfcheck", "toBlob", "release:width", "release:height"]);
@@ -569,20 +547,20 @@ describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
       ["width", 0],
       ["height", 0],
     ]);
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("已生成");
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
 
     // 失败分支：`canvasToBlob` reject（契约 §3 的逐字原因）时**照样释放**——渲染通道的 `finally` 里。
     canvases = [];
     steps = [];
     exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
 
     expect(canvases).toHaveLength(1);
     expect(canvases[0]?.writes).toEqual([
       ["width", 0],
       ["height", 0],
     ]);
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain(
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain(
       "失败：导出 PNG 失败：toBlob 返回了 null",
     );
   });
@@ -595,8 +573,8 @@ describe("空图纸与 props 驱动（规格 §10.4 / §2b）", () => {
     const wrapper = mountPanel({ usages: [] });
     expect(wrapper.get("[data-testid='export-empty-note']").text()).toBe("这张图纸没有可拼的像素");
     // 说明是**信息**，不是禁用：这一项照样可以保存（用户可能就是想导出这张空图）
-    expect(wrapper.get("[data-testid='export-save-sheet']").attributes("disabled")).toBeUndefined();
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("待生成");
+    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("待生成");
   });
 
   it("只给 props 就能完整工作：本文件全程不建 pinia，源码里也没有任何 store 的 import", async () => {
@@ -626,79 +604,58 @@ describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b�
    * （那是被测实现的内部函数，用它现算等于把被测口径当预期）。
    */
 
-  it("信息条两行与末行把六个字段**各观察到**：projectName / totalBeads / colorCount / paletteName / accuracy / generatedAt", async () => {
+  it("打印页标题行把 projectName 与「本页 / 尺寸 / 板序号」都写出来，六字段里被删掉的三样不再出现", async () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const stats = patternStats(pattern, palette);
-    // 夹具的判别力（回原始清单数）：33 个实心格、4 个色号——与格数 36、与色卡色数 6 都不相等，
-    // 所以「颗数传成了格数」或「色数传成了色卡色数」都会红。
+    // 夹具的判别力（回原始清单数）：33 个实心格、4 个色号——与格数 36、与色卡色数 6 都不相等
     expect(stats.total).toBe(33);
     expect(stats.colorCount).toBe(4);
     expect(palette.colors.length).toBe(6);
 
     const wrapper = mountPanel({ pattern, usages: stats.usages });
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
     const lines = recording.texts.map((call) => call.text);
+    const title = lines.find((text) => text.startsWith("测试工程 · ")) ?? "";
 
-    // ① projectName：信息条第一行（成品取**长边** 6 ⇒ 6 × 5 / 10 = 3.0 厘米）。
-    //    整串写死，「成品取总颗数 / 取面积」之类的错法都会红。
-    expect(lines).toContain("测试工程 · 6 × 6 格 · 成品 3.0 厘米");
+    // ① projectName + 页身份 + 本页格范围 + 每格实际毫米（29 板 + A4 是实物大小）
+    expect(title).toContain("第 1 行 第 1 列");
+    expect(title).toContain("第 1/1 块板");
+    expect(title).toContain("板 29 × 29");
+    expect(title).toContain("A4");
+    expect(title).toContain("本页 列 1–6 行 1–6");
+    expect(title).toContain("1 格 = 5.0mm（实物大小）");
 
-    // ② totalBeads 与 colorCount：信息条第二行的「全图 N 颗（M 种色）」。
-    //    整行**锚定**（前缀 / 颗数 / 色数 / 时间 / 末尾精度声明全部逐字对上）。**没有「本片」段**：
-    //    单张施工图是一张整图（不再分片），「本片」与「全图」指的是同一张图，写出来自相矛盾。
-    const infoLine = new RegExp(
-      `^测试色卡 · 全图 ${stats.total} 颗（${stats.colorCount} 种色） · .+ · 屏幕色仅供参考，以实物为准$`,
-    );
-    const matched = lines.filter((text) => infoLine.test(text));
-    expect(matched).toHaveLength(1);
-    const line = matched[0] as string;
-
-    // ③ paletteName 与 accuracy **分别断言**：整行锚定之外再各钉一头一尾——
-    //    两个字段对调时三条断言全红（对调后行首变成精度声明、行尾变成色卡名）。
-    expect(line.startsWith("测试色卡 · 全图")).toBe(true);
-    expect(line.endsWith(" · 屏幕色仅供参考，以实物为准")).toBe(true);
-    //    反向：色卡名不许出现在行尾、精度声明不许出现在行首
-    expect(line.startsWith("屏幕色仅供参考")).toBe(false);
-    expect(line.endsWith("测试色卡")).toBe(false);
-    //    信息条里不许再出现分片口径的「本片」（整图没有第二个颗数可说）
-    expect(line.includes("本片")).toBe(false);
-
-    // ④ generatedAt：信息条中段取出它，末行的「生成时间：…」必须**逐字相同**且是日期时间的样子
-    //    （空串 / 被别的东西冒充都会红）。
-    const generatedAt = new RegExp(
-      `^测试色卡 · 全图 ${stats.total} 颗（${stats.colorCount} 种色） · (.+) · 屏幕色仅供参考，以实物为准$`,
-    ).exec(line)?.[1];
-    expect(generatedAt).toMatch(/^\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}$/);
-    expect(lines).toContain(`生成时间：${generatedAt ?? ""}`);
-
-    // 末行的合计是 `colorCount` 的**另一处**独立观察点（`合计 N 颗 · M 种色`，N 由图纸现数）
-    expect(lines).toContain(`合计 ${stats.total} 颗 · ${stats.colorCount} 种色`);
-    expect(lines).toContain("屏幕色仅供参考，以实物为准");
+    // ② C7 从图上删掉的三样：色卡名 / 精度声明 / 生成时间——一个都不许出现在图上
+    const all = lines.join("\n");
+    expect(all).not.toContain("测试色卡");
+    expect(all).not.toContain("屏幕色仅供参考");
+    expect(all).not.toContain("生成时间");
+    expect(all).not.toContain("合计");
   });
 
-  it("颗数与色数只有 `usages` 一个来源：换一份伪造用量，图上文字跟着换", async () => {
-    // 这条钉的是「面板没有**第二份**真相」：`totalBeads` / `colorCount` 若从 `pattern` 现扫一遍，
-    // 或者写死成某个常数，下面这一条就会红——而只喂真 `usages` 的那条**判不开**（两者恰好相等）。
-    //
-    // 判别力来自**两个数故意不一致**：图纸本身是 33 颗 / 4 色，而这里喂进去的 `usages` 只有
-    // 1 项 5 颗 ⇒ 信息条的「全图」必须是 **5 颗（1 种色）**（图纸现扫的 33 颗只在末行的合计里出现）。
+  it("颗数与色数不再进图（C7 删掉「全图 N 颗（M 种色）」）；用料条仍只列**本页**那一份", async () => {
+    // C7 之前这条钉的是「面板没有第二份真相」（`totalBeads` / `colorCount` 只能来自 `usages`）。
+    // 现在这两个字段在打印页上不再出现——它们只进 `SheetMeta`，而打印页标题行不读它们。
     const wrapper = mountPanel({ usages: [{ code: "A1", name: "白", count: 5 }] });
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
     const lines = recording.texts.map((call) => call.text);
-
-    expect(lines.some((text) => text.includes("全图 5 颗（1 种色） · "))).toBe(true);
-    expect(lines).toContain("合计 33 颗 · 1 种色");
-    // 反向：图纸现扫出来的那个口径**不许**出现在「全图」那一段里
-    expect(lines.some((text) => text.includes("全图 33 颗"))).toBe(false);
+    expect(lines.some((text) => text.includes("全图"))).toBe(false);
+    expect(lines.some((text) => text.includes("合计"))).toBe(false);
+    expect(lines.some((text) => text.includes("生成时间"))).toBe(false);
+    // **用料条走 `usagesInRange`（本页那一份），与传入的 `usages` 无关**：6×6 夹具第 1 页有
+    // 26 颗 A1、5 颗 A2、A3 / A4 各 1 颗 ⇒ 条带必须列这四个真数，而**不是**传进来的 `A1 (5)`。
+    expect(lines).toContain("A1 (26)");
+    expect(lines).toContain("A2 (5)");
+    expect(lines).not.toContain("A1 (5)");
   });
 
   it("换一个工程名：图上文字与文件名跟着 props 走（不是写死的常量）", async () => {
     const wrapper = mountPanel({ projectName: "海边的猫" });
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
     const lines = recording.texts.map((call) => call.text);
 
-    expect(lines.some((text) => text.startsWith("海边的猫 · 6 × 6 格"))).toBe(true);
-    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("海边的猫-施工图.png");
+    expect(lines.some((text) => text.startsWith("海边的猫 · 第 1 行"))).toBe(true);
+    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("海边的猫-打印-r1c1.png");
     // 反向：上一次那个工程名一次都不许出现（写死工程名 / 复用上一次的 meta 都会在这里红）
     expect(lines.some((text) => text.includes("测试工程"))).toBe(false);
   });
@@ -728,8 +685,8 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
   it("没有预览时卸载不抛错（只导出失败过 / 一张都没导出过）", async () => {
     const wrapper = mountPanel();
     exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
-    await saveAndSettle(wrapper, "sheet");
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("失败");
+    await saveAndSettle(wrapper, "page-0");
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("失败");
     expect(revokedUrls).toEqual([]);
 
     expect(() => wrapper.unmount()).not.toThrow();
@@ -753,8 +710,8 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
           };
         }),
     );
-    await wrapper.get("[data-testid='export-save-sheet']").trigger("click");
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("生成中…");
+    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("生成中…");
 
     // 飞行中卸载：此刻一个 object URL 都还不存在（这正是「onUnmounted 扫不到它」的原因）
     wrapper.unmount();
@@ -789,13 +746,13 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
           };
         }),
     );
-    await wrapper.get("[data-testid='export-save-sheet']").trigger("click");
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("生成中…");
+    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("生成中…");
 
     // 飞行中「涂了一格」：`revision` 变 ⇒ 清单整体重建、旧 item 被丢弃
     await wrapper.setProps({ revision: 1 });
     await flushPromises();
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("待生成");
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("待生成");
 
     resolveBlob();
     await flushPromises();
@@ -805,8 +762,8 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
     expect(createdUrls).toEqual([]);
     expect(revokedUrls).toEqual([]);
     // ② 它**没有**被写到那个被丢弃的项上：新清单里的该项仍是「待生成」、没有 `<img>`
-    expect(wrapper.get("[data-testid='export-item-sheet']").text()).toContain("待生成");
-    expect(wrapper.find("[data-testid='export-preview-sheet']").exists()).toBe(false);
+    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("待生成");
+    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
   });
 
   /**
@@ -825,7 +782,7 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
           };
         }),
     );
-    await wrapper.get("[data-testid='export-save-sheet']").trigger("click");
+    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
 
     // 飞行中换到另一张图纸 + 另一个工程名（真实路径是 `/edit/a → /edit/b`）
     const big = makePattern(116, 116, undefined);
@@ -842,14 +799,14 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
     expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
     const filename = exporter.downloadBlob.mock.calls[0]?.[1] ?? "";
     // 落盘的名字是**取用那一刻**的工程名；新工程名一次都不许出现在这一笔里
-    expect(filename).toBe("测试工程-施工图.png");
+    expect(filename).toBe("测试工程-打印-r1c1.png");
     expect(filename).not.toContain("海边的猫");
     // 画布上的标题同样是旧工程名（字节与名字同源）——这条与上一条合起来才是「不错配」的完整判据
-    expect(recording.texts.map((call) => call.text)).toContain("测试工程 · 6 × 6 格 · 成品 3.0 厘米");
+    expect(recording.texts.map((call) => call.text).some((text) => text.startsWith("测试工程 · 第"))).toBe(true);
     // 被丢弃的那一项不许被写上 URL：**一个 URL 都没诞生**
     expect(createdUrls).toEqual([]);
     expect(revokedUrls).toEqual([]);
-    expect(wrapper.find("[data-testid='export-preview-sheet']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
   });
 });
 
@@ -998,19 +955,19 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
     setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
 
     const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
 
-    const item = wrapper.get("[data-testid='export-item-sheet']");
+    const item = wrapper.get("[data-testid='export-item-page-0']");
     // 原因**原样**上到该项（不许吞成成功、不许换成一句笼统文案）
     expect(item.text()).toContain("失败：MediaStore 拒绝插入（insert 返回 null）");
     // 「不静默」的另外半边：任何成功文案都不许出现
     expect(item.text()).not.toContain("已保存到相册");
     expect(item.text()).not.toContain("已生成");
     // 失败不产生预览：一份没落盘的字节不该有 object URL
-    expect(wrapper.find("[data-testid='export-preview-sheet']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
     expect(createdUrls).toEqual([]);
     // 失败不是终态：按钮仍可点（既有的「重试」路径没被这次改动改掉）
-    expect(wrapper.get("[data-testid='export-save-sheet']").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeUndefined();
     expect(albumSave).toHaveBeenCalledTimes(1);
     // 也不许悄悄回落到浏览器那一支
     expect(exporter.downloadBlob).not.toHaveBeenCalled();
@@ -1023,10 +980,10 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
     setPlatform({ ...browserPlatform, album: { kind: "download", save: albumSave } });
 
     const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "sheet");
+    await saveAndSettle(wrapper, "page-0");
 
     expect(albumSave).toHaveBeenCalledTimes(1);
-    const text = wrapper.get("[data-testid='export-item-sheet']").text();
+    const text = wrapper.get("[data-testid='export-item-page-0']").text();
     expect(text).toContain("已生成");
     expect(text).not.toContain("已保存到相册");
   });

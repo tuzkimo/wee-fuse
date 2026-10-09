@@ -6,8 +6,11 @@ import { defaultProjectName, setProjectStore } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
+import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import SetupPage from "@/views/SetupPage.vue";
+import { getBuiltinPalette } from "@/services/palette";
+import { useProjectSession } from "@/stores/project";
 
 /**
  * `/new/setup` 的三段端到端用例（选区 → 参数 → 落盘 / 重跑 / 结果）都在**真流水线、真几何、
@@ -1022,18 +1025,10 @@ describe("结果阶段", () => {
     expect(push).toHaveBeenCalledWith({ name: "editor", params: { id } });
   });
 
-  it("结果页有导出按钮，点击后就地打开导出面板（不跳编辑器）", async () => {
+  it("结果页的「查看施工图」就地打开查看层（不跳编辑器）；「打印」就地打开打印面板", async () => {
     // 沿用本文件已有的「跑到结果阶段」路径：seedDraft() → mount → 点 generate → flushPromises()
-    // **对简报代码的三处偏离**（前两处是硬缺陷，第三处是冗余，均已在 task-13 报告里记账）：
-    // ① 简报那一段漏了 `stubPlatform()`，而 happy-dom 没有 `createImageBitmap`（见下面「平台缺少
-    //    createImageBitmap」那条），没有桩时流水线在第一步就抛，`result-pane` 根本不出现——简报预期
-    //    的 RED 是 `Unable to get [data-testid='result-export']`，逐字使用实测红在第 1 条断言
-    //    （`result-pane` 不存在，原始输出见 task-13 报告 §RD）。本文件其余每一条跑到结果阶段的用例
-    //    都先调它；增补这一行不改断言、也不改被测行为。
-    // ② 简报写的 `wrapper.get(...).exists()` 通不过 `vue-tsc`（TS2339，`get` 的返回类型是
-    //    `Omit<DOMWrapper<Element>, "exists">`），见下面那两条断言处的说明。
-    // ③ 简报原文的 `setProjectStore(await createMemoryProjectStore())` 与 `beforeEach` **逐字重复**，
-    //    已删除（第 2 轮审查裁定）：它既不建立本用例的前提，也不改任何判据。
+    // **`stubPlatform()` 是必需的**：happy-dom 没有 `createImageBitmap`（见下面那条用例），没有桩时
+    // 流水线在第一步就抛，`result-pane` 根本不出现。本文件其余跑到结果阶段的用例都先调它。
     stubPlatform();
     seedDraft();
     const wrapper = mount(SetupPage);
@@ -1042,49 +1037,44 @@ describe("结果阶段", () => {
     await flushPromises();
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
 
-    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
-    await wrapper.get("[data-testid='result-export']").trigger("click");
+    // ① **C7 起结果页的入口是「查看施工图」**（旧的「导出」删掉了：它与查看层是同一张图）
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
+    await wrapper.get("[data-testid='result-view-sheet']").trigger("click");
     // 用例名里的「不跳编辑器」必须真的读一次路由：`push` 是本文件 mock 掉的唯一出口，
     // `afterEach` 已清空调用记录 ⇒ 这里 0 次调用就是「就地打开、没跳走」的机械证据。
     expect(push).not.toHaveBeenCalled();
-    // 简报这里写的是 `wrapper.get(...).exists()`，但 `get` 的返回类型是
-    // `Omit<DOMWrapper<Element>, "exists">`——`vue-tsc` 直接报 TS2339（`npm run build` 红）。
-    // 换成 `find(...).exists()` 语义逐字等价（`get` = 「找不到就抛」+ 找到了；`find().exists()` =
-    // 「找得到吗」），也因此与本文件其余断言的写法一致。
-    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(true);
 
-    // ---- 接线断言（第 1、2 轮修复追加）-------------------------------------------------------
-    // 上面三条只钉住「面板挂上来了」，面板**收到什么**一条都没读：把 `:usages="resultUsages"`
-    // 改成 `:usages="[]"`，上面三条照样全绿（面板只是多渲染一行 `export-empty-note`）——正是本项目
-    // 记过账的「两端各自正确、错在接线」。下面三条一起把这条接线钉死：
-    // ① 反向：`ExportPanel` 只在 `usages.length === 0` 时渲染 `export-empty-note`，接空必红；
-    // ② 正向（条数）：面板收到的用量条数 = 结果面板**当场写给用户看的**那一个用色数 N；
-    // ③ 正向（计数之和）：面板收到的 `Σ count` = 结果面板写的「共 M 颗豆」——②只钉条数，
-    //    把某一项 `count` 改错（等长但计数错）它判不出来，③ 补这一档。
-    // 三条判据的期望值都取自**同一次生成**在屏幕上渲染出来的数字，不是手抄的常量。
-    expect(wrapper.find("[data-testid='export-empty-note']").exists()).toBe(false);
+    // ---- 接线断言：查看层**收到什么** ------------------------------------------------
+    // 只钉「挂上来了」的话，把 `:pattern` 接成另一张图纸也照样绿——正是本项目记过账的
+    // 「两端各自正确、错在接线」。期望值取自**同一次生成**在屏幕上渲染出来的数字。
+    const viewer = wrapper.findComponent(SheetViewer);
+    const session = useProjectSession();
+    expect(viewer.props("pattern").width).toBe(session.pattern?.width);
+    expect(viewer.props("pattern").height).toBe(session.pattern?.height);
+    expect(viewer.props("palette").id).toBe(getBuiltinPalette().id);
     const statsText = wrapper.get("[data-testid='result-stats']").text();
-    const shownColors = /实际用了 (\d+) 种颜色/.exec(statsText)?.[1];
     const shownBeads = /共 (\d+) 颗豆/.exec(statsText)?.[1];
-    expect(shownColors).toBeDefined();
     expect(shownBeads).toBeDefined();
+    // `:name` 的期望值**现算**（`defaultProjectName`）：首生成取 `defaultProjectName(source.name)`
+    expect(viewer.props("name")).toBe(defaultProjectName(FILE.name));
+
+    // ② `@close` 接线：删掉 `@close="sheetOpen = false"` 时这一条立刻红（用户再也退不出查看态）
+    await wrapper.get("[data-testid='sheet-close']").trigger("click");
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+
+    // ③ 打印入口走的是打印面板（不是查看层）：两者是两件事，接错时这里红
+    await wrapper.get("[data-testid='result-print']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
     const panelUsages = wrapper.findComponent(ExportPanel).props("usages");
+    const shownColors = /实际用了 (\d+) 种颜色/.exec(statsText)?.[1];
     expect(panelUsages).toHaveLength(Number(shownColors));
     expect(panelUsages.reduce((sum, usage) => sum + usage.count, 0)).toBe(Number(shownBeads));
-
-    // `:project-name` 接线：`ExportPanel` 的模板**从不渲染** `projectName`，它只在落盘文件名上
-    // 显形（`exportFilename(projectName, "施工图")` 在 saveItem 里算）——接错在 UI 上看不见，
-    // 用户要拿到 `图纸-施工图.png` 才发现。所以只能读 prop。期望值**现算**（`defaultProjectName`）：
-    // 首生成取 `defaultProjectName(source.name)`（`generate()` 里那一步），写死字符串就成了自证。
     expect(wrapper.findComponent(ExportPanel).props("projectName")).toBe(defaultProjectName(FILE.name));
-
-    // ---- `@close` 接线（同上，今天也完全没被钉住）-------------------------------------------
-    // 关闭 = 卸载面板：`ExportPanel` 的 `onUnmounted` 靠这次卸载回收 object URL（任务 10 的 F3）。
-    // 删掉 `@close="exporting = false"`，这一条立刻红（面板留在屏幕上，用户再也退不出导出态）。
     await wrapper.get("[data-testid='export-close']").trigger("click");
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
   });
 
   it("平板结果阶段能页内回选区（左栏当场换回画布）", async () => {
