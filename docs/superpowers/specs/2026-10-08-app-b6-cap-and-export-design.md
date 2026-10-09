@@ -1,7 +1,12 @@
 # 计划 B6：长边上限收敛与导出体验重构（设计规格）
 
+> **下游变更（2026-10-09）**：本规格里的**版式与出口**两半已被
+> [C7 规格](2026-10-09-c7-sheet-style-and-exports-design.md) 取代——施工图与打印页改用新版式
+> （四边逐格刻度、每 5 格橙色虚线、单行标题、无页脚），单张施工图只剩「查看施工图」一个出口，
+> 下面 §6 / §13 里被 C7 改动的常量已在表内逐行标注。**分页数学与能力层落盘那两半未变**。
+
 - 日期：2026-10-08
-- 状态：待人类伙伴审查
+- 状态：待人类伙伴审查（版式与出口部分已被 C7 取代）
 - 上游：[主规格 §7.3 / §11](../specs/2026-09-30-image-to-pattern-design.md)、
   [B3 编辑器规格](2026-10-04-app-b3-editor-design.md)、[B4 导出规格](2026-10-05-app-b4-export-design.md)、
   [B5 Tauri 壳规格](2026-10-06-app-b5-tauri-shell-design.md)
@@ -464,11 +469,12 @@ interface SheetPlan {
 | `MIN_CELL_PX` | 24 | **删除** | §5.2 |
 | `SHEET_LABEL_MIN_CELL_PX` | 32 | **删除** | §6.2 |
 | `EXPORT_CELL_PX_FLOOR` | 8 | **删除** | §6.2 |
-| `EXPORT_CELL_PX_TARGET` | 40 | 40（不变） | 单张施工图的格像素上限 |
-| `EXPORT_MAX_EDGE` | 4096 | 4096（不变） | 单张施工图的画布上限 |
-| `LEGEND_ITEM_W` | 300 | **200** | 底部用料条（压缩几何） |
-| `LEGEND_ROW_H` | 30 | **22** | 同上 |
-| `SHEET_MIN_LABEL_FONT_PX` | — | **10** | 新增；格内色号字号的硬下限 |
+| `EXPORT_CELL_PX_TARGET` | 40 | 40（不变）〔**2026-10-09 被 C7 取代并删除**：改名 `EXPORT_CELL_MAX_PX` 且抬到 96，见 C7 规格 §3.4〕 | 单张施工图的格像素上限 |
+| `EXPORT_MAX_EDGE` | 4096 | 4096（不变）〔C7 沿用；58×58 在 C7 后是 4082×4066，贴着这个值，人类伙伴裁定「以后再测」〕 | 单张施工图的画布上限 |
+| `LEGEND_ITEM_W` | 300 | **200**〔**2026-10-09 被 C7 收到 120**〕 | 底部用料条（压缩几何） |
+| `LEGEND_ROW_H` | 30 | **22**〔C7 沿用〕 | 同上 |
+| `SHEET_MIN_LABEL_FONT_PX` | — | **10** | 新增；格内色号字号的硬下限〔C7 沿用；比例由 0.38 收到 0.36〕 |
+| `SHEET_INFO_BAR_H` / `SHEET_FOOTER_H` / `SHEET_TICK_FONT_MIN` / `TICK_FONT_RATIO` / `PAGE_HEADER_H` | — | **新增**〔**2026-10-09 全部被 C7 删除**：信息条压成单行标题、页脚三行整块去掉、刻度改成四边每格一个数字〕 | B6 的版式常量 |
 | `PRINT_DPI` / `PAPER_MM` / `PRINT_MARGIN_MM` / `PRINT_BEAD_PX` | — | **300 / {a4:210×297, a3:297×420} / 10 / 59** | 新增；§7.1。**常量关系断言**：29 板 + A4 时每格恰为 `BEAD_MM`（1:1）；58 板 + A3 时每格 < `BEAD_MM`（缩放） |
 | `SHARE_MAX_EDGE` / `SHARE_CELL_PX_MIN` / `SHARE_CELL_PX_MAX` | 2048 / 4 / 64 | **删除** | §10 |
 

@@ -1130,3 +1130,48 @@ git commit -m "docs: 同步 C7 的常量与精度声明口径"
       按人类伙伴的意思保留或删除。
 - [ ] 跑一次全量验证：`npm run test && npm run build`。
 - [ ] 把 §9 的人工验收清单（9 条）交给人类伙伴在真机上过一遍。
+
+---
+
+## 执行记录（2026-10-09，执行者按实际落地情况回填）
+
+六项任务**全部落地**，全套 `npm run test` 1330 条绿、`npm run build`（`vue-tsc` 严格模式）通过。
+分支 `feat/c7-sheet-restyle`，四个提交：
+
+| 提交 | 内容 |
+|---|---|
+| `e4bb78a` | 任务 1：几何改成内容驱动 |
+| `656abf4` | 任务 2：两个渲染器共用新版式 |
+| `e7a75a7` | 任务 3（部分）+ 任务 4：出口收敛与查看层缩放 |
+| `a58a0df` | 任务 3 收尾：三个页面的接线测试按新出口收敛 |
+| `6d47edf` | 任务 5：用色档位 8/16/24 + 自定义 |
+
+### 与计划的偏离（逐条记账）
+
+1. **`RulerBandPlan.cellPx` 改名 `stepPx`**（计划里叫 `cellPx`）。原因：词法闸门
+   `layoutGate` 实测抓到——渲染器里**不许出现标识符 `cellPx`**，而四边刻度带必须读它。
+   改名同时把语义写进类型（「带内第 index 条分隔线的步长」与「一格多大」是两件事）。
+2. **`PageChromePlan` 增加 `labelFontPx`**（计划里它只在 `SheetPlan` / `BoardPagePlan` 上）。
+   原因：两个渲染器都要它、取值口径完全一致（`planGridScale` 给），放在共用接口上
+   渲染器就**不需要**自己按格像素算字号。
+3. **计划里「先占位调用一次 `planPageChrome`」被拆成两个函数**（`planGridScale` +
+   `planLegendBands`）。这是计划自检时修掉的真占位符：格像素 ↔ 用料条列数是真循环依赖，
+   拆成「先用行数上界定格像素」与「再按真实网格宽定用料条」两段之后不需要任何占位调用。
+4. **`planLegendBands` 的宽度预算扣两条刻度带**（`SHEET_RULER_LEFT` 出现两次）。
+   计划里只扣了一条；网格左右都有行号带，扣一条会让画布在 116 格这类满格图纸上溢出。
+5. **`ExportPanel` 的 `pageUsages` 与传入的 `usages` 是两个量**（既有设计，本轮如实记录）：
+   用料条按**本页**格范围现算，`input.usages`（全图）只进 `SheetMeta`。C7 之后图上不再显示
+   `SheetMeta` 的颗数 / 色数，所以 `ExportPanel.test.ts` 里「伪造用量上墙」那组判据翻转为
+   「用料条仍只列本页那一份」。
+6. **`setupPage` 的 `generate` 原先漏传 `customMaxColors`**：档位选「自定义」时会按默认 32 生成
+   而落盘写 `'custom'`（界面与产物不一致）。计划里没预见到这条接线，实现时补上。
+7. **`ParamPanel` 的档位按钮处理器**原先从 `event.currentTarget` 读 `data-tier`——测试与部分
+   环境下拿不到；改成模板里直接把 `choice.value` 绑进 `emit`。
+8. **`toProjectDocument` 补了自定义色数校验**（计划只写了 `validateProjectDocument` 那条）：
+   落盘方向缺守卫会把「回读时必炸」的值写进库。
+
+### 仍待人工验收（规格 §9 的 9 条）
+
+自动化能给的是几何、文案与接线；**观感**（刻度字号是否贴边、橙色虚线的疏密、色号是否顶格）
+只能在真机上看。`.lab-out/c7-real.png` 是本轮用**真实渲染链**（`planSheet` + `drawSheet`）出的
+29×25 / 20 色样张，可作为第一眼的参照。
