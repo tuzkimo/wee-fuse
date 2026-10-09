@@ -33,42 +33,57 @@ import type {
 /** 产物画布单边上限。**4096 是主规格 §7.3 所给区间的保守下界**，探针页 `/lab/canvas` 实测后调整。 */
 export const EXPORT_MAX_EDGE = 4096;
 /**
- * 施工图的目标格像素（色号可读、文件不至于过大）。
+ * 单张施工图的格像素**上限**（2026-10-09 由 40 抬到 96，人类伙伴裁定，C7 规格 §3.4）。
  *
- * 它是 `planSheet` 算格像素时的**上界**之一（另两个上界由可用宽 / 高给出）：小图纸不会被放大到它之上。
+ * **为什么抬**：网格宽度只由格像素决定，而画布宽度过去被用料条按「满画布宽」算出来的列数撑大
+ * （29 格 + 13 色 ⇒ 画布 2648px、网格只有 1160px，右边 71% 是空白）。修掉用料条那条之后，
+ * 若仍把格像素封在 40，空白只是换了个来源：网格撑不满画布。抬到 96 让常用尺寸（29 / 58 格）
+ * 的格内色号从 15px 变 35px，手机上不放大也能读。
+ *
+ * **代价（如实写明）**：位图面积约翻倍（29×25 从 1.4MP 到 7.7MP），渲染更慢；58×58 这类尺寸
+ * 会顶到 `EXPORT_MAX_EDGE`，而**那个上限从没在真机上实测过**（`/lab/canvas` 探针页至今未跑）。
  */
-export const EXPORT_CELL_PX_TARGET = 40;
+export const EXPORT_CELL_MAX_PX = 96;
 /** 四周边距。 */
-export const SHEET_MARGIN = 24;
-/** 左刻度带宽（行号 + 板号）。 */
-export const SHEET_RULER_LEFT = 64;
-/** 上刻度带高（列号 + 板号）。 */
-export const SHEET_RULER_TOP = 44;
-/** 顶部信息条高（两行）。 */
-export const SHEET_INFO_BAR_H = 108;
-/** 页脚带高（三行 12px 文字 + 行距，`drawSheet` / `drawBoardPage` 的末行共用）。 */
-export const SHEET_FOOTER_H = 44;
+export const SHEET_MARGIN = 20;
+/**
+ * 刻度带的宽 / 高。
+ *
+ * **2026-10-09 起刻度带是「每格一格的带」**（淡蓝底 + 细分隔线 + 每格一个数字，口径来自
+ * 人类伙伴给的参照施工图）：行号带要放得下两位数字，所以横向 42px；纵向 36px 要放得下 30px 的刻度字。
+ */
+export const SHEET_RULER_LEFT = 42;
+export const SHEET_RULER_TOP = 36;
+/** 标题行高（单行）。2026-10-09 起信息条从两行压成一行，页脚三行整块删除。 */
+export const SHEET_TITLE_H = 34;
+/** 标题行字号（px）。 */
+export const SHEET_TITLE_FONT_PX = 22;
+/** 刻度带底色与格分隔线。 */
+export const SHEET_RULER_BG = "#eef3fb";
+export const SHEET_RULER_LINE = "#c8d4e8";
+/** 刻度带字号范围：下限 11px，上限受带高 36px 约束（带装不下比格子小更糟）。 */
+export const SHEET_RULER_FONT_MIN_PX = 11;
+export const SHEET_RULER_FONT_MAX_PX = 30;
 /**
  * 用料条（B6 新增：它嵌在产物底部，不再是独立成图）的**压缩几何**。
  *
- * 规格 §13 的常量迁移表：独立用量表时代的 300 / 30 随那套图一起删除，这对名字改为用料条
- * 自己的取值（200 / 22）——同一个文件里不留「同一件事的第二份解释」。
- *
- * 随后四个（`LEGEND_SWATCH_SIZE` / `LEGEND_CODE_X` / `LEGEND_COUNT_RIGHT_PAD` / `LEGEND_PAD_TOP`）
- * 从来只服务用料条，名字里没有第二个含义需要收敛，故原样保留。
+ * **2026-10-09 收窄**（C7 规格 §3.3）：项宽 200 → **120**、顶部间隔 8 → **12**。
+ * 项宽 200 会让 13 色排成 2600px 的条带、把画布宽度从 1248 撑到 2648（右侧 71% 空白），
+ * 而 `色号 (颗数)` 在 120px 里放得下（三字色号约 64px + 数字）。
+ * 顶部间隔 12px 是给**下刻度带**留的净空：刻度数字的下缘紧贴带底，8px 会与用料条视觉相碰。
  */
-export const LEGEND_ITEM_W = 200;
+export const LEGEND_ITEM_W = 120;
 export const LEGEND_ROW_H = 22;
 export const LEGEND_SWATCH_SIZE = 16;
-export const LEGEND_CODE_X = 26;
+export const LEGEND_CODE_X = 24;
 export const LEGEND_COUNT_RIGHT_PAD = 8;
-/** 用料条顶边与本带首行的间距；**`canvasHeight` 无条件含它**（见 `planSheet` 的高度预算）。 */
-export const LEGEND_PAD_TOP = 8;
+/** 用料条顶边与下刻度带底沿的净距；**`canvasHeight` 无条件含它**（见 `planLegendBands`）。 */
+export const LEGEND_PAD_TOP = 12;
 /** 三档线宽：每格 / 每 5 格 / 每 29 格。 */
 export const SHEET_LINE_WIDTHS: LineWidths = { thin: 1, major: 2, board: 3 };
-/** 刻度数字最小字号。 */
-export const SHEET_TICK_FONT_MIN = 12;
-/** 坐标刻度间隔（格）。 */
+/** 每 5 格参考虚线的颜色（橙色，口径来自参照施工图）。 */
+export const SHEET_MAJOR_GUIDE_STROKE = "#f0a02a";
+/** 坐标刻度间隔（格）。**2026-10-09 起只用于「每 5 格橙色虚线」**：刻度数字改成每格都有。 */
 export const TICK_EVERY = 5;
 /**
  * 板步长 = 一块拼豆板的格数（网格的粗档与板号边界都按它取模）。**取自 `board.ts`，不写第二份
@@ -80,24 +95,24 @@ export const TILE_STEP = BOARD_COLS;
 export const SHEET_MIN_LABEL_FONT_PX = 10;
 
 /**
- * 格内色号字号比例（0.38 × cellPx）。
+ * 格内色号字号比例（0.36 × cellPx，下限 `SHEET_MIN_LABEL_FONT_PX`）。
+ *
+ * **2026-10-09 由 0.38 收到 0.36**：口径改为「三个字符要留出两侧余量」——三字色号（如 `F25`）
+ * 在常见无衬线字体下约占 `3 × 0.6em = 1.8em`，即 `1.8 × 0.36 × cellPx = 0.65 × cellPx`，
+ * 两侧各余约 17% 格宽，与人类伙伴给的参照施工图观感一致。
  *
  * **刻意不与 `core/pattern/view.ts` 共享**：那里是屏幕即时提示、这里是纸面输出，两处阈值
  * （屏幕的 28 px 格 / 纸面的字号下限 `SHEET_MIN_LABEL_FONT_PX`）本就不同；共享一个比例常量会把
  * 「改一处观感影响两处语义」变成静默耦合。真要合并，必须同时改两处用例。
  */
-const LABEL_FONT_RATIO = 0.38;
+const LABEL_FONT_RATIO = 0.36;
 /**
- * 刻度数字字号比例（0.3 × cellPx，下限 `SHEET_TICK_FONT_MIN`）。
+ * 刻度数字字号比例（0.42 × cellPx，夹进 `SHEET_RULER_FONT_MIN_PX`..`SHEET_RULER_FONT_MAX_PX`）。
  *
- * **它在当前常量域内的可观测性随计划而变**：单张施工图的 `cellPx ≤ EXPORT_CELL_PX_TARGET = 40`
- * ⇒ `round(0.3 × cellPx) ≤ 12 = SHEET_TICK_FONT_MIN`（与下限同值、行为上不可观测）；打印页的
- * `cellPx` 可以取到 `PRINT_BEAD_PX = 59`（17.7 → 18 px，**在下限之上**），那里它真的生效。
- * 保留它是因为它编码了「刻度字号随格子缩放」的意图；与 `services/patternThumbnail.ts` 的
- * `RESULT_PREVIEW_MAX_EDGE`（同样当前不可观测、保留并写明）是同一个先例。
- * **不要**为它造一条「看起来能判别」的用例：判不开的断言比没有断言更坏。
+ * **2026-10-09 由 0.3 抬到 0.42**：刻度数字从「浮在格线交点上」改成「居中在刻度带格子里」之后，
+ * 参照图里数字高约为格子宽的 60%（32px 字 / 55px 格）；0.3 会让数字在带里显得又小又空。
  */
-const TICK_FONT_RATIO = 0.3;
+const RULER_FONT_RATIO = 0.42;
 
 /* ------------------------------------------------------------------ 打印页（B6） */
 
@@ -116,8 +131,6 @@ export const PRINT_BOARD_SIZES = [BOARD_COLS, BOARD_COLS * 2] as const;
 export type PrintBoardSize = (typeof PRINT_BOARD_SIZES)[number];
 /** 实物大小的格像素：`BEAD_MM` 在 `PRINT_DPI` 下的像素数。**由实物参数推导，不写字面量**。 */
 export const PRINT_BEAD_PX = Math.round((BEAD_MM / 25.4) * PRINT_DPI);
-/** 页眉带高（px）：一行标题 + 一行页信息。 */
-export const PAGE_HEADER_H = 72;
 
 /**
  * 毫米 → `PRINT_DPI` 下的像素（四舍五入到整数像素）。打印页画布与页边距的**唯一**换算口径。
@@ -176,19 +189,59 @@ export interface LegendBandPlan {
 }
 
 /**
- * **单张施工图的计划**（B6 新增：整张图纸一块 + 底部用料条）。
+ * 几条刻度带：四处偏移 + 两个尺寸即可定位四边（网格矩形由 `GridGeometry` 给）。
+ *
+ * **2026-10-09 新增**（C7 规格 §3.0）：刻度从「数字浮在格线交点上」改成
+ * 「四边各一条带、每格一个数字居中在格子里」，所以需要把四条带的位置一次算清。
+ * `cellPx` 与网格格像素**同值**——带与网格必须逐格对齐，两处各算一份 index 就会错行。
+ */
+export interface RulerBandPlan {
+  /** 带内每格的步长（= 网格格像素）。 */
+  readonly cellPx: number;
+  readonly fontPx: number;
+  /** 上带顶边。 */
+  readonly topY: number;
+  /** 下带顶边（= 网格下沿）。 */
+  readonly bottomY: number;
+  /** 左带左沿。 */
+  readonly leftX: number;
+  /** 右带左沿（= 网格右沿）。 */
+  readonly rightX: number;
+  /** 带高（列带）与带宽（行带）同值。 */
+  readonly thickness: number;
+}
+
+/**
+ * 单张施工图与打印页**共用**的「带」几何：标题行、四边刻度带、用料条。
+ *
+ * **为什么抽出来**（C7 规格 §3.0）：旧实现里这些带在两个计划函数里各算了一遍
+ * （两个 `infoBar`、两个 `footerY`、两套刻度带坐标），而新版式下它们在两边完全同形、差别只在数值
+ * ⇒ 「同一件事的第二份实现」在这里被结构性消灭（渲染器侧同理：`sheet.ts` 的 `drawRulerBands`
+ * 一个函数画四条边）。
+ */
+export interface PageChromePlan {
+  /** 标题行文本顶边（渲染器用 `textBaseline = "top"`）。 */
+  readonly titleY: number;
+  /** 标题行文本左沿。 */
+  readonly titleLeft: number;
+  /** 图上的标题字号；写进计划是为了渲染器不读常量。 */
+  readonly titleFontPx: number;
+  readonly ruler: RulerBandPlan;
+  readonly legend: LegendBandPlan;
+  /** 用料条首行顶边。 */
+  readonly legendTop: number;
+}
+
+/**
+ * **单张施工图的计划**（整张图纸一块 + 底部用料条）。
  *
  * `drawSheet` 吃这个形状（整图一块、不分片），`BoardPagePlan` 与它同构、差异只在页身份与几何来源。
  */
-export interface SheetPlan extends TileGeometry {
+export interface SheetPlan extends TileGeometry, PageChromePlan {
   readonly kind: "sheet";
   readonly canvasWidth: number;
   readonly canvasHeight: number;
   readonly labelFontPx: number;
-  readonly tickFontPx: number;
-  readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
-  readonly legend: LegendBandPlan;
-  readonly footerY: number;
 }
 
 export interface PlanOptions {
@@ -359,16 +412,11 @@ function makeGridGeometry(input: {
 }
 
 /**
- * 单张施工图计划：整张图纸一块（B6 起不再分片），底部嵌一条用料条。
+ * 单张施工图计划：整张图纸一块，底部嵌一条用料条（C7 起版式见规格 §3）。
  *
- * **闭式，无迭代**：先算用料条（只依赖色数与可用宽），再把它从可用高度里扣掉，最后定格像素。
- * `cellPx` 取三个上界的较小者：目标格像素、宽方向能放下、高方向能放下。
- * **色号画不下就抛**（不再静默省略）——这是规格 §6.2 的失败语义。
- *
- * **`legendH` 无条件含 `LEGEND_PAD_TOP`**（与规格 §6.2 的公式同形）：`canvasHeight` 经 `legendTop`
- * 本来就不分空与非空地把这 8px 算进去，高度预算里漏计它会让「空用量表 + 格像素恰好整除」那一类
- * 合成输入多出 8px（`cellPx × rows === innerH` 时 `canvasHeight === maxEdge + 8`）。非空用量表下
- * 两种写法逐位相等。
+ * **内容驱动、网格主导**（C7 规格 §3.4）：先由 `planGridScale` 定格像素（用料条只以「行数上界」
+ * 参与高度预算），再由 `planLegendBands` 按**真实网格宽**给用料条换行 ⇒ 用料条永不撑宽画布。
+ * **色号画不下就抛**（不静默省略）——这是规格 §6.2 的失败语义。
  */
 export function planSheet(
   pattern: Pattern,
@@ -381,84 +429,55 @@ export function planSheet(
   const safeUsages = requireUsages(usages);
   const maxEdge = requireMaxEdge(options, EXPORT_MAX_EDGE);
 
-  const innerW = maxEdge - 2 * SHEET_MARGIN - SHEET_RULER_LEFT;
-  if (innerW < 1) {
-    throw new Error(`画布上限 ${maxEdge} px 太小，无法生成施工图`);
-  }
-  // `left` 固定 `SHEET_MARGIN`：单张施工图的画布宽已经按用料条加宽过，左对齐即可
-  const legend = planLegendBand(safeUsages, maxEdge - 2 * SHEET_MARGIN, 0, SHEET_MARGIN);
-  const legendH = legend.itemRows * LEGEND_ROW_H + LEGEND_PAD_TOP;
-  const innerH =
-    maxEdge - 2 * SHEET_MARGIN - SHEET_INFO_BAR_H - SHEET_RULER_TOP - legendH - SHEET_FOOTER_H;
-
-  const cellPx = Math.min(
-    EXPORT_CELL_PX_TARGET,
-    Math.floor(innerW / pattern.width),
-    Math.floor(innerH / pattern.height),
-  );
-  // **`cellPx < 1` 单列一条**（2026-10-08）：`innerH` 为负时（用料条把可用高度吃光）下面那条字号
-  // 守卫会把 `-1 px` 这种噪声写进用户可见文本里。这里先把「根本放不下」说清楚，字号守卫只管
-  // 「放得下但格子太小」。
-  // **消息不写具体是谁不够**（2026-10-08 收口）：`cellPx < 1` 既可能来自高度被吃光，也可能来自
-  // 「高度够但装不下这么多行」（如 116×116 + `maxEdge: 300` 时 `innerH = 26 > 0`），也可能来自宽度
-  // ——`min` 的三个上界谁先归零都算放不下，写死一种原因会失实。宽度完全不够那一支另有更早的
-  // 「画布上限太小」守卫。
-  if (cellPx < 1) {
-    throw new Error(
-      `画布上限 ${maxEdge} px 的可用区域放不下 ${pattern.width}×${pattern.height} 的图纸`,
-    );
-  }
-  const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
-  if (labelFontPx < SHEET_MIN_LABEL_FONT_PX) {
-    throw new Error(
-      `画布上限 ${maxEdge} px 放不下 ${pattern.width}×${pattern.height} 的图纸：每格只有 ${cellPx} px、色号字号 ${labelFontPx} px，低于下限 ${SHEET_MIN_LABEL_FONT_PX} px`,
-    );
-  }
-
   const gridX = SHEET_MARGIN + SHEET_RULER_LEFT;
-  const gridY = SHEET_MARGIN + SHEET_INFO_BAR_H + SHEET_RULER_TOP;
+  const gridY = SHEET_MARGIN + SHEET_TITLE_H + SHEET_RULER_TOP;
+  const scale = planGridScale({
+    usageCount: safeUsages.length,
+    availableWidth: maxEdge,
+    availableHeight: maxEdge,
+    cellPxMax: EXPORT_CELL_MAX_PX,
+    cols: pattern.width,
+    rows: pattern.height,
+    reserveBandsInHeight: true,
+  });
+  const bands = planLegendBands({
+    usages: safeUsages,
+    // **用料条按真实网格宽换行**：这是「永不撑宽画布」的落点。
+    legendWrapWidth: pattern.width * scale.cellPx,
+    legendLeftBase: gridX,
+    cellPx: scale.cellPx,
+    cols: pattern.width,
+    rows: pattern.height,
+    gridX,
+    gridY,
+    rulerFontPx: scale.rulerFontPx,
+  });
   const geometry = makeGridGeometry({
     originCol: 0,
     originRow: 0,
     cols: pattern.width,
     rows: pattern.height,
-    cellPx,
+    cellPx: scale.cellPx,
     x: gridX,
     y: gridY,
   });
-  const legendTop = gridY + pattern.height * cellPx + LEGEND_PAD_TOP;
-  // 用料条**只调一次** `planLegendBand`：`itemCols` / `itemRows` 与 `top` 无关，上面那次已经把它们算准了，
-  // 这里只需把真正的顶边补上（再调一次会让 `requireUsages` 对每一项多跑一遍）。
-  const band: LegendBandPlan = { ...legend, top: legendTop };
-  const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
-  // **画布宽取「网格」与「用料条」的较大者**（2026-10-08 实测发现的缺陷）：`itemCols` 是按画布上限算的，
-  // 而网格宽度只取决于格像素——116×116 的最坏情况下用料条需要 4048 px 而网格只给 3592 px，
-  // 不取 max 会让第 18–19 列（约 16% 的用料项）静默落在画布外。
-  // `min(band.itemCols, safeUsages.length)` 是必需的：只按 itemCols 算会把 4 色小图纸也撑到 4048。
-  const bandWidth =
-    safeUsages.length === 0
-      ? 0
-      : SHEET_MARGIN + Math.min(band.itemCols, safeUsages.length) * band.itemWidth + SHEET_MARGIN;
-
   return {
     kind: "sheet",
-    cellPx,
+    cellPx: scale.cellPx,
     originCol: 0,
     originRow: 0,
     cols: pattern.width,
     rows: pattern.height,
     ...geometry,
-    canvasWidth: Math.max(gridX + pattern.width * cellPx + SHEET_MARGIN, bandWidth),
-    canvasHeight: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H + SHEET_MARGIN,
-    labelFontPx,
-    tickFontPx,
-    // `lineOneY` / `lineTwoY` 是**文本顶边**（渲染器用 `textBaseline = "top"`）；
-    // `footerY` 是页脚带的**中线**（渲染器用 `"middle"`），三行分别落在 `footerY ∓ 14`。
-    // 那个 14 是行距（= `sheet.ts` 的模块私有常量 `LEGEND_FOOTER_LINE_H`）；它不导出、本文件里
-    // 解析不到这个名字，所以这里写死数值——改动行距时必须同时改 `sheet.ts` 与本行（R19）。
-    infoBar: { lineOneY: SHEET_MARGIN, lineTwoY: SHEET_MARGIN + Math.round(SHEET_INFO_BAR_H / 2) },
-    legend: band,
-    footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,
+    canvasWidth: bands.canvasWidth,
+    canvasHeight: bands.canvasHeight,
+    labelFontPx: scale.labelFontPx,
+    titleY: SHEET_MARGIN,
+    titleLeft: SHEET_MARGIN,
+    titleFontPx: SHEET_TITLE_FONT_PX,
+    ruler: bands.ruler,
+    legend: bands.legend,
+    legendTop: bands.legendTop,
   };
 }
 
@@ -575,31 +594,117 @@ function requireUsages(usages: readonly ColorUsage[]): readonly ColorUsage[] {
 }
 
 /**
- * 用料条几何。**它只依赖「色数 + 可用宽」**，所以可以在算格像素之前算出来——这是单张施工图
- * 能避开「图例高度依赖用色数」那个循环依赖（B4 规格 §1.4 的 D3）的原因。
+ * 格像素与两个字号（**用料条只按行数上界参与高度预算**）。
  *
- * 只做几何：列数 = 可用宽放下几项，行数 = 色数需要几行。色块 / 色号 / 数量的落位偏移一并给出，
- * 渲染器（`drawLegendBand`）不再自己乘除。
+ * **为什么它与 `planLegendBands` 是两个函数**（C7 规格 §3.4）：用料条列数依赖网格宽、网格宽来自
+ * 格像素、而格像素的高度预算又依赖用料条行数 ⇒ 这是**真循环依赖**，只能先用「按满可用宽排布的
+ * 用料条行数」这个**上界**把格像素定下来。上界只会高估行数 ⇒ 定出的格像素只会偏保守，不会溢出画布。
  *
- * **`left` 是入参而不是按 `top` 同理回填**：单张施工图的画布宽已经按用料条加宽过，左对齐即可
- * （传 `SHEET_MARGIN`）；打印页的画布被纸型锁死，必须自己算「在可打印区内居中」的左沿
- * （见 `planBoardPage`）。两种口径都必须由计划给出，渲染器不许自己决定横向落位。
+ * `availableWidth` / `availableHeight` 由调用方给：单张施工图传画布上限，打印页传可打印区。
+ * `cellPxMax` 同理：单张传 `EXPORT_CELL_MAX_PX`，打印页传 `PRINT_BEAD_PX`（实物大小，永不放大）。
  */
-export function planLegendBand(
-  usages: readonly ColorUsage[],
-  availableWidth: number,
-  top: number,
-  left: number,
-): LegendBandPlan {
-  const safe = requireUsages(usages);
-  const width = requirePositiveInteger(availableWidth, "用料条可用宽度");
-  requireSafeInteger(top, "用料条顶边");
-  requireSafeInteger(left, "用料条左沿");
-  const itemCols = Math.max(1, Math.floor(width / LEGEND_ITEM_W));
-  const itemRows = safe.length === 0 ? 0 : Math.ceil(safe.length / itemCols);
-  return {
-    top,
-    left,
+export function planGridScale(input: {
+  readonly usageCount: number;
+  readonly availableWidth: number;
+  readonly availableHeight: number;
+  readonly cellPxMax: number;
+  readonly cols: number;
+  readonly rows: number;
+  /** 是否把标题行 + 两条刻度带 + 用料条计入高度预算（打印页的网格由纸型锁定，传 `false`）。 */
+  readonly reserveBandsInHeight: boolean;
+}): { readonly cellPx: number; readonly labelFontPx: number; readonly rulerFontPx: number } {
+  const usageCount = requireSafeInteger(input.usageCount, "用料色数");
+  const availableWidth = requirePositiveInteger(input.availableWidth, "可用宽度");
+  const availableHeight = requirePositiveInteger(input.availableHeight, "可用高度");
+  const cellPxMax = requirePositiveInteger(input.cellPxMax, "格像素上限");
+  const cols = requirePositiveInteger(input.cols, "网格列数");
+  const rows = requirePositiveInteger(input.rows, "网格行数");
+
+  const itemColsUpper = Math.max(
+    1,
+    Math.min(Math.floor(availableWidth / LEGEND_ITEM_W), Math.max(1, usageCount)),
+  );
+  const itemRowsUpper = usageCount === 0 ? 0 : Math.ceil(usageCount / itemColsUpper);
+  const bandsBudget = input.reserveBandsInHeight
+    ? SHEET_TITLE_H + 2 * SHEET_RULER_TOP + LEGEND_PAD_TOP + itemRowsUpper * LEGEND_ROW_H
+    : 0;
+  // **宽度预算里两条刻度带都要扣**（网格左右各一条行号带）。用料条不在这里扣——它按网格宽
+  // 换行，永远跟着网格走，所以不会成为画布宽度的上界（这正是旧实现的缺陷所在）。
+  const widthFit = Math.floor(
+    (availableWidth - 2 * SHEET_MARGIN - SHEET_RULER_LEFT - SHEET_RULER_LEFT) / cols,
+  );
+  const heightFit = Math.floor((availableHeight - 2 * SHEET_MARGIN - bandsBudget) / rows);
+  const cellPx = Math.min(cellPxMax, widthFit, heightFit);
+  // **`cellPx < 1` 单列一条**：不单列的话下面那条字号守卫会把 `-1 px` 这种噪声写进用户可见文本。
+  // **消息不写是谁不够**：宽度、高度、用料条预算谁先归零都算放不下，写死一种原因会失实。
+  if (cellPx < 1) {
+    throw new Error(
+      `可用区域 ${availableWidth}×${availableHeight} px 放不下 ${cols}×${rows} 的图纸`,
+    );
+  }
+  const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
+  if (labelFontPx < SHEET_MIN_LABEL_FONT_PX) {
+    throw new Error(
+      `可用区域放不下 ${cols}×${rows} 的图纸：每格只有 ${cellPx} px、色号字号 ${labelFontPx} px，低于下限 ${SHEET_MIN_LABEL_FONT_PX} px`,
+    );
+  }
+  const rulerFontPx = Math.min(
+    SHEET_RULER_FONT_MAX_PX,
+    Math.max(SHEET_RULER_FONT_MIN_PX, Math.round(cellPx * RULER_FONT_RATIO)),
+  );
+  return { cellPx, labelFontPx, rulerFontPx };
+}
+
+/**
+ * 用料条与「带」的落位（C7 规格 §3.0 / §3.4）：**列数由 `legendWrapWidth` 决定，永不撑宽画布**。
+ *
+ * `legendWrapWidth` 单张传**网格宽**、打印页传**可打印宽**（规格 §7.1 的第三处差异）。
+ * `legendLeftBase` 是这段宽度的左沿：单张传网格左沿（于是条带与网格居中对齐），
+ * 打印页传可打印区左沿（于是在可打印区内居中）。
+ *
+ * **为什么不等价于旧的 `planLegendBand`**：旧函数的 `itemCols` 按「可用宽」算，返回的画布宽度
+ * 反过来被条带撑大（29 格 + 13 色 ⇒ 画布 2648px、网格 1160px）。新函数把换行宽度交给调用方，
+ * 并把用料条的横向落位**收进返回值**，渲染器仍然不自己乘除。
+ */
+export function planLegendBands(input: {
+  readonly usages: readonly ColorUsage[];
+  readonly legendWrapWidth: number;
+  readonly legendLeftBase: number;
+  readonly cellPx: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly gridX: number;
+  readonly gridY: number;
+  readonly rulerFontPx: number;
+}): {
+  readonly legend: LegendBandPlan;
+  readonly legendTop: number;
+  readonly ruler: RulerBandPlan;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+} {
+  const safeUsages = requireUsages(input.usages);
+  const wrapWidth = requirePositiveInteger(input.legendWrapWidth, "用料条换行宽度");
+  const cellPx = requirePositiveInteger(input.cellPx, "格像素");
+  const cols = requirePositiveInteger(input.cols, "网格列数");
+  const rows = requirePositiveInteger(input.rows, "网格行数");
+  requireSafeInteger(input.legendLeftBase, "用料条左沿基准");
+  requireSafeInteger(input.gridX, "网格左沿");
+  requireSafeInteger(input.gridY, "网格顶边");
+
+  const itemCols = Math.max(
+    1,
+    Math.min(Math.floor(wrapWidth / LEGEND_ITEM_W), Math.max(1, safeUsages.length)),
+  );
+  const itemRows = safeUsages.length === 0 ? 0 : Math.ceil(safeUsages.length / itemCols);
+  const bandWidth = itemCols * LEGEND_ITEM_W;
+  // **下刻度带必须进这个高度**：旧预算只算了上刻度带，用料条落在 `y=1900` 而刻度带占
+  // `1884–1914`，两者叠字（2026-10-09 实测）。空用量表没有条带，间隔也不留。
+  const legendTop =
+    input.gridY + rows * cellPx + SHEET_RULER_TOP + (itemRows === 0 ? 0 : LEGEND_PAD_TOP);
+  const legend: LegendBandPlan = {
+    top: legendTop,
+    left: input.legendLeftBase + Math.max(0, Math.floor((wrapWidth - bandWidth) / 2)),
     itemCols,
     itemRows,
     itemWidth: LEGEND_ITEM_W,
@@ -608,16 +713,37 @@ export function planLegendBand(
     codeX: LEGEND_CODE_X,
     countRightPad: LEGEND_COUNT_RIGHT_PAD,
   };
+  const ruler: RulerBandPlan = {
+    cellPx,
+    fontPx: input.rulerFontPx,
+    topY: input.gridY - SHEET_RULER_TOP,
+    bottomY: input.gridY + rows * cellPx,
+    leftX: input.gridX - SHEET_RULER_LEFT,
+    rightX: input.gridX + cols * cellPx,
+    thickness: SHEET_RULER_TOP,
+  };
+  return {
+    legend,
+    legendTop,
+    ruler,
+    canvasWidth: Math.max(
+      input.gridX + cols * cellPx + SHEET_RULER_LEFT,
+      legend.left + bandWidth + SHEET_MARGIN,
+    ),
+    canvasHeight: legendTop + itemRows * LEGEND_ROW_H + SHEET_MARGIN,
+  };
 }
 
 /**
- * **一块板的打印页计划**（B6 新增：A4 / A3 × 29 / 58 板，每页一块板）。
+ * **一块板的打印页计划**（A4 / A3 × 29 / 58 板，每页一块板）。
  *
- * 字段与 `SheetPlan` 同构（同一套网格 / 刻度 / 板号 / 用料条几何），差异是：
- * 画布与页边距由**纸型**决定（`planSheet` 由 `maxEdge` 决定）、格像素由「板大小 + 纸型」按
- * §7.1 算出、多出页身份（`boardRow` / `boardCol` / `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）。
+ * 字段与 `SheetPlan` 同构（同一套网格 / 四边刻度带 / 用料条几何，都来自
+ * `planGridScale` + `planLegendBands`），差异只有三处（C7 规格 §7.1）：
+ * 画布与页边距由**纸型**决定（`planSheet` 由 `maxEdge` 决定）、多出页身份
+ * （`boardRow` / `boardCol` / `boardIndex` / `boardTotal` / 本页格范围 / `cellMm` / `scaleRatio`）、
+ * 标题行文案不同（`sheet.ts` 的 `boardPageTitle`）。
  */
-export interface BoardPagePlan extends TileGeometry {
+export interface BoardPagePlan extends TileGeometry, PageChromePlan {
   readonly kind: "board-page";
   readonly cellMm: number;
   readonly scaleRatio: number;
@@ -630,20 +756,10 @@ export interface BoardPagePlan extends TileGeometry {
   readonly canvasWidth: number;
   readonly canvasHeight: number;
   readonly labelFontPx: number;
-  readonly tickFontPx: number;
-  readonly infoBar: { readonly lineOneY: number; readonly lineTwoY: number };
-  /**
-   * **页眉 / 页脚文字的左沿**（2026-10-08 实测补入）：打印页的文字必须从**可打印区**左沿起，
-   * 用 `SHEET_MARGIN = 24px`（2.03mm）会让页眉两行与页脚三行落进 10mm 的不可打印区被裁。
-   * 单张施工图（屏幕产物）没有这个字段，它的文字左沿就是 `SHEET_MARGIN`。
-   */
-  readonly textLeft: number;
-  readonly legend: LegendBandPlan;
-  readonly footerY: number;
 }
 
 /**
- * 一页打印页计划。版面规则（规格 §7.1）：`1 格 = min(BEAD_MM, 可打印宽/列, 可打印高/行)`，
+ * 一页打印页计划。版面规则（规格 §7.1）：`1 格 = min(实物豆径, 可打印宽/列, 可打印高/行)`，
  * **永不放大到超过实物**；装不下就按可打印区缩放，`scaleRatio` 如实给出。
  *
  * **为什么它不收 `PlanOptions`**：打印页的画布由纸型决定，没有可调的 `maxEdge`（`planSheet` 才有），
@@ -685,62 +801,51 @@ export function planBoardPage(
   const printableW = canvasWidth - 2 * marginPx;
   const printableH = canvasHeight - 2 * marginPx;
 
-  // 用料条高度只依赖「色数 + 可用宽」（见 `planLegendBand`），所以格像素可以在它之后定；
-  // 横向落位要到「网格落位之后」才知道，所以这里只探一次高度（`top` / `left` 都是占位）
-  const legendProbe = planLegendBand(safeUsages, printableW, 0, 0);
-  const legendH = legendProbe.itemRows * LEGEND_ROW_H + LEGEND_PAD_TOP;
-  const chrome = PAGE_HEADER_H + SHEET_RULER_TOP + legendH + SHEET_FOOTER_H;
+  const scale = planGridScale({
+    usageCount: safeUsages.length,
+    availableWidth: printableW,
+    availableHeight: printableH,
+    // 上限是**实物大小**：纸再大也不放大（「永不放大超过实物」唯一的落点）
+    cellPxMax: PRINT_BEAD_PX,
+    cols,
+    rows,
+    // 网格由纸型锁定，不参与高度预算（纸就是画布，没有「可用高被带吃掉」这回事）
+    reserveBandsInHeight: false,
+  });
 
-  // 上限是**实物大小**：纸再大也不放大（这是「永不放大超过实物」唯一的落点）
-  const cellPx = Math.min(
-    PRINT_BEAD_PX,
-    // **刻度带也要算进宽度预算**：只按网格算宽度，会让「刻度带 + 网格」整块超出可打印区——
-    // 58 板在 A3 上右留白只剩 98px < 118px（10mm），刻度与板号会落进不可打印区。
-    Math.floor((printableW - SHEET_RULER_LEFT) / cols),
-    Math.floor((printableH - chrome) / rows),
-  );
-  if (cellPx < 1) {
-    throw new Error(
-      `纸张装不下本页：板大小 ${boardSize}、纸张 ${paper}、可打印 ${printableW}×${printableH} px`,
-    );
-  }
-  const labelFontPx = Math.max(1, Math.round(cellPx * LABEL_FONT_RATIO));
-  if (labelFontPx < SHEET_MIN_LABEL_FONT_PX) {
-    throw new Error(
-      `纸张装不下可读的格内色号：板大小 ${boardSize}、纸张 ${paper}、每格 ${cellPx} px、字号 ${labelFontPx} px`,
-    );
-  }
-  const tickFontPx = Math.max(SHEET_TICK_FONT_MIN, Math.round(cellPx * TICK_FONT_RATIO));
-
-  // 网格水平居中（含左侧刻度带），垂直从页眉下方开始。
-  // `cellPx` 已经把刻度带扣进宽度预算，所以「刻度带 + 网格」整块必然落在可打印区内。
-  const gridWidth = cols * cellPx;
-  const gridHeight = rows * cellPx;
+  // 网格水平居中（含左侧刻度带），垂直从页边距 + 标题行 + 上刻度带开始。
+  // `cellPx` 已经把两条刻度带扣进宽度预算，所以「刻度带 + 网格」整块必然落在可打印区内。
+  const gridWidth = cols * scale.cellPx;
   const gridX = Math.floor((canvasWidth - (SHEET_RULER_LEFT + gridWidth)) / 2) + SHEET_RULER_LEFT;
-  const gridY = marginPx + PAGE_HEADER_H + SHEET_RULER_TOP;
-  const geometry = makeGridGeometry({ originCol, originRow, cols, rows, cellPx, x: gridX, y: gridY });
-  const legendTop = gridY + gridHeight + LEGEND_PAD_TOP;
-  // **用料条的横向落位也要有预算**：列数是按**可打印宽**算的，若复用网格偏移（`gridX − SHEET_RULER_LEFT`），
-  // 29 板 + A4 + 221 色的条带右沿会到 2552 > 可打印右界 2362（越 190px、16mm），落进不可打印区。
-  // 把条带在可打印区内居中，并把左沿放进计划（`LegendBandPlan.left`），渲染器照它落位。
-  // `itemCols` 已经由 `planLegendBand` 夹到 ≥1；这里再夹一次是为了**空用量表**（`itemCols` 仍是
-  // `planSheet` 那种按可用宽算出的值），保证 `bandWidth` 是「真实会画出来的列数 × 项宽」而不是满宽
-  // ——否则空表 / 少色时条带会被算成满宽、`left` 偏到边上（画不出东西但计划里的数字是错的）。
-  const bandCols = Math.max(1, Math.min(legendProbe.itemCols, Math.max(safeUsages.length, 1)));
-  const bandWidth = bandCols * legendProbe.itemWidth;
-  // **不再调第三次**：`itemCols` / `itemRows` / `itemWidth` 等几何与 `top` / `left` 无关，探针那次已经算准，
-  // 这里只把真正的 `top` / `left` 补上（再调一次会让 `requireUsages` 对每一项多跑一遍）。
-  const band: LegendBandPlan = {
-    ...legendProbe,
-    top: legendTop,
-    left: marginPx + Math.floor((printableW - bandWidth) / 2),
-  };
+  const gridY = marginPx + SHEET_TITLE_H + SHEET_RULER_TOP;
+  const bands = planLegendBands({
+    usages: safeUsages,
+    // **打印页按可打印宽换行**（不是网格宽）：条带要在整张纸的可用宽度里排布
+    legendWrapWidth: printableW,
+    // 并在可打印区内居中（不是网格偏移——那会让 29 板 + A4 的条带右沿落进不可打印区）
+    legendLeftBase: marginPx,
+    cellPx: scale.cellPx,
+    cols,
+    rows,
+    gridX,
+    gridY,
+    rulerFontPx: scale.rulerFontPx,
+  });
+  const geometry = makeGridGeometry({
+    originCol,
+    originRow,
+    cols,
+    rows,
+    cellPx: scale.cellPx,
+    x: gridX,
+    y: gridY,
+  });
 
   return {
     kind: "board-page",
-    cellPx,
-    cellMm: (cellPx / PRINT_DPI) * 25.4,
-    scaleRatio: cellPx / PRINT_BEAD_PX,
+    cellPx: scale.cellPx,
+    cellMm: (scale.cellPx / PRINT_DPI) * 25.4,
+    scaleRatio: scale.cellPx / PRINT_BEAD_PX,
     boardSize,
     paper,
     boardRow,
@@ -754,12 +859,13 @@ export function planBoardPage(
     ...geometry,
     canvasWidth,
     canvasHeight,
-    labelFontPx,
-    tickFontPx,
-    infoBar: { lineOneY: marginPx, lineTwoY: marginPx + Math.round(PAGE_HEADER_H / 2) },
-    // 页眉 / 页脚文字的左沿 = 可打印区左沿（不是 `SHEET_MARGIN`：那是屏幕产物的边距）
-    textLeft: marginPx,
-    legend: band,
-    footerY: legendTop + band.itemRows * LEGEND_ROW_H + SHEET_FOOTER_H / 2,
+    labelFontPx: scale.labelFontPx,
+    // 标题行左沿 = 可打印区左沿（不是 `SHEET_MARGIN`：那是屏幕产物的边距）
+    titleY: marginPx,
+    titleLeft: marginPx,
+    titleFontPx: SHEET_TITLE_FONT_PX,
+    ruler: bands.ruler,
+    legend: bands.legend,
+    legendTop: bands.legendTop,
   };
 }
