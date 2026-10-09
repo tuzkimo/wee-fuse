@@ -47,8 +47,30 @@ export function toProjectDocument(
   ) {
     throw new Error(`长边豆数非法：${params.longSide}`);
   }
-  if (params.maxColors !== 16 && params.maxColors !== 32 && params.maxColors !== null) {
+  // **只认新枚举**（C7 规格 §6.2）：旧值 `32` / `null` 一律响亮失败，不做迁移。
+  if (
+    params.maxColors !== 8 &&
+    params.maxColors !== 16 &&
+    params.maxColors !== 24 &&
+    params.maxColors !== "custom" &&
+    params.maxColors !== "all"
+  ) {
     throw new Error(`用色档位非法：${String(params.maxColors)}`);
+  }
+  // 自定义色数：可缺省；**写了就必须落在 1..色卡色数**（与 `validateProjectDocument` 那条守卫
+  // 同口径——落盘方向也要拦，否则库里会存进一个回读时必炸的值）。
+  if (params.customMaxColors !== undefined) {
+    const custom = params.customMaxColors;
+    if (
+      typeof custom !== "number" ||
+      !Number.isInteger(custom) ||
+      custom < 1 ||
+      custom > fullPalette.colors.length
+    ) {
+      throw new Error(
+        `用色数非法：${String(custom)}（只允许 1..${fullPalette.colors.length} 的整数）`,
+      );
+    }
   }
   const { x, y, w, h, rotate } = params.crop;
   for (const [name, value] of Object.entries({ x, y, w, h })) {
@@ -92,7 +114,12 @@ export function toProjectDocument(
     height: pattern.height,
     palette: { id: fullPalette.id, codes },
     grid,
-    params: { longSide: params.longSide, maxColors: params.maxColors, crop: { x, y, w, h, rotate } },
+    params: {
+      longSide: params.longSide,
+      maxColors: params.maxColors,
+      ...(params.customMaxColors === undefined ? {} : { customMaxColors: params.customMaxColors }),
+      crop: { x, y, w, h, rotate },
+    },
   };
 }
 
@@ -122,6 +149,7 @@ export function fromProjectDocument(
   params: {
     longSide: number;
     maxColors: MaxColors;
+    customMaxColors?: number;
     crop: Rect;
     rotation: Rotation;
   };
@@ -158,6 +186,9 @@ export function fromProjectDocument(
     params: {
       longSide: checked.params.longSide,
       maxColors: checked.params.maxColors,
+      ...(checked.params.customMaxColors === undefined
+        ? {}
+        : { customMaxColors: checked.params.customMaxColors }),
       crop: { x, y, width: w, height: h },
       rotation: rotate as Rotation,
     },

@@ -11,7 +11,9 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
   return mount(ParamPanel, {
     props: {
       longSide: 58,
-      maxColors: 32,
+      maxColors: 24,
+      customMaxColors: 32,
+      paletteColorCount: 221,
       crop: { x: 0, y: 0, width: 600, height: 600 },
       rotation: 0,
       paletteName: "MARD 221 色",
@@ -150,33 +152,59 @@ describe("长边输入", () => {
 });
 
 describe("档位与色卡", () => {
-  it("切到 16 色时 emit 的是数字 16", async () => {
+  it("点「16 色」emit 的是数字 16", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='max-colors']").setValue("16");
+    await wrapper.get("[data-testid='max-colors-16']").trigger("click");
     expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([16]);
   });
 
-  it("切到「不限」时 emit 的是 null（不是空串、不是 0）", async () => {
+  it("点「不限」emit 的是字符串 'all'（不是 null、不是空串、不是 0）", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='max-colors']").setValue("");
-    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([null]);
+    await wrapper.get("[data-testid='max-colors-all']").trigger("click");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["all"]);
   });
 
-  // 上面两条只「写」选择框，读不出它有没有显示父级的档位——少了 `:value` 绑定，
-  // 选择框会停在第一个选项上而所有写入型断言照样绿。
-  //
-  // 【修复轮 1】`value === ""` 单独还不够：`selectedIndex === -1`（**一个 option 都没选中**）
-  // 时 `value` 同样是 `""`，所以「不限」那一行必须靠 `selectedIndex` 才分得出「第三个 option
-  // 被选中」与「没选中任何 option」。
-  it("档位选择框显示父级当前的档位（16 / 32 / 不限）", () => {
-    for (const [maxColors, expectedValue, expectedIndex] of [
-      [16, "16", 0],
-      [32, "32", 1],
-      [null, "", 2],
+  it("点「自定义」emit 'custom'，并显示自定义色数输入框", async () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find("[data-testid='custom-max-colors']").exists()).toBe(false);
+    await wrapper.get("[data-testid='max-colors-custom']").trigger("click");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["custom"]);
+    await wrapper.setProps({ maxColors: "custom" });
+    expect(wrapper.find("[data-testid='custom-max-colors']").exists()).toBe(true);
+  });
+
+  it("自定义色数输入合法值时 emit 数字；非法值 emit 不出去且给出中文提示", async () => {
+    const wrapper = mountPanel({ maxColors: "custom", customMaxColors: 32 });
+    const input = wrapper.get("[data-testid='custom-max-colors']");
+    await input.setValue("40");
+    expect(wrapper.emitted("update:customMaxColors")?.at(-1)).toEqual([40]);
+
+    await input.setValue("0");
+    expect(wrapper.emitted("update:customMaxColors")).toHaveLength(1); // 只在合法那一次 emit 过
+    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain(
+      "色数要填 1–221 之间的整数",
+    );
+    await input.setValue("999");
+    expect(wrapper.emitted("update:customMaxColors")).toHaveLength(1);
+  });
+
+  /**
+   * 上面几条只「写」按钮，读不出它有没有显示父级当前的档位——少了 `aria-pressed` 绑定，
+   * 按钮组会全都停在未选中态而所有写入型断言照样绿。
+   */
+  it("按钮组显示父级当前的档位（aria-pressed 精确到那一个）", () => {
+    for (const [maxColors, expected] of [
+      [8, "max-colors-8"],
+      [16, "max-colors-16"],
+      [24, "max-colors-24"],
+      ["all", "max-colors-all"],
+      ["custom", "max-colors-custom"],
     ] as const) {
-      const select = mountPanel({ maxColors }).get("[data-testid='max-colors']");
-      expect((select.element as HTMLSelectElement).value).toBe(expectedValue);
-      expect((select.element as HTMLSelectElement).selectedIndex).toBe(expectedIndex);
+      const wrapper = mountPanel({ maxColors });
+      for (const testid of ["max-colors-8", "max-colors-16", "max-colors-24", "max-colors-all", "max-colors-custom"]) {
+        const pressed = wrapper.get(`[data-testid='${testid}']`).attributes("aria-pressed");
+        expect(pressed).toBe(testid === expected ? "true" : "false");
+      }
     }
   });
 
@@ -277,7 +305,7 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
 
   it("400 × 300 的裁剪在 rotation 1 下两端都换轴（44 × 58）", async () => {
     const crop = { x: 0, y: 0, width: 400, height: 300 };
-    const wrapper = mountPanel({ crop, rotation: 1, longSide: 58, maxColors: null });
+    const wrapper = mountPanel({ crop, rotation: 1, longSide: 58, maxColors: "all" });
 
     const pattern = await generatePattern(
       {
@@ -286,7 +314,7 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
         crop,
         rotation: 1,
         longSide: 58,
-        maxColors: null,
+        maxColors: "all",
       },
       { exactDecoder: solid, fastDecoder: fastForbidden, palette },
     );

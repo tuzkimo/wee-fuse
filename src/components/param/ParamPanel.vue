@@ -18,19 +18,27 @@ import { MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/typ
 const LONG_SIDE_PRESETS = [29, 58, 116] as const;
 
 /**
- * 用色档位的三个选项。`<select>` 的 value 恒为**字符串**，所以「不限」（`MaxColors` 的 `null`）
- * 对应空串。模板里的 `:value` 显式做了 `null → ""` 的映射——Vue 自己也会把 `null`
- * 写成空串（runtime-dom 的 `patchDOMProp`，#11647），但不靠那条隐式行为更不容易读错。
+ * 用色档位的五个选项（C7 规格 §6.3：从 `<select>` 改成按钮组）。
+ *
+ * 人类伙伴的口径：8 / 16 / 24 三档够用；「自定义」应付个别情况；「不限」保留。
+ * 旧的三档（16 / 32 / 不限）在 core 里已经作废（`MaxColors` 只认新枚举），所以界面这层
+ * 不再有「32 色」这个说法。
  */
 const MAX_COLOR_CHOICES = [
-  { value: "16", label: "简单（16 色）" },
-  { value: "32", label: "标准（32 色）" },
-  { value: "", label: "精细（颜色不限）" },
+  { value: 8, label: "8 色" },
+  { value: 16, label: "16 色" },
+  { value: 24, label: "24 色" },
+  { value: "all", label: "不限" },
+  { value: "custom", label: "自定义" },
 ] as const;
 
 const props = defineProps<{
   longSide: number;
   maxColors: MaxColors;
+  /** `maxColors === "custom"` 时的具体色数（由父级的 store 持有）。 */
+  customMaxColors: number;
+  /** 内置色卡的色数：自定义输入框的上界（第 3 处「色数上限」，与 core / store 的两处同源）。 */
+  paletteColorCount: number;
   /** 非空由父级保证（设计规格 §4.1 的可空契约只在页面级）。 */
   crop: Rect;
   rotation: Rotation;
@@ -44,6 +52,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:longSide": [number];
   "update:maxColors": [MaxColors];
+  "update:customMaxColors": [number];
   generate: [];
 }>();
 
@@ -116,14 +125,43 @@ const summary = computed(() => {
  * 支去改一个他刚改对的东西，而真正要他改的是输入框——所以先报本地那条。
  * （用例「本地非法输入与父级原因同时存在时，显示本地那条」钉住这个顺序，含操作数对调的变异。）
  */
-const blockedReason = computed(() => longSideError.value || props.generateBlockedReason);
+const blockedReason = computed(
+  () => longSideError.value || customError.value || props.generateBlockedReason,
+);
 const disabled = computed(() => props.busy || blockedReason.value !== "");
 
-function onMaxColorsChange(event: Event): void {
-  const raw = (event.target as HTMLSelectElement).value;
-  // 只认模板里那三个 option 的值；空串（不限）必须落到 `null`，不能落到 0——`0` 在
-  // `buildPattern` 里是「响亮失败」，在别处则是「静默等价不限」，两种语义都不是这里的意图。
-  emit("update:maxColors", raw === "16" ? 16 : raw === "32" ? 32 : null);
+/**
+ * 自定义色数输入框自己持有的文本（与 `longSide` 同一套手法：**只有一个写入者**，
+ * 父级的值只在它**变化**时覆盖草稿）。
+ */
+const customDraft = ref(String(props.customMaxColors));
+watch(
+  () => props.customMaxColors,
+  (next) => {
+    customDraft.value = String(next);
+  },
+);
+
+/** 解析出的合法自定义色数；非法（空串、小数、越界）为 `null`。 */
+const parsedCustom = computed<number | null>(() => {
+  const value = Number(customDraft.value);
+  return Number.isInteger(value) && value >= 1 && value <= props.paletteColorCount ? value : null;
+});
+
+/**
+ * 自定义那条**本地错误**。它与 `longSideError` 同级：本地错优先于父级原因——用户这一拍刚打的字
+ * 还没回流上去，先报父级的「选区太小」会把他支去改一个刚改对的东西。
+ */
+const customError = computed(() =>
+  props.maxColors === "custom" && parsedCustom.value === null
+    ? `色数要填 1–${props.paletteColorCount} 之间的整数`
+    : "",
+);
+
+function onCustomMaxColorsInput(event: Event): void {
+  customDraft.value = (event.target as HTMLInputElement).value;
+  const value = parsedCustom.value;
+  if (value !== null) emit("update:customMaxColors", value);
 }
 </script>
 
@@ -155,18 +193,40 @@ function onMaxColorsChange(event: Event): void {
       </button>
     </div>
 
-    <label class="block text-lg text-slate-800">
+    <div class="block text-lg text-slate-800">
       用几种颜色
-      <select
-        data-testid="max-colors"
-        class="mt-2 block min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
-        :value="maxColors === null ? '' : String(maxColors)"
-        @change="onMaxColorsChange"
-      >
-        <option v-for="choice in MAX_COLOR_CHOICES" :key="choice.value" :value="choice.value">
+      <!--
+        C7 起是**按钮组**（不是 `<select>`）：档位只有五个，按钮组少一次展开、也不用处理
+        「`<select>` 的值恒为字符串」那层转换（旧实现里 `"32" → 32`、`"" → null` 的映射就是一处
+        静默失败的温床）。`data-tier` 承载真实档位值，事件处理里按它取回。
+      -->
+      <div data-testid="max-colors" class="mt-2 flex flex-wrap gap-2">
+        <button
+          v-for="choice in MAX_COLOR_CHOICES"
+          :key="String(choice.value)"
+          :data-testid="`max-colors-${choice.value}`"
+          :aria-pressed="maxColors === choice.value"
+          class="min-h-12 rounded border border-slate-300 px-4 text-base"
+          :class="maxColors === choice.value ? 'bg-slate-900 text-white' : ''"
+          @click="emit('update:maxColors', choice.value)"
+        >
           {{ choice.label }}
-        </option>
-      </select>
+        </button>
+      </div>
+    </div>
+
+    <label v-if="maxColors === 'custom'" class="block text-lg text-slate-800">
+      自定义色数
+      <input
+        :value="customDraft"
+        data-testid="custom-max-colors"
+        type="number"
+        inputmode="numeric"
+        :min="1"
+        :max="paletteColorCount"
+        class="mt-2 block min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
+        @input="onCustomMaxColorsInput"
+      />
     </label>
 
     <div data-testid="palette-card" class="rounded border border-slate-200 bg-white p-4">

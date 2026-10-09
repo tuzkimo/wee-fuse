@@ -81,6 +81,8 @@ export interface GenerateRequest {
   /** 成品长边豆数。 */
   readonly longSide: number;
   readonly maxColors: MaxColors;
+  /** 仅当 `maxColors === "custom"` 时有意义（C7 §6.1）。 */
+  readonly customMaxColors?: number;
 }
 
 /**
@@ -119,7 +121,7 @@ export async function generatePattern(
   request: GenerateRequest,
   deps: GenerateDeps,
 ): Promise<Pattern> {
-  const { crop, rotation, longSide, maxColors, sourceSize } = request;
+  const { crop, rotation, longSide, maxColors, customMaxColors, sourceSize } = request;
 
   // 源图尺寸：整数且 ≥1（AGENTS.md「入口校验」的网格 / 尺寸类口径）。放在最前面是因为下面的
   // 越界判定要用它：源图宽高为 `NaN` 时，**涉及它的那一条**越界不等式恒为假、会静默放行。
@@ -190,5 +192,5 @@ export async function generatePattern(
   // rotation === 0 时 rotateGrid 返回入参本身（同一引用）。buildPattern 只读网格的
   // rgb / filled，不会就地改写，故这里安全；下游任何新增的写操作都要先复制。
   const rotated = rotateGrid(sampled, rotation);
-  return buildPattern(rotated, deps.palette, { maxColors });
+  return buildPattern(rotated, deps.palette, { maxColors, customMaxColors });
 }

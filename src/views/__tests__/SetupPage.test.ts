@@ -236,7 +236,7 @@ describe("入口守卫与准备阶段", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: { blob: FILE, type: "image/png", name: "旧图.png" },
-      params: { longSide: 116, maxColors: null, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
+      params: { longSide: 116, maxColors: "all", crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
       meta: { id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" },
     });
 
@@ -398,9 +398,12 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     const metas = await store.list();
     expect(metas).toHaveLength(1);
     const record = await store.get(metas[0]!.id);
+    // C7 起 `customMaxColors` 与档位一起落盘（默认 32）：它在其它档位下不参与生成，但**必须存着**
+    // ——用户来回切到「自定义」时那个数字还在。
     expect(record?.doc.params).toEqual({
       longSide: 58,
-      maxColors: 32,
+      maxColors: 16,
+      customMaxColors: 32,
       crop: { x: 200, y: 100, w: 400, h: 300, rotate: 1 },
     });
 
@@ -490,21 +493,41 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     }
   });
 
-  it("档位三档落盘分别是 16 / 32 / null（B1 的三条断言在这里的新家）", async () => {
+  it("档位五档落盘分别是 8 / 16 / 24 / all / custom（含自定义色数的数值）", async () => {
     stubPlatform();
     seedDraft();
     const wrapper = mount(SetupPage);
     await flushPromises();
     const store = (await import("@/services/projectStore")).getProjectStore();
 
-    for (const [choice, expected] of [["16", 16], ["32", 32], ["", null]] as const) {
-      await wrapper.get("[data-testid='max-colors']").setValue(choice);
+    // C7：档位从按钮组读（`max-colors-<档位>`），旧枚举的 16 / 32 / null 已作废
+    for (const [testid, expected] of [
+      ["max-colors-8", 8],
+      ["max-colors-16", 16],
+      ["max-colors-24", 24],
+      ["max-colors-all", "all"],
+    ] as const) {
+      await wrapper.get(`[data-testid='${testid}']`).trigger("click");
       await wrapper.get("[data-testid='generate']").trigger("click");
       await flushPromises();
       const id = (await store.list())[0]!.id;
       expect((await store.get(id))?.doc.params.maxColors).toBe(expected);
     }
-    // 三次生成落在同一条记录上（重跑的语义），不是三条。
+
+    // 「自定义」档位：**数值也要落盘**（只存档位不存数值，回读时就生成不出用户要的色数）
+    await wrapper.get("[data-testid='max-colors-custom']").trigger("click");
+    await flushPromises();
+    await wrapper.get("[data-testid='custom-max-colors']").setValue("40");
+    // `setValue` 会触发 input 事件 ⇒ 草稿层 emit `update:customMaxColors` ⇒ store 里的数值跟着变
+    expect(useDraft().customMaxColors).toBe(40);
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    const id = (await store.list())[0]!.id;
+    const doc = (await store.get(id))?.doc;
+    expect(doc?.params.maxColors).toBe("custom");
+    expect(doc?.params.customMaxColors).toBe(40);
+
+    // 五次生成落在同一条记录上（重跑的语义），不是五条。
     expect(await store.list()).toHaveLength(1);
   });
 
@@ -865,7 +888,7 @@ describe("保存失败与重试", () => {
     expect(draft.crop).toEqual({ x: 200, y: 100, width: 400, height: 300 });
     expect(draft.rotation).toBe(1);
     expect(draft.longSide).toBe(58);
-    expect(draft.maxColors).toBe(32);
+    expect(draft.maxColors).toBe(16);
     expect(draft.preview).toBeNull();
   });
 

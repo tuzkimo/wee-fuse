@@ -34,7 +34,7 @@ function makePattern(): Pattern {
 /** 运行期参数：注意 `crop.width/height` 与独立的 `rotation`。 */
 const PARAMS: RuntimeParams = {
   longSide: 40,
-  maxColors: 32,
+  maxColors: 16,
   crop: { x: 1, y: 2, width: 30, height: 20 },
   rotation: 3,
 };
@@ -42,7 +42,7 @@ const PARAMS: RuntimeParams = {
 /** 同一组参数的**落盘**形状：`crop.w/h/rotate`。两者由 store 负责搬运。 */
 const DOC_PARAMS: ProjectParams = {
   longSide: 40,
-  maxColors: 32,
+  maxColors: 16,
   crop: { x: 1, y: 2, w: 30, h: 20, rotate: 3 },
 };
 
@@ -90,7 +90,7 @@ describe("工程会话 store", () => {
     // 子集下标 → 全色卡下标：降序写入的色号必须还原成 [7, 5, EMPTY]
     expect([...(session.pattern?.cells ?? [])]).toEqual([7, 5, EMPTY]);
     expect(session.params?.longSide).toBe(40);
-    expect(session.params?.maxColors).toBe(32);
+    expect(session.params?.maxColors).toBe(16);
     expect(session.params?.crop).toEqual({ x: 1, y: 2, width: 30, height: 20 });
     expect(session.params?.rotation).toBe(3);
     // markRaw：图纸持有 Uint16Array，被 Vue 深度代理纯属浪费（JSDoc 的承诺）
@@ -191,7 +191,7 @@ describe("工程会话 store", () => {
     // 对显式常量断言，不做前后对称比较：`width` 写成 `w` 之外的位置错位都在这里红
     expect(saved?.doc.params).toEqual({
       longSide: 40,
-      maxColors: 32,
+      maxColors: 16,
       crop: { x: 1, y: 2, w: 30, h: 20, rotate: 3 },
     });
     expect(saved?.doc.grid).toEqual([1, 0, EMPTY]);

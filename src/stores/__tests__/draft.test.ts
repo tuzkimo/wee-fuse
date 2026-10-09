@@ -56,14 +56,14 @@ describe("adoptImage：新图进来时的初始态", () => {
   it("默认参数是 58 颗 / 32 色（字面量断言，常量被改坏时它会红）", () => {
     const draft = seedImage();
     expect(draft.longSide).toBe(58);
-    expect(draft.maxColors).toBe(32);
+    expect(draft.maxColors).toBe(16);
   });
 
   it("换一张图会清掉上一次的 rerunOf、错误与改过的参数", () => {
     const draft = seedImage();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 116, maxColors: null, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 2 },
+      params: { longSide: 116, maxColors: "all", crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 2 },
       meta: { id: "p1", name: "旧图", createdAt: "2026-10-01T00:00:00.000Z" },
     });
     draft.setError("上一次的错误");
@@ -74,7 +74,7 @@ describe("adoptImage：新图进来时的初始态", () => {
     expect(draft.rerunOf).toBeNull();
     expect(draft.error).toBe("");
     expect(draft.longSide).toBe(58);
-    expect(draft.maxColors).toBe(32);
+    expect(draft.maxColors).toBe(16);
   });
 
   it("非法尺寸在写操作之前抛错（不把上一份草稿冲成半截）", () => {
@@ -115,7 +115,7 @@ describe("generated 的失效规则", () => {
     draft.setLongSide(116);
     expect(draft.generated).toBe(false);
     draft.markGenerated();
-    draft.setMaxColors(null);
+    draft.setMaxColors("all");
     expect(draft.generated).toBe(false);
   });
 
@@ -211,7 +211,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 116, maxColors: null, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
+      params: { longSide: 116, maxColors: "all", crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
       meta: { id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" },
     });
 
@@ -225,7 +225,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     expect(draft.crop).toEqual({ x: 3, y: 5, width: 400, height: 200 });
     expect(draft.rotation).toBe(3);
     expect(draft.longSide).toBe(116);
-    expect(draft.maxColors).toBeNull();
+    expect(draft.maxColors).toBe("all");
     expect(draft.rerunOf).toEqual({ id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" });
     // 预览不在编辑器里解码：交给 SetupPage 挂载时补（规格 §7）。
     expect(draft.preview).toBeNull();
@@ -237,7 +237,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 58, maxColors: 32, crop: { x: -50, y: 900, width: 1200, height: 100 }, rotation: 0 },
+      params: { longSide: 58, maxColors: 24, crop: { x: -50, y: 900, width: 1200, height: 100 }, rotation: 0 },
       meta: { id: "p2", name: "手改坏的文件", createdAt: "2026-10-01T00:00:00.000Z" },
     });
     draft.setSourceSize({ width: 800, height: 600 });
@@ -254,7 +254,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
         source: OTHER_SOURCE,
         params: {
           longSide: 116,
-          maxColors: null,
+          maxColors: "all",
           crop: { x: 3, y: 5, width: 400, height: 200 },
           rotation: 7 as unknown as 0,
         },
@@ -274,7 +274,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     expect(() =>
       draft.adoptProject({
         source: SOURCE,
-        params: { longSide: 58, maxColors: 32, crop: { x: Number.NaN, y: 0, width: 100, height: 100 }, rotation: 0 },
+        params: { longSide: 58, maxColors: 24, crop: { x: Number.NaN, y: 0, width: 100, height: 100 }, rotation: 0 },
         meta: { id: "p3", name: "坏选区", createdAt: "2026-10-01T00:00:00.000Z" },
       }),
     ).toThrow(/选区/);
@@ -307,10 +307,15 @@ describe("其他入口校验（规格 §12）", () => {
     }
   });
 
-  it("档位只允许 16 / 32 / null", () => {
+  it("档位只允许 8 / 16 / 24 / custom / all（旧枚举 32 / null 一律拒）", () => {
     const draft = seedImage();
-    expect(() => draft.setMaxColors(8 as unknown as 16)).toThrow(/档位/);
-    expect(() => draft.setMaxColors(Number.NaN as unknown as 16)).toThrow(/档位/);
+    for (const bad of [32, null, 0, Number.NaN, "16"]) {
+      expect(() => draft.setMaxColors(bad as unknown as 16)).toThrow(/档位/);
+    }
+    // 三个预设档 + 不限 + 自定义都放行
+    for (const good of [8, 16, 24, "all", "custom"] as const) {
+      expect(() => draft.setMaxColors(good)).not.toThrow();
+    }
   });
 
   it("旋转 / 比例 / 缩放 / 平移的非法值抛错", () => {
@@ -425,7 +430,7 @@ describe("releasePreview / reset", () => {
     expect(draft.zoom).toBe("fit");
     expect(draft.pan).toEqual({ x: 0, y: 0 });
     expect(draft.longSide).toBe(58);
-    expect(draft.maxColors).toBe(32);
+    expect(draft.maxColors).toBe(16);
     expect(draft.stage).toBe("crop");
     expect(draft.generated).toBe(false);
     expect(draft.busy).toBe(false);

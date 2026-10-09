@@ -221,7 +221,7 @@ describe("buildPattern", () => {
       [0, 250, 0],
       [0, 0, 250],
     ]);
-    const pattern = buildPattern(g, palette, { maxColors: null });
+    const pattern = buildPattern(g, palette, { maxColors: "all" });
     expect(codeAt(pattern, codes, 0)).toBe("A3");
     expect(codeAt(pattern, codes, 1)).toBe("A4");
     expect(codeAt(pattern, codes, 2)).toBe("A5");
@@ -261,7 +261,7 @@ describe("buildPattern（追加：maxColors=null 必须真的跳过聚类）", (
 
     // 「不限」的正确语义是跳过 medianCut、在全色卡里取最近色。
     // 若把 null 当成 16 档位走聚类，这条会红：用色被压到 ≤16。
-    const unlimited = buildPattern(g, widePalette, { maxColors: null });
+    const unlimited = buildPattern(g, widePalette, { maxColors: "all" });
     expect([...unlimited.cells]).toEqual(WIDE_RGB.map((_, i) => i));
     expect(usedOf(unlimited).size).toBe(24);
 
@@ -274,7 +274,7 @@ describe("buildPattern（追加：maxColors=null 必须真的跳过聚类）", (
 
   it("32 档位同样把 24 个色号原样保留（桶数少于档位时不切割）", () => {
     const g = grid(24, 1, WIDE_RGB);
-    const pattern = buildPattern(g, widePalette, { maxColors: 32 });
+    const pattern = buildPattern(g, widePalette, { maxColors: 24 });
     expect([...pattern.cells]).toEqual(WIDE_RGB.map((_, i) => i));
   });
 
@@ -318,41 +318,61 @@ describe("buildPattern（追加：逐格阶段必须用 ΔE76，不是 CIEDE2000
     // maxColors=null → 两个色号都是候选。ΔE76 取青（色卡下标 0）；
     // 若把 build.ts 里的度量换成 cie2000，会取紫（下标 1）→ 断言转红。
     const g = grid(1, 1, [[0, 34, 34]]);
-    expect([...buildPattern(g, metricPalette, { maxColors: null }).cells]).toEqual([0]);
+    expect([...buildPattern(g, metricPalette, { maxColors: "all" }).cells]).toEqual([0]);
   });
 });
 
 /**
- * —— 最终审查 F2 追加 ——
+ * —— 最终审查 F2 追加；C7 按新枚举改写 ——
  * `maxColors` 是规格 §4.4 里**要落盘并回读**的 `params.maxColors`，属外部输入；类型
- * `16 | 32 | null` 只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转。修复前实测：
+ * `8 | 16 | 24 | "custom" | "all"` 只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转。实测过的形态：
  * `NaN` → `medianCut` 的 `while (boxes.length < NaN)` 一次都不进入，全部桶当一个盒子 →
  * **静默产出「整图仅 1 色」的图纸**；`0` / `-1` → 走 `maxColors <= 0` 早退 → 静默等价
- * 「不限」，与 `16 | 32` 的档位语义冲突；`16.5` → 可切出 17 个簇，超出档位；
- * `Infinity` → 每桶各自成簇（计划「任务 8 使用 medianCut 时的注意事项」里 7k → 7.2M
- * 的 CIEDE2000 悬崖），此前没有任何运行时防线。
+ * 「不限」，与档位语义冲突；`16.5` → 可切出 17 个簇，超出档位；
+ * `Infinity` → 每桶各自成簇（7k → 7.2M 的 CIEDE2000 悬崖）。
+ *
+ * **2026-10-09（C7）**：旧枚举的 `32` / `null` 也归入「一律抛错」——人类伙伴裁定不做旧数据兼容。
  */
 describe("buildPattern（追加：用色档位入口校验）", () => {
-  it("非 16 / 32 / null 的档位一律抛错，而不是静默产出单色图纸或静默「不限」", () => {
+  it("非法档位一律抛错，而不是静默产出单色图纸或静默「不限」", () => {
     const g = grid(2, 1, [
       [250, 0, 0],
       [0, 0, 250],
     ]);
-    const bads: number[] = [Number.NaN, 0, -1, 16.5, Number.POSITIVE_INFINITY, 8];
+    // 含旧枚举的 32 / null：它们在 C7 起也是非法值（不做兼容）
+    const bads = [Number.NaN, 0, -1, 16.5, Number.POSITIVE_INFINITY, 32, null, "16"];
     for (const bad of bads) {
       expect(() => buildPattern(g, palette, { maxColors: bad as MaxColors })).toThrow(/用色档位非法/);
     }
   });
 
-  it("三个合法档位照常通过（16 / 32 / null 各自的语义不变）", () => {
+  it("三个预设档 + 自定义 + 不限都照常通过", () => {
     const g = grid(3, 1, [
       [250, 0, 0],
       [0, 250, 0],
       [0, 0, 250],
     ]);
+    expect([...buildPattern(g, palette, { maxColors: 8 }).cells]).toEqual([2, 3, 4]);
     expect([...buildPattern(g, palette, { maxColors: 16 }).cells]).toEqual([2, 3, 4]);
-    expect([...buildPattern(g, palette, { maxColors: 32 }).cells]).toEqual([2, 3, 4]);
-    expect([...buildPattern(g, palette, { maxColors: null }).cells]).toEqual([2, 3, 4]);
+    expect([...buildPattern(g, palette, { maxColors: 24 }).cells]).toEqual([2, 3, 4]);
+    expect([...buildPattern(g, palette, { maxColors: "all" }).cells]).toEqual([2, 3, 4]);
+    expect([
+      ...buildPattern(g, palette, { maxColors: "custom", customMaxColors: 5 }).cells,
+    ]).toEqual([2, 3, 4]);
+  });
+
+  it("自定义色数越界 / 非整数 / 缺失都响亮失败（消息与档位那条分开）", () => {
+    const g = grid(2, 1, [
+      [250, 0, 0],
+      [0, 0, 250],
+    ]);
+    for (const customMaxColors of [0, -1, 1.5, Number.NaN, 999]) {
+      expect(() => buildPattern(g, palette, { maxColors: "custom", customMaxColors })).toThrow(
+        /用色数非法/,
+      );
+    }
+    // 缺失：`undefined` 不是「用默认值」，而是「档位声明了自定义却没给数」——配置错，要响
+    expect(() => buildPattern(g, palette, { maxColors: "custom" })).toThrow(/用色数非法/);
   });
 });
 

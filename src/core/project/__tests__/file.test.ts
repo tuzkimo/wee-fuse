@@ -157,12 +157,19 @@ describe("toProjectDocument", () => {
     expect(() => toProjectDocument(bad, palette, params)).toThrow(/长度/);
   });
 
-  it("非法参数抛错（长边越界 / 档位非法 / 旋转非法）", () => {
+  it("非法参数抛错（长边越界 / 档位非法 / 自定义色数越界 / 旋转非法）", () => {
     const p = pattern3x3();
     expect(() => toProjectDocument(p, palette, { ...params, longSide: 117 })).toThrow(/长边/);
+    // **C7 起旧枚举的 32 / null 也是非法值**（不做旧数据兼容，见 C7 规格 §6.2）
+    for (const bad of [32, null, 0, "16"]) {
+      expect(() =>
+        toProjectDocument(p, palette, { ...params, maxColors: bad as unknown as 16 }),
+      ).toThrow(/档位/);
+    }
+    // 自定义色数只在 `"custom"` 档位下有意义，但**写了就必须合法**（上界是色卡色数）
     expect(() =>
-      toProjectDocument(p, palette, { ...params, maxColors: 8 as unknown as 16 }),
-    ).toThrow(/档位/);
+      toProjectDocument(p, palette, { ...params, customMaxColors: 999 }),
+    ).toThrow(/用色数非法/);
     expect(() =>
       toProjectDocument(p, palette, { ...params, crop: { ...params.crop, rotate: 4 } }),
     ).toThrow(/旋转/);
@@ -244,20 +251,20 @@ describe("fromProjectDocument", () => {
     // 顺带钉住 `maxColors` / `longSide` 这两个**此前没有任何断言读过**的回读字段。
     const asymmetric: ProjectParams = {
       longSide: 8,
-      maxColors: 32,
+      maxColors: 24,
       crop: { x: 3, y: 5, w: 12, h: 7, rotate: 2 },
     };
     const doc = toProjectDocument(p, palette, asymmetric);
     expect(doc.width).toBe(3);
     expect(doc.height).toBe(2);
     expect(doc.params.longSide).toBe(8);
-    expect(doc.params.maxColors).toBe(32);
+    expect(doc.params.maxColors).toBe(24);
     const reparsed: unknown = JSON.parse(JSON.stringify(doc));
     const back = fromProjectDocument(reparsed, palette);
     expect(back.pattern.width).toBe(3);
     expect(back.pattern.height).toBe(2);
     expect(back.params.longSide).toBe(8);
-    expect(back.params.maxColors).toBe(32);
+    expect(back.params.maxColors).toBe(24);
     expect(back.params.crop).toEqual({ x: 3, y: 5, width: 12, height: 7 });
     expect(back.params.rotation).toBe(2);
     expect([...back.pattern.cells]).toEqual([...p.cells]);
@@ -283,15 +290,27 @@ describe("fromProjectDocument", () => {
     expect(loaded).toEqual({ x: -8.5, y: 0, width: 12, height: 12 });
   });
 
-  it("maxColors = null（不限色）往返后仍是 null，不静默回落成 16", () => {
+  it("maxColors = 'all'（不限色）往返后仍是 'all'，不静默回落成 16", () => {
     // 此前只断言过 16 与 32：`checked.params.maxColors ?? 16` 这类静默回落会全绿。
+    // C7 起「不限」的表示是字符串 `"all"`（旧枚举的 `null` 已作废，见 C7 规格 §6.2）。
     const p = pattern3x3();
-    const doc = toProjectDocument(p, palette, { ...params, maxColors: null });
-    expect(doc.params.maxColors).toBeNull();
+    const doc = toProjectDocument(p, palette, { ...params, maxColors: "all" });
+    expect(doc.params.maxColors).toBe("all");
     const reparsed: unknown = JSON.parse(JSON.stringify(doc));
     const back = fromProjectDocument(reparsed, palette);
-    expect(back.params.maxColors).toBeNull();
+    expect(back.params.maxColors).toBe("all");
     expect([...back.pattern.cells]).toEqual([...p.cells]);
+  });
+
+  it("maxColors = 'custom' 时自定义色数一起往返（不能只存档位不存数值）", () => {
+    const p = pattern3x3();
+    const doc = toProjectDocument(p, palette, { ...params, maxColors: "custom", customMaxColors: 3 });
+    expect(doc.params.maxColors).toBe("custom");
+    expect(doc.params.customMaxColors).toBe(3);
+    const reparsed: unknown = JSON.parse(JSON.stringify(doc));
+    const back = fromProjectDocument(reparsed, palette);
+    expect(back.params.maxColors).toBe("custom");
+    expect(back.params.customMaxColors).toBe(3);
   });
 
   it("用到全色卡下标 0（A1）时往返仍忠实，不被 falsy 判断当成空格跳过", () => {

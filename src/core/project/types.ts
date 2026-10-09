@@ -24,6 +24,8 @@ export interface CropRect {
 export interface ProjectParams {
   readonly longSide: number;
   readonly maxColors: MaxColors;
+  /** 仅当 `maxColors === "custom"` 时有意义（C7 §6.1）；其它档位下原样存着，便于来回切档位。 */
+  readonly customMaxColors?: number;
   readonly crop: CropRect;
 }
 
@@ -160,8 +162,23 @@ export function validateProjectDocument(doc: unknown, fullPalette: Palette): Pro
     throw new Error(`长边豆数必须在 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 之间（当前 ${String(longSide)}）`);
   }
   const maxColors = params.maxColors;
-  if (maxColors !== 16 && maxColors !== 32 && maxColors !== null) {
-    throw new Error(`用色档位非法：${String(maxColors)}（只允许 16 / 32 / null）`);
+  // **只认新枚举**（C7 规格 §6.2）：旧值 `32` / `null` 一律响亮失败，不做迁移。
+  if (maxColors !== 8 && maxColors !== 16 && maxColors !== 24 && maxColors !== "custom" && maxColors !== "all") {
+    throw new Error(`用色档位非法：${String(maxColors)}（只允许 8 / 16 / 24 / "custom" / "all"）`);
+  }
+  // 自定义色数只在 `"custom"` 档位下参与校验（其它档位下它不参与生成，非法值不该拦住整个工程）。
+  const customMaxColors = params.customMaxColors;
+  if (customMaxColors !== undefined) {
+    if (
+      typeof customMaxColors !== "number" ||
+      !Number.isInteger(customMaxColors) ||
+      customMaxColors < 1 ||
+      customMaxColors > fullPalette.colors.length
+    ) {
+      throw new Error(
+        `用色数非法：${String(customMaxColors)}（只允许 1..${fullPalette.colors.length} 的整数）`,
+      );
+    }
   }
 
   const cropRaw = requireObject(params.crop, "裁剪区域");
@@ -184,6 +201,11 @@ export function validateProjectDocument(doc: unknown, fullPalette: Palette): Pro
     height,
     palette: { id: fullPalette.id, codes },
     grid: cells,
-    params: { longSide, maxColors, crop: { x, y, w, h, rotate } },
+    params: {
+      longSide,
+      maxColors,
+      ...(customMaxColors === undefined ? {} : { customMaxColors }),
+      crop: { x, y, w, h, rotate },
+    },
   };
 }

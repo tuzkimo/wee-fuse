@@ -292,8 +292,9 @@ describe("validateProjectDocument", () => {
     }
   });
 
-  it("params.maxColors 只允许 16 / 32 / null", () => {
-    for (const bad of [8, 0, 16.5, Number.NaN, Number.POSITIVE_INFINITY, "16"]) {
+  it("params.maxColors 只允许 8 / 16 / 24 / 'custom' / 'all'（旧枚举 32 / null 一律拒）", () => {
+    // C7 规格 §6.2：开发阶段清库测试，**不做旧数据兼容** ⇒ 旧值也是非法值。
+    for (const bad of [0, 16.5, Number.NaN, Number.POSITIVE_INFINITY, "16", 32, null]) {
       expect(() =>
         validateProjectDocument(
           { ...validDoc(), params: { ...(validDoc().params as object), maxColors: bad } },
@@ -301,7 +302,7 @@ describe("validateProjectDocument", () => {
         ),
       ).toThrow(/档位/);
     }
-    for (const good of [16, 32, null]) {
+    for (const good of [8, 16, 24, "custom", "all"]) {
       expect(() =>
         validateProjectDocument(
           { ...validDoc(), params: { ...(validDoc().params as object), maxColors: good } },
@@ -309,17 +310,38 @@ describe("validateProjectDocument", () => {
         ),
       ).not.toThrow();
     }
-    // 32 与 null 都要真落到返回值上（只断言 not.toThrow 会漏掉「被换成 16」这类静默改写）
-    const m32 = validateProjectDocument(
-      { ...validDoc(), params: { ...(validDoc().params as object), maxColors: 32 } },
-      palette,
-    );
-    expect(m32.params.maxColors).toBe(32);
-    const mNull = validateProjectDocument(
-      { ...validDoc(), params: { ...(validDoc().params as object), maxColors: null } },
-      palette,
-    );
-    expect(mNull.params.maxColors).toBeNull();
+    // 每个合法值都要真落到返回值上（只断言 not.toThrow 会漏掉「被换成 16」这类静默改写）
+    for (const good of [8, 16, 24, "custom", "all"] as const) {
+      const checked = validateProjectDocument(
+        { ...validDoc(), params: { ...(validDoc().params as object), maxColors: good } },
+        palette,
+      );
+      expect(checked.params.maxColors).toBe(good);
+    }
+  });
+
+  it("params.customMaxColors 可缺省；写了就必须是 1..色卡色数的整数", () => {
+    const withCustom = (customMaxColors: unknown) =>
+      validateProjectDocument(
+        {
+          ...validDoc(),
+          params: { ...(validDoc().params as object), maxColors: "custom", customMaxColors },
+        },
+        palette,
+      );
+    // 缺省合法（旧工程 / 非 custom 档位都不带这个字段）
+    expect(() =>
+      validateProjectDocument(
+        { ...validDoc(), params: { ...(validDoc().params as object), maxColors: "custom" } },
+        palette,
+      ),
+    ).not.toThrow();
+    for (const good of [1, 3, palette.colors.length]) {
+      expect(withCustom(good).params.customMaxColors).toBe(good);
+    }
+    for (const bad of [0, -1, 1.5, Number.NaN, palette.colors.length + 1, 999]) {
+      expect(() => withCustom(bad)).toThrow(/用色数非法/);
+    }
   });
 
   it("params.crop 的 x/y 必须有限，w/h 必须有限且 ≥1，rotate 必须是 0–3 的整数", () => {

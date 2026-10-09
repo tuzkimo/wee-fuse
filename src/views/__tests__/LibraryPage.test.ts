@@ -321,7 +321,7 @@ describe("LibraryPage", () => {
       doc: toProjectDocument(
         { width: 2, height: 1, paletteId: getBuiltinPalette().id, cells: new Uint16Array([0, 0]) },
         getBuiltinPalette(),
-        { longSide: 58, maxColors: null, crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
+        { longSide: 58, maxColors: "all", crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
       ),
       source: null,
     });
@@ -359,7 +359,7 @@ describe("LibraryPage", () => {
         doc: toProjectDocument(
           { width: 2, height: 1, paletteId: getBuiltinPalette().id, cells: new Uint16Array([0, 0]) },
           getBuiltinPalette(),
-          { longSide: 58, maxColors: null, crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
+          { longSide: 58, maxColors: "all", crop: { x: 0, y: 0, w: 2, h: 1, rotate: 0 } },
         ),
         source: null,
       });

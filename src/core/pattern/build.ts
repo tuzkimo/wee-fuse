@@ -74,8 +74,32 @@ export function computeDecodeSize(
 }
 
 export interface BuildOptions {
-  /** 用色档位：16 / 32 / null（不限）。 */
+  /** 用色档位：8 / 16 / 24 三个预设档、`"custom"`（配合 `customMaxColors`）或 `"all"`（不限）。 */
   readonly maxColors: MaxColors;
+  /** **仅当 `maxColors === "custom"` 时被读**；必须是 `1..色卡色数` 的整数。 */
+  readonly customMaxColors?: number;
+}
+
+/**
+ * 档位守卫（运行期）。类型只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转——它是要落盘并回读的
+ * `params.maxColors`。**只认新枚举**，旧值（`16 | 32 | null` 里的 `32` / `null`）在这里响亮失败。
+ */
+function requireMaxColors(value: MaxColors): MaxColors {
+  if (value !== 8 && value !== 16 && value !== 24 && value !== "custom" && value !== "all") {
+    throw new Error(`用色档位非法：${String(value)}（只允许 8 / 16 / 24 / "custom" / "all"）`);
+  }
+  return value;
+}
+
+/**
+ * 自定义色数守卫。上界是**色卡色数**（要的色比色卡还多没有意义，而 `medianCut` 在
+ * `maxColors` 超过实际色数时会提前收敛——静默接受会让用户以为「设了 300」真的生效了）。
+ */
+function requireCustomMaxColors(value: number | undefined, paletteSize: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > paletteSize) {
+    throw new Error(`用色数非法：${String(value)}（只允许 1..${paletteSize} 的整数）`);
+  }
+  return value;
 }
 
 /**
@@ -83,26 +107,25 @@ export interface BuildOptions {
  *
  * 两段式：先用聚类决定「选哪些色号」，再逐格在选中的色号里取最近色。
  *
- * - 选色阶段用 CIEDE2000：调用次数是「簇数 × 色卡色数」（最多 32 × 221 ≈ 7000），
+ * - 选色阶段用 CIEDE2000：调用次数是「簇数 × 色卡色数」（最多 24 × 221 ≈ 5300），
  *   负担得起最准的度量。
- * - 逐格阶段用 ΔE76：调用次数是「格子数 × 选中色数」（4 万 × ≤32 ≈ 128 万），
+ * - 逐格阶段用 ΔE76：调用次数是「格子数 × 选中色数」（4 万 × ≤221 ≈ 880 万），
  *   用 CIEDE2000 会慢一个数量级，而候选色号彼此距离较大，排序结果几乎无差别。
  *
- * maxColors 为 null 时不聚类，直接在全色卡里逐格取最近色——这是「不限」的真实语义，
+ * `"all"` 时不聚类，直接在全色卡里逐格取最近色——这是「不限」的真实语义，
  * 代价是用色数可能很多，界面需要如实展示给用户。
  *
- * **maxColors 必须是 `16 | 32 | null` 三者之一**，运行期也校验（类型只挡得住 TS 调用方，
- * 挡不住 `JSON.parse` + 强转——它是规格 §4.4 里要落盘并回读的 `params.maxColors`）：
- * - `NaN`：`medianCut` 的 `while (boxes.length < NaN)` 一次都不进入，全部桶当一个盒子 →
- *   **静默产出「整图仅 1 色」的图纸**；
- * - `0` / 负数：走 `medianCut` 的 `maxColors <= 0` 早退分支 → 静默等价「不限」，与档位语义冲突；
- * - `16.5` / `Infinity`：非整数值可切出超出档位的簇数；`Infinity` 更是让**每个桶各自成簇**
- *   （最多 32768 个），CIEDE2000 调用量从约 7k 暴涨到约 7.2M（计划的任务 8 注意事项）。
+ * **两个守卫都排在**任何写操作之前**：`NaN` / `0` / 负数 / 小数的历史教训见 C7 规格 §6.1
+ * （`NaN` 会让 `medianCut` 静默产出「整图仅 1 色」；`0` 会静默等价「不限」）。
  */
 export function buildPattern(grid: SampledGrid, palette: Palette, options: BuildOptions): Pattern {
-  if (options.maxColors !== null && options.maxColors !== 16 && options.maxColors !== 32) {
-    throw new Error(`用色档位非法：${String(options.maxColors)}（只允许 16 / 32 / null）`);
-  }
+  const tier = requireMaxColors(options.maxColors);
+  const clusterCount =
+    tier === "all"
+      ? null
+      : tier === "custom"
+        ? requireCustomMaxColors(options.customMaxColors, palette.colors.length)
+        : tier;
   const runtime: PaletteRuntime = createPaletteRuntime(palette);
   const cellCount = grid.width * grid.height;
   const cells = new Uint16Array(cellCount).fill(EMPTY);
@@ -129,9 +152,9 @@ export function buildPattern(grid: SampledGrid, palette: Palette, options: Build
   }
 
   const candidates =
-    options.maxColors === null
+    clusterCount === null
       ? palette.colors.map((_, i) => i)
-      : clustersToPaletteIndices(medianCut(histogram, options.maxColors), palette);
+      : clustersToPaletteIndices(medianCut(histogram, clusterCount), palette);
 
   const candidateLabs: Lab[] = candidates.map((i) => runtime.labs[i] as Lab);
 
