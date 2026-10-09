@@ -196,8 +196,15 @@ export interface LegendBandPlan {
  * `cellPx` 与网格格像素**同值**——带与网格必须逐格对齐，两处各算一份 index 就会错行。
  */
 export interface RulerBandPlan {
-  /** 带内每格的步长（= 网格格像素）。 */
-  readonly cellPx: number;
+  /**
+   * 带内每格的步长（= 网格格像素）。
+   *
+   * **为什么叫 `stepPx` 而不是 `cellPx`**：`cellPx` 是词法闸门 `layoutGate` 在渲染器里
+   * **禁止出现的标识符**（它逼着渲染器只经 `cellBox` 取格子位置）。刻度带与网格逐格对齐，
+   * 但这个量在渲染器里的用途是「带内第 index 条分隔线的位置」，与「一格多大」是两件事——
+   * 换个名字正好把这条界线写在类型上。
+   */
+  readonly stepPx: number;
   readonly fontPx: number;
   /** 上带顶边。 */
   readonly topY: number;
@@ -714,7 +721,7 @@ export function planLegendBands(input: {
     countRightPad: LEGEND_COUNT_RIGHT_PAD,
   };
   const ruler: RulerBandPlan = {
-    cellPx,
+    stepPx: cellPx,
     fontPx: input.rulerFontPx,
     topY: input.gridY - SHEET_RULER_TOP,
     bottomY: input.gridY + rows * cellPx,

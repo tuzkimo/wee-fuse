@@ -186,31 +186,38 @@ describe("renderBoardPageBlob", () => {
   });
 
   /**
-   * **两个用量入参的语义分工**（2026-10-08 控制者裁决）：`input.usages` 是**全图**用量
-   * （`sheetMeta` 的 `totalBeads` / `colorCount` 与页脚那句「… 全图 M 颗（K 种色）」都取自它），
-   * 第二个实参才是**本页**用量（用料条）。把本页用量塞进 `input.usages` 会让页脚**静默**把本页数
-   * 标成全图数——这条用例就是那个接线错误的判据。
+   * **两个用量入参的语义分工**（2026-10-08 裁决，C7 起判据换了一处）：
+   * `input.usages` 是**全图**用量、第二个实参才是**本页**用量（用料条）。
    *
-   * **本用例只断页脚那一半**（标题据此收窄，2026-10-08）：用料条那一半（本页独有的色号必须出现、
-   * 只有别的页才有的色号不许出现）由面板层的接线用例覆盖——`ExportPanel.test.ts` 的「打印页的用料条
-   * 只列本页用到的色」。这里不再重复一遍。
+   * **C7 改了什么**：图上不再有页脚那句「本页 N 颗 · 全图 M 颗（K 种色）」——
+   * 所以「本页数被静默标成全图数」这个形态在图上已经不可能出现，本用例改守**另一半**：
+   * 打印页的**用料条只列本页那一份**（把本页用量塞进 `input.usages` 会让它列出全图的色）。
+   * 用料条的接线（哪些色该出现）另由 `ExportPanel.test.ts` 覆盖，这里不重复。
    */
-  it("页脚的全图颗数 / 色数取自 input.usages", async () => {
-    const pattern = makePattern(58, 58, undefined); // 全 A1 实心：本页 29×29 = 841 颗
+  it("打印页用料条只列本页那一份用量（input.usages 是全图口径，不进用料条）", async () => {
+    const pattern = makePattern(58, 58, undefined); // 全 A1 实心
+    const usages: ColorUsage[] = [
+      { code: "A1", name: "白", count: 26 },
+      { code: "A2", name: "黑", count: 5 },
+      { code: "A3", name: "红", count: 1 },
+      { code: "A4", name: "浅灰", count: 1 },
+    ];
     await renderBoardPageBlob(
       {
         pattern,
         palette: makePalette(),
-        usages: makeUsages(), // 全图：26 + 5 + 1 + 1 = 33 颗、4 种色
+        usages, // 全图 4 色
         projectName: "测试工程",
         boardSize: 29,
         paper: "a4",
         pageIndex: 0,
       },
-      [{ code: "A2", name: "黑", count: 7 }], // 本页：只有一种色、7 颗（不进页脚的全图口径）
+      [{ code: "A2", name: "黑", count: 7 }], // 本页：只有一种色
     );
-    const footer = texts.map((text) => text.text).filter((text) => text.includes("· 全图"));
-    expect(footer).toEqual(["本页 841 颗 · 全图 33 颗（4 种色）"]);
+    const band = texts.filter((text) => /^A\d+ \(\d+\)$/.test(text.text)).map((text) => text.text);
+    expect(band).toEqual(["A2 (7)"]);
+    // 图上不再有「全图 N 颗」这种口径的文案
+    expect(texts.some((text) => text.text.includes("全图"))).toBe(false);
   });
 });
 

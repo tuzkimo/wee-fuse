@@ -4,6 +4,7 @@ import type { ColorUsage } from "../../pattern/stats";
 import { EMPTY, type Pattern } from "../../pattern/types";
 import {
   PRINT_MARGIN_MM,
+  SHEET_MAJOR_GUIDE_STROKE,
   SHEET_MARGIN,
   SHEET_MIN_LABEL_FONT_PX,
   cellBox,
@@ -56,11 +57,8 @@ function makePattern(width: number, height: number, values?: readonly number[]):
 function makeMeta(overrides: Partial<SheetMeta> = {}): SheetMeta {
   return {
     projectName: "测试工程",
-    generatedAt: "2026-10-05 12:00",
     totalBeads: 33,
     colorCount: 4,
-    paletteName: "测试色卡",
-    accuracy: "屏幕色仅供参考，以实物为准",
     ...overrides,
   };
 }
@@ -68,7 +66,7 @@ function makeMeta(overrides: Partial<SheetMeta> = {}): SheetMeta {
 /**
  * 只取落在 `plan.grid` **内部**的文字。
  *
- * **这条过滤是必须的，不是洁癖**：信息条 / 刻度 / 板号 / 用料条 / 页脚都在网格之外写字，
+ * **这条过滤是必须的，不是洁癖**：标题行 / 四边刻度带 / 用料条都在网格之外写字，
  * `expect(calls.texts).toEqual([])` 这种写法永远是假绿——它根本没读到「格区域内到底有没有色号」
  * 这条真正要守的性质。渲染器用例里任何关于「格内色号」的断言都必须经过本函数。
  *
@@ -138,8 +136,12 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
 
     // **左沿取自 `plan.legend.left`，不写 `SHEET_MARGIN`**：渲染器读的是计划给的字段，
     // 断言里写死常量的话，把渲染器改成「自己用 SHEET_MARGIN」也照样绿（打印页的 `left` 不是 SHEET_MARGIN）。
-    // 单张施工图这一步顺带钉住「计划给的 left 就是 SHEET_MARGIN」——这正是「行为不变」的判据。
-    expect(plan.legend.left).toBe(SHEET_MARGIN);
+    // C7 起 `left` 是「网格左沿 + 条带在网格宽内居中」算出来的，所以不再等于 `SHEET_MARGIN`——
+    // 判据改成「条带右沿不越过画布」与「左沿 ≥ 网格左沿」。
+    expect(plan.legend.left).toBeGreaterThanOrEqual(plan.grid.x);
+    expect(plan.legend.left + plan.legend.itemCols * plan.legend.itemWidth).toBeLessThanOrEqual(
+      plan.canvasWidth,
+    );
     // 色块：每个色号一颗 `plan.legend.swatchSize` 的方块，y = 带内该行的中线 − 半个色块
     for (let i = 0; i < usages.length; i += 1) {
       const col = i % plan.legend.itemCols;
@@ -149,46 +151,31 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
       expect(swatch?.w).toBe(plan.legend.swatchSize);
       expect(swatch?.fillStyle).toBe(rgbCss(palette.colors[i]!.rgb));
     }
-    const codes = calls.texts.filter((t) => t.text === "A1" && t.y > plan.legend.top);
-    expect(codes.length).toBe(1);
-    // 色号与数量（标题承诺的两样）：色号左对齐在项内偏移处，数量**右对齐**在项右端内缩处
+    // 色号与数量（标题承诺的两样）合成**一条**文本：`A1 (26)`，左对齐在项内偏移处。
+    // （C7 起色号与颗数不再分列排布：120px 项宽里分列会把两者挤到一起。）
     const firstCenterY = plan.legend.top + plan.legend.rowHeight / 2;
-    expect(codes[0]).toMatchObject({
-      textAlign: "left",
-      x: plan.legend.left + plan.legend.codeX,
-      y: firstCenterY,
-    });
-    const count = calls.texts.find(
-      (text) => text.text === String(usages[0]?.count) && text.y === firstCenterY,
-    );
-    expect(count).toMatchObject({
-      textAlign: "right",
-      x: plan.legend.left + plan.legend.itemWidth - plan.legend.countRightPad,
-    });
+    const first = calls.texts.find((text) => text.y === firstCenterY && text.x === plan.legend.left + plan.legend.codeX);
+    expect(first?.text).toBe(`${usages[0]?.code} (${usages[0]?.count})`);
+    expect(first?.textAlign).toBe("left");
   });
 
-  it("末行三行（合计 / 精度声明 / 生成时间）都在网格下方，且排在用料条之后", () => {
+  it("图上不再有末行三行（合计 / 精度声明 / 生成时间）：C7 把它们整块删掉，声明搬到 UI", () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const usages = makeUsages();
     const plan = planSheet(pattern, makePalette(), usages);
     const { target, calls } = createMockTarget();
-    drawSheet(target, pattern, makePalette(), usages, plan, makeMeta({ generatedAt: "2026-10-08 10:00" }));
+    drawSheet(target, pattern, makePalette(), usages, plan, makeMeta());
 
-    const belowGrid = calls.texts.filter((t) => t.y > plan.grid.y + plan.grid.height);
-    const texts = belowGrid.map((t) => t.text);
-    expect(texts).toContain("屏幕色仅供参考，以实物为准");
-    expect(texts).toContain("生成时间：2026-10-08 10:00");
-    expect(texts.some((t) => t.includes("合计 33 颗"))).toBe(true);
-    // 用料条在末行**之前**画：按 `calls.texts` 的**调用下标**比，而不是比 y 的大小——
-    // 页脚三行恒在 `legend.top` 之下（`footerY > legend.top`），只比 y 的话把绘制顺序反过来照样绿。
+    const all = calls.texts.map((text) => text.text).join("\n");
+    expect(all).not.toContain("屏幕色仅供参考");
+    expect(all).not.toContain("生成时间");
+    expect(all).not.toContain("合计");
+    // 网格之下只剩用料条（每项一条 `色号 (颗数)`）：底部刻度带的数字也在网格下沿之下，
+    // 所以判据按**文本形状**收窄到用料条那一条。
     const bandBottom = plan.legend.top + plan.legend.itemRows * plan.legend.rowHeight;
-    const bandIndices = calls.texts
-      .map((text, index) => ({ text, index }))
-      .filter((item) => item.text.y >= plan.legend.top && item.text.y < bandBottom)
-      .map((item) => item.index);
-    expect(bandIndices).toHaveLength(usages.length * 2); // 每项两条：色号 + 数量
-    const totalIndex = calls.texts.findIndex((text) => text.text.includes("合计 33 颗"));
-    expect(totalIndex).toBeGreaterThan(Math.max(...bandIndices));
+    const band = calls.texts.filter((text) => text.y >= plan.legend.top && text.y < bandBottom);
+    expect(band).toHaveLength(usages.length);
+    for (const text of band) expect(text.text).toMatch(/^A\d+ \(\d+\)$/);
   });
 
   it("save / restore 配平（不配平会泄漏 target 的全局状态）", () => {
@@ -213,15 +200,16 @@ describe("drawSheet（B6：单张 + 底部用料条）", () => {
       count: index + 1,
     }));
     const manyPlan = planSheet(pattern, manyPalette, many);
-    expect(manyPlan.legend.itemRows).toBe(2); // 前提：21 项在 20 列下要两行
-    // 多色 / 多列时 `left` 仍是 `SHEET_MARGIN`：单张施工图的画布宽已按用料条加宽过，**不居中**
-    // （打印页才在可打印区内居中——那里的 `left` 是 140 / 154，见 `planBoardPage` 的用例）
-    expect(manyPlan.legend.left).toBe(SHEET_MARGIN);
+    // 前提：6×6 的网格宽 384 ⇒ 用料条列数 3 ⇒ 21 项要 7 行
+    expect(manyPlan.legend.itemCols).toBe(Math.floor(manyPlan.grid.width / 120));
+    expect(manyPlan.legend.itemRows).toBe(Math.ceil(21 / manyPlan.legend.itemCols));
+    // C7 起 `left` = 网格左沿 + 条带在网格宽内居中（不再等于 `SHEET_MARGIN`）
+    expect(manyPlan.legend.left).toBeGreaterThanOrEqual(manyPlan.grid.x);
 
     const { target, calls } = createMockTarget();
     expect(() =>
       drawSheet(target, pattern, manyPalette, many.slice(0, 4), manyPlan, makeMeta()),
-    ).toThrow("用料条与本图不符：计划 2 行、按 4 项应为 1 行");
+    ).toThrow(/用料条与本图不符：计划 \d+ 行、按 4 项应为 \d+ 行/);
     expect(calls.fills).toEqual([]);
   });
 
@@ -332,57 +320,48 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     }
   });
 
-  it("② 三档网格线：逐位落位取自 plan 的 vLines/hLines，且按「细 → 5 格 → 板边界」各画一次", () => {
+  it("② 网格线：逐位落位取自 plan 的 vLines/hLines，细线与板边界各画一次（每 5 格改用橙色虚线）", () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const plan = planSheet(pattern, makePalette(), makeUsages());
     const { target, calls } = createMockTarget();
     drawSheet(target, pattern, makePalette(), makeUsages(), plan, makeMeta());
 
-    // 路径顺序 = 空格斜线 → 细 → 主 → 板（`GRID_GROUPS` 的顺序就是判据；反序会在这里红）
-    expect(calls.paths.map((path) => path.lineWidth)).toEqual([1, 1, 2, 3]);
-    const [, thin, major, board] = calls.paths;
-    expect(thin?.ops).toEqual(gridOps(plan, "thin"));
-    expect(major?.ops).toEqual(gridOps(plan, "major"));
-    expect(board?.ops).toEqual(gridOps(plan, "board"));
-    // 前提：三档在 6×6 夹具下**都非空**（某一档为空时，对应的期望序列会退化成「只有一次 stroke」）
-    for (const kind of ["thin", "major", "board"] as const) {
-      expect(gridOps(plan, kind).length).toBeGreaterThan(2);
-    }
-    // **板边界优先于 5 格主刻度**（0 处两者重叠）：那一条只能算板边界——优先序反了这条会红
+    // 路径顺序 = 空格斜线 → 细线 → 板边界 → 每 5 格虚线 → 外框（C7 起每 5 格不是加粗实线）。
+    // **按内容找路径**（不按固定下标）：刻度带的分隔线也是 lineWidth 1，按下标找会抓错。
+    const expectedThin = gridOps(plan, "thin");
+    const expectedBoard = gridOps(plan, "board");
+    const thin = calls.paths.find((path) => JSON.stringify(path.ops) === JSON.stringify(expectedThin));
+    const board = calls.paths.find((path) => JSON.stringify(path.ops) === JSON.stringify(expectedBoard));
+    expect(thin).toBeDefined();
+    expect(board).toBeDefined();
+    expect(thin?.lineWidth).toBe(1);
+    expect(board?.lineWidth).toBe(3);
+    // **板边界优先于 5 格主刻度**（0 处两者重叠）：那一条只能算板边界
     expect(plan.vLines[0]).toEqual({ at: plan.grid.x, kind: "board" });
     expect(plan.vLines.filter((line) => line.kind === "major").map((line) => line.at)).not.toContain(
       plan.grid.x,
     );
   });
 
-  it("③ 刻度与板号的字号都**显式**取自 plan.tickFontPx（在两者之间被改掉也不会跟着变）", () => {
+  it("③ 每 5 格画橙色虚线：颜色与线宽逐位来自常量，且每个 5 的倍数各一条路径", () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const plan = planSheet(pattern, makePalette(), makeUsages());
     const { target, calls } = createMockTarget();
-    // **判别力来自这一层包装**：最后一条列刻度画完（`textBaseline === "bottom"`）就把 target 的 font
-    // 改成诱饵——板号若靠继承而不是重新赋值，记录到的就是诱饵 ⇒ 红（「不靠继承」这句注释的判据）。
-    // 诱饵只在**全部**列刻度之后放：刻度段自己也只设一次 `font`，中途换掉会把后面的刻度一起记错。
-    const originalFillText = target.fillText.bind(target);
-    let bottomSeen = 0;
-    target.fillText = (text, x, y) => {
-      originalFillText(text, x, y);
-      if (target.textBaseline === "bottom") {
-        bottomSeen += 1;
-        if (bottomSeen === plan.colTicks.length) target.font = "1px 诱饵";
-      }
-    };
     drawSheet(target, pattern, makePalette(), makeUsages(), plan, makeMeta());
 
-    const expected = `${plan.tickFontPx}px sans-serif`;
-    expect(plan.tickFontPx).not.toBe(1); // 前提：诱饵与期望值不同
-    // 列刻度（baseline bottom）与板号（「第 N 块板」）两类文字
-    const ticks = calls.texts.filter((text) => text.textBaseline === "bottom");
-    const boards = calls.texts.filter(
-      (text) => text.text.startsWith("第 ") && text.text.endsWith(" 块板"),
-    );
-    expect(ticks.length).toBeGreaterThan(0);
-    expect(boards.length).toBeGreaterThan(0);
-    for (const text of [...ticks, ...boards]) expect(text.font).toBe(expected);
+    const guides = calls.paths.filter((path) => path.strokeStyle === SHEET_MAJOR_GUIDE_STROKE);
+    // 网格 6×6、原点 0 ⇒ 每轴各一条（只有 index 5，跳过 0）：竖直 + 水平 = 2
+    const vertical = guides.filter((path) => {
+      const move = path.ops.find((op) => op.op === "moveTo");
+      const line = path.ops.find((op) => op.op === "lineTo");
+      return move !== undefined && line !== undefined && move.x === line.x;
+    });
+    expect(guides).toHaveLength(2);
+    expect(vertical).toHaveLength(1);
+    for (const guide of guides) expect(guide.lineWidth).toBe(2);
+    // 划长 18 / 周期 30：网格高 = 6 × cellPx ⇒ ceil(网格高 / 30) 段
+    const moves = vertical[0]?.ops.filter((op) => op.op === "moveTo") ?? [];
+    expect(moves).toHaveLength(Math.ceil((6 * plan.cellPx) / 30));
   });
 
   it("④ `strayOps` 为空：每条路径都以 `beginPath` 开头", () => {
@@ -412,7 +391,7 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
       expect(fill?.fillStyle).toBe(rgbCss(palette.colors[item.index]?.rgb ?? [0, 0, 0]));
       expect([fill?.w, fill?.h]).toEqual([box.width, box.height]);
     }
-    // 格内色块**不描边**（格线统一在第 5 步画）：`strokeRect` 只属于用料条色块，恰好 4 个
+    // 格内色块**不描边**（格线统一在第 5 步画）：`strokeRect` 只属于用料条色块
     expect(calls.strokeRects).toHaveLength(makeUsages().length);
     expect(
       calls.strokeRects.every(
@@ -428,9 +407,9 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     const { target, calls } = createMockTarget();
     drawSheet(target, pattern, palette, makeUsages(), plan, makeMeta());
 
-    // 前提：格内字号与信息条（18）/ 用料条（14）/ 页脚（12）都不同——靠继承会在这里红
-    expect(plan.labelFontPx).toBe(Math.round(plan.cellPx * 0.38));
-    expect([18, 14, 12]).not.toContain(plan.labelFontPx);
+    // 前提：格内字号与标题行（22）/ 用料条（14）/ 刻度（ruler.fontPx）都不同——靠继承会在这里红
+    expect(plan.labelFontPx).toBe(Math.round(plan.cellPx * 0.36));
+    expect([22, 14, plan.ruler.fontPx]).not.toContain(plan.labelFontPx);
     for (const item of LABEL_CASES) {
       const box = cellBox(plan, item.col, item.row);
       const label = calls.texts.find(
@@ -469,18 +448,14 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     expect(plan.canvasHeight).toBeGreaterThan(plan.grid.y + plan.grid.height);
   });
 
-  it("⑨ 旧口径会判降级的那一档（cellPx = 27、labelFontPx = 10）照样画满格内色号", () => {
+  it("⑨ 字号在小尺寸下仍然画满格内色号；低于下限则计划阶段就抛（不静默省略）", () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const palette = makePalette();
     const usages = makeUsages();
-    // `maxEdge = 460` 是本文件实测出的那一档（规格 §14 要求「夹具里含一个旧口径下会被降级的尺寸」）：
-    // 用料条 2 行 ⇒ `innerH = 460 − 48 − 108 − 44 − 52 − 44 = 164` ⇒ `cellPx = floor(164 / 6) = 27`、
-    // `labelFontPx = round(27 × 0.38) = 10`（恰在下限上，故计划阶段不抛）。旧的降级判据（每格 32 px
-    // 的阈值常量，已随降级链一起删除）在这一档判「不画色号」；而本文件其余夹具的
-    // `cellPx = 40` 在 32 之上 ⇒ **只有这一档能证伪「按旧阈值跳过格内色号」**（变异实测见报告）。
-    const plan = planSheet(pattern, palette, usages, { maxEdge: 460 });
-    expect(plan.cellPx).toBe(27);
-    expect(plan.labelFontPx).toBe(SHEET_MIN_LABEL_FONT_PX);
+    // 夹具里含一个「色号很小但仍可读」的尺寸（规格 §14 的要求）：`maxEdge = 400` 时每格 33px、
+    // 字号 12px。旧口径的降级链会在这一档判「不画色号」；用例钉住「色号恒画」。
+    const plan = planSheet(pattern, palette, usages, { maxEdge: 400 });
+    expect(plan.labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
 
     const { target, calls } = createMockTarget();
     drawSheet(target, pattern, palette, usages, plan, makeMeta());
@@ -488,6 +463,11 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     const solidCount = CELLS_6X6.filter((value) => value !== EMPTY).length;
     expect(solidCount).toBe(33);
     expect(textsInGrid(calls, plan)).toHaveLength(solidCount);
+
+    // 再小就**响亮失败**（而不是画一张看不清的图）：同一个夹具把上限压到 350 ⇒ 每格 24px、字号 9px
+    expect(() => planSheet(pattern, palette, usages, { maxEdge: 350 })).toThrow(
+      /低于下限 10 px/,
+    );
   });
 });
 
@@ -503,9 +483,9 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     expect(texts.some((t) => t.includes("58") && t.includes("A3"))).toBe(true);
     expect(texts.some((t) => t.includes("第 1/4 块板"))).toBe(true);
     expect(texts.some((t) => t.includes("列 1–58") && t.includes("行 1–58"))).toBe(true);
-    // 页眉里的实际毫米与缩放比是「无空格」写法（与实现逐字一致：`4.7mm`，不是 `4.7 mm`）；
-    // 58+A3 的比率是 **93%**（宽度预算扣掉刻度带之后 cellPx = 55 / 59 = 0.9322）
-    expect(texts.some((t) => /1 格 = 4\.7mm（实物的 93%）/.test(t))).toBe(true);
+    // 标题行里的实际毫米与缩放比是「无空格」写法（与实现逐字一致：`4.7mm`，不是 `4.7 mm`）；
+    // C7 起 58+A3 的比率是 **92%**（左右刻度带各扣一条之后 cellPx = 54 / 59 = 0.9153）
+    expect(texts.some((t) => /1 格 = 4\.6mm（实物的 92%）/.test(t))).toBe(true);
   });
 
   it("页身份按 index 分行列（index 1 ⇒ 第 1 行 第 2 列、本页列 30–58；行/列对调即红）", () => {
@@ -539,63 +519,53 @@ describe("drawBoardPage（B6：每块板一页）", () => {
     const plan = planBoardPage(pattern, palette, pageUsages, { boardSize: 29, paper: "a4", index: 0 });
     const { target, calls } = createMockTarget();
     drawBoardPage(target, pattern, palette, pageUsages, plan, makeMeta());
-    // 只取**用料条带内**的文字：页脚三行也在 legend.top 之下，不过滤会把它们一起收进来
+    // 只取**用料条带内**的文字（C7 起网格之下只剩用料条，不再有页脚）
     const bandBottom = plan.legend.top + plan.legend.itemRows * plan.legend.rowHeight;
     const codes = calls.texts.filter((t) => t.y > plan.legend.top && t.y < bandBottom);
-    expect(codes.map((t) => t.text)).toEqual(["A2", "7"]);
+    expect(codes.map((t) => t.text)).toEqual(["A2 (7)"]);
   });
 
-  it("页眉两行与页脚三行的左沿取 plan.textLeft（全部文字的 x 都在可打印区内，SHEET_MARGIN = 2.03mm 会被裁）", () => {
+  it("标题行左沿取 plan.titleLeft（打印页要落在可打印区内，SHEET_MARGIN = 2.03mm 会被裁）", () => {
     const pattern = makePattern(58, 58);
     const palette = makePalette();
     const pageUsages = [{ code: "A2", name: "黑", count: 7 }];
     const plan = planBoardPage(pattern, palette, pageUsages, { boardSize: 29, paper: "a4", index: 0 });
     // **前提：两种左沿真的不同**（相同的话，这条用例对「用 SHEET_MARGIN」的变异没有判别力）：
-    // 24px = 2.03mm 落在家用机常见的 5mm 不可打印区之内，而 `PRINT_MARGIN_MM` 是 10mm 的余量口径。
-    expect(plan.textLeft).toBe(mmToPx(PRINT_MARGIN_MM));
-    expect(plan.textLeft).toBeGreaterThan(SHEET_MARGIN);
+    // 20px ≈ 1.7mm 落在家用机常见的 5mm 不可打印区之内，而 `PRINT_MARGIN_MM` 是 10mm 的余量口径。
+    expect(plan.titleLeft).toBe(mmToPx(PRINT_MARGIN_MM));
+    expect(plan.titleLeft).toBeGreaterThan(SHEET_MARGIN);
 
     const { target, calls } = createMockTarget();
     drawBoardPage(target, pattern, palette, pageUsages, plan, makeMeta());
 
-    // ① 全部文字——页眉 / 页脚 / 格内色号 / 刻度 / 板号 / 用料条——的 x 都不得落进不可打印区。
-    // 只断页眉那两行是不够的：页脚三行原来写的也是 `SHEET_MARGIN`（2026-10-08 实测补入）。
+    // ① 全部文字——标题行 / 格内色号 / 刻度 / 用料条——的 x 都不得落进不可打印区。
     for (const text of calls.texts) {
       expect(text.x).toBeGreaterThanOrEqual(mmToPx(PRINT_MARGIN_MM));
     }
 
-    // ② 页眉两行**恰好**落在 textLeft。按 y 定位而不是拿实现自己拼的字符串当期望值：
-    // 页眉两行的 y 只有这两条文字用（网格从 `grid.y = 234` 起），所以「恰好两条」本身就是判据。
-    const headerCalls = calls.texts.filter(
-      (text) => text.y === plan.infoBar.lineOneY || text.y === plan.infoBar.lineTwoY,
-    );
-    expect(headerCalls).toHaveLength(2);
-    expect(headerCalls.map((text) => text.x)).toEqual([plan.textLeft, plan.textLeft]);
-
-    // ③ 页脚三行同理。`LEGEND_FOOTER_LINE_H` 是 `sheet.ts` 的模块私有常量（不新增公开名字），
-    // 故这里写它的值 14——与 `drawSheet` 的页脚用例同一口径。
-    const footerYs = [plan.footerY - 14, plan.footerY, plan.footerY + 14];
-    const footerCalls = calls.texts.filter((text) => footerYs.includes(text.y));
-    expect(footerCalls).toHaveLength(3);
-    expect(footerCalls.map((text) => text.x)).toEqual([plan.textLeft, plan.textLeft, plan.textLeft]);
+    // ② 标题行**恰好一条**，且落在 titleLeft（按 y 定位，不拿实现自己拼的字符串当期望值）
+    const titleCalls = calls.texts.filter((text) => text.y === plan.titleY);
+    expect(titleCalls).toHaveLength(1);
+    expect(titleCalls[0]?.x).toBe(plan.titleLeft);
   });
 
   it("usages 与 plan 不同源（用料条行数对不上）即抛，且不留下半张图（写在任何写操作之前）", () => {
     // 与 `drawSheet` 的同源守卫同因：`LegendBandPlan.itemRows` 是计划用来扣高度预算的字段，而
     // `drawLegendBand` 只按 `itemCols` 排布、**不读 `itemRows`** ⇒ 配错不会报错，只会让用料条压到
-    // 页脚上 / 越出 `canvasHeight`，画出一张看起来正常的残缺图。
+    // 别的带上 / 越出 `canvasHeight`，画出一张看起来正常的残缺图。
     const pattern = makePattern(58, 58);
-    const codes = Array.from({ length: 12 }, (_, index) => `B${index + 1}`);
+    const codes = Array.from({ length: 40 }, (_, index) => `B${index + 1}`);
     const palette = makePaletteOf(codes);
     const many = codes.map((code, index) => ({ code, name: `色 ${index + 1}`, count: index + 1 }));
     const manyPlan = planBoardPage(pattern, palette, many, { boardSize: 29, paper: "a4", index: 0 });
-    expect(manyPlan.legend.itemCols).toBe(11);
-    expect(manyPlan.legend.itemRows).toBe(2); // 前提：12 项在 11 列下要两行
+    // 前提：可打印宽 2198px（A4 竖版）⇒ 列数 18 ⇒ 40 项要 3 行
+    expect(manyPlan.legend.itemCols).toBe(Math.floor((manyPlan.canvasWidth - 2 * mmToPx(PRINT_MARGIN_MM)) / 120));
+    expect(manyPlan.legend.itemRows).toBeGreaterThan(1);
 
     const { target, calls } = createMockTarget();
     expect(() =>
       drawBoardPage(target, pattern, palette, many.slice(0, 4), manyPlan, makeMeta()),
-    ).toThrow("用料条与本图不符：计划 2 行、按 4 项应为 1 行");
+    ).toThrow(/用料条与本图不符：计划 \d+ 行、按 4 项应为 \d+ 行/);
     expect(calls.fills).toEqual([]);
   });
 

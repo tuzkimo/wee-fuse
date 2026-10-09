@@ -27,16 +27,19 @@ export interface SheetRenderInput {
   readonly projectName: string;
 }
 
-/** 时间戳由调用方给（渲染器不读 `Date`，产物才可逐位回归）。 */
-export function sheetMeta(input: SheetRenderInput, generatedAt: string): SheetMeta {
+/**
+ * 施工图的元信息。**图上只剩三个字段**（C7 规格 §3.6）：色卡名 / 精度声明 / 生成时间都从图上删除
+ * （声明挪到 UI：参数面板的色卡卡片与查看施工图层），所以这里也不再收它们——留着会变成
+ * 「传了也不画」的静默参数。
+ *
+ * **不收时间戳 ⇒ 渲染器不读 `Date`**，产物因此可逐位回归。
+ */
+export function sheetMeta(input: SheetRenderInput): SheetMeta {
   const total = input.usages.reduce((sum, usage) => sum + usage.count, 0);
   return {
     projectName: input.projectName,
-    generatedAt,
     totalBeads: total,
     colorCount: input.usages.length,
-    paletteName: input.palette.name,
-    accuracy: input.palette.accuracy,
   };
 }
 
@@ -72,7 +75,7 @@ async function renderWithPlan(
 export async function renderSheetBlob(input: SheetRenderInput): Promise<Blob> {
   const plan = planSheet(input.pattern, input.palette, input.usages);
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
-    drawSheet(target, input.pattern, input.palette, input.usages, plan, sheetMeta(input, nowText()));
+    drawSheet(target, input.pattern, input.palette, input.usages, plan, sheetMeta(input));
   });
 }
 
@@ -122,13 +125,8 @@ export async function renderBoardPageBlob(
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
     // `totalBeads` / `colorCount` 全部由 `sheetMeta` 从 `input.usages`（全图）算，**这里不再覆写**：
     // 覆写是对同一个数组做同一次求和（逐位相同），只会多出一个「将来与 sheetMeta 口径漂移」的写处。
-    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, sheetMeta(input, nowText()));
+    drawBoardPage(target, input.pattern, input.palette, pageUsages, plan, sheetMeta(input));
   });
-}
-
-/** `meta.generatedAt` 的唯一来源（壳里与浏览器里都是本地时间的中文格式）。 */
-export function nowText(): string {
-  return new Date().toLocaleString("zh-CN");
 }
 
 /**
