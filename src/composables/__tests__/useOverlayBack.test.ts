@@ -88,7 +88,12 @@ describe("useOverlayBack", () => {
     expect(closeTopOverlay()).toBe(true);
     expect(closed).toHaveBeenCalledTimes(1);
 
-    // 重复置真不重复注册：栈里仍然只有它一个（否则返回键会连关两次、第二次关到不存在的东西）
+    // **这一句钉「弹出后不再关第二次」**：条目已被上面那次 `closeTopOverlay()` 从栈里摘掉 ⇒ 再关一次必须是
+    // `false`。**它钉不住「重复置真不重复注册」**——上面这句 `active.value = true` 与当前值相同，
+    // `watch` 用 `Object.is` 比较后**根本不会回调**，去重早退（`sync` 里的 `on === present`）在这一步没有被
+    // 执行到。**如实登记归因（实测）**：由 `ref` 驱动的 `active` 不可能让 watch 拿同一个布尔值回调两次 ⇒
+    // 那句早退是**防御性**的，把 `on === present` 改成 `if (false)` 本文件 15 条用例**全绿**（零杀）
+    // ⇒ **没有任何用例钉它**；下面重入段钉的是另一件事（`present` 在回落时是否被正确回写）。
     active.value = true;
     await nextTick();
     expect(closeTopOverlay()).toBe(false);
@@ -97,6 +102,18 @@ describe("useOverlayBack", () => {
     await nextTick();
     active.value = false;
     await nextTick();
+    expect(closeTopOverlay()).toBe(false);
+
+    // **重入循环：`true ⇒ false ⇒ true` 必须重新入栈。** 这一段的判据是「`present` 在回落那一步被正确
+    // 回写」：`sync(false)` 若走 `indexOf` 摘除了条目、却让 `present` 卡在 `true`，再次打开就会在早退处
+    // 返回、**永不入栈** ⇒ 按返回键直接穿透到导航栈（把 `present = on` 改成 `present = true` 本段即红）。
+    // 两个 `active` 型的注册点（页内确认条、图纸库删除框）都会经历「条目已被 `closeTopOverlay()` 弹出、
+    // 而 `active` 还没回落」这个窗口。
+    active.value = true;
+    await nextTick();
+    expect(closeTopOverlay()).toBe(true);
+    // 回调又被调了一次，且再关一次为 `false` ⇒ 重入**只入栈一次**，没把同一个条目压两遍。
+    expect(closed).toHaveBeenCalledTimes(2);
     expect(closeTopOverlay()).toBe(false);
     wrapper.unmount();
   });

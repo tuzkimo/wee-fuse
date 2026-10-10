@@ -30,7 +30,7 @@ import { useProjectSession } from "@/stores/project";
  * 下一步他自己会点返回键或保存。返 `true` 即阻止这次退出（`onCloseRequested` 的 `preventDefault`）。
  *
  * **如实记录的边界（不要读成「已验」）**：
- * - 判据 E 的读数是「返回键触发、关闭请求**未观察到触发**」⇒ 按 B5-R6 **不构成缺陷**：返回键的三分支
+ * - 判据 E 的读数是「返回键触发、关闭请求**未观察到触发**」⇒ 按 B5-R6 **不构成缺陷**：返回键的四个分支
  *   已经把「有未保存改动就退出」这条路堵住，退出请求只是多一道保险。
  * - `platform.lifecycle.exit()` 的壳侧实现对 `app.exit(0)` 的调用需要 `core:app:allow-exit`，而它
  *   **不在 `core:app:default` 里** ⇒ 该权限已由真机缺陷修复轮补进 `capabilities/default.json`（本任务
@@ -41,8 +41,8 @@ import { useProjectSession } from "@/stores/project";
  *   **不假装测到了真导航**；真导航那一半只在真机上成立（人工清单）。
  *
  * **消费者 = 唯一生产装配点 `src/App.vue`**（`useShellLifecycle()`，返回值是 `void`——没有模板面）。
- * 判别力在 `__tests__/useShellLifecycle.test.ts`：内联宿主直持假平台的 handler 钉三支互不遮蔽，
- * 再挂真 `App.vue` 钉「装配真的接了线」（没接线的实现能让全部三支用例照样绿）。
+ * 判别力在 `__tests__/useShellLifecycle.test.ts`：内联宿主直持假平台的 handler 钉四支互不遮蔽，
+ * 再挂真 `App.vue` 钉「装配真的接了线」（没接线的实现能让全部四支用例照样绿）。
  */
 export function useShellLifecycle(): void {
   const router = useRouter();
