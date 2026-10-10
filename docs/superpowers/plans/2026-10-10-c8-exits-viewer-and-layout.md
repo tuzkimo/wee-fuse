@@ -156,6 +156,7 @@ describe("useOverlayBack", () => {
     expect(closeTopOverlay()).toBe(true);
     expect(closed).toHaveBeenCalledTimes(1);
 
+    // 重复置真不重复注册：栈里仍然只有它一个（否则返回键会连关两次、第二次关到不存在的东西）
     active.value = true;
     await nextTick();
     expect(closeTopOverlay()).toBe(false);
@@ -1519,7 +1520,9 @@ git commit -m "feat(ui): 结果页抽成共用组件并新增 /edit/:id/result�
 
 - [ ] **步骤 3：写失败的测试（编辑页）**
 
-在 `src/views/__tests__/EditorPage.test.ts` 里（**用既有的 `mountPage()` / `makeEditorRecord()`**）新增：
+在 `src/views/__tests__/EditorPage.test.ts` 里（**用既有的 `mountPage()` / `makeEditorRecord()`**，
+并把下面代码里的 `saveMock` / `pushMock` 换成**该文件里既有的桩变量名**——先读文件头确认，
+不要为了这几条用例新造一套桩）新增：
 
 ```ts
   it("标题前是返回箭头（不再是「回图纸库」RouterLink）（C8 第 3 项）", async () => {
@@ -1784,10 +1787,17 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
   });
 
   it("单指拖动会平移视图（transform 的 translate 变化）", async () => {
-    const wrapper = mountViewer();
+    // **用 100×100 的图纸**：2×1 在 800×600 里默认视图是 64px/格（`minCellScale` 的上限），
+    // 图像只有 128px 宽 < 视口 ⇒ `clampView` 把它按居中夹住，拖动**什么都不会变**（假绿）。
+    // 100×100 的适配比例是 6px/格，连点 8 次放大后 6×1.25⁸ ≈ 35 → 图像 3500px，横向真的可拖。
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+    });
     await flushPromises();
     withViewport(wrapper);
-    await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
+    for (let i = 0; i < 8; i += 1) {
+      await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
+    }
     const before = wrapper.get("[data-testid='sheet-preview']").attributes("style");
     const stage = wrapper.get("[data-testid='sheet-stage']");
     await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
@@ -2196,7 +2206,7 @@ async function saveAll(): Promise<void> { … }
 ```
 [← export-close]  打印
 摘要 export-summary-print / 四个选项 / export-empty-note / 长按提示
-◀ 第 N / 共 M 页 ▶（print-page-indicator / print-page-prev / print-page-next）
+◀ 第 N / M 页 ▶（print-page-indicator / print-page-prev / print-page-next）
 横向预览条：overflow-x-auto snap-x snap-mandatory，一页一格
    · 当前页 ⇒ <img :data-testid="`print-preview-img-${i}`">
    · 其它页 ⇒ 占位 <p>第 N 页</p>
@@ -2302,13 +2312,28 @@ export interface RerunTarget {
   readonly id: string;
   readonly createdAt: string;
 }
+
+/**
+ * `adoptProject`（从已有工程重跑）的入参：**身份 + 名字**。
+ *
+ * **它是独立类型、不是 `RerunTarget`**：身份（`RerunTarget`）已经收窄成 `{ id, createdAt }`，
+ * 而重跑必须同时把记录里的名字带进草稿（`name.value = normalizeProjectName(input.meta.name)`）——
+ * 两者恰好都从 `ProjectMeta` 来，但语义不同，混用一个类型会让「少了名字」在编译期看不出来。
+ */
+export interface AdoptMeta {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+}
 ```
 
 - `const name = ref("");` + `function setName(value: string): void { name.value = normalizeProjectName(value); }`
   （`import { defaultProjectName, normalizeProjectName } from "@/services/projectStore";`）。
 - `adoptImage`：`name.value = defaultProjectName(input.source.name);`（放在 `source.value = input.source` 之后）。
-- `adoptProject`：`name.value = normalizeProjectName(input.meta.name);`
-  `rerunOf.value = { id: input.meta.id, createdAt: input.meta.createdAt };`
+- `adoptProject`：入参 `meta` 的类型由 `RerunTarget` 改成 **`AdoptMeta`**（`{ id, name, createdAt }`，
+  见上面的类型块），主体写 `name.value = normalizeProjectName(input.meta.name);`
+  与 `rerunOf.value = { id: input.meta.id, createdAt: input.meta.createdAt };`。
+  **调用方不用改**：`services/rerunDraft.ts`（任务 4）与 `EditorPage` 传的都是 `{ id, name, createdAt }`。
 - `setRerunOf`：`rerunOf.value = { id: next.id, createdAt: next.createdAt };`，
   `requireRerunTarget` 去掉对 `name` 的校验（保留 `id` / `createdAt`）。
 - `reset()`：`name.value = "";`。
