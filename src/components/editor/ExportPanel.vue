@@ -346,9 +346,13 @@ watch(
     saveError.value = "";
     failedCount.value = 0;
     if (currentPage.value > pageCount.value - 1) {
-      // 越界：夹回第 1 页。改 `currentPage` 会触发上面那个侦听器去渲染，所以这里不重复请求
+      // 越界：夹回第 1 页。**走 `goToPage` 而不是直接写 `currentPage`**（第 2 轮审查的 Important）：
+      // 页号有两个来源（按钮 / 滑动、夹取），滚动条必须跟着页号走——29 板下停在第 16 页
+      // （`scrollLeft = 15w`）时切到 58 板（4 页），只改页号会让滚动位置仍指向末格 ⇒ 第 1 页的
+      // `<img>` 落在屏外（指示「第 1 / 4 页」而条上显示末格占位），正是本轮要修的症状。
+      // `goToPage` 改完 `currentPage` 会触发上面那个侦听器去渲染，所以这里不重复请求
       // （两处都发请求的话，被丢弃的那一次会白渲染一整页）。
-      currentPage.value = 0;
+      goToPage(0);
       return;
     }
     void showPreview(currentPage.value);
@@ -396,7 +400,7 @@ function successText(): string {
  *
  * 四支状态各有各的话，**不共用一个「存过几张」的数字**：
  * - `saving` ⇒「正在保存 第 i/N 页」（N = **本轮**剩余页数，重试时是 14 而不是 16）；
- * - `error`  ⇒「已存 N 张 · 第 M 张失败：<原样原因>」（M 取 `failedCount`，不从 `saved.size` 反推）；
+ * - `error`  ⇒「已存 N 张，第 M 张失败：<原样原因>」（M 取 `failedCount`，不从 `saved.size` 反推）；
  * - `done`   ⇒ 按落点分叉的成功文案（`已生成 16 张` / `已保存到相册 16 张`）；
  * - `idle`   ⇒ 什么都不说（`print-save-state` 整块不存在）。
  */

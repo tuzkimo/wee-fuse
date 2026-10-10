@@ -415,7 +415,7 @@ describe("C8：多页预览与一键保存", () => {
     await flushPromises();
     expect(strip.scrollLeft).toBe(800);
 
-    // 再翻一页 ⇒ 2400（`index × 屏宽`，不是「累加一次」）
+    // 再翻一页 ⇒ 1600（第 2 页 = `index × 屏宽` = 2 × 800，不是「在上一次的基础上加一次」）
     await wrapper.get("[data-testid='print-page-next']").trigger("click");
     await flushPromises();
     expect(strip.scrollLeft).toBe(1600);
