@@ -5,35 +5,35 @@
 // 保存、未保存离开拦截、B1-8 重载、键盘撤销。**画与手势在 PatternCanvas，状态在 stores/editor.ts，
 // 视图数学在 core/pattern/view.ts**；本文件里不许出现第二份坐标数学或第二个 dirty 标志。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import {
-  RouterLink,
-  onBeforeRouteLeave,
-  useRoute,
-  useRouter,
-  type RouteLocationRaw,
-} from "vue-router";
+import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
 import type { Rect } from "@/core/image/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
-import type { Pattern } from "@/core/pattern/types";
+import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { zoomCellView, type CellPoint } from "@/core/pattern/view";
-import ExportPanel from "@/components/editor/ExportPanel.vue";
 import PalettePanel from "@/components/editor/PalettePanel.vue";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
-import SheetViewer from "@/components/sheet/SheetViewer.vue";
+import { useOverlayBack } from "@/composables/useOverlayBack";
 import { getBuiltinPalette } from "@/services/palette";
 import { renderPatternThumbnail } from "@/services/patternThumbnail";
+import { seedRerunDraft } from "@/services/rerunDraft";
 import { useDraft } from "@/stores/draft";
 import { useEditor } from "@/stores/editor";
 import { useProjectSession } from "@/stores/project";
+import { backOrHome } from "@/views/backOrHome";
 
 /**
  * 编辑器（B3）。
  *
  * B1 只到「载入工程 + 显示只读参数」，B2 加了「改参数重新生成」入口；B3 补上真正的编辑：
- * 这个文件本身**没有**任何绘制或几何代码，它只是把 store 与四个 props 进 / 事件出的组件接起来。
- * 落盘一律走 `useProjectSession().save()`（本页不 import `indexedDB`）。
+ * 这个文件本身**没有**任何绘制或几何代码，它只是把 store 与三个 props 进 / 事件出的组件
+ * （画布 / 工具栏 / 调色板）接起来。落盘一律走 `useProjectSession().save()`（本页不 import `indexedDB`）。
+ *
+ * **C8 第 3 项起出口收敛**：查看施工图与打印这两块覆盖层不再由本页渲染（单张施工图的出口是
+ * 「保存 → 修改成功结果页 → 查看」），本页因此也删掉了 `sheetOpen` / `panelMode` 两个 ref 与
+ * **本地那份** `seedRerunDraft`（改成 import `@/services/rerunDraft` 的共用实现——本地那份漏传
+ * `customMaxColors`，会静默产出用色数与记录不一致的图纸，见 `services/rerunDraft.ts` 的文件头）。
  *
  * **两条静默错误的防线**（写错都不报错）：
  * 1. 尺寸与用色数读**图纸**（`patternStats`），不读 `session.record.meta.*`——那三个字段是
@@ -75,20 +75,6 @@ const pendingRerun = ref(false);
  * 不能靠临时把 `session.dirty` 置假来表达（那会顺手改掉一个语义不同的状态位）。
  */
 const allowLeave = ref(false);
-
-/**
- * 两个覆盖层的打开状态：`panelMode` 是打印面板（`null` = 关着）、`sheetOpen` 是查看施工图。
- *
- * **C7 起「导出」按钮被删除**（人类伙伴 2026-10-09 裁定）：单张施工图原本有两个出口——打印面板的
- * sheet 模式与「查看施工图」，两者是同一张图。现在只剩「查看施工图」一个，打印面板只服务打印页。
- *
- * **页面只做接线**（R-4）：计划、清单、逐项状态、渲染与落盘都在两个组件里。页面给它们的四样东西是
- * 「内存态图纸 + 页面已有的 usages + 打开形态 + 失效通道 revision」——`usages` 直接复用**下面**那个
- * `usages` computed（它在 `stats` 之后派生；面板因此不必再走一遍 O(格数) 的 `patternStats`）。
- */
-const panelMode = ref<"print" | null>(null);
-/** 查看施工图（吃内存态图纸，**含未保存改动**；不读落盘记录里的图纸字段）。 */
-const sheetOpen = ref(false);
 
 /**
  * **已经载入**的 id。
@@ -229,7 +215,7 @@ function zoomBy(factor: number): void {
 
 /** emit 总线：模板里的监听器都进这里，逻辑只有一份。 */
 function onCommand(name: string): void {
-  if (name === "save") void save();
+  if (name === "save") void saveThenResult();
   else if (name === "undo") editor.undo();
   else if (name === "redo") editor.redo();
   else if (name === "fit") fitView();
@@ -243,24 +229,49 @@ function onCommand(name: string): void {
  *
  * 失败语义是**二分**的，页面对两种失败的处理也必须是二分（控制者裁决 5）：
  * - **存储失败**（`save()` 返回 false + 写 `session.error`）→ 显示琥珀条与「重试保存」，
- *   **内存态与 `session.dirty` 都不动**（主规格 §8），页面也不跳转。
+ *   **内存态与 `session.dirty` 都不动**（主规格 §8），页面也**不跳转**：跳走会把改动丢在一个
+ *   没有编辑入口的结果页上。
  * - **封面非法会抛**（`session.save` 的编程错误守卫，生产不可达）→ **不吞**：吞成一条用户可见的
  *   错误条只会给出一个「重试保存」的按钮，而重试必然再抛一次——那是响亮失败被降级成死路。
  *
- * `finally` 只负责把 `saving` 放回去（抛错时也必须放回去，否则按钮永久禁用）。
+ * 成功之后**跳「修改成功」结果页**（C8 规格 §3.3）：这是编辑页收敛后唯一的出口（查看施工图与打印
+ * 两块覆盖层已从本页删除）。此刻 `session.dirty` 已为假，所以 `onBeforeRouteLeave` 不会拦这次导航。
+ *
+ * **跳转不写在 `save()` 里面**（本条与简报草稿的第 7.7 步不同，见任务 5 报告 §偏差 D1）：
+ * `saveAndLeave()`（确认条的「保存并离开」）也调 `save()`，而它的语义是**去用户选定的那个目标**
+ * （`pending`：去 setup 重做、或切到另一个 id）。跳转若写进 `save()`，那条路径会先跳结果页、再跳
+ * 用户的目标——两次导航、历史里多一条无意义的 edit-result。所以 `save()` 只回答「存成功了没有」，
+ * 「存成功之后去哪」由两个调用方各自决定。
+ *
+ * `finally` 只负责把 `saving` 放回去（抛错时也必须放回去，否则按钮永久禁用）——提前 `return`
+ * 也会走到它。
  */
-async function save(): Promise<void> {
+async function save(): Promise<boolean> {
   const pattern = session.pattern;
-  if (pattern === null || editor.saving) return;
+  if (pattern === null || editor.saving) return false;
   editor.setSaving(true);
   editor.setError("");
   try {
     const thumbnail = thumbnailFor(pattern);
     const saved = await session.save({ thumbnail });
-    if (!saved) editor.setError(session.error);
+    if (!saved) {
+      editor.setError(session.error);
+      return false;
+    }
+    return true;
   } finally {
     editor.setSaving(false);
   }
+}
+
+/**
+ * 工具栏的「保存」与保存失败后的「重试保存」共用的这一条：存成功就跳「修改成功」结果页
+ * （C8 规格 §3.3）。两个入口共用一份，是因为它们的语义完全相同——都是「用户按了保存」；
+ * 失败时留在编辑器给重试（不跳转）。
+ */
+async function saveThenResult(): Promise<void> {
+  if (!(await save())) return;
+  void router.push({ name: "edit-result", params: { id: route.params.id } });
 }
 
 /**
@@ -276,7 +287,7 @@ async function save(): Promise<void> {
 async function replayPending(): Promise<void> {
   const target = pending.value;
   // 「改参数重新生成」被拦下的那一次：确认离开之后才播种草稿（见 `pendingRerun`）。
-  if (pendingRerun.value) seedRerunDraft();
+  if (pendingRerun.value) seedRerunDraft(draft, session);
   allowLeave.value = true;
   if (target !== null) await router.push(target);
   const nextId = typeof route.params.id === "string" ? route.params.id : "";
@@ -290,10 +301,9 @@ async function replayPending(): Promise<void> {
   allowLeave.value = false;
 }
 
-/** 保存并离开：保存失败**不放行**（改动还在内存里，走了就丢）。 */
+/** 保存并离开：保存失败**不放行**（改动还在内存里，走了就丢）；成功则重放被拦下的那次导航。 */
 async function saveAndLeave(): Promise<void> {
-  await save();
-  if (editor.error !== "") return;
+  if (!(await save())) return;
   await replayPending();
 }
 
@@ -308,6 +318,21 @@ function cancelLeave(): void {
   pendingRerun.value = false;
   leaving.value = false;
 }
+
+/**
+ * 未保存确认条也是「临时界面」：Android 返回键先收掉它（= 继续编辑），而不是离开页面
+ * （C8 规格 §3.6.2）。判据用 `leaving`——它由守卫与「重做」两条路径共同置真。
+ *
+ * **必须在 setup 的同步执行期调用**（`useOverlayBack` 内部用 `watch` 与 `onUnmounted`）；
+ * 注册 / 注销跟着 `leaving` 走，所以「收掉之后条目要出栈」这件事由那个 composable 负责
+ * （本页不持有第二份覆盖层状态）。
+ */
+useOverlayBack(
+  () => {
+    cancelLeave();
+  },
+  () => leaving.value,
+);
 
 onMounted(async () => {
   const id = route.params.id;
@@ -404,44 +429,24 @@ onBeforeUnmount(() => {
 });
 
 /**
- * 把当前工程的原图与参数播种进向导草稿（B2 规格 §7）。**逻辑与 B1 / B2 逐字相同**
- * （B3 只是在**何时**调用它上加了确认这一步）。
- *
- * **只播种、不解码**：原图尺寸与预览位图在 `SetupPage` 挂载时统一解码——同一段解码逻辑出现在
- * 两处正是本项目最贵的缺陷形态（「两端各自正确、错在接线」）。所以这里刻意**不**调用
- * `adoptImage`（它要尺寸与预览画布），也不碰 `setSourceSize`。
- *
- * 三个入参各自的来源与取舍：
- * - `source.blob` / `type` 直接取自记录；记录里**没有**原始文件名（`ProjectSource` 只有这两个
- *   字段），`DraftSource.name` 只能填工程名。
- * - `params` 取自 `session.params`（`fromProjectDocument` 已经把落盘的 `crop.w/h/rotate` 映射成
- *   运行期的 `crop.width/height` + 独立 `rotation`，这里不许再映射一遍）。`crop` **拷一份**再传。
- * - `meta` 原样沿用 `id` / `name` / `createdAt`：重跑要覆盖同一条记录。
+ * 橡皮（C8 第 3 项：按钮从调色板搬进工具栏）。
+ * **顺带切回画笔**：在框选 / 吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+ * （与「吸管取色后切回画笔」同口径）。
  */
-function seedRerunDraft(): void {
-  const record = session.record;
-  const params = session.params;
-  if (record === null || record.source === null || params === null) return;
-
-  draft.adoptProject({
-    source: { blob: record.source.blob, type: record.source.type, name: record.meta.name },
-    params: {
-      longSide: params.longSide,
-      maxColors: params.maxColors,
-      crop: {
-        x: params.crop.x,
-        y: params.crop.y,
-        width: params.crop.width,
-        height: params.crop.height,
-      },
-      rotation: params.rotation,
-    },
-    meta: { id: record.meta.id, name: record.meta.name, createdAt: record.meta.createdAt },
-  });
+function onEraser(): void {
+  editor.setCurrentColor(EMPTY);
+  editor.setTool("brush");
 }
 
 /**
- * 「改参数重新生成」入口（B2 规格 §7 + B3 规格 §8.5 的接缝）。
+ * 「重做」入口（B2 规格 §7 + B3 规格 §8.5 的接缝；C8 第 3 项从页面中部搬进工具栏输出行）。
+ *
+ * **草稿播种走共用实现**（`@/services/rerunDraft` 的 `seedRerunDraft`）：本页原来有一份**本地**
+ * 副本，它漏传 `params.customMaxColors` ⇒ 从编辑器点「重做」跑一条自定义 N 色的工程时，草稿里
+ * 还是残留值（默认 32），而 `maxColors === "custom"` ⇒ **静默产出用色数与记录不一致的图纸**。
+ * 现在它与编辑来源结果页的「重做」是**同一份**实现（两处各写一遍就是「同一件事的第二份实现」）。
+ * 那条实现同时负责「只播种、不解码」：原图尺寸与预览位图统一在 `SetupPage` 解码（同一段解码逻辑
+ * 出现在两处正是本项目最贵的缺陷形态）。
  *
  * 有未保存改动时**不播种、也不跳转**：把 `{ name: "setup" }` 当成一次待确认的离开交给同一条
  * 确认条。**不能**先播种再让守卫去拦——播种是一次写操作，用户点「继续编辑」之后那个草稿身份
@@ -458,7 +463,7 @@ function rerun(): void {
     leaving.value = true;
     return;
   }
-  seedRerunDraft();
+  if (!seedRerunDraft(draft, session)) return;
   void router.push({ name: "setup" });
 }
 </script>
@@ -475,23 +480,24 @@ function rerun(): void {
 
     <template v-else-if="session.record">
       <!--
-        回图纸库入口（F1：人工验证发现编辑页**没有任何回库入口**——Tauri 壳里没有浏览器工具栏，
-        这个缺口更明显）。它是**普通的 `RouterLink`**：
+        返回箭头（C8 第 3 项替换掉原「回图纸库」整块 `RouterLink`）。
 
-        - 不用 `@click="router.push(...)"`：`RouterLink` 渲染成 `<a>`，平板与读屏都更好
-          （主规格 §6.4）；
-        - **不为它写任何新的拦截逻辑**——`onBeforeRouteLeave` 会把这次导航当成一次普通的离开，
-          有未保存改动时自动弹**同一条**页面内确认条（下面那段 JSDoc 就是那条守卫）；
-        - 触控目标 ≥44px（`min-h-11`）、字号 ≥16px（`text-base`，主规格 §6.4）。
+        - 为什么不是 `RouterLink`：规格 §3.6.1 要的是「有上一页就退回去、历史为空才回图纸库」——
+          那是一次**判断**，声明式目标做不到（F1 那版只会回图纸库）。
+        - `backOrHome` 内部走 `router.push` / `router.back`，所以离场守卫**照常生效**：有未保存
+          改动时会被同一条页面内确认条拦下（`onBeforeRouteLeave` 那段就是那条守卫）。
+        - 触控目标 ≥44px（`min-h-11 min-w-11`）、`aria-label` 必给（箭头没有文字，读屏用户否则
+          听到一个没有名字的按钮；主规格 §6.4）。
       -->
       <div class="flex flex-wrap items-center gap-3">
-        <RouterLink
-          data-testid="back-to-library"
-          to="/"
-          class="inline-flex min-h-11 items-center rounded border border-slate-300 px-4 text-base text-slate-700"
+        <button
+          data-testid="editor-back"
+          aria-label="返回"
+          class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
+          @click="backOrHome(router)"
         >
-          ← 回图纸库
-        </RouterLink>
+          ←
+        </button>
         <h1 class="project-name text-3xl font-bold text-slate-900">{{ session.record.meta.name }}</h1>
       </div>
       <!-- 尺寸与用色数读**图纸**（规格 §8.3），不是 `meta` 的冗余字段 -->
@@ -500,30 +506,12 @@ function rerun(): void {
         {{ stats?.colorCount ?? 0 }} 种颜色
       </p>
 
-      <p v-if="session.record.source" data-testid="rerun-available" class="mt-4 text-lg text-slate-600">
-        原图已保存，可以改参数重新生成。
-      </p>
-      <p v-else data-testid="rerun-unavailable" class="mt-4 text-lg text-amber-700">
-        这个工程没有保存原图，只能继续编辑或重新导出，不能改参数重新生成。
-      </p>
-
       <!--
-        裁决 2：**不额外拦截、不做第二次确认**（重跑本身不问「是否编辑过」），只在入口旁固定如实
-        说明；**有未保存改动时仍走同一条确认条**——`rerun()` 把「去 setup」当成一次待确认的离开
-        交给 §8.4 的守卫，后者是「刚刚涂完没保存就被带走」那一支的兜底（规格 §8.5）。
+        C8 第 3 项：原来这里有三段提示（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」/
+        「重新生成会按原图重做整张图纸，手工涂改不会保留。」）与一颗页面中部的大按钮。它们全部删除：
+        「重做」搬进工具栏输出行（没有原图时**不渲染**，所以「提示的对象」不存在了），
+        「会重做整张图纸」这层意思由「重做」这个名字与它旁边的保存按钮承担。
       -->
-      <p data-testid="rerun-warning" class="mt-2 text-base text-slate-500">
-        重新生成会按原图重做整张图纸，手工涂改不会保留。
-      </p>
-
-      <button
-        v-if="session.record.source"
-        data-testid="rerun"
-        class="mt-3 min-h-14 rounded bg-slate-900 px-6 text-lg text-white"
-        @click="rerun"
-      >
-        改参数重新生成
-      </button>
 
       <div v-if="editor.pattern" class="mt-6 flex flex-col gap-4 md:flex-row">
         <div class="h-[60vh] min-h-64 flex-1 rounded bg-white p-3 shadow">
@@ -559,6 +547,8 @@ function rerun(): void {
             :show-labels="editor.showLabels"
             :saving="editor.saving"
             :dirty="session.dirty"
+            :can-rerun="session.record?.source != null"
+            :eraser-active="editor.currentColor === EMPTY"
             @update:tool="editor.setTool($event)"
             @undo="onCommand('undo')"
             @redo="onCommand('redo')"
@@ -568,8 +558,8 @@ function rerun(): void {
             @zoom-in="onCommand('zoom-in')"
             @zoom-out="onCommand('zoom-out')"
             @save="onCommand('save')"
-            @view-sheet="sheetOpen = true"
-            @print="panelMode = 'print'"
+            @rerun="rerun"
+            @eraser="onEraser"
           />
 
           <PalettePanel
@@ -580,19 +570,23 @@ function rerun(): void {
           />
 
           <!--
-            「添加颜色」入口与 `PalettePicker` **都由 `PalettePanel` 自己渲染**（控制者裁决 R-3）：
-            页面不再放第二个入口。原因有二——① 同一 testid 出现两次会让 `get` 命中靠前的那个、
-            `findAll` 数量翻倍，用例的判据变得依赖 DOM 顺序；② 页面那份 `palette.colors.findIndex(…)`
-            会是第 4 份「色号 → 全色卡下标」的同源实现，而规格 §9.2 明确要求这个映射只走
-            `core/palette` 的权威实现（`createPaletteRuntime().indexByCode`），面板里已经有一份。
+            选择器（`PalettePicker`）**由 `PalettePanel` 自己渲染**（控制者裁决 R-3）：页面不放第二个
+            入口。原因有二——① 同一 testid 出现两次会让 `get` 命中靠前的那个、`findAll` 数量翻倍，
+            用例的判据变得依赖 DOM 顺序；② 页面那份 `palette.colors.findIndex(…)` 会是第 4 份
+            「色号 → 全色卡下标」的同源实现，而规格 §9.2 明确要求这个映射只走 `core/palette` 的权威
+            实现（`createPaletteRuntime().indexByCode`），面板里已经有一份。
+            **C8 第 3 项**：原来的「添加颜色」入口已从面板删除，现在点**当前色槽**开合它。
           -->
         </div>
       </div>
     </template>
 
-    <!-- 未保存离开的确认条（页面内，不是浏览器 confirm）。
-         **z-40 > 导出覆盖层的 z-30**（修复波 B-2）：面板打开时按返回，守卫照常拦下并把 `leaving`
-         置真，但确认条若被压在全屏面板之下，用户看到的是「按了没反应」——什么都没发生、也没有出口。 -->
+    <!--
+      未保存离开的确认条（页面内，不是浏览器 confirm）。`z-40` 让它盖住整页内容；C8 第 3 项之后
+      本页不再渲染任何全屏覆盖层（查看层与打印面板已删除），所以这条 z 序不再与谁比较——保留
+      `z-40` 是为了「它必须浮在最上面」这条不变量本身。
+      它同时是覆盖层返回栈上的一项（见 `cancelLeave` 下面那次 `useOverlayBack`）：Android 返回键
+      先收掉它，而不是离开页面。 -->
     <div
       v-if="leaving"
       data-testid="leave-bar"
@@ -634,39 +628,9 @@ function rerun(): void {
       v-if="editor.error"
       data-testid="retry-save"
       class="mt-3 min-h-12 rounded border border-slate-300 px-4 text-base"
-      @click="save"
+      @click="saveThenResult"
     >
       重试保存
     </button>
-
-    <!--
-      打印面板（C7 起只剩打印页一种形态）。**图纸来源恒为 `editor.pattern`**（**内存态**，
-      含未保存改动）——打印不触发保存、也不读落盘记录里的图纸字段。
-      **唯一取自落盘记录的是工程名**（`:project-name`，只是文件名的前缀与图上标题）。
-
-      `v-if` 必须**同时**要求 `editor.pattern` 存在（契约 §2b）：少了后半句，图纸还没载入时
-      面板会在渲染期抛错（`:pattern` 拿到 null）。除此之外不新增别的门。
-    -->
-    <ExportPanel
-      v-if="panelMode !== null && editor.pattern !== null"
-      :pattern="editor.pattern"
-      :palette="palette"
-      :usages="usages"
-      :project-name="session.record?.meta.name ?? '图纸'"
-      :revision="editor.revision"
-      @close="panelMode = null"
-    />
-
-    <!--
-      查看施工图（C7 起是单张施工图的**唯一**出口，自带保存）。同样吃**内存态**图纸：
-      编辑器里刚改的格子直接反映到图上，不需要先保存。
-    -->
-    <SheetViewer
-      v-if="sheetOpen && editor.pattern !== null"
-      :pattern="editor.pattern"
-      :palette="palette"
-      :name="session.record?.meta.name ?? '图纸'"
-      @close="sheetOpen = false"
-    />
   </main>
 </template>

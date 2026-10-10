@@ -17,6 +17,9 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
       showLabels: true,
       saving: false,
       dirty: false,
+      // C8 第 3 项新增的两个 prop：默认「有原图（可以重做）」「当前色不是橡皮」。
+      canRerun: true,
+      eraserActive: false,
       ...overrides,
     },
   });
@@ -231,57 +234,69 @@ describe("触控目标与字号", () => {
   });
 });
 
-describe("导出与打印入口", () => {
-  // 契约 §2b / 规格 §13.1：工具栏**只加** `export` / `print` 两个事件与两颗按钮，既有语义不动。
-  //
-  // 尺寸类名也在这里断：上面那条既有用例的 testid 清单是**硬编码**的、不含 B4 新增的 `export`
-  // 与 B6 新增的 `print`，而它属于「既有断言，一行不许改」——新增的这两颗按钮否则没有任何尺寸类断言。
-  // （控制者裁定 5 采纳本处置；把新按钮加进那条清单需要改既有断言，如实记为**延后 Minor**，
-  //   见报告清单第 8 条。）
-  it("点「查看施工图」emit 一次空载荷的 view-sheet，且触控目标 ≥44px、字号 ≥16px", async () => {
-    const wrapper = mountToolbar();
-    const button = wrapper.get("[data-testid='view-sheet']");
-    expect(button.text()).toContain("查看施工图");
-    expect(button.classes()).toContain("min-h-11"); // 2.75rem = 44px
-    expect(button.classes()).toContain("text-base"); // 1rem = 16px
-
-    await button.trigger("click");
-    // 断言的是**载荷**：`toEqual([[]])` 同时钉住「只 emit 一次」与「是空载荷」
-    expect(wrapper.emitted("view-sheet")).toEqual([[]]);
-    // 串台守卫：复制粘贴漏改事件名（emit `save` / `print`）时这里红
-    expect(wrapper.emitted("save")).toBeUndefined();
-    expect(wrapper.emitted("print")).toBeUndefined();
-    // **C7 起不再有「导出」按钮**：它与「查看施工图」是同一张图的两个出口
-    expect(wrapper.find("[data-testid='export']").exists()).toBe(false);
-    expect(wrapper.emitted("export")).toBeUndefined();
+/**
+ * C8 第 3 项：出口收敛。
+ *
+ * 这一组替换掉原来那组「导出与打印入口」的用例（`view-sheet` / `print` 两颗按钮已按规格删除）：
+ * 唯一的外部出口是「保存」→ 结果页，改参数重新生成从页面中部搬进本行并改名「重做」，橡皮从
+ * 调色板搬进工具行，历史行第二颗按钮改叫「恢复」（它仍是 `redo`）。
+ *
+ * 三个「存在性」判据与三个「行为」判据各自独立：按钮挪错行、按下态读错 prop、emit 载荷错、
+ * 没有原图却仍然渲染「重做」——四种错法各有一条会红。
+ */
+describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
+  it("工具行里有「橡皮」，它带按下态（C8 第 3 项：挪进画笔那一行）", async () => {
+    const wrapper = mountToolbar({ eraserActive: true });
+    const row = wrapper.get("[data-testid='toolbar-row-tools']");
+    expect(row.text()).toContain("橡皮");
+    const eraser = wrapper.get("[data-testid='eraser']");
+    expect(eraser.attributes("aria-pressed")).toBe("true");
+    await eraser.trigger("click");
+    expect(wrapper.emitted("eraser")).toHaveLength(1);
   });
 
-  /**
-   * B6 任务 10：工具栏多一个「打印」入口（规格 §8 的两个入口共用 `EditorPage` 那一个面板）。
-   *
-   * 两条断言缺一不可：`print` 被 emit（接线对）**且** `view-sheet` 没被 emit（复制粘贴漏改事件名
-   * 时，「点打印结果打开的是施工图面板」不会报任何错）。
-   */
-  it("点打印 emit 一次 print", async () => {
+  it("输出行是「重做 + 保存」：没有查看施工图、没有打印（C8 第 3 项）", () => {
     const wrapper = mountToolbar();
-    const button = wrapper.get("[data-testid='print']");
-    expect(button.text()).toContain("打印");
-    expect(button.classes()).toContain("min-h-11"); // 2.75rem = 44px
-    expect(button.classes()).toContain("text-base"); // 1rem = 16px
+    const row = wrapper.get("[data-testid='toolbar-row-output']");
+    expect(row.text()).toContain("重做");
+    expect(row.text()).toContain("保存");
+    expect(wrapper.find("[data-testid='view-sheet']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='print']").exists()).toBe(false);
+  });
 
-    await button.trigger("click");
-    expect(wrapper.emitted("print")).toEqual([[]]);
-    expect(wrapper.emitted("export")).toBeUndefined();
+  it("「重做」在保存那一行、白底，点它 emit rerun", async () => {
+    const wrapper = mountToolbar();
+    const rerun = wrapper.get("[data-testid='rerun']");
+    expect(rerun.classes()).toContain("border-slate-300");
+    expect(rerun.classes()).not.toContain("bg-slate-900");
+    await rerun.trigger("click");
+    expect(wrapper.emitted("rerun")).toHaveLength(1);
+  });
+
+  it("canRerun 为假时不渲染「重做」（没有原图的工程改不了参数）", () => {
+    expect(mountToolbar({ canRerun: false }).find("[data-testid='rerun']").exists()).toBe(false);
+  });
+
+  it("历史行的第二颗按钮叫「恢复」（它仍是 redo 事件）", async () => {
+    const wrapper = mountToolbar({ canRedo: true });
+    const row = wrapper.get("[data-testid='toolbar-row-history']");
+    expect(row.text()).toContain("撤销");
+    expect(row.text()).toContain("恢复");
+    expect(row.text()).not.toContain("重做");
+    await wrapper.get("[data-testid='redo']").trigger("click");
+    expect(wrapper.emitted("redo")).toHaveLength(1);
   });
 });
 
 /** 五行分组：行 id → 该行应出现的 testid（顺序即 DOM 顺序）。产品口径见规格 §5.1。 */
 const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
-  ["tools", ["tool-brush", "tool-select", "tool-pick"]],
+  // C8 第 3 项：橡皮从调色板搬进工具行**尾部**（位置口径：工具挨着工具）。
+  ["tools", ["tool-brush", "tool-select", "tool-pick", "eraser"]],
   ["history", ["undo", "redo"]],
   ["display", ["toggle-grid", "toggle-labels"]],
   ["view", ["zoom-fit", "zoom-in", "zoom-out"]],
-  ["output", ["view-sheet", "print", "editor-save"]],
+  // C8 第 3 项：查看施工图 / 打印两颗按钮删除，改参数重新生成搬进来并改名「重做」。
+  ["output", ["rerun", "editor-save"]],
 ];
 
 describe("五行分组", () => {
@@ -323,15 +338,15 @@ describe("五行分组", () => {
 
   /**
    * **`editor-dirty` 的归属**：它是 `<span>`，落在哪一行原先没有被任何断言钉住（遍历 `button`
-   * 的写法看不见它）。`dirty: true` 时 output 行必须是 `export / print / editor-save / editor-dirty`
+   * 的写法看不见它）。`dirty: true` 时 output 行必须是 `rerun / editor-save / editor-dirty`
    * ——把指示挪到别的行、或挪到「保存」之前，都会在这里红。
    */
-  it("output 行在 dirty 时同时收 button 与 span：export / print / editor-save / editor-dirty", () => {
+  it("output 行在 dirty 时同时收 button 与 span：rerun / editor-save / editor-dirty", () => {
     const wrapper = mountToolbar({ dirty: true });
     const found = wrapper
       .get("[data-testid='toolbar-row-output']")
       .findAll("button, span[data-testid]")
       .map((element) => element.attributes("data-testid"));
-    expect(found).toEqual(["view-sheet", "print", "editor-save", "editor-dirty"]);
+    expect(found).toEqual(["rerun", "editor-save", "editor-dirty"]);
   });
 });

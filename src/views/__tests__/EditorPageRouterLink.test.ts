@@ -14,27 +14,26 @@ import { useProjectSession } from "@/stores/project";
 import EditorPage from "@/views/EditorPage.vue";
 
 /**
- * F1 的**真路由器**用例（与 `EditorPage.test.ts` 互补，不重复它的职责）。
+ * 返回箭头的**真路由器**用例（与 `EditorPage.test.ts` 互补，不重复它的职责）。
  *
- * `EditorPage.test.ts` 把整个 `vue-router` 换成了替身，于是「点入口 → 路由器 → 离场守卫」这条链
- * **有一跳测不到**：那里的 `RouterLink` 桩是 `<a><slot /></a>`，**点击不会驱动路由器**，
- * 所以那条用例只能证明「同一个守卫 + 入口声明的目标」。本文件用**真** `createRouter` +
- * `createMemoryHistory` 把这一跳补上：
+ * `EditorPage.test.ts` 把整个 `vue-router` 换成了替身：那边钉的是「箭头的接线与 `backOrHome` 的
+ * 两个判据」（直接喂 `history.state`），但「点击 → 路由器 → 离场守卫」这条链**有一跳测不到**
+ * ——替身路由器不驱动导航。本文件用**真** `createRouter` 把这一跳补上：
  *
- *   点入口 → RouterLink 的 click 处理器 → `router.push` → vue-router 跑 `onBeforeRouteLeave` →
- *   守卫返回 false → **导航被取消** → 页面内的确认条出现。
+ *   点 `editor-back` → `backOrHome(router)` → `router.push({ name: "home" })` →
+ *   vue-router 跑 `onBeforeRouteLeave` → 守卫返回 false → **导航被取消** → 页面内的确认条出现。
  *
  * **对照组是承重的**（本项目反复用它的形态：右键那条用例带一个左键对照）：第 1 条在**干净**状态下
- * 点同一个入口，路由**必须真的变成 `/`**。没有它，「dirty 时不跳转」与「这个点击本来就没驱动任何
- * 导航」不可区分——那正是替身版本测不到的那一跳。实测：把入口换成不驱动路由器的 `<a href="/">`，
- * 两条**同时**红（对照条红在 `expected '/edit/a' to be '/'`）；把守卫改成恒放行，则只有第 2 条红
- * （`expected '/' to be '/edit/a'`）。
+ * 点同一个箭头，路由**必须真的变成 `/`**。没有它，「dirty 时不跳转」与「这个点击本来就没驱动任何
+ * 导航」不可区分——那正是替身版本测不到的那一跳。实测记录（F1 那版，入口换成不驱动路由器的
+ * `<a href="/">`）：两条**同时**红（对照条红在 `expected '/edit/a' to be '/'`）；把守卫改成恒放行，
+ * 则只有第 2 条红（`expected '/' to be '/edit/a'`）。
  *
- * **这个文件不区分「链接 vs 旁路」——如实标注**：`onBeforeRouteLeave` 是**路由级**的，对这个 route 的
- * 任何离开都生效，所以把入口换成 `@click="router.push('/')"` 的旁路按钮时，这里两条**依然全绿**
- * （实测）。**两个文件各守一半，合起来才是 F1 的完整证据**：`EditorPage.test.ts` 钉「**旁路实现会红**」
- * ——那里读 `to` 属性与 `RouterLink` 组件本身，且替身路由器不驱动导航，所以「点击后不许有 push」
- * 在那边是有效的；本文件钉「**点击 → 路由器 → 守卫**」这一跳走不走得通。
+ * **为什么这里用 `createMemoryHistory` 不算假绿**（C8 第 3 项新增的如实标注）：内存历史**不写**
+ * `history.state.back`（见 `backOrHome.ts` 的文件头），所以 `backOrHome` 在本文件里恒走「回图纸库」
+ * 那一支。而本文件要钉的正是**那一支**经真路由器时会不会被守卫拦下；「有上一页 ⇒ `back()`」那一支
+ * 由 `backOrHome.test.ts`（`createWebHistory`）与 `EditorPage.test.ts`（直接喂 `history.state`）钉。
+ * 反过来，若在本文件里断言「点了箭头 ⇒ `back()`」，那才是恒绿的假绿——**不要那样写**。
  *
  * 基础设施比 `EditorPage.test.ts` 少：这里**不需要** 2D 上下文桩——`PatternCanvas.draw()` 拿不到
  * 上下文就早退，而视图落定走的是 `useCanvasSurface.measure()` 的回调（与 2D 上下文无关），
@@ -152,14 +151,14 @@ afterEach(() => {
   setProjectStore(null);
 });
 
-describe("回图纸库入口（F1）＋真路由器：点击真的经路由器与离场守卫", () => {
-  it("对照：干净时点它真的离开到图纸库（这一跳由路由器完成，不是用例自己 push）", async () => {
+describe("返回箭头（C8 第 3 项）＋真路由器：点击真的经路由器与离场守卫", () => {
+  it("对照：干净时点它真的离开到图纸库（导航由页面 → 路由器完成，不是用例自己 push）", async () => {
     const wrapper = await mountAtEditor();
     expect(router.currentRoute.value.path).toBe("/edit/a");
-    expect(wrapper.find("[data-testid='back-to-library']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='editor-back']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='home']").exists()).toBe(false);
 
-    await wrapper.get("[data-testid='back-to-library']").trigger("click");
+    await wrapper.get("[data-testid='editor-back']").trigger("click");
     await flushPromises();
 
     // 没有加载失败、也没有被谁拦住：路由真的到了 `/`，首页真的渲染出来。
@@ -180,7 +179,7 @@ describe("回图纸库入口（F1）＋真路由器：点击真的经路由器�
     expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, 2]);
     expect(useProjectSession().dirty).toBe(true);
 
-    await wrapper.get("[data-testid='back-to-library']").trigger("click");
+    await wrapper.get("[data-testid='editor-back']").trigger("click");
     await flushPromises();
 
     // 守卫（`EditorPage` 的 `onBeforeRouteLeave`）取消了这次导航：地址还在 `/edit/a`，首页没有被渲染，
@@ -188,9 +187,10 @@ describe("回图纸库入口（F1）＋真路由器：点击真的经路由器�
     expect(router.currentRoute.value.path).toBe("/edit/a");
     expect(wrapper.find("[data-testid='home']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='leave-bar']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='back-to-library']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='editor-back']").exists()).toBe(true);
 
-    // 「放弃改动」之后才真的离开，而且去的就是**入口声明的那个目标**（`/`）。
+    // 「放弃改动」之后才真的离开，而且去的是**箭头自己那条判据给出的目标**
+    // （本文件用的是内存历史 ⇒ `backOrHome` 那一支恒为「回图纸库」`/`）。
     await wrapper.get("[data-testid='leave-discard']").trigger("click");
     await flushPromises();
     expect(router.currentRoute.value.path).toBe("/");

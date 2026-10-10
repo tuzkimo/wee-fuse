@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // src/components/editor/PatternToolbar.vue
 //
-// 编辑器工具栏：工具切换 / 撤销重做 / 网格线与格内色号开关 / 适配与 ± 缩放 / 保存与未保存指示。
+// 编辑器工具栏：工具切换（含橡皮）/ 撤销重做 / 网格线与格内色号开关 / 适配与 ± 缩放 /
+// 「重做」（改参数重新生成）与保存 + 未保存指示。
 // props 进、事件出，**不读 store**（`dirty` 的唯一来源是 `session.dirty`，由页面传进来）。
 //
 // 三个开关类按钮 emit 的是**翻转后的值**而不是当前值：本组件不持有开关状态，
@@ -9,6 +10,11 @@
 //
 // `disabled` **逐字**读 `canUndo` / `canRedo`（规格 §6.6）：能不能撤只有 `EditHistory` 知道，
 // 组件里再算一次「有没有东西可撤」就是第二份真相，漂移的那天没有任何信号。
+//
+// **C8 第 3 项起本组件是页面唯一的外部出口**：查看施工图 / 打印两颗按钮已删除（单张施工图的出口
+// 收敛到「保存 → 修改成功结果页 → 查看」），改参数重新生成从页面中部搬进输出行并改名「重做」，
+// 橡皮从调色板搬进工具行。本组件仍然只**报告**用户点了什么：`eraser` 的接收方（`EditorPage.onEraser`）
+// 除了把当前色设成橡皮，还要顺手切回画笔——那是页面的事，不在这里替它决定。
 //
 // `aria-pressed` 直接绑**布尔值**而不是 `String(...)`：这个属性的类型是 `Booleanish`
 // (`boolean | "true" | "false"`)，`String()` 返回的宽 `string` 过不了 `vue-tsc` 的严格检查
@@ -26,6 +32,10 @@ const props = defineProps<{
   saving: boolean;
   /** 未保存状态：唯一来源是 `session.dirty`（规格 §7 要点 4），本组件只负责显示。 */
   dirty: boolean;
+  /** 「重做」（改参数重新生成）是否可用：没有保存原图的工程没有这一项。 */
+  canRerun: boolean;
+  /** 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。 */
+  eraserActive: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -38,8 +48,10 @@ const emit = defineEmits<{
   "zoom-in": [];
   "zoom-out": [];
   save: [];
-  "view-sheet": [];
-  print: [];
+  /** 改参数重新生成（C8 从页面上那颗大按钮搬进来）。 */
+  rerun: [];
+  /** 把当前色槽设为橡皮（`EMPTY`）**并切回画笔**——见 `EditorPage.onEraser`。 */
+  eraser: [];
 }>();
 
 /** 三个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
@@ -71,6 +83,18 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
       >
         {{ item.label }}
       </button>
+      <!-- 橡皮（C8 第 3 项：从调色板搬进工具行、跟在三个工具之后）。按下态读 `eraserActive`
+           （= 当前色是 `EMPTY`）：用户切到橡皮之后必须看得出来自己握着的不是某个色。
+           点它 emit `eraser`——**「顺带切回画笔」在页面那一层做**（`EditorPage.onEraser`），
+           本组件不替父级决定工具状态。 -->
+      <button
+        data-testid="eraser"
+        :aria-pressed="eraserActive"
+        class="min-h-11 rounded border border-slate-300 px-4 text-base"
+        @click="emit('eraser')"
+      >
+        橡皮
+      </button>
     </div>
 
     <div data-testid="toolbar-row-history" class="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
@@ -88,7 +112,7 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
         class="min-h-11 rounded border border-slate-300 px-4 text-base disabled:opacity-50"
         @click="emit('redo')"
       >
-        重做
+        恢复
       </button>
     </div>
 
@@ -124,15 +148,22 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
     </div>
 
     <div data-testid="toolbar-row-output" class="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
-      <!-- 「查看施工图」与「打印」都由 `EditorPage` 渲染（唯一装配点）：本组件只知道用户点了哪一个，
-           不持有面板状态、也不 import 任何 store。
-           **C7 起「导出」按钮被删除**（人类伙伴 2026-10-09 裁定）：它与「查看施工图」是同一张图的
-           两个出口，一个有保存、一个有落盘，用户分不清该点哪个 ⇒ 收敛成「查看施工图」一个。 -->
-      <button data-testid="view-sheet" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('view-sheet')">
-        查看施工图
-      </button>
-      <button data-testid="print" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="emit('print')">
-        打印
+      <!--
+        C8 第 3 项：这一行是编辑器**唯一的出口行**——「重做」（改参数重新生成，从页面中部搬进来）
+        与「保存」。查看施工图 / 打印两颗按钮已删除：单张施工图的出口收敛成「保存 → 修改成功结果页
+        → 查看」，本组件不再持有那两个面板的任何知识（`data-testid` 的删除清单见任务 5 简报）。
+
+        「重做」是**白底次要按钮**（`border-slate-300`、无底色），保存仍是黑底主操作：重做会丢掉
+        手工涂改，视觉权重不能压过保存。`canRerun` 为假（工程没有保存原图）时**不渲染它**——
+        没有原图就无从「按原图重新生成」，留一颗点了没反应的按钮比没有按钮更糟。
+      -->
+      <button
+        v-if="canRerun"
+        data-testid="rerun"
+        class="min-h-11 rounded border border-slate-300 px-4 text-base"
+        @click="emit('rerun')"
+      >
+        重做
       </button>
       <button
         data-testid="editor-save"

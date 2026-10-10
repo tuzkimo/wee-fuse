@@ -2,7 +2,6 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick, reactive } from "vue";
-import { RouterLink } from "vue-router";
 import { fitTransform, type ViewTransform } from "@/core/crop/view";
 import { defaultCellView } from "@/core/pattern/view";
 import { EMPTY } from "@/core/pattern/types";
@@ -11,15 +10,7 @@ import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
-import SheetViewer from "@/components/sheet/SheetViewer.vue";
-import {
-  createRecordingTarget,
-  resetExporterMock,
-  stubObjectUrl,
-  type MockExporter,
-  type RecordingTarget,
-} from "@/components/editor/__tests__/exportTestKit";
-import { cellBox, planSheet } from "@/core/render/layout";
+import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import {
@@ -55,9 +46,21 @@ import EditorPage from "@/views/EditorPage.vue";
  *    要减掉 rect.left/top」两件事都成为可断言的外部可观察量；
  * 4. `toDataURL` 每次返回**不同**的串 → 「保存时确实重算了封面」有判别力（用真实 happy-dom 的
  *    `toDataURL` 时前后串相同，把 `{ thumbnail }` 删掉照样绿，那是哑弹）。
+ *
+ * **路由替身里还有两样东西**（C8 第 3 项）：`back` 与 `options.history.state`——返回箭头走的是
+ * `backOrHome(router)`，它要读这两样才能决定「退回去」还是「回图纸库」。喂值方式见下面 `historyState`
+ * 的 JSDoc；`@/services/exporter` 的替身随「编辑页不再渲染查看层 / 打印面板」一并删除（那两块
+ * 覆盖层退出本页之后，本文件没有任何一条用例碰导出通道）。
  */
-const { pushMock, routeState, leaveGuards } = vi.hoisted(() => ({
+const { pushMock, backMock, historyState, routeState, leaveGuards } = vi.hoisted(() => ({
   pushMock: vi.fn(),
+  /**
+   * `backOrHome` 的另一个出口：历史里有上一页时它调 `router.back()`（由路由器退回去）。
+   * 生产路由器写 `history.state.back`、**内存历史不写**（见 `backOrHome.ts` 的文件头），
+   * 所以这里把那个字段做成**可写的桩**，让两支都可判——而不是依赖某个特定历史实现。
+   */
+  backMock: vi.fn(),
+  historyState: {} as { back?: unknown },
   routeState: { params: { id: "a" } as Record<string, string> },
   leaveGuards: [] as ((to: unknown, from: unknown) => boolean)[],
 }));
@@ -75,46 +78,18 @@ const router = reactive(routeState);
 
 vi.mock("vue-router", () => ({
   useRoute: () => router,
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => ({
+    push: pushMock,
+    back: backMock,
+    // `backOrHome` 读的就是它（`router.options.history.state.back`）。C8 第 3 项起编辑页的返回
+    // 箭头走这个函数，所以替身必须给出这一层；`RouterLink` 已随「回图纸库」整块删除而不再需要。
+    options: { history: { state: historyState } },
+  }),
   // 新增基础设施：把守卫捕获出来（见文件头注释 ②）。返回值与真实现一致：false = 取消导航。
   onBeforeRouteLeave: (guard: (to: unknown, from: unknown) => boolean): void => {
     leaveGuards.push(guard);
   },
-  RouterLink: { template: "<a><slot /></a>" },
 }));
-
-/**
- * 导出面板的平台边界（任务 4）：`@/services/exporter` 的五个碰平台的函数换成替身，
- * `exportFilename` 用**真实现**（文件名的逐字格式是任务 3 用例的事）。
- *
- * 为什么不 mock `@/core/render/*`：规格 §13.2 第 1 条要的判据是「`drawSheet` **收到的该格
- * `fillRect` 颜色**是新色」——只有让真渲染器跑在记录型 target 上，`cellBox → fillRect`
- * 这条链才真的被走过（happy-dom 的 canvas 没有像素语义，CONTRACT §5.1）。
- *
- * **替身必须用 `vi.hoisted` 就地声明**（不能放共享模块）：`vi.mock` 的工厂被提升到所有 import
- * 之前，工厂里引用任何模块级导出都会崩在 TDZ（实测：`Cannot access 'exporter' before
- * initialization`）。共享模块 `@/components/editor/__tests__/exportTestKit` 提供的是
- * `MockExporter` 类型（成员由真模块派生 ⇒ 签名漂移在本文件编译失败）、记录型 target（含
- * `fillText` 记录）、假画布与 `resetExporterMock`。
- */
-const exporter = vi.hoisted(
-  () =>
-    ({
-      createCanvasStrict: vi.fn(),
-      requireContext2D: vi.fn(),
-      // 面板自身不再直调它（渲染走 `@/services/sheetExport` 的两条 Blob 通道，由那里调用）：
-      // 「在哪一项上调用、顺序如何」由 `ExportPanel.test.ts` 的**同一个** `resetExporterMock`
-      // 默认实现 + 顺序表钉住。
-      assertCanvasPainted: vi.fn(),
-      canvasToBlob: vi.fn(),
-      downloadBlob: vi.fn(),
-    }) satisfies MockExporter,
-);
-
-vi.mock("@/services/exporter", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/services/exporter")>();
-  return { ...actual, ...exporter };
-});
 
 const palette = getBuiltinPalette();
 
@@ -371,6 +346,9 @@ beforeEach(async () => {
   canvasSeq = 0;
   leaveGuards.length = 0;
   pushMock.mockClear();
+  backMock.mockClear();
+  // 历史里默认没有上一页（`backOrHome` 走「回图纸库」那一支）；要测另一支的用例自己喂值。
+  delete historyState.back;
   // 复位走**代理**（与用例里改 id 的方式一致）。可以放心走代理是因为下面 `afterEach` 会卸载
   // 每个用例挂过的页面——没有留下未卸载的实例，也就没有 watcher 会被这一次复位唤醒。
   router.params = { id: "a" };
@@ -407,10 +385,19 @@ describe("EditorPage（B1 只读版 + B3 编辑器宿主）", () => {
     expect(wrapper.find("[data-testid='editor-error']").exists()).toBe(false);
   });
 
-  it("有原图时显示「可以改参数重跑」，没有时明确禁用并给原因", async () => {
+  /**
+   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具栏输出行）。
+   *
+   * 两条分支合在一条里断言，理由与旧版相同：**互斥性只有同时看到两侧才有判别力**——
+   * 只有「有原图时渲染」时，把 `:can-rerun` 绑成常量 `true` 也绿。
+   *
+   * 原来的两条 `<p>`（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」）随本任务删除：
+   * 提示的对象不存在了（没有原图时工具栏**不渲染**那颗按钮）。留下的这一条覆盖它们真正承重的那半句
+   * ——**没有原图只是「不能改参数重新生成」，不是「打不开」**。
+   */
+  it("「重做」只在有原图时渲染；没有原图的工程照常打开", async () => {
     const wrapper = await mountPage();
-    expect(wrapper.find("[data-testid='rerun-available']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='rerun-unavailable']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='rerun']").exists()).toBe(true);
 
     const noSource = await createMemoryProjectStore();
     await noSource.put(makeEditorRecord());
@@ -418,11 +405,10 @@ describe("EditorPage（B1 只读版 + B3 编辑器宿主）", () => {
     // 与 `mountPage()` 等价（`mount` + `flushPromises`），只是这里要挂第二个页面：
     // 走同一个助手，`afterEach` 才会把它一起卸载（见 `mountPage` 的 JSDoc）。
     const second = await mountPage();
-    expect(second.find("[data-testid='rerun-unavailable']").text()).toContain("原图");
-    // 两条分支互斥：没有原图时不能同时说「原图已保存」
-    expect(second.find("[data-testid='rerun-available']").exists()).toBe(false);
+    expect(second.find("[data-testid='rerun']").exists()).toBe(false);
     // 名称与尺寸照常显示：没有原图只是「不能改参数重跑」，不是「打不开」
     expect(second.text()).toContain("小猫");
+    expect(second.find("[data-testid='editor-canvas']").exists()).toBe(true);
   });
 
   it("找不到工程时显示错误，不白屏", async () => {
@@ -481,8 +467,9 @@ describe("改参数重新生成（B2 规格 §7）", () => {
     // 组件不装插件也能拿到它（上面 5 条既有用例就是这么挂的）。
     const wrapper = await mountPage();
 
-    // 入口的名字是给用户看的：只有按钮没有标签、或标签写错，用户不知道这一下会发生什么
-    expect(wrapper.get("[data-testid='rerun']").text()).toContain("改参数重新生成");
+    // 入口的名字是给用户看的：只有按钮没有标签、或标签写错，用户不知道这一下会发生什么。
+    // **C8 第 3 项改名**：它从页面中部搬进工具栏输出行，文案由「改参数重新生成」收敛成「重做」。
+    expect(wrapper.get("[data-testid='rerun']").text()).toContain("重做");
 
     const draft = useDraft();
     // 点之前草稿必须是干净的：否则下面的断言分不清「这一点点出来的」还是「本来就有的」。
@@ -524,18 +511,36 @@ describe("改参数重新生成（B2 规格 §7）", () => {
     expect(draft.crop).toEqual({ x: 2, y: 3, width: 8, height: 8 });
   });
 
-  it("没有保存原图的工程不给出入口（维持既有的琥珀提示）", async () => {
-    const noSource = await createMemoryProjectStore();
-    await noSource.put(makeEditorRecord({ params: RERUN_PARAMS }));
-    setProjectStore(noSource);
-    const wrapper = await mountPage();
+  /**
+   * **C8 顺带修的静默缺陷，本任务必须真的落地**（任务 4 的审查点名）：编辑页原先有一份**本地**
+   * `seedRerunDraft`，它漏传 `params.customMaxColors` ⇒ 从编辑器点「重做」跑一条自定义 N 色的
+   * 工程时，草稿里还是残留值（默认 32），而 `maxColors === "custom"` ⇒ **静默产出用色数与记录
+   * 不一致的图纸**，全程没有任何报错。本任务删掉本地那份、改成 import 共用的实现
+   * （`@/services/rerunDraft`，任务 4 已建，编辑来源结果页在用）。
+   *
+   * 判据就是**读草稿里那个数**：参数来自落盘记录（`customMaxColors: 20`），点一下「重做」之后
+   * 草稿里必须是 20。起点**刻意不是 20**——否则「播种对了」与「本来就是 20」不可区分
+   * （`adoptProject` 在不传这个字段时保留残留值，残留值正是 32）。
+   */
+  it("「重做」把落盘参数（含自定义用色数）整份播种进草稿", async () => {
+    const store = await createMemoryProjectStore();
+    await store.put(
+      makeEditorRecord({
+        withSource: true,
+        params: { ...RERUN_PARAMS, maxColors: "custom", customMaxColors: 20 },
+      }),
+    );
+    setProjectStore(store);
 
-    expect(wrapper.find("[data-testid='rerun']").exists()).toBe(false);
-    expect(wrapper.get("[data-testid='rerun-unavailable']").text()).toContain("没有保存原图");
-    // 两条分支互斥，而且没有原图只是「不能重跑」，不是「打不开」：点不了也不该点错
-    expect(wrapper.find("[data-testid='rerun-available']").exists()).toBe(false);
-    expect(wrapper.text()).toContain("小猫");
-    expect(pushMock).not.toHaveBeenCalled();
+    const wrapper = await mountPage();
+    const draft = useDraft();
+    expect(draft.customMaxColors).not.toBe(20); // 草稿层的残留值：默认 32
+
+    await wrapper.get("[data-testid='rerun']").trigger("click");
+
+    expect(draft.rerunOf?.id).toBe("a");
+    expect(draft.maxColors).toBe("custom");
+    expect(draft.customMaxColors).toBe(20);
   });
 });
 
@@ -587,14 +592,6 @@ describe("装配：载入 → 播种 store → 视图落定", () => {
     // 读 `meta.colorCount` 的变异也在这里红：`put` 把它派生成**全色卡色数**（≠2）。
     expect(wrapper.get("[data-testid='editor-size']").text()).toContain("2 种颜色");
     expect(wrapper.get("[data-testid='editor-size']").text()).not.toContain("999");
-  });
-
-  it("rerun 入口旁有固定说明，dirty 指示干净时不渲染", async () => {
-    const wrapper = await mountPage();
-    expect(wrapper.get("[data-testid='rerun-warning']").text()).toContain(
-      "重新生成会按原图重做整张图纸，手工涂改不会保留。",
-    );
-    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
   });
 });
 
@@ -695,6 +692,45 @@ describe("保存", () => {
     // 重试若重新渲染封面，这里就是两个不同的串（`toDataURL` 桩按调用序号递增）。
     expect(attempts).toHaveLength(2);
     expect(attempts[0]).toBe(attempts[1]);
+  });
+
+  /**
+   * C8 第 3 项：**保存成功之后跳「修改成功」结果页**（这是编辑页收敛后唯一的出口）。
+   *
+   * 判据是两条：`session.save` 真的被调过一次（少了它，「没保存也跳」会绿），以及 `push` 的目标
+   * 逐字是 `edit-result` + **本记录的 id**（写成 home / setup / 常量 id 都会红）。`pushMock` 与
+   * `vi.spyOn(session, …)` 都是本文件既有的桩，没有为这两条用例新造一套。
+   */
+  it("保存成功后跳到「修改成功」的结果页（C8 第 3 项）", async () => {
+    const session = useProjectSession();
+    const saveSpy = vi.spyOn(session, "save");
+    const wrapper = await mountPage();
+
+    await wrapper.get("[data-testid='editor-save']").trigger("click");
+    await flushPromises();
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith({ name: "edit-result", params: { id: "a" } });
+  });
+
+  // 失败那半支：**不跳转**，留在编辑器给重试——跳走会把内存里的改动丢在一个没有编辑入口的页面上。
+  // 失败照样用「put 抛错」那条既有替身造，不另造一套桩。
+  it("保存失败**不**跳转（留在编辑器给重试）", async () => {
+    const real = getProjectStore();
+    setProjectStore({
+      ...real,
+      async put(): Promise<void> {
+        throw new Error("磁盘已满");
+      },
+    });
+    const wrapper = await mountPage();
+
+    await wrapper.get("[data-testid='editor-save']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='save-error']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(true);
+    expect(pushMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1084,7 +1120,8 @@ describe("页面接线（续）：色板 / 显示开关 / 工具栏命令与状�
     // 先钉住起点：否则「变成了 220」与「本来就是 220」不可区分（播种值是 0）。
     expect(editor.currentColor).toBe(0);
 
-    await wrapper.get("[data-testid='palette-add']").trigger("click");
+    // C8 第 3 项：选择器的入口是**当前色槽本身**（「添加颜色」那颗按钮已删除）
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
     await wrapper.get(`[data-testid='picker-color'][data-code='${target.code}']`).trigger("click");
 
     expect(editor.currentColor).toBe(palette.colors.length - 1);
@@ -1469,249 +1506,122 @@ describe("端到端 ③：/edit/a → /edit/b", () => {
 });
 
 /**
- * 回图纸库入口（F1）。
+ * C8 第 3 项：**编辑页的出口收敛**。
  *
- * 人工验证发现：编辑页**没有任何回库入口**——用户只能靠浏览器 / Android 系统的返回键离开，
- * 而 Tauri 壳里没有浏览器工具栏。这里钉两件事：
- * ① 入口存在，且是**路由链接**（`RouterLink` 渲染成 `<a>`；不用 `@click="router.push(...)"` 绕过
- *    链接语义，主规格 §6.4）；② 它是**走守卫的正常导航**——有未保存改动时被同一条页面内确认条拦下，
- *    没有为它新增任何第二个 dirty 标志或第二段拦截逻辑。
+ * 原「回图纸库」整块（`RouterLink` + `back-to-library`）换成标题前的返回箭头（`editor-back`）；
+ * 唯一的外部出口是「保存」→「修改成功」结果页（`edit-result`）；查看层与打印面板不再由本页渲染
+ * （它们的内部改造是任务 6 / 7 的事，`data-testid` 不变）。
+ *
+ * **返回箭头为什么是 `@click="backOrHome(router)"` 而不是 `RouterLink`**（F1 那版留下的教训换了形态）：
+ * 规格 §3.6.1 要的是「有上一页就退回去、历史为空才回图纸库」——那是一次**判断**，声明式目标做不到。
+ * `backOrHome` 是既有的那一份实现（只给生图页 / 编辑页用）；它内部走 `router.push` / `router.back`，
+ * 所以**离场守卫照常生效**（真路由器上那一跳由 `EditorPageRouterLink.test.ts` 钉）。本文件把路由器
+ * 换成替身，钉的是**接线与目标**：点一下必须真的问过 `backOrHome` 的两个判据。
  */
-describe("回图纸库入口（F1）", () => {
-  it("载入成功后顶部有回图纸库入口：指向图纸库的路由链接，且满足触控 / 字号下限", async () => {
+describe("C8 第 3 项：编辑页出口收敛", () => {
+  it("标题前是返回箭头（不再是「回图纸库」RouterLink）（C8 第 3 项）", async () => {
     const wrapper = await mountPage();
-    const entry = wrapper.get("[data-testid='back-to-library']");
-    // 只有入口没有标签、或标签写错，用户不知道这一下会发生什么
-    expect(entry.text()).toContain("回图纸库");
-    // 触控目标 ≥44px、字号 ≥16px（主规格 §6.4；与工具栏按钮同一口径的类名断言）
-    expect(entry.classes()).toContain("min-h-11"); // 2.75rem = 44px
-    expect(entry.classes()).toContain("text-base"); // 16px
-
-    // **目标**：既有 mock 里的 `RouterLink` 是 `{ template: "<a><slot /></a>" }` 且**没有声明 props**，
-    // 所以 `to` 以 fallthrough 属性的形式落在渲染出的 `<a>` 上——这是本环境里唯一能观察到
-    // 「入口声明了哪个目标」的形式。真实 `RouterLink` 会把它当 prop 消费并渲染成 `href="/"`；
-    // 「href 对不对」只有真实路由器 / 真机能验，这里不写对 mock 自身行为的断言。
-    expect(entry.attributes("to")).toBe("/");
-    // 旁路写法的判别力：`@click="router.push('/')"` 的 `<a>` / `<button>` 既没有 `to` 属性、
-    // 也没有 `RouterLink` 组件，这一条与上面那条同时红（变异实测见报告 §F1）。
-    expect(wrapper.findComponent(RouterLink).exists()).toBe(true);
+    expect(wrapper.find("[data-testid='back-to-library']").exists()).toBe(false);
+    const back = wrapper.get("[data-testid='editor-back']");
+    expect(back.element.tagName).toBe("BUTTON");
+    expect(back.text()).toContain("←");
   });
 
-  it("有未保存改动时点它：不跳转、由同一条确认条接手，放弃后重放的正是入口自己的目标", async () => {
+  // 返回箭头的接线判据：**两个分支各走一次**。只断言「历史为空 ⇒ push home」时，把实现写成
+  // `router.push({ name: "home" })`（永远回首页）照样绿——而规格 §3.6.1 要的是「有上一页就退回去」。
+  // 反过来只断言 `back()` 时，「历史为空 ⇒ 回首页」这条兜底（用户眼里的「按了没反应」）没人守。
+  //
+  // 这里的 `historyState` 就是 `backOrHome` 读的那个字段，**直接喂值**让两支都可判。生产路由器会
+  // 自己写它（`backOrHome.test.ts` 因此必须用 `createWebHistory`——内存历史不写这个字段，用它写
+  // 「有上一页 ⇒ back()」是恒绿的假绿）。
+  it("返回箭头接的是 backOrHome：历史为空回图纸库、有上一页就退回去", async () => {
     const wrapper = await mountPage();
-    useEditor().setCurrentColor(2);
-    await dragPaint(wrapper, [1, 0], [1, 0]);
+    const back = wrapper.get("[data-testid='editor-back']");
+    // 触控目标 ≥44px（主规格 §6.4，与工具栏同一口径的类名断言）。箭头本身没有文字标签，
+    // 所以必须有 `aria-label`，否则读屏用户听到的是一个没有名字的按钮。
+    expect(back.attributes("aria-label")).toBe("返回");
+    expect(back.classes()).toContain("min-h-11"); // 2.75rem = 44px
+    expect(back.classes()).toContain("min-w-11");
 
-    const entry = wrapper.get("[data-testid='back-to-library']");
+    await back.trigger("click");
+    expect(backMock).not.toHaveBeenCalled();
+    expect(pushMock).toHaveBeenCalledWith({ name: "home" });
 
-    // ① 入口**自己不发起导航、也不绕过守卫**。真实路由器会在导航时先跑离场守卫，而这里的 `RouterLink`
-    //    是桩（不驱动路由器），所以「点完之后一次 push 都没有」正是旁路实现的红点：写成
-    //    `@click="router.push('/')"` 时 pushMock 已经被调过一次。
-    await entry.trigger("click");
-    await nextTick();
+    pushMock.mockClear();
+    historyState.back = "/";
+    await back.trigger("click");
+    expect(backMock).toHaveBeenCalledTimes(1);
     expect(pushMock).not.toHaveBeenCalled();
-
-    // 目标也取自入口**自己声明的那个**（不是用例里另写一个常量）：下面第 ② / ③ 步过的都是它。
-    const target = entry.attributes("to");
-    if (target === undefined) throw new Error("回图纸库入口没有声明目标（to）");
-
-    // ② 像真实路由器那样，拿**入口自己声明的目标**去过那条守卫：有未保存改动 ⇒ 取消导航 + 同一条确认条。
-    //    这一条就是「新入口接的是同一条路」；删掉 / 改坏守卫（例如放行）时它立刻红。
-    expect(getLeaveGuard()(target, { name: "editor" })).toBe(false);
-    await nextTick();
-    expect(wrapper.find("[data-testid='leave-bar']").exists()).toBe(true);
-    expect(pushMock).not.toHaveBeenCalled();
-
-    // ③ 端到端闭环：点「放弃改动」之后，重放的**正是入口声明的那个目标**——不是写死的 home、
-    //    也不是别的路由。入口 → 守卫 → 确认条 → 路由器，一条链走完。
-    await wrapper.get("[data-testid='leave-discard']").trigger("click");
-    await flushPromises();
-    expect(pushMock).toHaveBeenCalledTimes(1);
-    expect(pushMock).toHaveBeenCalledWith(target);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 导出 / 打印面板的接线与端到端（任务 4 立项，任务 10 收敛成两种模式）
-//
-// 面板自己持有清单与逐项状态（契约 §2b / 规格 §10），页面只做三件事：`panelMode` 开关、
-// 把**内存态**图纸与页面已有的 `usages` 传下去、`@close` 关掉。下面几条用例把这三件事各钉一条，
-// 最后一条就是规格 §13.2 第 1 条（「导出旧图」的判别性用例）。
-// ---------------------------------------------------------------------------
-
-describe("导出面板接线（任务 4 / 任务 10）", () => {
-  let recording: RecordingTarget;
-
-  beforeEach(() => {
-    recording = createRecordingTarget();
-    // 五个替身的默认实现与 `ExportPanel.test.ts` 共用一份（`resetExporterMock`）。本文件**不挂
-    // `onStep` / `onCanvas` 钩子**：顺序表与「释放晚于 toBlob」是面板自己那组用例的职责，
-    // 这里只需要「真渲染器把 `fillRect` 记下来」这一件事（端到端那条判据）。
-    resetExporterMock(exporter, recording.target);
-    stubObjectUrl();
   });
 
-  it("点「查看施工图」→ 查看层出现；点「关闭」→ 回编辑态（图纸与编辑态都没被丢掉）", async () => {
+  it("不再有改参重生的两行提示（C8 第 3 项）", async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.find("[data-testid='rerun-available']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='rerun-unavailable']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='rerun-warning']").exists()).toBe(false);
+  });
+
+  it("编辑器自己不再渲染查看层与打印面板（出口只剩结果页那一条）", async () => {
     const wrapper = await mountPage();
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
-
-    await wrapper.get("[data-testid='view-sheet']").trigger("click");
-    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(true);
-    // 查看层真的被挂起来了（不是空壳）：组件实例在，标题也在
-    expect(wrapper.findComponent(SheetViewer).exists()).toBe(true);
-    expect(wrapper.get("[data-testid='sheet-title']").text()).toContain("施工图");
-    // **吃的是内存态图纸**（含未保存改动），不是落盘记录里的那一份
-    expect(wrapper.findComponent(SheetViewer).props("pattern")).toBe(useEditor().pattern);
-
-    await wrapper.get("[data-testid='sheet-close']").trigger("click");
-    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
-    // 「回编辑态」不是把页面卸载重建：画布、工具栏与图纸都原样还在
-    expect(wrapper.find("[data-testid='editor-canvas']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='tool-brush']").exists()).toBe(true);
-    expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
-  });
-
-  it("点「打印」→ 以**打印模式**打开同一个面板（清单是页、不是一张施工图），关闭后回编辑态", async () => {
-    // 接线判据：`@print="panelMode = 'print'"`。只钉「面板出现」时，把 print 接到
-    // `panelMode = 'sheet'` 照样绿——而用户点的明明是「打印」。
-    const wrapper = await mountPage();
-    await wrapper.get("[data-testid='print']").trigger("click");
-
-    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
-    // **不要用整页 `text()` 里的「打印」当判据**：页标签写的是「打印页 第 1 行…」，那是一句**恒真**的
-    // 断言。模式的判据是标题与摘要文案。
-    expect(wrapper.get("[data-testid='export-panel'] h2").text()).toBe("打印");
-    expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
-    // 2×1 图纸 ⇒ 29 板下恰好 1 页（页数来自 `printBoardCount`，不是常数）
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(1);
-    expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain(
-      "共 1 页（每页一块 29×29 板 · A4）",
-    );
-    expect(wrapper.find("[data-testid='print-board-29']").exists()).toBe(true);
-
-    await wrapper.get("[data-testid='export-close']").trigger("click");
     expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
-    expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, EMPTY]);
   });
 
-  it("打印面板的 `:project-name` 真的接了线：文件名与图上标题带记录的工程名", async () => {
-    // 修复波 C-M2：这条 prop 原来零断言——把它钉成常量也能全绿，
-    // 而它是「图纸来源是内存态 + 名字取自记录」这条承诺在面板这一侧的**唯一**接线。
-    const wrapper = await mountPage();
-    await wrapper.get("[data-testid='print']").trigger("click");
-    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
-    await flushPromises();
-
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(true);
-    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
-    // 打印页**带**页序号（r1c1）
-    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("小猫-打印-r1c1.png");
-    expect(recording.texts.some((call) => call.text.startsWith("小猫 · 第 1 行"))).toBe(true);
-  });
-
-  it("打印面板打开时按返回：确认条浮在覆盖层**之上**（z 序），用户看得见、也点得动", async () => {
-    // 修复波 B-2：面板是 `fixed inset-0 z-30`，确认条原来是 `z-20` ⇒ 守卫拦下了导航、`leaving` 也
-    // 置真了，但用户看到的是「按了没反应」：什么都看不见、也没有出口。
-    const wrapper = await mountPage();
-    useEditor().setCurrentColor(2);
-    await dragPaint(wrapper, [1, 0], [1, 0]);
-
-    await wrapper.get("[data-testid='print']").trigger("click");
-    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
-
-    expect(getLeaveGuard()({ name: "home" }, { name: "editor" })).toBe(false);
-    await nextTick();
-
-    const bar = wrapper.get("[data-testid='leave-bar']");
-    const panel = wrapper.get("[data-testid='export-panel']");
-    /** 类名里那个 `z-NN` 的数值（没有 `z-*` 时是 `NaN` ⇒ 后面的比较恒假、必红）。 */
-    const zOf = (el: { classes: () => string[] }): number => {
-      const match = /(?:^|\s)z-(\d+)(?:\s|$)/.exec(el.classes().join(" "));
-      return match === null ? Number.NaN : Number(match[1]);
-    };
-    expect(zOf(panel)).toBe(30);
-    expect(zOf(bar)).toBe(40);
-    expect(zOf(bar)).toBeGreaterThan(zOf(panel));
-    // 三个动作都在：用户有真的出口（而不是「面板盖住了确认条」这种静默死路）
-    // `wrapper.get(...)` 的返回类型是 `Omit<DOMWrapper<Element>, "exists">`（VTU 2.4.10），
-    // 所以「还在不在」必须走 `find(...).exists()`（B4 规格里记过这一条）。
-    expect(wrapper.find("[data-testid='leave-save']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='leave-discard']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='leave-cancel']").exists()).toBe(true);
-  });
-
-  it("面板的 `usages` 跟着图纸走：全空图纸如实说明，涂一格之后那句话消失", async () => {
-    // 夹具：**全空**的 2×1 → `patternStats` 的 usages 为空（`EditorPage` 的 `usages` 就是它）
-    const doc = toProjectDocument(
-      { width: 2, height: 1, paletteId: palette.id, cells: Uint16Array.from([EMPTY, EMPTY]) },
-      palette,
-      { longSide: 2, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
-    );
-    const store = await createMemoryProjectStore();
-    await store.put({
-      meta: {
-        id: "a",
-        name: "小猫",
-        createdAt: "2026-10-03T00:00:00.000Z",
-        updatedAt: "2026-10-03T01:00:00.000Z",
-        thumbnail: "",
-        width: 0,
-        height: 0,
-        colorCount: 0,
-      },
-      doc,
-      source: null,
-    });
-    setProjectStore(store);
-
-    const wrapper = await mountPage();
-    await wrapper.get("[data-testid='print']").trigger("click");
-    expect(wrapper.get("[data-testid='export-empty-note']").text()).toBe("这张图纸没有可拼的像素");
-
-    // 涂一格：`patternStats().usages` 从空变成 1 项——面板那一行必须跟着消失（`:usages` 的接线）。
-    // 少了 `:usages` 这一条 props 的实时性，面板会一直说「没有可拼的像素」（不报错、只是撒谎）。
-    useEditor().setCurrentColor(2);
-    await dragPaint(wrapper, [0, 0], [0, 0]);
-    expect(wrapper.find("[data-testid='export-empty-note']").exists()).toBe(false);
-  });
-
-  it("端到端（规格 §13.2-1）：改一格 → 查看施工图 → 渲染器收到的该格是新色，不是落盘记录里的旧值", async () => {
+  /**
+   * 「橡皮」剥掉了它在本页的最后一层皮：按钮在工具栏（`PatternToolbar` 的 `eraser`），
+   * 真正要做的两件事在**页面**这一层——设当前色为 `EMPTY`、**并切回画笔**。
+   *
+   * 后半句是这条用例的核心：在框选 / 吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+   * （与「吸管取色后切回画笔」同口径）。所以起点**刻意先切到框选**——否则「切回画笔」与
+   * 「本来就是画笔」不可区分。
+   */
+  it("工具栏「橡皮」：设当前色为 EMPTY 并切回画笔，按下态跟着当前色", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
-    const pattern = editor.pattern;
-    if (pattern === null) throw new Error("载入失败：编辑器还没有图纸");
-    const paintedColor = palette.colors[2];
-    if (paintedColor === undefined) throw new Error("色卡至少要有三色");
 
-    // 起点：(1,0) 是**空格**。涂成 2 号色 ⇒ 内存态与落盘记录从这一刻起不一致。
-    editor.setCurrentColor(2);
+    expect(editor.currentColor).toBe(0); // 播种色
+    await wrapper.get("[data-testid='tool-select']").trigger("click");
+    expect(editor.tool).toBe("select");
+    // `:eraser-active` 接的是「当前色是不是 EMPTY」：此刻不是，所以没有按下态
+    expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("false");
+
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+
+    expect(editor.currentColor).toBe(EMPTY);
+    expect(editor.tool).toBe("brush");
+    expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("true");
+    // 只改当前色与工具，不碰图纸
+    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
+  });
+
+  /**
+   * 未保存确认条也是「临时界面」：Android 返回键先收掉它（= 继续编辑），而不是离开页面
+   * （C8 规格 §3.6.2）。判据用 `leaving`。
+   *
+   * 这条不是简报原文（简报第 7 步第 8 项要求把确认条接进返回栈，却没给对应的断言）：没有它时
+   * `useOverlayBack(...)` 那几行**没有任何断言读过**——整段删掉照样全绿（与 `LibraryPage` 的删除框
+   * 同形，那里的用例也是这么补的）。
+   */
+  it("未保存确认条进覆盖层返回栈：按下返回先收掉它（C8 规格 §3.6.2）", async () => {
+    const wrapper = await mountPage();
+    // 干净时页面上没有注册点：返回键该走导航栈（`false` 就是那个信号）
+    expect(closeTopOverlay()).toBe(false);
+
+    useEditor().setCurrentColor(2);
     await dragPaint(wrapper, [1, 0], [1, 0]);
-    expect(Array.from(pattern.cells)).toEqual([0, 2]);
-    // **夹具的判别力**：存储里那一格仍是旧的 EMPTY。少了这一句，「渲染器收到新色」与
-    // 「新旧两份恰好一样」不可区分——M14 变异会照样绿。
-    expect(storedCells(await getProjectStore().get("a"))).toEqual([0, EMPTY]);
+    expect(getLeaveGuard()({ name: "home" }, { name: "editor" })).toBe(false);
+    await nextTick();
+    expect(wrapper.find("[data-testid='leave-bar']").exists()).toBe(true);
 
-    // C7：单张施工图的唯一出口是「查看施工图」——它吃**内存态** `editor.pattern`
-    await wrapper.get("[data-testid='view-sheet']").trigger("click");
-    await flushPromises();
-
-    // 判据 = 渲染器**实际收到的**那一格 `fillRect` 的颜色（规格 §13.2 第 1 条逐字）。
-    // 计划与坐标都由真 core 现算：单张施工图覆盖全图，`(1,0)` 的像素由 `cellBox` 给出。
-    // 工程名必须与夹具 A 的 `meta.name` 同源（C8 §7.3 起标题字号由名字宽度决定 ⇒ 名字不同、
-    // 标题行高就不同、`grid.y` 也不同）。
-    const plan = planSheet(pattern, palette, patternStats(pattern, palette).usages, "小猫");
-    const box = cellBox(plan, 1, 0);
-    const painted = recording.fills.filter(
-      (fill) => fill.x === box.x && fill.y === box.y && fill.w === box.width && fill.h === box.height,
-    );
-    // 期望值**不用 `rgbCss` 现算**（那是被测口径之一）：直接拼出契约 §2 的序列化形状
-    expect(painted.map((fill) => fill.fillStyle)).toEqual([
-      `rgb(${paintedColor.rgb[0]}, ${paintedColor.rgb[1]}, ${paintedColor.rgb[2]})`,
-    ]);
-    // 那一格只被画一次；M14（数据源换成落盘图纸）下它是空格 ⇒ 这里**一格都没有**
-    expect(painted).toHaveLength(1);
+    // 覆盖层活着：返回键被它吃掉（= 继续编辑），不交给导航栈
+    expect(closeTopOverlay()).toBe(true);
+    await nextTick();
+    expect(wrapper.find("[data-testid='leave-bar']").exists()).toBe(false);
+    expect(pushMock).not.toHaveBeenCalled();
+    // 收掉之后条目要出栈，否则第二次返回会被一个已经关掉的确认条吃掉（页面看起来「返回键失灵」）
+    expect(closeTopOverlay()).toBe(false);
+    // 「继续编辑」的语义（`cancelLeave`）：下一次导航照样被拦——不是顺手清掉 dirty 或放行守卫
+    expect(getLeaveGuard()({ name: "home" }, { name: "editor" })).toBe(false);
   });
 });
 

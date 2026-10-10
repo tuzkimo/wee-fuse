@@ -58,10 +58,29 @@ describe("当前画笔槽（§9.1 第 1 条）", () => {
     expect(slot).toContain("柠黄");
   });
 
-  // 橡皮态必须看得见：当前色是 EMPTY 时显示「不拼豆（橡皮）」（§9.1 第 1 条 + §6.3）。
-  it("当前色是 EMPTY 时显示「不拼豆（橡皮）」", () => {
+  // 橡皮态必须看得见：当前色是 EMPTY 时槽位文案是「橡皮」（§9.1 第 1 条 + §6.3）。
+  // **C8 第 3 项改口径**：原来是「不拼豆（橡皮）」，现在就是「橡皮」——独立的橡皮按钮已经搬进
+  // 工具栏（`PatternToolbar` 的 `eraser`），槽位不再兼任那个入口。
+  it("当前色是 EMPTY 时槽位文案是「橡皮」", () => {
     const wrapper = mountPanel({ currentColor: EMPTY });
-    expect(wrapper.get("[data-testid='palette-current']").text()).toContain("不拼豆（橡皮）");
+    expect(wrapper.get("[data-testid='palette-current']").text()).toBe("橡皮");
+  });
+
+  // 当前色槽同时是选择器的**唯一入口**（C8 第 3 项删掉了「添加颜色」那颗按钮）：
+  // `aria-expanded` 是它对辅助技术的状态陈述，点第二下要收回去（`picking = !picking`）。
+  // 同一实例上两个方向都走一遍——只断言「点一下会展开」时，绑成常量 `true` 也绿。
+  it("当前色槽的 aria-expanded 跟随选择器的开合（同一实例两个方向）", async () => {
+    const wrapper = mountPanel();
+    const slot = wrapper.get("[data-testid='palette-current']");
+
+    expect(slot.attributes("aria-expanded")).toBe("false");
+    await slot.trigger("click");
+    expect(slot.attributes("aria-expanded")).toBe("true");
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(true);
+
+    await slot.trigger("click");
+    expect(slot.attributes("aria-expanded")).toBe("false");
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
   });
 
   // 【裁决 3 的直接后果，本任务最承重的一条】画笔色清单 = **当前图纸用到的色号**，
@@ -150,21 +169,31 @@ describe("已用色列表（§9.1 第 2 条）", () => {
   });
 });
 
-describe("橡皮与「添加颜色」（§9.1 第 3、4 条）", () => {
-  // 橡皮 emit 的是 `EMPTY`（0xffff，图纸里「不拼豆」的唯一表示），不是 -1、不是 0——
-  // 0 是合法色号（A1），emit 0 会让用户以为自己在用 A1 画画。
-  it("点橡皮 emit EMPTY（不是 -1、不是 0）", async () => {
+describe("当前色槽即入口（§9.1 第 3 条）", () => {
+  // C8 第 3 项：入口从「添加颜色」那颗按钮换成**当前色槽本身**。
+  // 断言拆成三件：它真的是按钮（`div` 点不动）、初始不展开、点一下展开。
+  it("当前色槽是一颗按钮，点它展开选色（C8 第 3 项：删掉「添加颜色」入口）", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='palette-eraser']").trigger("click");
-    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([EMPTY]);
-    expect(EMPTY).toBe(0xffff); // 契约常量，逐字
+    const slot = wrapper.get("[data-testid='palette-current']");
+    expect(slot.element.tagName).toBe("BUTTON");
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+    await slot.trigger("click");
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(true);
   });
 
-  it("「添加颜色」打开选择器；点关闭收起，且不改当前色", async () => {
+  // 两颗按钮都不许留个壳：`palette-add` 的入口功能已并入当前色槽，
+  // `palette-eraser` 搬到了工具栏（`PatternToolbar` 的 `eraser`）。
+  it("没有「添加颜色」按钮，也没有橡皮按钮（橡皮搬到工具栏）", () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find("[data-testid='palette-add']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='palette-eraser']").exists()).toBe(false);
+  });
+
+  it("点选择器的关闭：收起且不改当前色", async () => {
     const wrapper = mountPanel();
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
 
-    await wrapper.get("[data-testid='palette-add']").trigger("click");
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(true);
 
     await wrapper.get("[data-testid='picker-close']").trigger("click");
@@ -177,7 +206,7 @@ describe("橡皮与「添加颜色」（§9.1 第 3、4 条）", () => {
   // 「关掉了但没设色」会让用户白点一次。
   it("在选择器里选中某色 → emit 该色的全色卡下标并自动收起选择器", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='palette-add']").trigger("click");
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
 
     // 选择器块与列表行都带 `data-code`，所以这里必须限定在 picker 之内。
     await wrapper.get("[data-testid='picker'] [data-code='M1']").trigger("click");
@@ -226,7 +255,7 @@ describe("端到端：真实 patternStats 的用量 → 面板 → 选择器标�
     expect(wrapper.get("[data-testid='palette-current']").text()).toContain("M1");
 
     // 选择器侧：被标记的正是那两颗。DOM 顺序是色卡顺序（A1 在下标 0、M1 在下标 206）。
-    await wrapper.get("[data-testid='palette-add']").trigger("click");
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
     const marked = wrapper.findAll("[data-used='1']").map((block) => block.attributes("data-code"));
     expect(marked).toEqual(["A1", "M1"]);
     // A2 是下标 1：任何「按 usages 位置当下标」的实现都会把 A1 标成下标 0、把 A2 标成下标 1，
@@ -244,14 +273,14 @@ describe("非法输入", () => {
   });
 
   // 【修复轮 1，控制者裁决补】上一条的同源守卫，落在当前画笔值上：`currentColor` 越界
-  // （`>= colors.length` 且 `!== EMPTY`）此前被静默显示成「不拼豆（橡皮）」——画面上完全看不出错，
+  // （`>= colors.length` 且 `!== EMPTY`）此前被静默显示成「橡皮」——画面上完全看不出错，
   // 用户以为自己在涂空格，而画笔实际握着色卡外的下标；一旦落笔，`core/pattern/edit.ts` 只守
   // `0..EMPTY`、不守色数上界，那个值就被**静默涂开**。谎报状态 + 静默涂错色，两条都踩了
   // 裁决 3 的口径（`core/project/file.ts`：查不到就响亮失败），故改为渲染期抛错。
   //
   // 999 是**色卡外但仍在 `Uint16` 值域内**的值：它同时也是「最容易顺手 `?? 0` 掉」的那种输入，
   // 且与 `EMPTY`（0xffff）不同——`EMPTY` 是「橡皮」这个合法状态的取值，必须继续放行
-  // （「当前色是 EMPTY 时显示「不拼豆（橡皮）」」那条钉着放行方向）。
+  // （「当前色是 EMPTY 时槽位文案是「橡皮」」那条钉着放行方向）。
   // 消息里带上**实际值**，否则「越界了、但越到哪去了」在日志里看不出来。
   it("currentColor 越界（色卡外且不是 EMPTY）时响亮失败，消息带实际值", () => {
     expect(() => mountPanel({ currentColor: 999 })).toThrow("999");
