@@ -61,7 +61,12 @@ const { pushMock, backMock, historyState, routeState, leaveGuards } = vi.hoisted
    */
   backMock: vi.fn(),
   historyState: {} as { back?: unknown },
-  routeState: { params: { id: "a" } as Record<string, string> },
+  /**
+   * 当前路由的替身：`params.id` 供页面自己的 watcher 用，`path` 供 `backOrHome` 用——本轮修 2 起
+   * 判据还要读 `router.currentRoute.value.path`（「当前页也在流程里就不避开」那条），
+   * 而本页（`/edit/:id`）不在流程前缀下，所以上一页是流程页时应当回图纸库。
+   */
+  routeState: { params: { id: "a" } as Record<string, string>, path: "/edit/a" },
   leaveGuards: [] as ((to: unknown, from: unknown) => boolean)[],
 }));
 
@@ -84,6 +89,9 @@ vi.mock("vue-router", () => ({
     // `backOrHome` 读的就是它（`router.options.history.state.back`）。C8 第 3 项起编辑页的返回
     // 箭头走这个函数，所以替身必须给出这一层；`RouterLink` 已随「回图纸库」整块删除而不再需要。
     options: { history: { state: historyState } },
+    // 本轮修 2 起判据还要读当前页的 path（「当前页也在流程里就不避开」那一半）——与 `useRoute()`
+    // 共用同一颗 `routeState`，用例改一处就够。
+    currentRoute: { value: router },
   }),
   // 新增基础设施：把守卫捕获出来（见文件头注释 ②）。返回值与真实现一致：false = 取消导航。
   onBeforeRouteLeave: (guard: (to: unknown, from: unknown) => boolean): void => {
@@ -1574,7 +1582,8 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
     expect(pushMock).toHaveBeenCalledWith({ name: "home" });
     expect(backMock).not.toHaveBeenCalled();
 
-    // `/new`（选图页）同样在 `avoidPathPrefix` 的口径内：前缀判据覆盖整条流程，不是一个点。
+    // `/new`（选图页）同样在流程前缀（`views/backOrHome.ts` 的 `FLOW_PATH_PREFIX`）的口径内：
+    // 前缀判据覆盖整条流程，不是一个点。
     pushMock.mockClear();
     historyState.back = "/new";
     await back.trigger("click");

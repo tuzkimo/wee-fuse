@@ -26,10 +26,11 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 路由替身：**四样东西**。`push` / `replace` 是页面所有跳转的两个出口（入口守卫走 `replace`，
+ * 路由替身：**五样东西**。`push` / `replace` 是页面所有跳转的两个出口（入口守卫走 `replace`，
  * 见「入口守卫与准备阶段」那条 replace 用例——**替身必须同时给出这两个**，否则 `replace` 与
- * `push` 在用例里分不开）；`back` 与 `options.history.state` 归页头返回箭头（`backOrHome(router)`
- * 要读后两样才能决定「退回去」还是「回图纸库」，见 `views/backOrHome.ts` 的文件头）。
+ * `push` 在用例里分不开）；`back` / `options.history.state` / `currentRoute` 归页头返回箭头
+ * （`backOrHome(router)` 要读这三样才能决定「退回去」还是「回图纸库」，见 `views/backOrHome.ts`
+ * 的文件头；本轮修 2 起判据还要读当前页的 path——「当前页也在流程里就不避开」那一半）。
  * `historyState` 由用例直接喂值，让两支都可判——生产路由器自己写 `state.back`
  * （`backOrHome.test.ts` 因此必须用 `createWebHistory`）。
  */
@@ -38,6 +39,8 @@ const routerMock = vi.hoisted(() => ({
   replace: vi.fn(),
   back: vi.fn(),
   historyState: {} as { back?: unknown },
+  /** 本页是生图页（`/new/setup`）：它在流程前缀内，正是「当前页也在流程里就不避开」要用的那格。 */
+  currentRoute: { value: { path: "/new/setup" } },
 }));
 vi.mock("vue-router", () => ({
   useRouter: () => ({
@@ -45,6 +48,7 @@ vi.mock("vue-router", () => ({
     replace: routerMock.replace,
     back: routerMock.back,
     options: { history: { state: routerMock.historyState } },
+    currentRoute: routerMock.currentRoute,
   }),
 }));
 const push = routerMock.push;
@@ -505,6 +509,15 @@ describe("页头返回箭头（按阶段分叉）", () => {
 
     push.mockClear();
     historyState.back = "/";
+    await back.trigger("click");
+    expect(backMock).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+
+    // **本轮修 2 的另一半**（生图页的真实现场）：上一页是**选图页** `/new` 时，它与本页同在一个流程
+    // 前缀下 ⇒ 判据不许把它当成已作废的死条目，仍要 `back()`（少了这条，「当前页也在流程里就不避开」
+    // 被删掉时本页的返回会静默变成回图纸库，而它是**上一步**）。
+    backMock.mockClear();
+    historyState.back = "/new";
     await back.trigger("click");
     expect(backMock).toHaveBeenCalledTimes(1);
     expect(push).not.toHaveBeenCalled();
