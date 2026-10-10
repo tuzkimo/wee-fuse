@@ -150,8 +150,9 @@ describe("PickPage", () => {
     expect(draft.preview?.width).toBe(800);
     expect(draft.preview?.height).toBe(600);
     expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
-    // 新图一律从选区阶段起步（`adoptImage` 的承诺之一）。
-    expect(draft.stage).toBe("crop");
+    // 新图一律从**编辑**阶段起步（`adoptImage` 的承诺之一）。C8 第 4 项把阶段从三个
+    // （`crop` / `params` / `result`）收敛成两个，这里跟的是新取值 `"edit"`。
+    expect(draft.stage).toBe("edit");
     expect(push).toHaveBeenCalledTimes(1);
     expect(push).toHaveBeenCalledWith({ name: "setup" });
   });

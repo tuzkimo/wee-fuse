@@ -4,12 +4,15 @@ import { centerSquare, clampRectToSource, type AspectLock } from "@/core/crop/re
 import type { Size, ZoomLevel } from "@/core/crop/view";
 import type { Rect, Rotation } from "@/core/image/types";
 import { DEFAULT_MAX_COLORS, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/types";
+import { defaultProjectName, normalizeProjectName } from "@/services/projectStore";
 
 /**
- * 向导草稿与阶段机（`/new` → 选区 → 参数 → 结果）。
+ * 向导草稿与阶段机（`/new` → 编辑 → 结果；C8 单页化之后手机也只走这两个阶段）。
  *
  * 它只回答两件事：用户现在走到哪一步，以及手上这份选区与参数是什么。**不 import 解码器、
  * 不 import `indexedDB`**——解码在 `services/`，落盘在 `useProjectSession`。
+ * （唯一的 services 依赖是 `@/services/projectStore` 里两个**纯函数**：`defaultProjectName` /
+ * `normalizeProjectName`——工程名的清洗必须与存储层的 `put` / `rename` 同源，不能另抄一份。）
  *
  * `generated` 的语义是「本次生成成功、且此后没有改过**会影响产物**的东西」：改选区 / 旋转 /
  * 比例 / 长边 / 档位都让它回落到 false，而**改缩放档位与平移不回落**（视图不改变产物）。
@@ -18,22 +21,23 @@ import { DEFAULT_MAX_COLORS, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from
  * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：本文件的一切导出都是任务 10
  * （`PickPage`：`adoptImage` / `source` / `sourceSize` / `preview` / `rerunOf`）、任务 11
  * （`SetupPage`）与任务 12（`EditorPage` 重跑入口：`adoptProject` / `DraftParams` /
- * `RerunTarget`）的接口面。**它们现在都在生产路径上被消费**——`PickPage.vue` / `SetupPage.vue` /
+ * `AdoptMeta`）的接口面。**它们现在都在生产路径上被消费**——`PickPage.vue` / `SetupPage.vue` /
  * `EditorPage.vue` 三个页面各有一处 `useDraft()`，不是「只被用例消费」（`reset` 没有独立调用点，
  * 经 `onLeaveSetup` 到达）。
  *
  * 任务 11 的接口面**不只是 setter**，它同时**读** `source` / `sourceSize` / `preview` / `crop` /
  * `rotation` / `aspect` / `zoom` / `pan` / `longSide` / `maxColors` / `stage` / `busy` / `error` /
- * `rerunOf`（`task-11-brief.md` 逐项出现），并**写** `setSourceSize` / `setPreview` / `setCrop` /
- * `setRotation` / `setAspect` / `setLongSide` / `setMaxColors` / `setZoom` / `setPan` / `setStage` /
- * `setBusy` / `setError` / `markGenerated` / `onLeaveSetup` / `setRerunOf`。`releasePreview` 除了
- * `onLeaveSetup` 里那一支（规格 §9 的「总是释放预览」）之外，还被 `SetupPage` 的「保存失败 →
- * 离开」分支直接调用；`reset` 没有独立调用点，它是 `onLeaveSetup` 的另一个出口（§9 的
- * 「已生成且无改动 → 清空草稿」）。两者同样归任务 11 的离开路径。
+ * `rerunOf` / `name`（`task-11-brief.md` 逐项出现，`name` 由 C8 §3.7 追加），并**写**
+ * `setSourceSize` / `setPreview` / `setCrop` / `setRotation` / `setAspect` / `setLongSide` /
+ * `setMaxColors` / `setZoom` / `setPan` / `setStage` / `setBusy` / `setError` / `markGenerated` /
+ * `onLeaveSetup` / `setRerunOf` / `setName`。`releasePreview` 除了 `onLeaveSetup` 里那一支
+ * （规格 §9 的「总是释放预览」）之外，还被 `SetupPage` 的「保存失败 → 离开」分支直接调用；
+ * `reset` 没有独立调用点，它是 `onLeaveSetup` 的另一个出口（§9 的「已生成且无改动 → 清空草稿」）。
+ * 两者同样归任务 11 的离开路径。
  */
 
-/** 向导的三个阶段：选区 → 参数 → 结果。 */
-export type Stage = "crop" | "params" | "result";
+/** 向导阶段（C8 收敛）：手机单页之后 `crop` 与 `params` 渲染出完全一样的界面，两个取值没有区别。 */
+export type Stage = "edit" | "result";
 
 /** 用户选中的那张原图（`blob` 是原始字节，尺寸要解码后才知道，见 `setSourceSize`）。 */
 export interface DraftSource {
@@ -42,8 +46,23 @@ export interface DraftSource {
   readonly name: string;
 }
 
-/** 就地重跑时要沿用的那条记录（`id` / 名称 / `createdAt` 不变，`updatedAt` 由 save 刷新）。 */
+/**
+ * 「本草稿指向的落盘记录」（身份）。**不再含 `name`**（C8 规格 §3.7）：名字搬到 `draft.name`，
+ * 身份只管「下一次生成是新建还是覆盖同一条」。
+ */
 export interface RerunTarget {
+  readonly id: string;
+  readonly createdAt: string;
+}
+
+/**
+ * `adoptProject`（从已有工程重跑）的入参：**身份 + 名字**。
+ *
+ * **它是独立类型、不是 `RerunTarget`**：身份（`RerunTarget`）已经收窄成 `{ id, createdAt }`，
+ * 而重跑必须同时把记录里的名字带进草稿（`name.value = normalizeProjectName(input.meta.name)`）——
+ * 两者恰好都从 `ProjectMeta` 来，但语义不同，混用一个类型会让「少了名字」在编译期看不出来。
+ */
+export interface AdoptMeta {
   readonly id: string;
   readonly name: string;
   readonly createdAt: string;
@@ -109,7 +128,9 @@ function requireMaxColors(next: MaxColors): MaxColors {
  *
  * **它与 `core/pattern/build.ts` 的同名守卫是两处**（本文件是「写状态之前」那一道、
  * core 是「进算法之前」那一道），措辞一致；上界在本文件是常量（内置 MARD 221），
- * core 那处用 `palette.colors.length`——store 不许 import services，所以这里写常量。
+ * core 那处用 `palette.colors.length`——store 手上没有色卡（色卡归 `services/palette.ts`），
+ * 所以这里写常量。**不要把这句话读成「store 一律不许 import services」**：C8 §3.7 之后本文件
+ * 确实 import 了 `services/projectStore` 的两个纯函数（见文件头），这里说的只是色卡不在手上。
  */
 function requireCustomMaxColors(next: number): number {
   if (!Number.isInteger(next) || next < 1 || next > MAX_CUSTOM_MAX_COLORS) {
@@ -140,24 +161,24 @@ function requireZoom(next: ZoomLevel): ZoomLevel {
 }
 
 function requireStage(next: Stage): Stage {
-  if (next !== "crop" && next !== "params" && next !== "result") {
-    throw new Error(`阶段非法：${String(next)}（只允许 "crop" / "params" / "result"）`);
+  if (next !== "edit" && next !== "result") {
+    throw new Error(`向导阶段非法：${String(next)}（只允许 edit / result）`);
   }
   return next;
 }
 
 /**
- * 重跑目标（身份）的三个字段都是**字符串**，`id` 还必须**非空**。
+ * 重跑目标（身份）的两个字段都是**字符串**，`id` 还必须**非空**。
  *
- * 为什么运行期要查：这三个字段会被 `save()` 写进存储再回读（`id` 决定 `put` 的键），而类型
+ * 为什么运行期要查：这两个字段会被 `save()` 写进存储再回读（`id` 决定 `put` 的键），而类型
  * 挡不住 `JSON.parse` + 强转。`id` 为空串时 `put` 会造出一条谁也打不开的记录，属静默数据损坏。
+ *
+ * **不再校验 `name`**（C8 规格 §3.7）：名字已经不是身份的一部分，它住在 `draft.name` 里、
+ * 由 `setName` 走 `normalizeProjectName` 单独守。
  */
 function requireRerunTarget(target: RerunTarget): RerunTarget {
   if (typeof target.id !== "string" || target.id === "") {
     throw new Error(`重跑目标的 id 必须是非空字符串（当前 ${String(target.id)}）`);
-  }
-  if (typeof target.name !== "string") {
-    throw new Error(`重跑目标的名称必须是字符串（当前 ${String(target.name)}）`);
   }
   if (typeof target.createdAt !== "string") {
     throw new Error(`重跑目标的 createdAt 必须是字符串（当前 ${String(target.createdAt)}）`);
@@ -232,10 +253,27 @@ export const useDraft = defineStore("draft", () => {
    */
   const customMaxColors = ref(32);
 
-  const stage = ref<Stage>("crop");
+  const stage = ref<Stage>("edit");
   const generated = ref(false);
   const busy = ref(false);
   const error = ref("");
+
+  /**
+   * 工程名（C8 规格 §3.7）——**整个 App 里这个名字的唯一真相**。
+   *
+   * 此前它有三个来源，各写各的：首次生成时由 `SetupPage` 从文件名现推（`defaultProjectName`）、
+   * 重跑时从记录里拿、改名走图纸库的对话框。于是「生图页改名」这件事根本没有入口，
+   * 用户在图上看到的名字与库里那条记录的名字可以不一致，而**没有任何报错**。
+   *
+   * 现在收敛成一个可变的 `ref`：
+   * - `adoptImage` 从**所选文件名**种下默认名（`defaultProjectName(input.source.name)`）；
+   * - `adoptProject` 从记录里带进来（`normalizeProjectName(input.meta.name)`）；
+   * - `setName` 是唯一的改写入口（走 `normalizeProjectName`：trim + 非空 + ≤ `PROJECT_NAME_MAX`）；
+   * - `reset()` 清空。
+   *
+   * **消费方四处同源**：`ParamPanel` 的输入框、图纸库卡片、图上标题、导出文件名。
+   */
+  const name = ref("");
 
   /**
    * 当前原图尺寸（夹取选区的边界来源）。
@@ -272,6 +310,7 @@ export const useDraft = defineStore("draft", () => {
     sourceSize.value = nextSize;
     preview.value = markRaw(input.preview);
     rerunOf.value = null;
+    name.value = defaultProjectName(input.source.name);
     pendingCrop.value = null;
     crop.value = centerSquare(nextSize);
     rotation.value = 0;
@@ -279,7 +318,7 @@ export const useDraft = defineStore("draft", () => {
     longSide.value = DEFAULT_LONG_SIDE;
     maxColors.value = DEFAULT_MAX_COLORS;
     customMaxColors.value = 32;
-    stage.value = "crop";
+    stage.value = "edit";
     generated.value = false;
     busy.value = false;
     error.value = "";
@@ -296,21 +335,27 @@ export const useDraft = defineStore("draft", () => {
    *
    * 四处校验同样落在**写操作之前**：一个非法的 `rotation` 若在写完之后才抛，store 会停在
    * 「新 source + 空 crop + 旧 rotation」的半截态（`AGENTS.md`：校验写在任何写操作之前）。
+   *
+   * `meta` 的类型是 **`AdoptMeta`（身份 + 名字）**、不是 `RerunTarget`：重跑既要记下覆盖哪一条，
+   * 也要把那条记录的名字带进 `draft.name`（`RerunTarget` 收窄后已经没有 `name` 了）。
    */
   function adoptProject(input: {
     readonly source: DraftSource;
     readonly params: DraftParams;
-    readonly meta: RerunTarget;
+    readonly meta: AdoptMeta;
   }): void {
     const nextRotation = requireRotation(input.params.rotation);
     const nextLongSide = requireLongSide(input.params.longSide);
     const nextMaxColors = requireMaxColors(input.params.maxColors);
     const nextCrop = requireCropInput(input.params.crop);
+    // 名字的校验（trim / 非空 / 长度）在**任何写操作之前**：非法的记录名不该留下半截草稿。
+    const nextName = normalizeProjectName(input.meta.name);
 
     source.value = input.source;
     sourceSize.value = null;
     preview.value = null;
-    rerunOf.value = { id: input.meta.id, name: input.meta.name, createdAt: input.meta.createdAt };
+    rerunOf.value = { id: input.meta.id, createdAt: input.meta.createdAt };
+    name.value = nextName;
     pendingCrop.value = nextCrop;
     crop.value = null;
     rotation.value = nextRotation;
@@ -318,10 +363,21 @@ export const useDraft = defineStore("draft", () => {
     longSide.value = nextLongSide;
     maxColors.value = nextMaxColors;
     customMaxColors.value = input.params.customMaxColors ?? customMaxColors.value;
-    stage.value = "crop";
+    stage.value = "edit";
     generated.value = false;
     busy.value = false;
     error.value = "";
+  }
+
+  /**
+   * 改名——**工程名的唯一写入口**（C8 规格 §3.7）。
+   *
+   * 校验（trim → 非空 → ≤ `PROJECT_NAME_MAX`）与图纸库的 `rename` / 存储的 `put` **同一个函数**
+   * （`normalizeProjectName`），不是第三份副本：写状态之前先响亮失败，非法输入不会留下
+   * 「名字被清成空串、图纸标题印不出来」这种半截草稿。
+   */
+  function setName(value: string): void {
+    name.value = normalizeProjectName(value);
   }
 
   /**
@@ -334,9 +390,9 @@ export const useDraft = defineStore("draft", () => {
    * 而界面还写着「已更新这张图纸」。现在：`adoptProject`（编辑器重跑入口）种下它、
    * `SetupPage` 在生成并保存成功后写回它、`adoptImage` / `reset` 清掉它。
    *
-   * **校验写在任何写操作之前**（`AGENTS.md`「入口校验」）：`id` 必须非空字符串、`name` 与
-   * `createdAt` 必须是字符串，非法抛中文错误——非法输入不会留下「身份是新的、其余状态是旧的」
-   * 半截草稿。
+   * **校验写在任何写操作之前**（`AGENTS.md`「入口校验」）：`id` 必须非空字符串、`createdAt`
+   * 必须是字符串，非法抛中文错误——非法输入不会留下「身份是新的、其余状态是旧的」半截草稿。
+   * **不再校验 `name`**（C8 规格 §3.7）：名字已经不是身份的一部分。
    */
   function setRerunOf(target: RerunTarget | null): void {
     if (target === null) {
@@ -345,8 +401,8 @@ export const useDraft = defineStore("draft", () => {
     }
     const next = requireRerunTarget(target);
     // 拷一份而不是存引用：调用方（`SetupPage`）手里的 `meta` 是 `ProjectMeta`，原地改它不该
-    // 悄悄改掉这里的身份。
-    rerunOf.value = { id: next.id, name: next.name, createdAt: next.createdAt };
+    // 悄悄改掉这里的身份。**只拷 id 与 createdAt**——名字住在 `draft.name`。
+    rerunOf.value = { id: next.id, createdAt: next.createdAt };
   }
 
   /**
@@ -475,6 +531,7 @@ export const useDraft = defineStore("draft", () => {
     sourceSize.value = null;
     preview.value = null;
     rerunOf.value = null;
+    name.value = "";
     pendingCrop.value = null;
     crop.value = null;
     rotation.value = 0;
@@ -482,7 +539,7 @@ export const useDraft = defineStore("draft", () => {
     longSide.value = DEFAULT_LONG_SIDE;
     maxColors.value = DEFAULT_MAX_COLORS;
     customMaxColors.value = 32;
-    stage.value = "crop";
+    stage.value = "edit";
     generated.value = false;
     busy.value = false;
     error.value = "";
@@ -493,6 +550,7 @@ export const useDraft = defineStore("draft", () => {
     sourceSize,
     preview,
     rerunOf,
+    name,
     crop,
     rotation,
     aspect,
@@ -508,6 +566,7 @@ export const useDraft = defineStore("draft", () => {
     adoptImage,
     adoptProject,
     setRerunOf,
+    setName,
     setSourceSize,
     setPreview,
     setCrop,

@@ -482,12 +482,14 @@ describe("改参数重新生成（B2 规格 §7）", () => {
     expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith({ name: "setup" });
 
-    // 身份：id / 名称 / createdAt 原样沿用，重跑才会覆盖同一条记录（规格 §7）
+    // 身份：id / createdAt 原样沿用，重跑才会覆盖同一条记录（规格 §7）。
+    // **C8 第 4 项收窄**：名字从身份里搬到了 `draft.name`（§3.7 的唯一真相），
+    // 所以下面两条一起读——身份不再有名字，而名字确实被播进了草稿。
     expect(draft.rerunOf).toEqual({
       id: "a",
-      name: "小猫",
       createdAt: "2026-10-03T00:00:00.000Z",
     });
+    expect(draft.name).toBe("小猫");
     expect(draft.longSide).toBe(37);
     expect(draft.maxColors).toBe(16);
     // 旋转取自**落盘参数**的 `crop.rotate`（=1），不是运行期草稿的默认 0

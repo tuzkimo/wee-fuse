@@ -5,11 +5,13 @@ import type { RgbaImage } from "@/core/image/types";
 import { loadPalette } from "@/core/palette/registry";
 import { generatePattern } from "@/services/pipeline";
 import ParamPanel from "@/components/param/ParamPanel.vue";
+import TierSlider from "@/components/param/TierSlider.vue";
 
 /** 600×600 的裁剪 + 长边 58 → 58×58 颗、29.0×29.0 厘米、2×2=4 块板。 */
 function mountPanel(overrides: Record<string, unknown> = {}) {
   return mount(ParamPanel, {
     props: {
+      name: "小猫",
       longSide: 58,
       maxColors: 24,
       customMaxColors: 32,
@@ -17,12 +19,16 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       crop: { x: 0, y: 0, width: 600, height: 600 },
       rotation: 0,
       paletteName: "MARD 221 色",
-      paletteAccuracy: "屏幕色仅供参考，以实物为准",
       busy: false,
       generateBlockedReason: "",
       ...overrides,
     },
   });
+}
+
+/** 用色那条 `TierSlider`（长边那条是 `[0]`）。两条滑条的断言都经它取节点。 */
+function colorSlider(wrapper: ReturnType<typeof mountPanel>) {
+  return wrapper.findAllComponents(TierSlider)[1]!;
 }
 
 describe("尺寸摘要", () => {
@@ -105,16 +111,20 @@ describe("长边输入", () => {
   });
 
   // 三个快捷值都是契约里的数据钩子；漏掉 58 / 116 时只点 29 是看不出来的。
-  it("快捷值按钮直接 emit", async () => {
+  // C8 第 4 项：三个预设按钮（`preset-29|58|116`）被**滑条上的档位节点**取代，动作从
+  // 「点按钮」变成「拖滑条到那个值」；接线（`update:longSide`）与取值一字未变。
+  it("长边滑条拖到档位节点上直接 emit 那个值", async () => {
     const wrapper = mountPanel();
-    for (const [testid, value] of [
-      ["preset-29", 29],
-      ["preset-58", 58],
-      ["preset-116", 116],
-    ] as const) {
-      await wrapper.get(`[data-testid='${testid}']`).trigger("click");
+    for (const value of [29, 58, 116] as const) {
+      await wrapper.get("[data-testid='long-side-slider']").setValue(String(value));
       expect(wrapper.emitted("update:longSide")?.at(-1)).toEqual([value]);
     }
+  });
+
+  it("长边滑条的档位节点是 29 / 58 / 116（三个预设值的替代物）", () => {
+    const wrapper = mountPanel();
+    const marks = wrapper.findAllComponents(TierSlider)[0]!.findAll("[data-node]").map((mark) => mark.text());
+    expect(marks).toEqual(["29", "58", "116"]);
   });
 
   // 父级回灌（快捷值按钮在真实父级里走的是 store，或从已有工程播种）。
@@ -151,68 +161,104 @@ describe("长边输入", () => {
   });
 });
 
-describe("档位与色卡", () => {
-  it("点「16 色」emit 的是数字 16", async () => {
+describe("用色档位（滑条，C8 第 4 项）", () => {
+  it("滑条拨到 8 ⇒ emit 数字 8", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='max-colors-16']").trigger("click");
-    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([16]);
+    await wrapper.get("[data-testid='max-colors-slider']").setValue("8");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([8]);
   });
 
-  it("点「不限」emit 的是字符串 'all'（不是 null、不是空串、不是 0）", async () => {
+  it("滑条拨到 20（非预设、非上界）⇒ emit custom + 那个数值", async () => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='max-colors-all']").trigger("click");
-    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["all"]);
-  });
-
-  it("点「自定义」emit 'custom'，并显示自定义色数输入框", async () => {
-    const wrapper = mountPanel();
-    expect(wrapper.find("[data-testid='custom-max-colors']").exists()).toBe(false);
-    await wrapper.get("[data-testid='max-colors-custom']").trigger("click");
+    await wrapper.get("[data-testid='max-colors-slider']").setValue("20");
+    expect(wrapper.emitted("update:customMaxColors")?.at(-1)).toEqual([20]);
+    // 顺序是「先数值、后档位」：只发 custom 而不发数值，回读时就生成不出用户要的色数。
     expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["custom"]);
-    await wrapper.setProps({ maxColors: "custom" });
-    expect(wrapper.find("[data-testid='custom-max-colors']").exists()).toBe(true);
   });
 
-  it("自定义色数输入合法值时 emit 数字；非法值 emit 不出去且给出中文提示", async () => {
-    const wrapper = mountPanel({ maxColors: "custom", customMaxColors: 32 });
-    const input = wrapper.get("[data-testid='custom-max-colors']");
-    await input.setValue("40");
-    expect(wrapper.emitted("update:customMaxColors")?.at(-1)).toEqual([40]);
-
-    await input.setValue("0");
-    expect(wrapper.emitted("update:customMaxColors")).toHaveLength(1); // 只在合法那一次 emit 过
-    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain(
-      "色数要填 1–221 之间的整数",
-    );
-    await input.setValue("999");
-    expect(wrapper.emitted("update:customMaxColors")).toHaveLength(1);
+  it("滑条拖到最右端（= 色卡色数）⇒ emit 'all'（不是色卡色数那个数字）", async () => {
+    const wrapper = mountPanel({ paletteColorCount: 221 });
+    await wrapper.get("[data-testid='max-colors-slider']").setValue("221");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["all"]);
+    // 「不限」不该顺手把色卡色数写进自定义值：那一档根本不读它。
+    expect(wrapper.emitted("update:customMaxColors")).toBeUndefined();
   });
 
   /**
-   * 上面几条只「写」按钮，读不出它有没有显示父级当前的档位——少了 `aria-pressed` 绑定，
-   * 按钮组会全都停在未选中态而所有写入型断言照样绿。
+   * 上面三条只「写」滑条，读不出它有没有显示父级**当前**的档位——滑条位置不跟 props 走的话，
+   * 从「不限」切到「16 色」再切回来，拇指会停在旧位置而所有写入型断言照样绿。
    */
-  it("按钮组显示父级当前的档位（aria-pressed 精确到那一个）", () => {
-    for (const [maxColors, expected] of [
-      [8, "max-colors-8"],
-      [16, "max-colors-16"],
-      [24, "max-colors-24"],
-      ["all", "max-colors-all"],
-      ["custom", "max-colors-custom"],
-    ] as const) {
-      const wrapper = mountPanel({ maxColors });
-      for (const testid of ["max-colors-8", "max-colors-16", "max-colors-24", "max-colors-all", "max-colors-custom"]) {
-        const pressed = wrapper.get(`[data-testid='${testid}']`).attributes("aria-pressed");
-        expect(pressed).toBe(testid === expected ? "true" : "false");
-      }
-    }
+  it("滑条位置跟着父级档位走（all 停在最右端、custom 停在自定义值上）", () => {
+    const at = (wrapper: ReturnType<typeof mountPanel>): string =>
+      (wrapper.get("[data-testid='max-colors']").element as HTMLInputElement).value;
+
+    expect(at(mountPanel({ maxColors: 8 }))).toBe("8");
+    expect(at(mountPanel({ maxColors: 16 }))).toBe("16");
+    expect(at(mountPanel({ maxColors: 24 }))).toBe("24");
+    expect(at(mountPanel({ maxColors: "all", paletteColorCount: 221 }))).toBe("221");
+    expect(at(mountPanel({ maxColors: "custom", customMaxColors: 20 }))).toBe("20");
   });
 
-  it("色卡卡片显示名称与精度声明（主规格 §11：声明必须出现在色卡 UI 上）", () => {
+  it("档位文案与生效上限跟着档位走", () => {
+    const tierOf = (wrapper: ReturnType<typeof mountPanel>): string =>
+      wrapper.get("[data-testid='max-colors-tier']").text();
+    const valueOf = (wrapper: ReturnType<typeof mountPanel>): string =>
+      wrapper.get("[data-testid='max-colors-value']").text();
+
+    expect(tierOf(mountPanel({ maxColors: 24 }))).toBe("用色：24 色");
+    expect(valueOf(mountPanel({ maxColors: 24 }))).toBe("24");
+    expect(tierOf(mountPanel({ maxColors: "custom", customMaxColors: 20 }))).toBe("用色：自定义 20 色");
+    expect(valueOf(mountPanel({ maxColors: "custom", customMaxColors: 20 }))).toBe("20");
+    // 「不限」的滑条上界就是色卡色数（C8 规格 §6 裁定 B）——读数是它，不是 0、不是空串。
+    expect(tierOf(mountPanel({ maxColors: "all", paletteColorCount: 221 }))).toContain("用色：不限");
+    expect(valueOf(mountPanel({ maxColors: "all", paletteColorCount: 221 }))).toBe("221");
+  });
+
+  /** 滑条上的节点：三个预设档 + **最右端的「不限」**（档位从按钮组搬到滑条上）。 */
+  it("用色滑条的档位节点是 8 / 16 / 24 / 不限", () => {
+    const wrapper = mountPanel({ paletteColorCount: 221 });
+    const marks = colorSlider(wrapper).findAll("[data-node]").map((mark) => mark.text());
+    expect(marks).toEqual(["8 色", "16 色", "24 色", "不限"]);
+  });
+
+  it("色卡卡片显示名称（C8 起不再有精度声明那一行）", () => {
     const wrapper = mountPanel();
     const card = wrapper.get("[data-testid='palette-card']").text();
     expect(card).toContain("MARD 221 色");
-    expect(card).toContain("屏幕色仅供参考，以实物为准");
+  });
+});
+
+describe("工程名输入（C8 规格 §3.7）", () => {
+  it("回显父级的名字，并给出字数计数", () => {
+    const wrapper = mountPanel({ name: "小猫" });
+    const input = wrapper.get("[data-testid='project-name-input']");
+    expect((input.element as HTMLInputElement).value).toBe("小猫");
+    expect(input.attributes("maxlength")).toBe("100");
+    expect(wrapper.get("[data-testid='project-name-counter']").text()).toContain("2 / 100");
+  });
+
+  it("改名字 ⇒ emit update:name（原样，trim 交给 store 的 normalizeProjectName）", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("[data-testid='project-name-input']").setValue("  小猫咪  ");
+    expect(wrapper.emitted("update:name")?.at(-1)).toEqual(["  小猫咪  "]);
+    // 计数按 trim 后的长度：前后空白不该让用户以为名字超长了。
+    expect(wrapper.get("[data-testid='project-name-counter']").text()).toContain("3 / 100");
+  });
+
+  it("名字清空 ⇒ 报错、不 emit、禁用生成（空名字印不出标题也写不出文件名）", async () => {
+    const wrapper = mountPanel();
+    const input = wrapper.get("[data-testid='project-name-input']");
+    await input.setValue("   ");
+
+    expect(wrapper.emitted("update:name")).toBeUndefined();
+    expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("工程名称不能为空");
+    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
+
+    // 改回合法名字：错误消失、恢复 emit 与可生成（不是单向锁死）。
+    await input.setValue("小猫");
+    expect(wrapper.emitted("update:name")?.at(-1)).toEqual(["小猫"]);
+    expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
+    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeUndefined();
   });
 });
 

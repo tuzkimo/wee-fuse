@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // src/views/SetupPage.vue
 //
-// `/new/setup`：选区 → 参数 → 结果，三个阶段一个页面。断点**只决定布局**（平板左右分栏 /
-// 手机单栏分步），行为不分叉——这是设计评审时选定的路线 2（规格 §4.5）。
+// `/new/setup`：**编辑 → 结果**两个阶段一个页面（C8 第 4 项把手机的三步分页取消：`crop` 与
+// `params` 渲染出的是同一屏，两个取值没有区别，于是 `Stage` 收敛成 `"edit" | "result"`）。
+// 断点**只决定布局**（平板左右分栏 / 手机单栏上下排），行为不分叉。
 //
 // 生成即落盘，重跑覆盖同一条记录：走 `useProjectSession().adopt()` + `save()`，
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
@@ -22,9 +23,10 @@ import { loadImageSource } from "@/services/imageSource";
 import { getBuiltinPalette } from "@/services/palette";
 import { renderPatternThumbnail } from "@/services/patternThumbnail";
 import { generatePattern } from "@/services/pipeline";
-import { defaultProjectName, getProjectStore, type ProjectMeta } from "@/services/projectStore";
+import { getProjectStore, type ProjectMeta } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
 import { useProjectSession } from "@/stores/project";
+import { backOrHome } from "@/views/backOrHome";
 
 const router = useRouter();
 const draft = useDraft();
@@ -77,11 +79,25 @@ const resultIsNew = ref(true);
  */
 const lastSaveFailed = ref(false);
 
-/** 三个阶段各自的可见性：平板两栏常驻（结果阶段左栏换成结果、**右栏参数仍在**，可直接重跑），
- *  手机一次只显示一屏。 */
-const showCanvas = computed(() => draft.stage === "crop" && draft.preview !== null);
-const showParams = computed(() => (isWide.value ? true : draft.stage === "params"));
+/** 结果阶段才换成结果卡片；其余时候**一页里同时有选区画布与参数**（手机也不再分页，C8 第 4 项）。 */
 const showResult = computed(() => draft.stage === "result" && session.pattern !== null);
+const showEditor = computed(() => draft.stage !== "result");
+
+/**
+ * 页头的返回箭头（C8 规格 §3.6.1，Ruling 21 的分叉口径）。
+ *
+ * **编辑阶段**走 `backOrHome`：有上一页就退回去（通常是从选图页进来的），历史为空才回图纸库。
+ * **结果阶段恒回图纸库**：结果不是独立路由（它就是本页的 `stage === "result"`），
+ * `back()` 会退到**上一页**——也就是选图页——而用户按的是「结束」而不是「再选一张图」。
+ * 这与 `EditResultPage` 的返回箭头同一口径（它也不走 `backOrHome`）。
+ */
+function goBack(): void {
+  if (draft.stage === "result") {
+    void router.push({ name: "home" });
+    return;
+  }
+  backOrHome(router);
+}
 
 /**
  * 生成前的豆数网格（也是「这张选区拼得出来吗」的判据）。
@@ -229,7 +245,11 @@ async function generate(): Promise<void> {
     const isNew = target === null;
     const meta: ProjectMeta = {
       id: target?.id ?? createId(),
-      name: target?.name ?? defaultProjectName(source.name),
+      // 名字**只有一个来源**：`draft.name`（C8 §3.7——`adoptImage` 从文件名种下、`adoptProject`
+      // 从记录带进来、`ParamPanel` 的输入框当场改）。这里原先还有一条
+      // `defaultProjectName(source.name)` 的 fallback，那正是「名字有两个来源」的形态：
+      // 用户在生图页改了名字，落盘的却是文件名派生的那一个。
+      name: draft.name,
       createdAt: target?.createdAt ?? now,
       updatedAt: now,
       thumbnail,
@@ -266,7 +286,7 @@ async function generate(): Promise<void> {
       // 这是「离开页面再回来仍然覆盖同一条」的承重一步（原先的页面级 `savedTarget` 就是在这里
       // 丢的）。保存失败这一支**不写回**：那条记录此刻并不在库里，写回会让结果文案与实际落盘
       // 不一致；失败后的续存由 `retrySave()` 成功时补写。
-      draft.setRerunOf({ id: meta.id, name: meta.name, createdAt: meta.createdAt });
+      draft.setRerunOf({ id: meta.id, createdAt: meta.createdAt });
       lastSaveFailed.value = false;
     } else {
       // 保存失败不丢态：图纸还在内存里，结果照常显示，给用户一条重试的路（主规格 §8）。
@@ -289,7 +309,7 @@ async function retrySave(): Promise<void> {
     // ② 把离开页面的出口交回 §9 的作废分支（见 `lastSaveFailed`）。
     const meta = session.record?.meta;
     if (meta !== undefined) {
-      draft.setRerunOf({ id: meta.id, name: meta.name, createdAt: meta.createdAt });
+      draft.setRerunOf({ id: meta.id, createdAt: meta.createdAt });
     }
     lastSaveFailed.value = false;
     draft.setError("");
@@ -312,13 +332,23 @@ function resetCrop(): void {
 
 <template>
   <main class="min-h-screen bg-slate-50 p-4 md:p-6">
-    <header class="flex flex-wrap items-center justify-between gap-4">
+    <header class="flex flex-wrap items-center gap-3">
+      <!--
+        返回箭头（C8 第 4 项替换掉原「回图纸库」整块按钮）。触控目标 ≥44px、`aria-label` 必给
+        （箭头没有文字，读屏用户否则听到一个没有名字的按钮；主规格 §6.4）。
+        分叉口径见 `goBack()`：编辑阶段按历史退，结果阶段恒回图纸库。
+      -->
+      <button
+        data-testid="setup-back"
+        aria-label="返回"
+        class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
+        @click="goBack"
+      >
+        ←
+      </button>
       <h1 class="text-2xl font-bold text-slate-900">
         {{ draft.stage === "result" ? "生成结果" : "框出想拼的那块" }}
       </h1>
-      <button class="min-h-12 rounded border border-slate-300 px-4 text-base" @click="router.push({ name: 'home' })">
-        回图纸库
-      </button>
     </header>
 
     <p v-if="storeError" class="mt-4 rounded bg-red-50 p-4 text-lg text-red-700">
@@ -327,7 +357,7 @@ function resetCrop(): void {
     <p v-if="preparing" class="mt-4 text-lg text-slate-500">正在准备预览…</p>
 
     <div :class="isWide ? 'mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]' : 'mt-6 space-y-6'">
-      <section v-if="showCanvas" data-testid="crop-pane" class="rounded bg-white p-3 shadow">
+      <section v-if="showEditor" data-testid="crop-pane" class="rounded bg-white p-3 shadow">
         <div class="h-[55vh] min-h-64">
           <CropCanvas
             v-if="draft.preview !== null && draft.crop !== null && draft.sourceSize !== null"
@@ -386,15 +416,16 @@ function resetCrop(): void {
           :is-new="resultIsNew"
           :can-rerun="true"
           :name="session.record?.meta.name ?? '图纸'"
-          @rerun="draft.setStage('crop')"
+          @rerun="draft.setStage('edit')"
           @edit="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
           @ok="router.push({ name: 'home' })"
         />
       </section>
 
-      <section v-if="showParams" data-testid="param-pane" class="rounded bg-white p-4 shadow">
+      <section v-if="showEditor" data-testid="param-pane" class="rounded bg-white p-4 shadow">
         <ParamPanel
           v-if="draft.crop !== null"
+          :name="draft.name"
           :long-side="draft.longSide"
           :max-colors="draft.maxColors"
           :custom-max-colors="draft.customMaxColors"
@@ -402,34 +433,15 @@ function resetCrop(): void {
           :crop="draft.crop"
           :rotation="draft.rotation"
           :palette-name="palette.name"
-          :palette-accuracy="palette.accuracy"
           :busy="draft.busy"
           :generate-blocked-reason="blockedReason"
+          @update:name="draft.setName"
           @update:long-side="draft.setLongSide($event)"
           @update:max-colors="draft.setMaxColors($event)"
           @update:custom-max-colors="draft.setCustomMaxColors($event)"
           @generate="generate"
         />
       </section>
-    </div>
-
-    <div v-if="!isWide" class="mt-6 flex gap-3">
-      <button
-        v-if="draft.stage === 'crop'"
-        data-testid="to-params"
-        class="min-h-14 flex-1 rounded bg-slate-900 text-lg text-white"
-        @click="draft.setStage('params')"
-      >
-        下一步
-      </button>
-      <button
-        v-if="draft.stage === 'params'"
-        data-testid="back-to-crop"
-        class="min-h-14 rounded border border-slate-300 px-6 text-lg"
-        @click="draft.setStage('crop')"
-      >
-        上一步
-      </button>
     </div>
 
     <p v-if="draft.error" data-testid="setup-error" class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800">

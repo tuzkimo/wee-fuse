@@ -174,9 +174,12 @@ describe("EditResultPage（/edit/:id/result）", () => {
 
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
 
-    // ① 草稿真的被播种了：`source` 非空且身份就是刚保存的那条记录
+    // ① 草稿真的被播种了：`source` 非空且身份就是刚保存的那条记录。
+    // **C8 第 4 项收窄**：名字从身份（`RerunTarget`）搬到了 `draft.name`（§3.7 的唯一真相），
+    // 所以两条一起读——身份不再有名字，而记录的名字确实被带进了草稿。
     expect(draft.source).not.toBeNull();
-    expect(draft.rerunOf).toEqual({ id: "a", name: "小猫", createdAt: META.createdAt });
+    expect(draft.rerunOf).toEqual({ id: "a", createdAt: META.createdAt });
+    expect(draft.name).toBe("小猫");
     // ② 参数一并带过去（含 C8 顺带修的 `customMaxColors`）
     expect(draft.maxColors).toBe("custom");
     expect(draft.customMaxColors).toBe(20);

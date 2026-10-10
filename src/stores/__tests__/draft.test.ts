@@ -22,6 +22,12 @@ import { useDraft, type Stage } from "@/stores/draft";
  * 修复轮 1（审查驱动）再补 6 条：五个 setter 的**写入值**各一条（此前只断言了 `generated`，
  * 「赋值被删掉」26 条全绿——见下面 `describe("setter 的写入值…")`），以及 `setPreview` 的
  * `null` / 非对象守卫（1 条）。
+ *
+ * C8 任务 8 再补 5 条（`工程名是草稿的一段…` 那个 describe）：`draft.name` 的三个来源与
+ * `setName` 的校验（2 条）、身份里不再有名字（1 条）、`stage` 只剩 edit / result（1 条）、
+ * `adoptProject` 的记录名校验落在写操作之前（1 条）。**同一轮里改掉了既有断言中的
+ * `stage === "crop"`（→ `"edit"`）与 `setRerunOf` / `rerunOf` 上关于 `name` 的那几条**
+ * （规格直接冲突，逐条登记在 `task-8-report.md`）。
  */
 
 const SOURCE = { blob: new Blob([new Uint8Array([1, 2, 3])]), type: "image/png", name: "小猫.png" };
@@ -46,7 +52,7 @@ describe("adoptImage：新图进来时的初始态", () => {
   it("选区是居中正方（与 B1 临时入口行为等价），阶段回到选区、未生成", () => {
     const draft = seedImage();
     expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
-    expect(draft.stage).toBe("crop");
+    expect(draft.stage).toBe("edit");
     expect(draft.generated).toBe(false);
     expect(draft.rotation).toBe(0);
     expect(draft.aspect).toBe("free");
@@ -226,10 +232,12 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     expect(draft.rotation).toBe(3);
     expect(draft.longSide).toBe(116);
     expect(draft.maxColors).toBe("all");
-    expect(draft.rerunOf).toEqual({ id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" });
+    expect(draft.rerunOf).toEqual({ id: "p1", createdAt: "2026-10-01T00:00:00.000Z" });
+    // C8 §3.7：名字随记录一起进草稿，成为**唯一真相**（不再挂在身份上）。
+    expect(draft.name).toBe("小猫");
     // 预览不在编辑器里解码：交给 SetupPage 挂载时补（规格 §7）。
     expect(draft.preview).toBeNull();
-    expect(draft.stage).toBe("crop");
+    expect(draft.stage).toBe("edit");
     expect(draft.generated).toBe(false);
   });
 
@@ -326,13 +334,15 @@ describe("其他入口校验（规格 §12）", () => {
     expect(() => draft.setPan({ x: Number.NaN, y: 0 })).toThrow(/平移/);
   });
 
-  it("阶段只允许 crop / params / result（拼错不会静默留在状态机里）", () => {
+  it("阶段只允许 edit / result（旧的 crop / params 一律响亮拒绝，拼错不会静默留在状态机里）", () => {
     const draft = seedImage();
-    draft.setStage("params");
-    expect(draft.stage).toBe("params");
+    draft.setStage("result");
+    expect(draft.stage).toBe("result");
 
+    expect(() => draft.setStage("crop" as unknown as Stage)).toThrow(/阶段/);
+    expect(() => draft.setStage("params" as unknown as Stage)).toThrow(/阶段/);
     expect(() => draft.setStage("done" as unknown as Stage)).toThrow(/阶段/);
-    expect(draft.stage).toBe("params");
+    expect(draft.stage).toBe("result");
   });
 
   it("setRerunOf：存一份副本、null 清空、非法字段抛中文错误且不改状态", () => {
@@ -341,7 +351,7 @@ describe("其他入口校验（规格 §12）", () => {
 
     // 合法输入：身份是「本草稿指向的那条落盘记录」，**存副本**——调用方（`SetupPage` 的 `meta`）
     // 原地改它不该悄悄改掉 store 里的身份。
-    const meta = { id: "p1", name: "小猫", createdAt: "2026-10-03T00:00:00.000Z" };
+    const meta = { id: "p1", createdAt: "2026-10-03T00:00:00.000Z" };
     draft.setRerunOf(meta);
     expect(draft.rerunOf).toEqual(meta);
     expect(draft.rerunOf).not.toBe(meta);
@@ -351,14 +361,13 @@ describe("其他入口校验（规格 §12）", () => {
     expect(draft.rerunOf).toBeNull();
 
     // 非法输入：`id` 空串会造出一条谁也打不开的记录（`put` 的键），必须响亮拒绝。
-    draft.setRerunOf({ id: "keep", name: "旧", createdAt: "2026-10-03T00:00:00.000Z" });
-    expect(() => draft.setRerunOf({ id: "", name: "x", createdAt: "t" })).toThrow(/id/);
-    expect(() => draft.setRerunOf({ id: "x", name: 1 as unknown as string, createdAt: "t" })).toThrow(/名称/);
+    draft.setRerunOf({ id: "keep", createdAt: "2026-10-03T00:00:00.000Z" });
+    expect(() => draft.setRerunOf({ id: "", createdAt: "t" })).toThrow(/id/);
     expect(() =>
-      draft.setRerunOf({ id: "x", name: "n", createdAt: undefined as unknown as string }),
+      draft.setRerunOf({ id: "x", createdAt: undefined as unknown as string }),
     ).toThrow(/createdAt/);
-    // 校验写在任何写操作之前：三次抛错之后身份仍是上一条。
-    expect(draft.rerunOf).toEqual({ id: "keep", name: "旧", createdAt: "2026-10-03T00:00:00.000Z" });
+    // 校验写在任何写操作之前：两次抛错之后身份仍是上一条。
+    expect(draft.rerunOf).toEqual({ id: "keep", createdAt: "2026-10-03T00:00:00.000Z" });
   });
 
   it("setCrop 把越界矩形夹回来（守住 crop 的合法不变量）", () => {
@@ -408,7 +417,7 @@ describe("releasePreview / reset", () => {
     expect(toRaw(draft.source)).toBe(SOURCE);
     expect(draft.sourceSize).toEqual({ width: 800, height: 600 });
     expect(draft.longSide).toBe(116);
-    expect(draft.stage).toBe("crop");
+    expect(draft.stage).toBe("edit");
   });
 
   it("reset 把每一段都退回初始态（含 busy / error / rerunOf）", () => {
@@ -431,10 +440,12 @@ describe("releasePreview / reset", () => {
     expect(draft.pan).toEqual({ x: 0, y: 0 });
     expect(draft.longSide).toBe(58);
     expect(draft.maxColors).toBe(16);
-    expect(draft.stage).toBe("crop");
+    expect(draft.stage).toBe("edit");
     expect(draft.generated).toBe(false);
     expect(draft.busy).toBe(false);
     expect(draft.error).toBe("");
+    // C8 §3.7：名字也是草稿的一段，`reset` 必须一起清掉。
+    expect(draft.name).toBe("");
   });
 
   it("setBusy / setError / setStage 是纯 setter，不改 generated", () => {
@@ -442,10 +453,82 @@ describe("releasePreview / reset", () => {
     draft.markGenerated();
     draft.setBusy(true);
     draft.setError("保存失败");
-    draft.setStage("params");
+    draft.setStage("result");
     expect(draft.generated).toBe(true);
     expect(draft.busy).toBe(true);
     expect(draft.error).toBe("保存失败");
-    expect(draft.stage).toBe("params");
+    expect(draft.stage).toBe("result");
+  });
+});
+
+/**
+ * C8 规格 §3.7：工程名的**唯一真相**搬到草稿上（`draft.name`），身份（`RerunTarget`）收窄成
+ * 「覆盖哪一条」。下面四条钉住这次收敛的三个面：名字的来源与可改性、非法输入响亮失败、
+ * 身份里不再有名字、阶段只有两个取值。
+ *
+ * **简报给出的原句有两处笔误**，逐条登记在 `task-8-report.md` 的「测试侧更正」：
+ * ① `fakeCanvas()` → 本文件既有的 `fakePreview()`；② 「传多余 `name` 会抛 /id|createdAt/」不成立
+ * ——`{ id: "a", createdAt: "x" }` 两个字段都合法、`requireRerunTarget` 也不再看 `name`，
+ * 所以它**不抛**；同一意图下改成「多传的 `name` 不得被存进身份」（有判别力，见下）。
+ */
+describe("工程名是草稿的一段，身份只管覆盖哪一条（C8 §3.7）", () => {
+  it("工程名是草稿的一部分：选图即定名，可随时改（C8 规格 §3.7）", () => {
+    const draft = useDraft();
+    draft.adoptImage({
+      source: { blob: new Blob([]), type: "image/png", name: "IMG_20260401_123456.jpg" },
+      sourceSize: { width: 10, height: 10 },
+      preview: fakePreview(),
+    });
+    expect(draft.name).toBe("IMG_20260401_123456");
+    draft.setName("  小猫  ");
+    expect(draft.name).toBe("小猫"); // 走 normalizeProjectName：trim + 非空 + ≤100
+  });
+
+  it("工程名非法时响亮失败，且不写坏已有的名字", () => {
+    const draft = useDraft();
+    draft.setName("小猫");
+    expect(() => draft.setName("   ")).toThrow(/不能为空/);
+    expect(() => draft.setName("阿".repeat(101))).toThrow(/100/);
+    expect(draft.name).toBe("小猫");
+  });
+
+  it("身份只管「覆盖哪一条」：`rerunOf` 里不再有名字", () => {
+    const draft = useDraft();
+    draft.setRerunOf({ id: "a", createdAt: "2026-10-10T00:00:00.000Z" });
+    expect(draft.rerunOf).toEqual({ id: "a", createdAt: "2026-10-10T00:00:00.000Z" });
+
+    // 多传一个 `name`（旧形状）：身份必须**丢掉**它。实现若把 `name` 一起拷进身份
+    // （即改回 `{ id, name, createdAt }`），`toEqual` 立刻红——这才是本条要钉的行为。
+    draft.setRerunOf({ id: "a", name: "小猫", createdAt: "x" } as never);
+    expect(draft.rerunOf).toEqual({ id: "a", createdAt: "x" });
+    expect(draft.rerunOf).not.toHaveProperty("name");
+  });
+
+  it("stage 只有 edit / result 两个取值", () => {
+    const draft = useDraft();
+    expect(draft.stage).toBe("edit");
+    draft.setStage("result");
+    expect(draft.stage).toBe("result");
+    // 旧取值一律被 requireStage 响亮拒绝。
+    expect(() => draft.setStage("params" as never)).toThrow(/阶段/);
+    expect(() => draft.setStage("crop" as never)).toThrow(/阶段/);
+  });
+
+  it("adoptProject 的记录名非法时在写操作之前抛错（不留半截草稿）", () => {
+    const draft = seedImage();
+    expect(draft.name).toBe("小猫");
+
+    expect(() =>
+      draft.adoptProject({
+        source: OTHER_SOURCE,
+        params: { longSide: 58, maxColors: 24, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 0 },
+        meta: { id: "p4", name: "   ", createdAt: "2026-10-01T00:00:00.000Z" },
+      }),
+    ).toThrow(/不能为空/);
+
+    // 名字校验若落在写操作之后，这里会看到「新 source / 新身份 / 空名字」的混合态。
+    expect(toRaw(draft.source)).toBe(SOURCE);
+    expect(draft.rerunOf).toBeNull();
+    expect(draft.name).toBe("小猫");
   });
 });

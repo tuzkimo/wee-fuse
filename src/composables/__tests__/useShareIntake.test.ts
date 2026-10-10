@@ -343,7 +343,8 @@ describe("useShareIntake", () => {
     expect(toRaw(draft.source)?.blob).toBe(FILE);
     expect(draft.preview).toBe(decode.canvases[0]);
     expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
-    expect(draft.stage).toBe("crop");
+    // C8 第 4 项：阶段收敛成 `"edit" | "result"`（旧的 `crop` / `params` 合并成 `edit`）。
+    expect(draft.stage).toBe("edit");
     expect(push).toHaveBeenCalledTimes(1);
     expect(push).toHaveBeenCalledWith({ name: "setup" });
     // 成功路径不留提示条、也不留暂存（否则用户成功之后还看着一条上一轮的提示）。
@@ -1041,7 +1042,8 @@ describe("App.vue 的分享装配", () => {
     expect(draft.sourceSize).toEqual({ width: 1200, height: 900 });
     expect(draft.preview).toBe(decode.canvases[0]);
     expect(draft.crop).toEqual({ x: 150, y: 0, width: 900, height: 900 });
-    expect(draft.stage).toBe("crop");
+    // C8 第 4 项：阶段收敛成 `"edit" | "result"`（旧的 `crop` / `params` 合并成 `edit`）。
+    expect(draft.stage).toBe("edit");
     expect(push).toHaveBeenCalledTimes(1);
     expect(push).toHaveBeenCalledWith({ name: "setup" });
     // 提示条只服务失败与暂存两件事：成功路径上不许出现。

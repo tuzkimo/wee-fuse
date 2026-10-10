@@ -1,111 +1,179 @@
 <script setup lang="ts">
 // src/components/param/ParamPanel.vue
 //
-// 参数面板：长边 / 档位 / 色卡卡片 / 尺寸摘要 / 生成按钮。props 进、事件出，
+// 参数面板：工程名 / 长边 / 用色档位 / 色卡卡片 / 尺寸摘要 / 生成按钮。props 进、事件出，
 // 不读 store、不 import services（本组件是纯展示层）。
 //
 // **摘要的豆数用 `computeGridSize`**——与 `services/pipeline.ts` 是**同一个函数**，
 // 不是同一份算法抄两遍：本项目最贵的缺陷形态是「两端各自正确、错在接线」，
 // UI 显示 58×44 而生成出来 44×58 正是它；同函数 + 传 `rotatedSize` 的换轴结果是组件侧的守卫。
+//
+// **C8 第 4 项**：长边与用色数都换成 `TierSlider`（滑条 + 数字输入框），原来的两个按钮组
+// （`preset-*` / `max-colors-*`）与独立的 `custom-max-colors` 输入框整块删除——档位现在由
+// 滑条上的节点表示，滑条的上界就是该参数的上界（用色数那条的上界**就是「不限」**）。
+// 工程名输入框加在最上面（§3.7：名字在这里就能改，不用等生成完去图纸库）。
 import { computed, ref, watch } from "vue";
 import { rotatedSize } from "@/core/image/rotate";
 import type { Rect, Rotation } from "@/core/image/types";
 import { boardCount, beadsToCm, formatCm } from "@/core/pattern/board";
 import { computeGridSize } from "@/core/pattern/build";
 import { MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/types";
+import TierSlider, { type TierNode } from "@/components/param/TierSlider.vue";
+import { PROJECT_NAME_MAX } from "@/services/projectStore";
 
-/** 常用长边快捷值（设计规格 §4.6；B1 的临时入口用的就是 58 / 116）。 */
-const LONG_SIDE_PRESETS = [29, 58, 116] as const;
-
-/**
- * 用色档位的五个选项（C7 规格 §6.3：从 `<select>` 改成按钮组）。
- *
- * 人类伙伴的口径：8 / 16 / 24 三档够用；「自定义」应付个别情况；「不限」保留。
- * 旧的三档（16 / 32 / 不限）在 core 里已经作废（`MaxColors` 只认新枚举），所以界面这层
- * 不再有「32 色」这个说法。
- */
-const MAX_COLOR_CHOICES = [
-  { value: 8, label: "8 色" },
-  { value: 16, label: "16 色" },
-  { value: 24, label: "24 色" },
-  { value: "all", label: "不限" },
-  { value: "custom", label: "自定义" },
-] as const;
+/** 长边滑条上的三个档位（原 `LONG_SIDE_PRESETS` 的三个值，1 / 2 / 4 块板）。 */
+const LONG_SIDE_NODES: readonly TierNode[] = [
+  { value: 29, label: "29" },
+  { value: 58, label: "58" },
+  { value: 116, label: "116" },
+];
 
 const props = defineProps<{
+  /** 工程名（父级持有真相；本组件只回显与上报）。 */
+  name: string;
   longSide: number;
   maxColors: MaxColors;
   /** `maxColors === "custom"` 时的具体色数（由父级的 store 持有）。 */
   customMaxColors: number;
-  /** 内置色卡的色数：自定义输入框的上界（第 3 处「色数上限」，与 core / store 的两处同源）。 */
+  /** 内置色卡的色数：用色滑条的上界（也就是「不限」那一档）。 */
   paletteColorCount: number;
   /** 非空由父级保证（设计规格 §4.1 的可空契约只在页面级）。 */
   crop: Rect;
   rotation: Rotation;
   paletteName: string;
-  paletteAccuracy: string;
   busy: boolean;
   /** 父级给出的额外阻拦原因（选区太小、存储不可用…）；空串表示没有。 */
   generateBlockedReason: string;
 }>();
 
 const emit = defineEmits<{
+  "update:name": [string];
   "update:longSide": [number];
   "update:maxColors": [MaxColors];
   "update:customMaxColors": [number];
   generate: [];
 }>();
 
-/**
- * 输入框自己持有的文本。用户可以随便打字，父级的 `longSide` 只在它**变化**时覆盖它。
- *
- * 不用 `v-model`：那会由 `vModelText` 指令自己去监听 `input`，于是同一个输入框有两个写入者
- * （指令 + 本文件的事件处理函数），而「谁先更新 `draft`」只由 `mountElement` 里
- * 「指令 `created` 先于 props 补丁」这条实现细节保证——换个版本或换成 `v-model` 的写法，
- * 处理函数就可能读到上一拍的 `draft` 而 emit 出一个用户没输入过的值。这里只留一个写入者。
- * （另外 `v-model` 对 `type="number"` 会隐式 `castToNumber`，`draft` 会在 string / number 之间跳。）
- */
-const draft = ref(String(props.longSide));
+// ---------------------------------------------------------------------------
+// 工程名（C8 §3.7）
+// ---------------------------------------------------------------------------
 
-// 父级改值（快捷值按钮、从已有工程播种、store 夹取）时同步回输入框。
+/**
+ * 名字输入框自己持有的文本（与长边同一套手法：**只有一个写入者**，父级的值只在它**变化**时
+ * 覆盖草稿）。不回传 trim 后的结果：清洗是 store 的 `setName`（`normalizeProjectName`）的职责，
+ * 在这里再 trim 一次就是第二份口径，而用户在中间打空格时输入框会当场跳字。
+ */
+const nameDraft = ref(props.name);
 watch(
-  () => props.longSide,
+  () => props.name,
   (next) => {
-    draft.value = String(next);
+    nameDraft.value = next;
   },
 );
 
-/** 解析出的合法长边豆数；非法（含空串、小数、越界）为 `null`。 */
-const parsed = computed<number | null>(() => {
-  const value = Number(draft.value);
-  // `Number("")` 是 0，`Number.isInteger` 同时挡下小数与非有限值（超长数字串会变成 Infinity）。
-  return Number.isInteger(value) && value >= MIN_LONG_SIDE && value <= MAX_LONG_SIDE ? value : null;
-});
+/**
+ * 空名字的**本地错误**：名字会印在图纸标题与导出文件名上，空名字在 `put` / `rename` 里会被
+ * `normalizeProjectName` 响亮拒绝——与其让用户白跑一遍流水线再看到「保存失败」，
+ * 不如在这里就禁用生成并说明原因。
+ */
+const nameError = computed(() => (nameDraft.value.trim().length === 0 ? "工程名称不能为空" : ""));
 
-const longSideError = computed(() =>
-  parsed.value === null ? `长边豆数要填 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 之间的整数` : "",
+function onNameInput(event: Event): void {
+  nameDraft.value = (event.target as HTMLInputElement).value;
+  if (nameError.value === "") emit("update:name", nameDraft.value);
+}
+
+// ---------------------------------------------------------------------------
+// 长边
+// ---------------------------------------------------------------------------
+
+const longSideError = ref("");
+/**
+ * 长边的**当前生效值**（本地草稿）。
+ *
+ * 为什么不直接用 `props.longSide` 算摘要：父级（`SetupPage`）是在 `@update:longSide` 里写 store 的，
+ * props 要等下一拍才回流——用户拖完滑条得立刻看到新尺寸，不能等回灌。`TierSlider` 里的文本
+ * 同理，所以它的 `value` 只在**变化**时覆盖自己的草稿。
+ */
+const longSideDraft = ref<number | null>(props.longSide);
+watch(
+  () => props.longSide,
+  (next) => {
+    longSideDraft.value = next;
+    // 父级改了值（重跑播种 / 别处的写入）⇒ 上一次的本地非法输入已经不作数了。
+    longSideError.value = "";
+  },
 );
 
-function onLongSideInput(event: Event): void {
-  draft.value = (event.target as HTMLInputElement).value;
-  const value = parsed.value;
-  if (value !== null) emit("update:longSide", value);
+function onLongSideInput(state: { readonly value: number | null; readonly error: string }): void {
+  longSideError.value = state.error === "" ? "" : `长边豆数${state.error}`;
+  longSideDraft.value = state.value;
+  if (state.value !== null) emit("update:longSide", state.value);
 }
 
-function pickPreset(value: number): void {
-  draft.value = String(value);
-  emit("update:longSide", value);
+// ---------------------------------------------------------------------------
+// 用色档位
+// ---------------------------------------------------------------------------
+
+const colorError = ref("");
+
+/** 用色滑条的档位节点：三个预设 + **最右端的「不限」**（滑条上界就是色卡色数）。 */
+const COLOR_NODES = computed<readonly TierNode[]>(() => [
+  { value: 8, label: "8 色" },
+  { value: 16, label: "16 色" },
+  { value: 24, label: "24 色" },
+  { value: props.paletteColorCount, label: "不限" },
+]);
+
+/** 滑条上的位置：`"all"` 停在最右端，`"custom"` 停在自定义值上。 */
+const colorSliderValue = computed(() =>
+  props.maxColors === "all"
+    ? props.paletteColorCount
+    : props.maxColors === "custom"
+      ? props.customMaxColors
+      : props.maxColors,
+);
+
+const colorTierText = computed(() => {
+  if (props.maxColors === "all") return "用色：不限（跳过分簇，能少则少）";
+  if (props.maxColors === "custom") return `用色：自定义 ${props.customMaxColors} 色`;
+  return `用色：${props.maxColors} 色`;
+});
+
+/**
+ * 用色数：**滑条上界就是「不限」**（C8 规格 §6 裁定 B）。三个预设值原样映射到档位，
+ * 其余整数走 `"custom"` + 该数值；填到上界（= 色卡色数）就是「不限」。
+ */
+function onMaxColorsInput(state: { readonly value: number | null; readonly error: string }): void {
+  colorError.value = state.error === "" ? "" : `色数${state.error}`;
+  if (state.value === null) return;
+  if (state.value >= props.paletteColorCount) {
+    emit("update:maxColors", "all");
+    return;
+  }
+  if (state.value === 8 || state.value === 16 || state.value === 24) {
+    emit("update:maxColors", state.value);
+    return;
+  }
+  // 先写数值再切档位：反过来的话，父级在「档位已是 custom、数值还是旧值」的那一拍里会拿旧
+  // 数值去重算（同一拍内 Vue 还没 patch 完 props），用户看到的摘要与最终产物就对不上。
+  emit("update:customMaxColors", state.value);
+  emit("update:maxColors", "custom");
 }
+
+// ---------------------------------------------------------------------------
+// 摘要 / 生成闸门
+// ---------------------------------------------------------------------------
 
 /**
  * 尺寸摘要。豆数走 `computeGridSize`（与流水线同一个函数），厘米走 `beadsToCm` / `formatCm`，
  * 板数走 `boardCount`——三处都复用 core，组件里不出现第二份换算。
  *
- * 用**输入框当前文本**（`parsed`）而不是 `props.longSide`：用户改完要立刻看到新尺寸，
+ * 用**滑条的当前值**（`longSideDraft`）而不是 `props.longSide`：用户改完要立刻看到新尺寸，
  * 不能等父级回灌。非法输入时整块摘要隐藏，由 `blocked-reason` 说明原因。
  */
 const summary = computed(() => {
-  const value = parsed.value;
+  const value = longSideDraft.value;
   if (value === null) return null;
   const oriented = rotatedSize(props.crop.width, props.crop.height, props.rotation);
   const grid = computeGridSize(oriented.width, oriented.height, value);
@@ -126,112 +194,70 @@ const summary = computed(() => {
  * （用例「本地非法输入与父级原因同时存在时，显示本地那条」钉住这个顺序，含操作数对调的变异。）
  */
 const blockedReason = computed(
-  () => longSideError.value || customError.value || props.generateBlockedReason,
+  () =>
+    longSideError.value ||
+    colorError.value ||
+    nameError.value ||
+    props.generateBlockedReason,
 );
 const disabled = computed(() => props.busy || blockedReason.value !== "");
-
-/**
- * 自定义色数输入框自己持有的文本（与 `longSide` 同一套手法：**只有一个写入者**，
- * 父级的值只在它**变化**时覆盖草稿）。
- */
-const customDraft = ref(String(props.customMaxColors));
-watch(
-  () => props.customMaxColors,
-  (next) => {
-    customDraft.value = String(next);
-  },
-);
-
-/** 解析出的合法自定义色数；非法（空串、小数、越界）为 `null`。 */
-const parsedCustom = computed<number | null>(() => {
-  const value = Number(customDraft.value);
-  return Number.isInteger(value) && value >= 1 && value <= props.paletteColorCount ? value : null;
-});
-
-/**
- * 自定义那条**本地错误**。它与 `longSideError` 同级：本地错优先于父级原因——用户这一拍刚打的字
- * 还没回流上去，先报父级的「选区太小」会把他支去改一个刚改对的东西。
- */
-const customError = computed(() =>
-  props.maxColors === "custom" && parsedCustom.value === null
-    ? `色数要填 1–${props.paletteColorCount} 之间的整数`
-    : "",
-);
-
-function onCustomMaxColorsInput(event: Event): void {
-  customDraft.value = (event.target as HTMLInputElement).value;
-  const value = parsedCustom.value;
-  if (value !== null) emit("update:customMaxColors", value);
-}
 </script>
 
 <template>
   <section class="space-y-6">
-    <label class="block text-lg text-slate-800">
-      长边豆数
+    <div class="block text-lg text-slate-800">
+      图纸名字
       <input
-        :value="draft"
-        data-testid="long-side"
-        type="number"
-        inputmode="numeric"
-        :min="MIN_LONG_SIDE"
-        :max="MAX_LONG_SIDE"
+        :value="nameDraft"
+        data-testid="project-name-input"
+        type="text"
+        :maxlength="PROJECT_NAME_MAX"
         class="mt-2 block min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
-        @input="onLongSideInput"
+        @input="onNameInput"
       />
-    </label>
-
-    <div class="flex flex-wrap gap-3">
-      <button
-        v-for="n in LONG_SIDE_PRESETS"
-        :key="n"
-        :data-testid="`preset-${n}`"
-        class="min-h-12 rounded border border-slate-300 px-4 text-base"
-        @click="pickPreset(n)"
-      >
-        {{ n }} 颗
-      </button>
+      <p data-testid="project-name-counter" class="mt-1 text-base text-slate-500">
+        {{ nameDraft.trim().length }} / {{ PROJECT_NAME_MAX }} · 这个名字会印在图纸标题与文件名上
+      </p>
     </div>
+
+    <TierSlider
+      label="长边豆数"
+      :min="MIN_LONG_SIDE"
+      :max="MAX_LONG_SIDE"
+      :value="longSide"
+      :nodes="LONG_SIDE_NODES"
+      :disabled="busy"
+      input-test-id="long-side"
+      slider-test-id="long-side-slider"
+      @input="onLongSideInput"
+    />
 
     <div class="block text-lg text-slate-800">
-      用几种颜色
-      <!--
-        C7 起是**按钮组**（不是 `<select>`）：档位只有五个，按钮组少一次展开、也不用处理
-        「`<select>` 的值恒为字符串」那层转换（旧实现里 `"32" → 32`、`"" → null` 的映射就是一处
-        静默失败的温床）。`data-tier` 承载真实档位值，事件处理里按它取回。
-      -->
-      <div data-testid="max-colors" class="mt-2 flex flex-wrap gap-2">
-        <button
-          v-for="choice in MAX_COLOR_CHOICES"
-          :key="String(choice.value)"
-          :data-testid="`max-colors-${choice.value}`"
-          :aria-pressed="maxColors === choice.value"
-          class="min-h-12 rounded border border-slate-300 px-4 text-base"
-          :class="maxColors === choice.value ? 'bg-slate-900 text-white' : ''"
-          @click="emit('update:maxColors', choice.value)"
-        >
-          {{ choice.label }}
-        </button>
-      </div>
-    </div>
-
-    <label v-if="maxColors === 'custom'" class="block text-lg text-slate-800">
-      自定义色数
-      <input
-        :value="customDraft"
-        data-testid="custom-max-colors"
-        type="number"
-        inputmode="numeric"
+      <TierSlider
+        label="用几种颜色"
         :min="1"
         :max="paletteColorCount"
-        class="mt-2 block min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
-        @input="onCustomMaxColorsInput"
+        :value="colorSliderValue"
+        :nodes="COLOR_NODES"
+        :disabled="busy"
+        input-test-id="max-colors"
+        slider-test-id="max-colors-slider"
+        @input="onMaxColorsInput"
       />
-    </label>
+      <!--
+        档位的文字读数 + **生效上限**。上限那一项读的是滑条位置（`colorSliderValue`）：
+        「不限」那一档就是色卡色数（`paletteColorCount`），这正是 C8 规格 §6 裁定 B 的口径。
+      -->
+      <p class="text-base text-slate-500">
+        <span data-testid="max-colors-tier">{{ colorTierText }}</span>
+        <span class="ml-2 text-slate-400">
+          生成时最多用 <span data-testid="max-colors-value">{{ colorSliderValue }}</span> 种
+        </span>
+      </p>
+    </div>
 
     <div data-testid="palette-card" class="rounded border border-slate-200 bg-white p-4">
       <p class="text-lg font-semibold text-slate-900">{{ paletteName }}</p>
-      <p class="mt-1 text-base text-slate-500">{{ paletteAccuracy }}</p>
     </div>
 
     <dl v-if="summary" data-testid="summary" class="space-y-1 rounded bg-slate-100 p-4 text-lg text-slate-800">
