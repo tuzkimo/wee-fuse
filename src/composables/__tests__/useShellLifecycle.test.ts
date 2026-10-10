@@ -268,6 +268,28 @@ describe("useShellLifecycle", () => {
     overlay.unmount();
     host.unmount();
   });
+
+  it("无历史 + 有覆盖层 ⇒ 仍然先关覆盖层（不 exit）", () => {
+    const spies = lifecycleSpies();
+    setPlatform(spies.platform);
+    const closed = vi.fn();
+    const Overlay = defineComponent({
+      setup() {
+        useOverlayBack(closed);
+      },
+      template: `<div />`,
+    });
+    const overlay = mount(Overlay);
+    const host = mountHost();
+
+    pressBack(spies, { canGoBack: false });
+
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+    expect(spies.exit).not.toHaveBeenCalled();
+    overlay.unmount();
+    host.unmount();
+  });
 });
 
 /**
