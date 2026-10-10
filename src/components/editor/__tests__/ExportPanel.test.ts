@@ -1,5 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { closeTopOverlay } from "@/composables/useOverlayBack";
 import type { Palette } from "@/core/palette/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
@@ -8,11 +9,8 @@ import ExportPanel from "@/components/editor/ExportPanel.vue";
 // 所以这里的期望值不是手抄的字符串，而是「同一个函数」的输出——文件名的逐字格式由
 // `services/__tests__/exporter.test.ts` 负责，本文件钉的是「面板把正确的那组实参喂了进去」。
 import { exportFilename } from "@/services/exporter";
-import { setPlatform } from "@/services/platform/capabilities";
-import { browserPlatform } from "@/services/platform/browserPlatform";
 import {
   createRecordingTarget,
-  createdBlobs,
   createdUrls,
   resetExporterMock,
   revokedUrls,
@@ -23,19 +21,35 @@ import {
 } from "./exportTestKit";
 
 /**
- * 导出面板用例（B6 任务 10：面板收敛成 `sheet` / `print` 两种模式）。
+ * 导出面板用例（C8 任务 7：面板从「一页一项 + 每项一个保存」收敛成「多页预览 + 一键顺序保存」）。
  *
  * 本文件**全程不建 pinia**：面板一旦 import 任何 store 并在 setup / 渲染里读它，挂载期就会以
  * 「no active Pinia」抛错，每一条用例都会红——这就是「面板不许 import `@/stores/*`」这条纪律的
  * 运行时证明（`只给 props 就能完整工作` 那一条另外补一条源码级词法闸门）。
  *
- * 平台边界只有一处桩：`@/services/exporter` 的五个碰平台的函数（建画布 / ctx / **画布自检** /
- * toBlob / 下载），`exportFilename` 用**真实现**。面板自己不再碰这些函数——它走
- * `@/services/sheetExport` 的两条 Blob 通道（建画布 → 渲染 → 自检 → toBlob → 释放画布），
- * 而那两条通道正是调这五个替身的（`vi.mock` 是模块级的，所以替身照样命中）。
+ * 平台边界有两处桩：
+ * 1. `@/services/exporter` 的五个碰平台的函数（建画布 / ctx / **画布自检** / toBlob / 下载），
+ *    `exportFilename` 用**真实现**。面板自己不再碰这些函数——它走 `@/services/sheetExport` 的
+ *    Blob 通道（建画布 → 渲染 → 自检 → toBlob → 释放画布），而那条通道正是调这五个替身的
+ *    （`vi.mock` 是模块级的，所以替身照样命中）。
+ * 2. `@/services/platform/capabilities` 的 `getPlatform`（与 `SheetViewer.test.ts` 同款）：
+ *    面板落盘调的就是 `getPlatform().album.save`，直接替它才能观察到「顺序保存」的**每一次调用
+ *    与中途挂起**（任务 7 步骤 1 换掉了旧的 `downloadBlob` 桩）。
  * **不 mock `@/core/render/*`**：让真渲染器跑在下面的记录型 target 上，
  * 「props → plan → 渲染器」这条链才是真的被走过（happy-dom 的 canvas 没有像素语义）。
  */
+
+/* ---------------- 桩 2：能力层落盘（getPlatform().album.save） ---------------- */
+
+/**
+ * 落盘替身。`kind` 做成**可变的一个格子**（不是写死的 `"album"`）：成功文案按落点分叉，
+ * 写死的替身让 `download` 那一支零覆盖，把文案改成常量也全绿。
+ */
+const albumSave = vi.hoisted(() => vi.fn());
+const albumKind = vi.hoisted(() => ({ value: "download" as "download" | "album" }));
+vi.mock("@/services/platform/capabilities", () => ({
+  getPlatform: () => ({ album: { kind: albumKind.value, save: albumSave } }),
+}));
 
 /* ---------------- 桩 1：平台边界（exporter 的五个函数） ---------------- */
 
@@ -53,7 +67,7 @@ const exporter = vi.hoisted(
     ({
       createCanvasStrict: vi.fn(),
       requireContext2D: vi.fn(),
-      // 画布自检（契约 §2 的第 6 个导出）：生产消费者是 `sheetExport.ts` 的两条 Blob 通道——
+      // 画布自检（契约 §2 的第 6 个导出）：生产消费者是 `sheetExport.ts` 的 Blob 通道——
       // 面板不调用它，但它必须在这条路径上发生（本文件的顺序表用例钉着这件事）。
       assertCanvasPainted: vi.fn(),
       canvasToBlob: vi.fn(),
@@ -138,7 +152,7 @@ const usages: readonly ColorUsage[] = makeUsages();
  * 打印模式的公共 props：**116×116 全 A1**。
  *
  * 判别力来自「同一张图纸在两个板大小下页数不同」：29 板 ⇒ 16 页、58 板 ⇒ 4 页
- * （`printBoardCount` 的口径），所以「选择器切换后清单没重建」这一类静默错误判得开。
+ * （`printBoardCount` 的口径），所以「选择器切换后预览条没重建」这一类静默错误判得开。
  */
 function printOverrides(): Record<string, unknown> {
   const pattern = makePattern(116, 116, undefined);
@@ -162,19 +176,13 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
   });
 }
 
-async function saveAndSettle(wrapper: ReturnType<typeof mount>, id: string): Promise<void> {
-  await wrapper.get(`[data-testid='export-save-${id}']`).trigger("click");
-  await flushPromises();
-}
-
 /**
  * 摘掉 `disabled` 之后点一下某个选项按钮。
  *
- * **为什么需要它**（任务 10 第 1 轮修复）：四个打印选项在**任一项生成中**禁用（修复的第 3 条，
- * 生产上用户点不动），而 `disabled` 同样拦住了用例的 `trigger`——于是「飞行中改选项」这条路径在
- * 用例里变得**不可达**。这里手动解除，让**时序判据**（名字与字节同源）独立于**可达性判据**（禁用）
- * 被测到：将来有人删掉 `disabled`、或另开一条改选项的路径，这条时序判据仍对「退回旧写法」的变异必红。
- * 可达性由「任一项生成中时四个打印选项禁用」那条用例单独钉住。
+ * 四个打印选项在**保存中**禁用（改选项会重建预览与账本），而 `disabled` 同样拦住了用例的 `trigger`
+ * ——于是「飞行中改选项」这条路径在用例里变得**不可达**。这里手动解除，让**时序判据**
+ * （名字与字节同源、账本不写回被丢弃的清单）独立于**可达性判据**（禁用）被测到：将来有人删掉
+ * `disabled`、或另开一条改选项的路径，这条时序判据仍对「退回旧写法」的变异必红。
  */
 async function clickDisabledOption(
   wrapper: ReturnType<typeof mount>,
@@ -193,7 +201,7 @@ const PANEL_SOURCES: Record<string, string> = import.meta.glob<string>("../Expor
 });
 
 let recording: RecordingTarget;
-/** 每一次 `createCanvasStrict` 造出来的假画布，按调用顺序（一次导出 = 一张画布）。 */
+/** 每一次 `createCanvasStrict` 造出来的假画布，按调用顺序（一次渲染 = 一张画布）。 */
 let canvases: FakeCanvas[];
 /** 渲染路径上的**顺序**：自检必须早于 `toBlob`，释放必须晚于 `toBlob`。 */
 let steps: string[] = [];
@@ -214,374 +222,432 @@ beforeEach(() => {
     },
   });
   stubObjectUrl();
+  albumSave.mockReset().mockResolvedValue(undefined);
+  albumKind.value = "download";
+  // **覆盖层返回栈是模块级状态**：用上一条用例留下的条目会让「先关打印页」这条判据变成
+  // 「关的是别人」，所以每个用例开头把栈清干净（清空时每个 `close` 回调也会被调用——
+  // 那些回调属于已卸载的旧 wrapper，`emit` 到已卸载组件是安全的）。
+  closeTopOverlay();
 });
 
-/* ---------------- 打印页清单 ---------------- */
+/* ---------------- 打印页的摘要与选项（C7 起本面板只剩打印这一种形态） ---------------- */
 
-describe("打印页清单（C7 起本面板只剩打印这一种形态）", () => {
-  it("面板只有一个标题「打印」，且不再有施工图摘要（那张图改走「查看施工图」）", () => {
+describe("打印页摘要与选项（C7 起本面板只剩打印这一种形态）", () => {
+  it("面板只有一个标题「打印」，且不再有施工图摘要（那张图改走「查看施工图」）", async () => {
     const wrapper = mountPanel();
+    await flushPromises();
 
     // C7：`mode="sheet"` 被删除 ⇒ 摘要只剩打印那一条，且四个打印选项在
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='export-item-page-0']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='print-page-indicator']").exists()).toBe(true);
     expect(wrapper.get("h2").text()).toBe("打印");
     expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='print-board-29']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='print-paper-a4']").exists()).toBe(true);
+    wrapper.unmount();
   });
 
-  it("换一张图纸（**对象身份**变化、revision 不动）清单跟着走", async () => {
+  it("预览条与页码指示随页数重建（6×6 ⇒ 1 页；116×116 ⇒ 16 页）", async () => {
     const wrapper = mountPanel();
-    const big = makePattern(116, 116, undefined);
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(1);
+    await flushPromises();
+    expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 1 / 1 页");
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(1);
 
     // **只换 pattern（`revision` 刻意不动）**：`beginSession` 会把 `revision` 归零，所以
     // 「从一张 revision = 0 的图纸换到另一张」时 revision 这一路根本不会触发——少看 `pattern`
-    // 的对象身份时，清单会停在上一张图纸的页数上。
+    // 的对象身份时，预览条会停在上一张图纸的页数上。
+    const big = makePattern(116, 116, undefined);
     await wrapper.setProps({ pattern: big, usages: patternStats(big, palette).usages });
     await flushPromises();
 
     // 116×116 + 29 板 ⇒ 4×4 = 16 页
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(16);
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(16);
     expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("共 16 页");
+    wrapper.unmount();
   });
 
-  it("mode=print：项数 = 页数（116 格 + 29 板 ⇒ 16 页），每页标签含页码与本页格范围", () => {
+  it("116 格 + 29 板 ⇒ 16 页；摘要写「共 16 页 / 每页一块 29×29 板 / 适合页面」", async () => {
     const wrapper = mountPanel(printOverrides());
+    await flushPromises();
 
-    const pages = wrapper.findAll("[data-testid^='export-item-page-']");
-    expect(pages).toHaveLength(16);
-    // **清单的 DOM 顺序 = 页索引升序**：这是旧的「用量表 → 分享图 → 各片」顺序断言在页清单上的
-    // 对应物（那三类产物下线、顺序口径不能跟着一起丢）。顺序反过来时用户会在第 1 项上存到最后一页，
-    // 而项数、标签、文件名全都「各自正确」。
-    expect(pages.map((page) => page.attributes("data-testid"))).toEqual(
-      Array.from({ length: 16 }, (_, index) => `export-item-page-${index}`),
-    );
-    // 116 = 4 × 29 ⇒ 板阵是 4 列 × 4 行，第 16 页就是「第 4 行 第 4 列」
-    const last = wrapper.get("[data-testid='export-item-page-15']").text();
-    expect(last).toContain("第 4 行 第 4 列");
-    expect(last).toContain("第 16/16 页");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("第 1 行 第 1 列");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("第 1/16 页");
-    expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("适合页面");
-    expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("29×29 板");
-    // 本面板没有「一张施工图」那一项，也没有 sheet 模式的摘要（C7：那张图改走「查看施工图」）
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(16);
+    // **预览条的 DOM 顺序 = 页索引升序**：顺序反过来时用户会在第 1 格上看到最后一页，
+    // 而页数、页码指示、文件名全都「各自正确」。
+    expect(
+      wrapper
+        .findAll("[data-testid^='print-preview-page-']")
+        .map((page) => page.attributes("data-testid")),
+    ).toEqual(Array.from({ length: 16 }, (_, index) => `print-preview-page-${index}`));
+    const summary = wrapper.get("[data-testid='export-summary-print']").text();
+    expect(summary).toContain("共 16 页");
+    expect(summary).toContain("29×29 板");
+    expect(summary).toContain("适合页面");
     expect(wrapper.find("[data-testid='export-summary-sheet']").exists()).toBe(false);
+    // 第 16 格是占位文案（不是当前页 ⇒ 不渲染 `<img>`）；第 1 格是当前页
+    expect(wrapper.get("[data-testid='print-preview-page-15']").text()).toContain("第 16 页");
+    expect(wrapper.find("[data-testid='print-preview-img-15']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='print-preview-img-0']").exists()).toBe(true);
+    wrapper.unmount();
   });
 
-  it("mode=print：改板大小 / 纸张会**重建清单**（58 板 + A3 ⇒ 4 页），且两个方向都能来回", async () => {
+  it("改板大小 / 纸张会**重建预览**（58 板 ⇒ 4 页），且两个方向都能来回", async () => {
     const wrapper = mountPanel(printOverrides());
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(16);
+    await flushPromises();
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(16);
     expect(wrapper.get("[data-testid='print-board-29']").attributes("aria-pressed")).toBe("true");
     expect(wrapper.get("[data-testid='print-paper-a4']").attributes("aria-pressed")).toBe("true");
 
-    // ① 只改板大小：116 = 2 × 58 ⇒ 4 页。**页身份也跟着变**（2 列 ⇒ 第 4 页是「第 2 行 第 2 列」）
+    // ① 只改板大小：116 = 2 × 58 ⇒ 4 页
     await wrapper.get("[data-testid='print-board-58']").trigger("click");
+    await flushPromises();
     expect(wrapper.get("[data-testid='print-board-58']").attributes("aria-pressed")).toBe("true");
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
-    expect(wrapper.get("[data-testid='export-item-page-3']").text()).toContain("第 2 行 第 2 列");
-    expect(wrapper.get("[data-testid='export-item-page-3']").text()).toContain("第 4/4 页");
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(4);
+    expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 1 / 4 页");
     expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("58×58 板");
 
     // ② 改纸张：页数不变（页数只由板大小与图纸尺寸决定），摘要如实写出 A3
     await wrapper.get("[data-testid='print-paper-a3']").trigger("click");
+    await flushPromises();
     expect(wrapper.get("[data-testid='print-paper-a3']").attributes("aria-pressed")).toBe("true");
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(4);
     expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("A3");
 
     // ③ 回到 29 板要能重建回去（不是单向的：只加不清的写法会在这一条上红）
     await wrapper.get("[data-testid='print-board-29']").trigger("click");
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(16);
+    await flushPromises();
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(16);
+    wrapper.unmount();
   });
 
-  it("mode=print：非整除尺寸也要对（30×30 + 29 板 ⇒ 2×2 = 4 页，末列 / 末行收窄）", async () => {
+  it("非整除尺寸也要对（30×30 + 29 板 ⇒ 2×2 = 4 页，末列 / 末行收窄）", async () => {
     // **整除夹具覆盖不到的那一支**：116×116 是 29 与 58 的公倍数，所以「最后一列 / 行只有一部分格」
-    // 这条路径在旧夹具下**一次都没被走过**——标签的行列换算与 `usagesInRange` 的格范围收窄都在这条路上。
+    // 这条路径在旧夹具下**一次都没被走过**——页计划与 `usagesInRange` 的格范围收窄都在这条路上。
     // 30 = 29 + 1 ⇒ 板阵 2×2：第 2 页只有 1 列、第 4 页只有 1 列 1 行。
     const pattern = makePattern(30, 30, undefined);
     const wrapper = mountPanel({ pattern, usages: patternStats(pattern, palette).usages });
+    await flushPromises();
 
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(4);
     expect(wrapper.get("[data-testid='export-summary-print']").text()).toContain("共 4 页");
-    expect(wrapper.get("[data-testid='export-item-page-1']").text()).toContain(
-      "第 1 行 第 2 列（第 2/4 页）",
-    );
-    expect(wrapper.get("[data-testid='export-item-page-3']").text()).toContain(
-      "第 2 行 第 2 列（第 4/4 页）",
-    );
+    // 占位文案按 1 起的页号写（第 2 格 = 「第 2 页」）
+    expect(wrapper.get("[data-testid='print-preview-page-1']").text()).toContain("第 2 页");
+    wrapper.unmount();
   });
 
-  it("`revision` 可以不给（结果页没有编辑通道）：缺省 0，`pattern` 身份变化仍然重建清单", async () => {
+  it("`revision` 可以不给（结果页没有编辑通道）：缺省 0，`pattern` 身份变化仍然重建预览", async () => {
     // 结果页只有 `pattern` 这一条失效通道，所以 `revision` 必须是可选 prop。
     const wrapper = mount(ExportPanel, {
       props: { pattern: makePattern(6, 6, CELLS_6X6), palette, usages, projectName: "测试工程" },
     });
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(1);
+    await flushPromises();
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(1);
 
     const big = makePattern(116, 116, undefined);
     await wrapper.setProps({ pattern: big, usages: patternStats(big, palette).usages });
     await flushPromises();
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(16);
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(16);
+    wrapper.unmount();
   });
 });
 
-/* ---------------- 逐项导出 ---------------- */
+/* ---------------- C8：多页预览与一键保存 ---------------- */
 
-describe("逐项导出：一次手势一张（规格 §10.3 / R-5）", () => {
-  it("待生成 → 生成中… → 已生成：期间按钮禁用，画布尺寸取自 paperPlan，预览 URL 是**落盘那一颗** blob 造的", async () => {
-    const wrapper = mountPanel();
-    const item = () => wrapper.get("[data-testid='export-item-page-0']");
-    expect(item().text()).toContain("待生成");
-    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeUndefined();
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
+describe("C8：多页预览与一键保存", () => {
+  it("预览条一页一格，只有当前页真的渲染出图（16 页全量驻留会吃掉内存）", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
 
-    // 卡住 `canvasToBlob`，让「生成中」成为可观察状态（它本来只存在于两个微任务之间），
-    // 并准备好**这一颗具体的 blob**：下面用**恒等**断言钉住「落盘的就是它」。
-    const blob = new Blob([new Uint8Array([1])], { type: "image/png" });
-    let release = (): void => {};
-    exporter.canvasToBlob.mockImplementationOnce(
+    expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 1 / 16 页");
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(16);
+    expect(wrapper.findAll("[data-testid^='print-preview-img-']")).toHaveLength(1);
+    const src = wrapper.get("[data-testid='print-preview-img-0']").attributes("src");
+    expect(createdUrls).toContain(src);
+    // 只有当前页渲染 ⇒ 只有一次渲染通道（16 页全渲染的话这里会是 16）
+    expect(exporter.createCanvasStrict).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it("翻到第 2 页：换图、释放上一页的 object URL", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    const first = wrapper.get("[data-testid='print-preview-img-0']").attributes("src");
+    await wrapper.get("[data-testid='print-page-next']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 2 / 16 页");
+    expect(wrapper.find("[data-testid='print-preview-img-0']").exists()).toBe(false);
+    // 第 2 页的 `<img>` 在（`get` 找不到就抛，所以这一句同时是「存在」与「已换图」）
+    expect(wrapper.get("[data-testid='print-preview-img-1']").attributes("src")).not.toBe(first);
+    expect(revokedUrls).toContain(first);
+    wrapper.unmount();
+  });
+
+  it("◀ 回到上一页：第 1 页时上一页按钮禁用（不越界）", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+
+    expect(
+      (wrapper.get("[data-testid='print-page-prev']").element as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await wrapper.get("[data-testid='print-page-next']").trigger("click");
+    await flushPromises();
+    expect(
+      (wrapper.get("[data-testid='print-page-prev']").element as HTMLButtonElement).disabled,
+    ).toBe(false);
+
+    await wrapper.get("[data-testid='print-page-prev']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 1 / 16 页");
+    wrapper.unmount();
+  });
+
+  it("一键保存：顺序存满 16 张，文件名逐页正确，文案按落点分叉", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+
+    expect(albumSave).toHaveBeenCalledTimes(16);
+    const names = albumSave.mock.calls.map((call) => call[1] as string);
+    expect(names[0]).toBe(exportFilename("测试工程", "打印", { rowIndex: 0, colIndex: 0 }));
+    expect(names[15]).toBe(exportFilename("测试工程", "打印", { rowIndex: 3, colIndex: 3 }));
+    // 浏览器落点说「已生成」，不冒充相册（既有口径逐字保留）
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("已生成 16 张");
+    // 成功后文案里不许出现失败数（「一张失败都没有」与「有几张失败」是两个不同的状态）
+    expect(wrapper.get("[data-testid='print-save-state']").text()).not.toContain("失败");
+    // 壳落点那一支的另一半（把文案写成常量时上面那条照样绿）：
+    // 换成 album 落点后重开一次面板再存——**不能拿同一个 wrapper 再点一次**：
+    // 全存完之后没有欠账，`saveAll` 会早退、状态仍是上一轮那句。
+    albumKind.value = "album";
+    albumSave.mockClear();
+    const inShell = mountPanel(printOverrides());
+    await flushPromises();
+    await inShell.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+    expect(inShell.get("[data-testid='print-save-state']").text()).toContain("已保存到相册 16 张");
+    expect(albumSave).toHaveBeenCalledTimes(16);
+    inShell.unmount();
+    wrapper.unmount();
+  });
+
+  it("一键保存：每一页都带着自己的字节去落盘（不是把第一页存 16 遍）", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    // 挂载期那次预览渲染已经是第 1 张画布 —— 下面按**增量**数。
+    const before = exporter.canvasToBlob.mock.calls.length;
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+
+    // 16 页各渲染一次、各落盘一次
+    expect(exporter.canvasToBlob).toHaveBeenCalledTimes(before + 16);
+    expect(albumSave).toHaveBeenCalledTimes(16);
+    // **16 笔递出去的是 16 颗不同的对象**：「把第一页存 16 遍」的实现会在这里红
+    // （它复用同一颗 blob，虽然 16 次调用、16 个正确文件名全都对得上）。
+    // 预览路径用掉的 `createdBlobs` **不能**拿来做这条判据：预览是挂载期渲染的那一张，
+    // 保存路径不建 object URL（那是「预览」这件事的产物，不是「落盘」的）。
+    const delivered = albumSave.mock.calls.map((call) => call[0] as Blob);
+    expect(new Set(delivered).size).toBe(16);
+    wrapper.unmount();
+  });
+
+  it("中途失败：停下、如实报已存几张与第几张失败，按钮变成「继续保存剩余 N 张」", async () => {
+    albumSave
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("相册写入被拒绝"));
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+
+    expect(albumSave).toHaveBeenCalledTimes(3);
+    const text = wrapper.get("[data-testid='print-save-state']").text();
+    expect(text).toContain("已存 2 张");
+    expect(text).toContain("第 3 张失败：相册写入被拒绝");
+    // 失败即停：不许继续往下存（「存满 16 张」和「存 3 张就停」是两件事）
+    expect(wrapper.get("[data-testid='print-save-all']").text()).toContain("继续保存剩余 14 张");
+
+    // 重试只存没成功的那 14 页（不重存已经进相册的）
+    albumSave.mockResolvedValue(undefined);
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+    expect(albumSave).toHaveBeenCalledTimes(3 + 14);
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("已生成 16 张");
+    // 重试成功后按钮回到「保存全部（16 张）」
+    expect(wrapper.get("[data-testid='print-save-all']").text()).toContain("保存全部（16 张）");
+    wrapper.unmount();
+  });
+
+  it("保存期间禁用四个选项与保存按钮，并显示「正在保存 第 1/16 页」", async () => {
+    let release: () => void = () => undefined;
+    albumSave.mockImplementationOnce(
       () =>
-        new Promise<Blob>((resolve) => {
-          release = () => {
-            resolve(blob);
-          };
+        new Promise<void>((resolve) => {
+          release = resolve;
         }),
     );
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
 
-    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
-    expect(item().text()).toContain("生成中…");
-    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("正在保存 第 1/16 页");
+    expect(
+      (wrapper.get("[data-testid='print-save-all']").element as HTMLButtonElement).disabled,
+    ).toBe(true);
+    for (const id of ["print-board-29", "print-board-58", "print-paper-a4", "print-paper-a3"]) {
+      expect((wrapper.get(`[data-testid='${id}']`).element as HTMLButtonElement).disabled).toBe(true);
+    }
+    release();
+    await flushPromises();
+    // 结算之后解锁（只在「保存中」禁用，不是一禁到底）
+    expect(
+      (wrapper.get("[data-testid='print-save-all']").element as HTMLButtonElement).disabled,
+    ).toBe(false);
+    for (const id of ["print-board-29", "print-board-58", "print-paper-a4", "print-paper-a3"]) {
+      expect(
+        (wrapper.get(`[data-testid='${id}']`).element as HTMLButtonElement).disabled,
+      ).toBe(false);
+    }
+    wrapper.unmount();
+  });
+
+  it("保存中连点两次只走一轮（手势可能比下一帧更快）", async () => {
+    let release: () => void = () => undefined;
+    albumSave.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+
+    const button = wrapper.get("[data-testid='print-save-all']");
+    // 第一次用 `trigger`；**第二次直接 `dispatchEvent`**：`trigger` 对 `disabled` 元素会静默跳过，
+    // 而这一 tick 里 `disabled` 也许还没生效 ⇒ 第二次真的会进 handler，只有入口早退能挡住。
+    const first = button.trigger("click");
+    button.element.dispatchEvent(new MouseEvent("click"));
+    await first;
+
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    release();
+    await flushPromises();
+    // 一轮跑完就是 16 次，不是 32 次
+    while ((button.element as HTMLButtonElement).disabled) {
+      release();
+      await flushPromises();
+    }
+    expect(albumSave).toHaveBeenCalledTimes(16);
+    wrapper.unmount();
+  });
+
+  it("保存中途换板大小：落盘照常完成，但不把状态写回已经被丢弃的清单（代数判据）", async () => {
+    // 手法沿用例「飞行中改板大小：文件名仍与本页字节同源」：手动解除 `disabled` 之后点选项按钮。
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+
+    let release: () => void = () => undefined;
+    albumSave.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("正在保存 第 1/16 页");
+
+    // 飞行中切到 58 板（4 页）：预览与账本整体重建
+    await clickDisabledOption(wrapper, "print-board-58");
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(4);
+    expect(wrapper.find("[data-testid='print-save-state']").exists()).toBe(false);
 
     release();
     await flushPromises();
 
-    expect(item().text()).toContain("已生成");
-    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeUndefined();
-    // 预览就是刚落盘的那一颗字节：`<img src>` = 那次 `createObjectURL` 的返回值
-    expect(wrapper.get("[data-testid='export-preview-page-0']").attributes("src")).toBe(createdUrls[0]);
-    expect(createdBlobs).toHaveLength(1);
-    expect(createdBlobs[0]).toBe(blob);
-    // **画布尺寸取自 `planBoardPage`**：6×6 图纸 + 29 板 + A4 ⇒ 纸型像素 2480×3508
-    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
-    // 落盘：默认落点是浏览器实现 ⇒ `album.save` 内部走 `downloadBlob`（真实现）。
-    // 实参是那一颗 blob 与 `exportFilename(工程名, "打印", tile)` 的逐字结果（**带页序号**）。
-    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
-    const [blobArg, filenameArg] = exporter.downloadBlob.mock.calls[0];
-    expect(blobArg).toBe(blob);
-    expect(filenameArg).toBe("测试工程-打印-r1c1.png");
+    // ① 被丢弃的那一轮**停下**了：代数变了 ⇒ 不再继续往下存（旧写法会一路存到第 16 页）
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    // ② 状态不许写回新清单：新板大小下 16 张的账本没有任何意义（「已生成 16 张」是幻觉）
+    expect(wrapper.find("[data-testid='print-save-state']").exists()).toBe(false);
+    // ③ 新清单自身仍然可用：按钮回到「保存全部（4 张）」
+    expect(wrapper.get("[data-testid='print-save-all']").text()).toContain("保存全部（4 张）");
+    wrapper.unmount();
   });
 
-  it("一项失败不影响其他项：失败只写该项的状态与中文原因，重试仍可成功", async () => {
-    // 用打印模式（16 页）而不是 sheet 模式：sheet 只有一项，「不影响其他项」在那一支上不可观察。
+  it("面板在结算前被卸载 ⇒ 连 object URL 都不建（沿用 F6 的口径）", async () => {
     const wrapper = mountPanel(printOverrides());
-    exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
+    // 挂载期的预览渲染还没结算就卸载：`generation` 在 `onUnmounted` 里 +1
+    wrapper.unmount();
+    expect(createdUrls).toEqual([]);
+    expect(revokedUrls).toEqual([]);
 
-    await saveAndSettle(wrapper, "page-0");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain(
-      "失败：导出 PNG 失败：toBlob 返回了 null",
-    );
-    // 其他页**一个都没被带下水**：状态仍是「待生成」、没有预览、按钮仍可点
-    expect(wrapper.get("[data-testid='export-item-page-1']").text()).toContain("待生成");
-    expect(wrapper.get("[data-testid='export-item-page-15']").text()).toContain("待生成");
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
-    expect(exporter.downloadBlob).not.toHaveBeenCalled();
-
-    // 失败不是终态：这一页自己重试成功
-    await saveAndSettle(wrapper, "page-0");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
-
-    // 另一页独立走通（下载与预览都发生）
-    await saveAndSettle(wrapper, "page-1");
-    expect(wrapper.get("[data-testid='export-item-page-1']").text()).toContain("已生成");
-    expect(exporter.downloadBlob).toHaveBeenCalledTimes(2);
-  });
-
-  it("重存同一项：先销号旧预览，再指向新 URL —— 旧 URL 恰好销号一次", async () => {
-    // `saveItem` 里的 `revokePreview(item)` 若被删掉（只覆盖 `previewUrl`），旧 object URL 永久泄漏，
-    // 而其余用例照样全绿（B4 修复波 C-M1 的靶子，本任务逐字保留这条防线）。
-    const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "page-0");
-    await saveAndSettle(wrapper, "page-0");
-
-    expect(createdUrls).toEqual(["blob:test-1", "blob:test-2"]);
-    expect(revokedUrls).toEqual([createdUrls[0]]);
-    expect(wrapper.get("[data-testid='export-preview-page-0']").attributes("src")).toBe(createdUrls[1]);
-  });
-
-  it("打印页：画布就是纸型像素，文件名带**本页**的行列（r4c4，不是 r1c1）", async () => {
-    const wrapper = mountPanel(printOverrides());
-
-    await saveAndSettle(wrapper, "page-15");
-    // A4 = 210×297mm @300dpi ⇒ 2480×3508 px（尺寸由 `planBoardPage` 从纸型推出）
-    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
-    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
-    const filename = exporter.downloadBlob.mock.calls[0]?.[1];
-    // 页序号来自 `boardPageTile`（= `planBoardPage` 的 boardRow / boardCol，**1 起**）
-    expect(filename).toBe("测试工程-打印-r4c4.png");
-    expect(filename).toBe(
-      exportFilename("测试工程", "打印", { rowIndex: 3, colIndex: 3 }),
-    );
-
-    // 换成 A3 + 58 板：画布换成 A3 像素，页身份换成 2×2 板阵里的第 4 页（r2c2）
-    await wrapper.get("[data-testid='print-paper-a3']").trigger("click");
-    await wrapper.get("[data-testid='print-board-58']").trigger("click");
-    await saveAndSettle(wrapper, "page-3");
-    expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(3508, 4961);
-    expect(exporter.downloadBlob.mock.calls[1]?.[1]).toBe("测试工程-打印-r2c2.png");
-  });
-
-  it("打印页的末列 / 末行收窄真的走到落盘（30×30：第 2 页 r1c2、第 4 页 r2c2）", async () => {
-    // 整除夹具下「本页格范围」恒等于整块板，所以 `usagesInRange` / `countTileBeads` 的**收窄**从未
-    // 被走过。30×30 + 29 板：第 2 页 = 列 29–29（1 列）× 行 0–28（29 行）、第 4 页 = 1×1。
-    const pattern = makePattern(30, 30, undefined);
-    const wrapper = mountPanel({ pattern, usages: patternStats(pattern, palette).usages });
-
-    await saveAndSettle(wrapper, "page-1");
-    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("测试工程-打印-r1c2.png");
-    // **本页的格范围**写在标题行里（C7 起页脚三行删除，那一半信息进了标题行）
-    const texts = recording.texts.map((call) => call.text);
-    expect(texts.some((text) => text.includes("本页 列 30–30 行 1–29"))).toBe(true);
-
-    await saveAndSettle(wrapper, "page-3");
-    expect(exporter.downloadBlob.mock.calls[1]?.[1]).toBe("测试工程-打印-r2c2.png");
-    const textsAfterSecondSave = recording.texts.map((call) => call.text);
-    expect(textsAfterSecondSave.some((text) => text.includes("本页 列 30–30 行 30–30"))).toBe(true);
-  });
-
-  it("打印页的用料条只列本页用到的色：本页独有的色号出现、只在别的页的色号不出现", async () => {
-    // **把面板的 `pageUsages` 换成 `snapshot.usages`（全图用量）时这条必红**：条带会多出「只在
-    // 别的页」的色号。用料条的接线此前只经 `fillText` 落到画布，没有任何断言观察过它。
-    const pattern = makePattern(58, 58); // 58 = 2 × 29 ⇒ 4 页
-    pattern.cells.fill(EMPTY); // `makePattern` 的默认值是 0（= A1 实心），这里要一张几乎全空的图纸
-    pattern.cells[0] = 1; // (0,0) = A2：**第 1 页独有**
-    pattern.cells[40 * 58 + 40] = 2; // (40,40) = A3：第 4 页（行 / 列 29–57 那块板）才有
-    const fullUsages = patternStats(pattern, palette).usages;
-    // 反向前提：全图用量里**两种色都有**——少了 A3 的话，下面那句 `not.toContain` 恒真、没有判别力。
-    expect(fullUsages.map((usage) => usage.code)).toEqual(["A2", "A3"]);
-
-    const wrapper = mountPanel({ pattern, usages: fullUsages });
-    await saveAndSettle(wrapper, "page-0");
-
-    // 条带里每项是**一条** `色号 (颗数)`、左对齐；格内色号是 `center`、标题行是整句
-    // ⇒ 这条过滤把网格里成千上万条「A2」全部排掉，只剩条带那一份。
-    const leftAligned = recording.texts
-      .filter((call) => call.textAlign === "left")
-      .map((call) => call.text);
-    expect(leftAligned).toContain("A2 (1)");
-    expect(leftAligned.some((text) => text.startsWith("A3 "))).toBe(false);
-  });
-
-  it("任一项生成中时四个打印选项禁用（改选项会重建清单、把飞行中那一项丢掉）", async () => {
-    // 缺陷的可达入口就是这四颗按钮：飞行窗口里点一下，清单重建、飞行中的项被丢弃。
-    // `disabled` 是「将来的时序错误不再可达」这条防线；判别力在下面两个方向的断言里。
-    const wrapper = mountPanel(printOverrides());
-    const optionIds = ["print-board-29", "print-board-58", "print-paper-a4", "print-paper-a3"];
-    for (const id of optionIds) {
-      expect(wrapper.get(`[data-testid='${id}']`).attributes("disabled")).toBeUndefined();
-    }
-
-    let release = (): void => {};
-    exporter.canvasToBlob.mockImplementationOnce(
-      () =>
-        new Promise<Blob>((resolve) => {
-          release = () => {
-            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
-          };
-        }),
-    );
-    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("生成中…");
-    for (const id of optionIds) {
-      expect(wrapper.get(`[data-testid='${id}']`).attributes("disabled")).toBeDefined();
-    }
-
-    release();
     await flushPromises();
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
-    for (const id of optionIds) {
-      expect(wrapper.get(`[data-testid='${id}']`).attributes("disabled")).toBeUndefined();
-    }
+    // await 结算之后**一个 URL 都没诞生**——比「诞生了再销号」更强（没有需要回收的对象）
+    expect(createdUrls).toEqual([]);
+    expect(revokedUrls).toEqual([]);
   });
 
-  it("改一格（revision 变）⇒ 所有「已生成」复位为「待生成」，预览销号后丢弃", async () => {
+  it("渲染完先自检、再 toBlob、最后释放画布（一键保存逐页都走这条通道）", async () => {
     const wrapper = mountPanel(printOverrides());
-    await saveAndSettle(wrapper, "page-0");
-    await saveAndSettle(wrapper, "page-1");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(true);
-    expect(createdUrls).toHaveLength(2);
-
-    await wrapper.setProps({ revision: 1 });
     await flushPromises();
-
-    // ① **所有**项回「待生成」（只复位被点过的那一两项会在这里红）
-    for (const id of ["page-0", "page-1", "page-2"]) {
-      const text = wrapper.get(`[data-testid='export-item-${id}']`).text();
-      expect(text).toContain("待生成");
-      expect(text).not.toContain("已生成");
-    }
-    // ② 预览**销号后**丢弃：`<img>` 消失，且两个 object URL 都被 revoke
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='export-preview-page-1']").exists()).toBe(false);
-    expect(revokedUrls).toEqual(createdUrls);
-  });
-
-  it("渲染完先自检、再 toBlob、最后释放画布", async () => {
-    const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "page-0");
-    // 顺序断言（`steps` 由假画布与两个桩按真实发生顺序记下）：自检必须**早于** toBlob——
-    // 反过来的话，一张「看起来正常」的白图已经落盘了才被发现（规格 §9 第 5 条的整条目的）。
+    // 挂载期的预览渲染就是一次完整的通道（顺序表里每一步都出现过一次）
     expect(steps).toEqual(["selfcheck", "toBlob", "release:width", "release:height"]);
-    expect(exporter.assertCanvasPainted).toHaveBeenCalledTimes(1);
     expect(exporter.assertCanvasPainted).toHaveBeenCalledWith(canvases[0]?.canvas);
+
+    steps = [];
+    canvases = [];
+    // 挂载期那次预览渲染已经自检过一次 ⇒ 下面按**增量**数（`canvases` / `steps` 是本用例自己清空的）
+    const selfChecksBefore = exporter.assertCanvasPainted.mock.calls.length;
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+    expect(canvases).toHaveLength(16);
+    expect(exporter.assertCanvasPainted).toHaveBeenCalledTimes(selfChecksBefore + 16);
+    // **每一页的顺序都自洽**：16 页各一组「自检 → toBlob → 释放」，不许交错
+    const perPage = ["selfcheck", "toBlob", "release:width", "release:height"];
+    expect(steps).toEqual(Array.from({ length: 16 }, () => perPage).flat());
+    wrapper.unmount();
   });
 
-  it("逐张渲染后即时释放画布：成功与失败两条路径都写回 0，且释放晚于 toBlob", async () => {
-    const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "page-0");
-    expect(canvases).toHaveLength(1);
-    // 顺序与内容一起断：**toBlob 之后**才释放（提前释放＝拿着 0×0 的画布去 toBlob，生产上就是空图）
-    expect(steps).toEqual(["selfcheck", "toBlob", "release:width", "release:height"]);
-    expect(canvases[0]?.writes).toEqual([
-      ["width", 0],
-      ["height", 0],
-    ]);
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
+  it("接进覆盖层返回栈：closeTopOverlay() 先关打印页（emit close 一次）", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
 
-    // 失败分支：`canvasToBlob` reject（契约 §3 的逐字原因）时**照样释放**——渲染通道的 `finally` 里。
-    canvases = [];
-    steps = [];
-    exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
-    await saveAndSettle(wrapper, "page-0");
-
-    expect(canvases).toHaveLength(1);
-    expect(canvases[0]?.writes).toEqual([
-      ["width", 0],
-      ["height", 0],
-    ]);
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain(
-      "失败：导出 PNG 失败：toBlob 返回了 null",
-    );
+    expect(closeTopOverlay()).toBe(true);
+    expect(wrapper.emitted("close")).toEqual([[]]);
+    // 弹出之后不再关第二次（`close` 不许被重复调用）
+    expect(closeTopOverlay()).toBe(false);
+    expect(wrapper.emitted("close")).toEqual([[]]);
+    // 返回箭头（`export-close` 这个 id 不变）走的还是同一条 `close`
+    await wrapper.get("[data-testid='export-close']").trigger("click");
+    expect(wrapper.emitted("close")).toEqual([[], []]);
+    wrapper.unmount();
   });
 });
 
 /* ---------------- 空图纸与 props 驱动 ---------------- */
 
 describe("空图纸与 props 驱动（规格 §10.4 / §2b）", () => {
-  it("用量表为空时给一行如实说明，不拦也不假装成功", () => {
+  it("用量表为空时给一行如实说明，不拦也不假装成功", async () => {
     const wrapper = mountPanel({ usages: [] });
+    await flushPromises();
     expect(wrapper.get("[data-testid='export-empty-note']").text()).toBe("这张图纸没有可拼的像素");
-    // 说明是**信息**，不是禁用：这一项照样可以保存（用户可能就是想导出这张空图）
-    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeUndefined();
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("待生成");
+    // 说明是**信息**，不是禁用：这一键照样可以保存（用户可能就是想导出这张空图）
+    expect(
+      (wrapper.get("[data-testid='print-save-all']").element as HTMLButtonElement).disabled,
+    ).toBe(false);
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+    expect(albumSave).toHaveBeenCalledTimes(1);
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("已生成 1 张");
+    wrapper.unmount();
   });
 
   it("只给 props 就能完整工作：本文件全程不建 pinia，源码里也没有任何 store 的 import", async () => {
-    // 运行时证明：挂载 + 真的生成一项，全程没有任何 pinia 实例
+    // 运行时证明：挂载 + 真的走一遍一键保存，全程没有任何 pinia 实例
     const wrapper = mountPanel(printOverrides());
-    await saveAndSettle(wrapper, "page-0");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("已生成");
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("已生成 16 张");
 
     // 源码级证明（词法近似，与 `coreBoundary` 同一口径）：`from "…/stores/…"` 一次都不许出现。
     // 已知偏差：`require("@/stores/editor")` 或动态 import 里的字符串绕得过这道闸门——它挡的是
@@ -589,16 +655,17 @@ describe("空图纸与 props 驱动（规格 §10.4 / §2b）", () => {
     const source = PANEL_SOURCES["../ExportPanel.vue"] ?? "";
     expect(source.length).toBeGreaterThan(0);
     expect(/from\s+["'][^"']*\/stores\//.test(source)).toBe(false);
+    wrapper.unmount();
   });
 });
 
-/* ---------------- SheetMeta 的六个字段 ---------------- */
+/* ---------------- SheetMeta 的字段真的上到图上 ---------------- */
 
-describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b）", () => {
+describe("图纸元信息真的上到图上（F1 / 契约 §2b、§4b）", () => {
   /*
    * 这一组挡的是「面板造了 meta 但字段是空的 / 是 0 / 是错的名字」这一类**静默**错误：
-   * `SheetMeta` 只经 `fillText` 出现在画布上，因此把 `generatedAt` 传成 ""、`totalBeads` 传 0、
-   * 把 `paletteName` 与 `accuracy` 对调，面板之外**没有任何其它断言**能发现。
+   * `SheetMeta` 只经 `fillText` 出现在画布上，因此把 `projectName` 传成 ""、把本页用量换成全图用量，
+   * 面板之外**没有任何其它断言**能发现。
    *
    * 期望值全部按契约 §4b 的逐字格式**现拼**，不引用 `sheet.ts` 的私有 `infoLineOne` / `infoLineTwo`
    * （那是被测实现的内部函数，用它现算等于把被测口径当预期）。
@@ -613,7 +680,10 @@ describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b�
     expect(palette.colors.length).toBe(6);
 
     const wrapper = mountPanel({ pattern, usages: stats.usages });
-    await saveAndSettle(wrapper, "page-0");
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+
     const lines = recording.texts.map((call) => call.text);
     const title = lines.find((text) => text.startsWith("测试工程 · ")) ?? "";
 
@@ -631,182 +701,91 @@ describe("SheetMeta 的六个字段真的上到图上（F1 / 契约 §2b、§4b�
     expect(all).not.toContain("屏幕色仅供参考");
     expect(all).not.toContain("生成时间");
     expect(all).not.toContain("合计");
+    wrapper.unmount();
   });
 
   it("颗数与色数不再进图（C7 删掉「全图 N 颗（M 种色）」）；用料条仍只列**本页**那一份", async () => {
     // C7 之前这条钉的是「面板没有第二份真相」（`totalBeads` / `colorCount` 只能来自 `usages`）。
     // 现在这两个字段在打印页上不再出现——它们只进 `SheetMeta`，而打印页标题行不读它们。
     const wrapper = mountPanel({ usages: [{ code: "A1", name: "白", count: 5 }] });
-    await saveAndSettle(wrapper, "page-0");
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+
     const lines = recording.texts.map((call) => call.text);
     expect(lines.some((text) => text.includes("全图"))).toBe(false);
     expect(lines.some((text) => text.includes("合计"))).toBe(false);
     expect(lines.some((text) => text.includes("生成时间"))).toBe(false);
-    // **用料条走 `usagesInRange`（本页那一份），与传入的 `usages` 无关**：6×6 夹具第 1 页有
+    // **用料条走 `usagesInRange`（本页那一份），与传入的 `usages` 无关**：6×6 夹具那一页有
     // 26 颗 A1、5 颗 A2、A3 / A4 各 1 颗 ⇒ 条带必须列这四个真数，而**不是**传进来的 `A1 (5)`。
     expect(lines).toContain("A1 (26)");
     expect(lines).toContain("A2 (5)");
     expect(lines).not.toContain("A1 (5)");
+    wrapper.unmount();
   });
 
   it("换一个工程名：图上文字与文件名跟着 props 走（不是写死的常量）", async () => {
     const wrapper = mountPanel({ projectName: "海边的猫" });
-    await saveAndSettle(wrapper, "page-0");
-    const lines = recording.texts.map((call) => call.text);
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
 
+    const lines = recording.texts.map((call) => call.text);
     expect(lines.some((text) => text.startsWith("海边的猫 · 第 1 行"))).toBe(true);
-    expect(exporter.downloadBlob.mock.calls[0]?.[1]).toBe("海边的猫-打印-r1c1.png");
+    expect(albumSave.mock.calls[0]?.[1]).toBe("海边的猫-打印-r1c1.png");
     // 反向：上一次那个工程名一次都不许出现（写死工程名 / 复用上一次的 meta 都会在这里红）
     expect(lines.some((text) => text.includes("测试工程"))).toBe(false);
+    wrapper.unmount();
   });
 });
 
-/* ---------------- 卸载与飞行中失效 ---------------- */
+/* ---------------- 预览的失败与回收 ---------------- */
 
-describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
-  /*
-   * 面板只有 `v-if`、关闭即**卸载**，而 `revokePreview` 只在「重建清单」与「重存同一项」时被调用
-   * ⇒ 反复「导出 → 关闭」会把每一张全分辨率 PNG 的 object URL 一直钉在内存里。
-   */
-  it("卸载（关闭面板）时把所有预览的 object URL 销号", async () => {
+describe("预览的失败与回收", () => {
+  it("预览渲染失败：如实写中文原因，不抛到控制台、不挡保存", async () => {
+    exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
+    const wrapper = mountPanel();
+    await flushPromises();
+
+    expect(wrapper.get("[data-testid='print-preview-error']").text()).toBe(
+      "预览生成失败：导出 PNG 失败：toBlob 返回了 null",
+    );
+    expect(wrapper.find("[data-testid='print-preview-img-0']").exists()).toBe(false);
+    // 预览失败 ≠ 不能保存：一键保存自己渲染、自己报错
+    albumSave.mockResolvedValue(undefined);
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("已生成 1 张");
+    wrapper.unmount();
+  });
+
+  it("换页 / 卸载都把当前预览的 object URL 销号一次（不多不少）", async () => {
     const wrapper = mountPanel(printOverrides());
-    await saveAndSettle(wrapper, "page-0");
-    await saveAndSettle(wrapper, "page-1");
-    expect(createdUrls).toHaveLength(2);
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(true);
-    // 卸载**之前**一个都还没销号（否则这条用例分不清「卸载时销号」与「本来就是空的」）
+    await flushPromises();
+    expect(createdUrls).toHaveLength(1);
     expect(revokedUrls).toEqual([]);
 
-    wrapper.unmount();
+    await wrapper.get("[data-testid='print-page-next']").trigger("click");
+    await flushPromises();
+    await wrapper.get("[data-testid='print-page-next']").trigger("click");
+    await flushPromises();
+    expect(createdUrls).toHaveLength(3);
+    // 前两张已销号，当前这张还活着
+    expect(revokedUrls).toEqual([createdUrls[0], createdUrls[1]]);
 
+    wrapper.unmount();
     expect(revokedUrls).toEqual(createdUrls);
   });
 
-  it("没有预览时卸载不抛错（只导出失败过 / 一张都没导出过）", async () => {
+  it("卸载时没有预览（一次都没渲染出来）不抛错，也不产生销号调用", async () => {
+    exporter.canvasToBlob.mockRejectedValue(new Error("导出 PNG 失败：toBlob 返回了 null"));
     const wrapper = mountPanel();
-    exporter.canvasToBlob.mockRejectedValueOnce(new Error("导出 PNG 失败：toBlob 返回了 null"));
-    await saveAndSettle(wrapper, "page-0");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("失败");
+    await flushPromises();
+    expect(createdUrls).toEqual([]);
     expect(revokedUrls).toEqual([]);
 
     expect(() => wrapper.unmount()).not.toThrow();
     expect(revokedUrls).toEqual([]);
-  });
-
-  /**
-   * **保存飞行中关掉面板**（修复轮 F6）：面板的 `onUnmounted` 只扫**当时**的 `items.value`，
-   * 所以面板被丢弃之后才诞生的 object URL 永远扫不到。`saveItem` 的代数 / 卸载判据因此排在
-   * **`createObjectURL` 之前**——所以这一支的判据比「诞生了再销号」更强：**它根本不诞生**。
-   * 触发它不需要编辑入口：关闭按钮没有 `disabled`。
-   */
-  it("保存飞行中卸载：await 期间关掉面板 ⇒ 落盘照常发生，但预览 URL 根本不诞生", async () => {
-    const wrapper = mountPanel();
-    let resolveBlob = (): void => {};
-    exporter.canvasToBlob.mockImplementationOnce(
-      () =>
-        new Promise<Blob>((resolve) => {
-          resolveBlob = () => {
-            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
-          };
-        }),
-    );
-    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("生成中…");
-
-    // 飞行中卸载：此刻一个 object URL 都还不存在（这正是「onUnmounted 扫不到它」的原因）
-    wrapper.unmount();
-    expect(createdUrls).toEqual([]);
-    expect(revokedUrls).toEqual([]);
-
-    resolveBlob();
-    await flushPromises();
-
-    // ① **落盘照常完成**（用户那一次手势不该因为面板关掉而白点），但**一个 URL 都没诞生**——
-    //    没有被丢弃的项、也没有需要回收的对象（`revokedUrls` 同样是空的，不是「销号过了」）。
-    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
-    expect(createdUrls).toEqual([]);
-    expect(revokedUrls).toEqual([]);
-    // ② 渲染通道的 `finally` 照常释放画布（卸载没有打乱释放这条路径）。
-    expect(steps).toEqual(["selfcheck", "release:width", "release:height"]);
-  });
-
-  /**
-   * **保存飞行中图纸变了**（修复波 B-3）：面板**没有**卸载，只是清单被 `rebuildItems` 重建
-   * （面板开着时 `Ctrl+Z` / 切换工程 `pattern` 身份变化都会走到这里）。缺了代数守卫，
-   * 那个 object URL 会写在一个已经被丢弃的 `item` 上、**永不回收**。
-   */
-  it("保存飞行中涂改（revision 变）：URL 根本不诞生，也不写到被丢弃的项上", async () => {
-    const wrapper = mountPanel();
-    let resolveBlob = (): void => {};
-    exporter.canvasToBlob.mockImplementationOnce(
-      () =>
-        new Promise<Blob>((resolve) => {
-          resolveBlob = () => {
-            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
-          };
-        }),
-    );
-    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("生成中…");
-
-    // 飞行中「涂了一格」：`revision` 变 ⇒ 清单整体重建、旧 item 被丢弃
-    await wrapper.setProps({ revision: 1 });
-    await flushPromises();
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("待生成");
-
-    resolveBlob();
-    await flushPromises();
-
-    // ① **代数判据排在 `createObjectURL` 之前** ⇒ 一个 URL 都没诞生（比「诞生了再销号」更强：
-    //    没有任何一颗 blob URL 需要被回收）。
-    expect(createdUrls).toEqual([]);
-    expect(revokedUrls).toEqual([]);
-    // ② 它**没有**被写到那个被丢弃的项上：新清单里的该项仍是「待生成」、没有 `<img>`
-    expect(wrapper.get("[data-testid='export-item-page-0']").text()).toContain("待生成");
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
-  });
-
-  /**
-   * **保存飞行中切换工程**（修复波 B-3 的第二半）：`pattern` 换对象 + `:project-name` 跟着换，
-   * 而画布上的字节是 `await` **之前**那张图纸的。修好之前，文件名会在 `await` 之后读
-   * `props.projectName` ⇒ 产出「**文件名的工程名是新的、字节是旧图纸的**」这种静默错产物。
-   */
-  it("保存飞行中换工程：文件名用取用那一刻的工程名（旧图纸的字节不配新名字）", async () => {
-    const wrapper = mountPanel();
-    let resolveBlob = (): void => {};
-    exporter.canvasToBlob.mockImplementationOnce(
-      () =>
-        new Promise<Blob>((resolve) => {
-          resolveBlob = () => {
-            resolve(new Blob([new Uint8Array([1])], { type: "image/png" }));
-          };
-        }),
-    );
-    await wrapper.get("[data-testid='export-save-page-0']").trigger("click");
-
-    // 飞行中换到另一张图纸 + 另一个工程名（真实路径是 `/edit/a → /edit/b`）
-    const big = makePattern(116, 116, undefined);
-    await wrapper.setProps({
-      pattern: big,
-      projectName: "海边的猫",
-      usages: patternStats(big, palette).usages,
-    });
-    await flushPromises();
-
-    resolveBlob();
-    await flushPromises();
-
-    expect(exporter.downloadBlob).toHaveBeenCalledTimes(1);
-    const filename = exporter.downloadBlob.mock.calls[0]?.[1] ?? "";
-    // 落盘的名字是**取用那一刻**的工程名；新工程名一次都不许出现在这一笔里
-    expect(filename).toBe("测试工程-打印-r1c1.png");
-    expect(filename).not.toContain("海边的猫");
-    // 画布上的标题同样是旧工程名（字节与名字同源）——这条与上一条合起来才是「不错配」的完整判据
-    expect(recording.texts.map((call) => call.text).some((text) => text.startsWith("测试工程 · 第"))).toBe(true);
-    // 被丢弃的那一项不许被写上 URL：**一个 URL 都没诞生**
-    expect(createdUrls).toEqual([]);
-    expect(revokedUrls).toEqual([]);
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
   });
 });
 
@@ -815,80 +794,66 @@ describe("面板卸载后回收预览 URL（修复轮 F3）", () => {
 describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门的行为面）", () => {
   /*
    * 这一组是**端到端**的：真 `ExportPanel` + 真 `core/render` 渲染链 + 真 `sheetExport` Blob 通道
-   * + 真 `exportFilename`，只把最外面的落点换成假 `AlbumSaver`。
+   * + 真 `exportFilename`，只把最外面的落点换成假 `getPlatform`。
    */
 
   /**
-   * **为什么用 `afterEach` 复位**：用例中途红会让末尾那行不执行，注入的假平台于是泄漏给本文件
-   * 其余用例（它们断言「已生成」、假定落点是浏览器），红因会变得与本次改动无关。
+   * **为什么用 `afterEach` 复位**：用例中途红会让末尾那行不执行，改过的落点于是泄漏给本文件
+   * 其余用例（它们断言「已生成」、假定落点是 `download`），红因会变得与本次改动无关。
    */
   afterEach(() => {
-    setPlatform(browserPlatform);
+    albumKind.value = "download";
   });
 
-  it("端到端：点「保存」⇒ 经 getPlatform().album.save 落盘，实参是那颗 blob（恒等 + 逐字节）与带页序号的名字", async () => {
-    const saves: { blob: Blob; filename: string }[] = [];
-    const albumSave = vi.fn(async (blob: Blob, filename: string): Promise<void> => {
-      saves.push({ blob, filename });
-    });
-    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
-
+  it("一键保存：每一笔落盘的实参是那颗 blob（恒等 + 逐字节）与带页序号的名字", async () => {
     // 夹具给的是**这一颗**具体的 blob，而且**逐字节认得出来**（PNG 魔数）：只断言「`save` 被调用过」
     // 时，把实参换成 `new Blob([])` / 另包一层的实现照样绿（本项目记过账的「桩的回声」形态）。
+    //
+    // **第一次 `canvasToBlob` 与保存无关**：面板挂载就会为第 1 页渲染预览，而预览**不落盘**。
+    // 所以这一颗 blob 由**每一次**渲染产出一致的内容（挂载那次预览 + 16 次保存共 17 次），
+    // 恒等断言于是问的是「平台收到的是不是画布产出的那一颗」——`mockImplementationOnce` 只会
+    // 命中挂载那次预览，用它做的恒等断言是**假的**（拿到的其实是默认实现那颗，实测踩过）。
     const PNG_MAGIC = [137, 80, 78, 71, 13, 10, 26, 10];
     const blob = new Blob([new Uint8Array(PNG_MAGIC)], { type: "image/png" });
-    exporter.canvasToBlob.mockImplementationOnce(async () => blob);
+    exporter.canvasToBlob.mockImplementation(async () => blob);
+    albumKind.value = "album";
 
-    // 200×200 的旧夹具换成 116×116 ⇒ 16 页。**点第 16 页（r4c4）**：页序号是不是真的递到了平台，
-    // 只有「不是第一页」的那一项判得开（r1c1 恰好最像巧合）。
+    // 200×200 的旧夹具换成 116×116 ⇒ 16 页。**第 16 页（r4c4）**的页序号是不是真的递到了平台，
+    // 只有「不是第一页」的那一笔判得开（r1c1 恰好最像巧合）。
     const wrapper = mountPanel(printOverrides());
-    await saveAndSettle(wrapper, "page-15");
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
 
-    expect(albumSave).toHaveBeenCalledTimes(1);
-    const delivered = saves[0];
+    const delivered = albumSave.mock.calls[15];
     if (delivered === undefined) throw new Error("平台一次保存都没收到：接线断了（面板没走能力层）");
 
     // ① **恒等**（规格 §9.2-2）：平台拿到的就是 `canvasToBlob` 产出的那一颗对象
-    expect(delivered.blob).toBe(blob);
+    const blobArg = delivered[0] as Blob;
+    expect(blobArg).toBe(blob);
     // ② 字节数/字节内容真的递到了——读的是**平台收到的那个对象**
-    expect(delivered.blob.size).toBe(PNG_MAGIC.length);
-    expect(Array.from(new Uint8Array(await delivered.blob.arrayBuffer()))).toEqual(PNG_MAGIC);
+    expect(blobArg.size).toBe(PNG_MAGIC.length);
+    expect(Array.from(new Uint8Array(await blobArg.arrayBuffer()))).toEqual(PNG_MAGIC);
     // ③ 名字 = `exportFilename(工程名, "打印", tile)` 的逐字结果（页序号 1 起 ⇒ r4c4）。
     //    漏传 `tile` 会让文件名全变成「非分片」，而图本身完全正常（本任务最容易写错的一处）。
-    expect(delivered.filename).toBe(exportFilename("测试工程", "打印", { rowIndex: 3, colIndex: 3 }));
-    expect(delivered.filename).toBe("测试工程-打印-r4c4.png");
-    // ④ 落点分叉：`album` ⇒ 壳里的成功文案（浏览器那一支仍是「已生成」，见下一条）
-    expect(wrapper.get("[data-testid='export-item-page-15']").text()).toContain("已保存到相册");
-    // ⑤ 预览仍然是**递给平台的那一颗**字节（不是重新渲染 / 重新包装的第二份）
-    expect(createdBlobs[0]).toBe(blob);
-    // ⑥ 面板不再直调 `downloadBlob`（G4 的行为面：旧路径一次都不许走，哪怕它在浏览器里也能用）
+    expect(delivered[1]).toBe(exportFilename("测试工程", "打印", { rowIndex: 3, colIndex: 3 }));
+    expect(delivered[1]).toBe("测试工程-打印-r4c4.png");
+    // ④ 落点分叉：`album` ⇒ 壳里的成功文案（浏览器那一支仍是「已生成」，见上一条）
+    expect(wrapper.get("[data-testid='print-save-state']").text()).toContain("已保存到相册 16 张");
+    // ⑤ 面板不再直调 `downloadBlob`（G4 的行为面：旧路径一次都不许走，哪怕它在浏览器里也能用）
     expect(exporter.downloadBlob).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 
-  /**
-   * **飞行中改板大小：名字与字节必须出自同一份快照**（第 1 轮审查的关键项）。
-   *
-   * 旧的 `downloadAndPreview` 在 `await` **之前**就把 `tile` 取好了，而收敛后的 `saveItem` 一度在
-   * `await` 之后才读 `boardSize.value` / `paper.value` 去算名字 ⇒ 字节是 29 板的第 3 页、名字却写成
-   * 58 板下的 `r2c1`（静默错产物，正是 B-3 修过的那一类）。
-   *
-   * 判据挑「同一 index 在两个板大小下**页身份不同**」的那一页（29 板的 index 2 = r1c3；58 板下同
-   * index = r2c1），所以「名字读的是哪一份选项」判得开。
-   *
-   * **为什么要先 `removeAttribute("disabled")`**：修复的第 3 条让这四颗按钮在生成中禁用（生产上
-   * 用户点不动那正是修复），而 `disabled` 也拦住了用例的 `trigger`。这里手动解除，是为了让**时序**
-   * 这条判据**独立于可达性**被测到：将来有人删掉 `disabled`、或另开一条改选项的路径，这条用例仍然
-   * 会在「名字退回旧写法」的变异上红。可达性由「任一项生成中时四个打印选项禁用」那条单独钉住。
-   */
-  it("飞行中改板大小：文件名仍与本页字节同源（不写成新选项下的页身份）", async () => {
-    const saves: { blob: Blob; filename: string }[] = [];
-    const albumSave = vi.fn(async (blob: Blob, filename: string): Promise<void> => {
-      saves.push({ blob, filename });
-    });
-    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
-
-    const wrapper = mountPanel(printOverrides());
-    let release = (): void => {};
+  it("飞行中改板大小：被丢弃的那一轮不诞生 URL，也不撤掉当前页正在显示的图", async () => {
+    // 这条钉的是**预览**路径上的代数判据（与下面「保存中途换板大小」同一条纪律的另一面）。
+    // 判死什么：把 `showPreview` 里的 `stale(token)` 删掉 ⇒ 被丢弃的那一轮会把它的 URL 写到
+    // `previewUrl` 上（那个 URL 永远没人回收）；把 `revokePreview()` 挪到判据**之前** ⇒
+    // 被丢弃的那一轮会顺手把**当前页正在显示的图**销号（用户看到预览凭空消失）。
+    //
+    // **确定性来自「挂载那一轮就卡住」**：`mockImplementationOnce` 在挂载**之前**装好 ⇒ 挂载期的
+    // 第 1 页渲染握在这颗不结算的 promise 上，而它结算之前就换了板大小。
+    let release: () => void = () => undefined;
     exporter.canvasToBlob.mockImplementationOnce(
       () =>
         new Promise<Blob>((resolve) => {
@@ -897,95 +862,110 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
           };
         }),
     );
+    const wrapper = mountPanel(printOverrides());
+    // 挂载那一轮还没出图（`<img>` 还没到）——否则下面的 `release()` 之后什么都不会发生，判据是假的
+    expect(wrapper.find("[data-testid='print-preview-img-0']").exists()).toBe(false);
+    // 挂载期的预览没有诞生 URL（挂载时的 `showPreview` 停在 `await renderBoardPageBlob` 上）
+    expect(createdUrls).toEqual([]);
 
-    await wrapper.get("[data-testid='export-save-page-2']").trigger("click");
+    // 飞行中切到 58 板（页数 16 → 4）：被丢弃的是**29 板下第 1 页**那一轮
     await clickDisabledOption(wrapper, "print-board-58");
-    // 选项真的换了（清单已重建、页数变成 58 板的 4 页）——否则下面的断言就在测一个没发生的场景
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(4);
+    await flushPromises();
+
+    // 58 板下第 1 页的预览就位：这张图是「当前页正在显示的图」，下面不许被撤掉
+    const shownBefore = wrapper.get("[data-testid='print-preview-img-0']").attributes("src");
+    const urlsBefore = createdUrls.length;
+    const revokedBefore = revokedUrls.length;
     release();
     await flushPromises();
 
-    expect(albumSave).toHaveBeenCalledTimes(1);
-    // 名字 = 29 板的页身份 r1c3（旧写法在这里给 r2c1），字节是同一份快照渲染出来的
-    expect(saves[0]?.filename).toBe("测试工程-打印-r1c3.png");
-    // 画布也是旧选项那一份（A4 = 2480×3508）
+    // ① 被丢弃的那一轮**根本没诞生 URL**（代数判据排在 `createObjectURL` 之前）
+    expect(createdUrls).toHaveLength(urlsBefore);
+    // ② 它也没把当前页已经在显示的图撤掉（销号排在判据之后），且那一张就是新选项渲染出来的
+    expect(revokedUrls).toHaveLength(revokedBefore);
+    expect(revokedUrls).not.toContain(shownBefore);
+    expect(wrapper.get("[data-testid='print-preview-img-0']").attributes("src")).toBe(shownBefore);
+    // ③ 新选项下那一页**自己**的预览照常出图（A4 像素）
     expect(exporter.createCanvasStrict).toHaveBeenLastCalledWith(2480, 3508);
-    // 被丢弃的项不许被写上 URL（代数守卫照常生效）；落盘本身照常发生
-    expect(createdUrls).toEqual([]);
+    // ④ 预览路径不落盘
+    expect(albumSave).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 
-  /**
-   * 同一缺陷的**第二种后果**：`boardPageTile` 在 `await` 之后按**新**选项算名字时，新选项下不存在的
-   * 页索引会直接抛「页索引 15 越界」——`album.save` 一次都不会被调用，用户无过错却保存失败。
-   */
   it("飞行中改板大小：末页仍能落盘（旧写法会用越界的页索引算名字 ⇒ 保存失败）", async () => {
-    const saves: { blob: Blob; filename: string }[] = [];
-    const albumSave = vi.fn(async (blob: Blob, filename: string): Promise<void> => {
-      saves.push({ blob, filename });
-    });
-    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
-
     const wrapper = mountPanel(printOverrides());
-    let release = (): void => {};
-    exporter.canvasToBlob.mockImplementationOnce(
+    await flushPromises();
+
+    let release: () => void = () => undefined;
+    albumSave.mockImplementationOnce(
       () =>
-        new Promise<Blob>((resolve) => {
-          release = () => {
-            resolve(new Blob([new Uint8Array([2])], { type: "image/png" }));
-          };
+        new Promise<void>((resolve) => {
+          release = resolve;
         }),
     );
-
     // 29 板下的第 16 页（r4c4）。飞行中切到 58 板（只有 4 页 ⇒ index 15 不存在）
-    await wrapper.get("[data-testid='export-save-page-15']").trigger("click");
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
     await clickDisabledOption(wrapper, "print-board-58");
-    expect(wrapper.findAll("[data-testid^='export-item-page-']")).toHaveLength(4);
+    expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(4);
     release();
     await flushPromises();
 
+    // 落盘的那一笔用的仍是**旧选项**下的页身份（r1c1），不是拿 58 板去算 index 0
     expect(albumSave).toHaveBeenCalledTimes(1);
-    expect(saves[0]?.filename).toBe("测试工程-打印-r4c4.png");
-    expect(createdUrls).toEqual([]);
+    expect(albumSave.mock.calls[0]?.[1]).toBe("测试工程-打印-r1c1.png");
+    // 代数判据不把状态写回新清单
+    expect(wrapper.find("[data-testid='print-save-state']").exists()).toBe(false);
+    wrapper.unmount();
   });
 
-  it("平台保存失败 ⇒ 走既有的逐项失败态（驱动给的中文原因 + 可重试），不静默、也不产生预览 URL", async () => {
-    const albumSave = vi.fn(async (): Promise<void> => {
+  it("平台保存失败：如实报第几张失败与中文原因，不静默、也不产生预览 URL", async () => {
+    albumKind.value = "album";
+    albumSave.mockImplementation(async (): Promise<void> => {
       throw new Error("MediaStore 拒绝插入（insert 返回 null）");
     });
-    setPlatform({ ...browserPlatform, album: { kind: "album", save: albumSave } });
 
     const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "page-0");
+    await flushPromises();
+    // 挂载期只有预览会建 URL；保存失败**不许**再建（一份没落盘的字节不该有 object URL）
+    const urlsBeforeSave = createdUrls.length;
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
 
-    const item = wrapper.get("[data-testid='export-item-page-0']");
-    // 原因**原样**上到该项（不许吞成成功、不许换成一句笼统文案）
-    expect(item.text()).toContain("失败：MediaStore 拒绝插入（insert 返回 null）");
+    const text = wrapper.get("[data-testid='print-save-state']").text();
+    // 原因**原样**上到状态里（不许吞成成功、不许换成一句笼统文案）
+    expect(text).toContain("第 1 张失败：MediaStore 拒绝插入（insert 返回 null）");
+    expect(text).toContain("已存 0 张");
     // 「不静默」的另外半边：任何成功文案都不许出现
-    expect(item.text()).not.toContain("已保存到相册");
-    expect(item.text()).not.toContain("已生成");
-    // 失败不产生预览：一份没落盘的字节不该有 object URL
-    expect(wrapper.find("[data-testid='export-preview-page-0']").exists()).toBe(false);
-    expect(createdUrls).toEqual([]);
+    expect(text).not.toContain("已保存到相册");
+    expect(text).not.toContain("已生成");
+    // 失败不产生预览：URL 一个都没多（失败页面仍显示占位 / 或挂载期那张预览）
+    expect(createdUrls).toHaveLength(urlsBeforeSave);
     // 失败不是终态：按钮仍可点（既有的「重试」路径没被这次改动改掉）
-    expect(wrapper.get("[data-testid='export-save-page-0']").attributes("disabled")).toBeUndefined();
+    expect(
+      (wrapper.get("[data-testid='print-save-all']").element as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(wrapper.get("[data-testid='print-save-all']").text()).toContain("继续保存剩余 1 张");
     expect(albumSave).toHaveBeenCalledTimes(1);
     // 也不许悄悄回落到浏览器那一支
     expect(exporter.downloadBlob).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 
   it("成功文案按落点分叉：浏览器落点仍是既有原文案「已生成」，不冒充「已保存到相册」", async () => {
     // 这条钉的是分叉的**另一个方向**：把文案写成恒定的「已保存到相册」时，上面那条 album 用例
     // 照样绿（它就是 album），只有这一条会红。
-    const albumSave = vi.fn(async (): Promise<void> => undefined);
-    setPlatform({ ...browserPlatform, album: { kind: "download", save: albumSave } });
-
+    albumKind.value = "download";
     const wrapper = mountPanel();
-    await saveAndSettle(wrapper, "page-0");
+    await flushPromises();
+    await wrapper.get("[data-testid='print-save-all']").trigger("click");
+    await flushPromises();
 
     expect(albumSave).toHaveBeenCalledTimes(1);
-    const text = wrapper.get("[data-testid='export-item-page-0']").text();
-    expect(text).toContain("已生成");
+    const text = wrapper.get("[data-testid='print-save-state']").text();
+    expect(text).toContain("已生成 1 张");
     expect(text).not.toContain("已保存到相册");
+    wrapper.unmount();
   });
 });
 
@@ -993,17 +973,21 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
 
 describe("B5-25：那句「长按预览图存进相册」的提示只对浏览器成立", () => {
   afterEach(() => {
-    setPlatform(browserPlatform);
+    albumKind.value = "download";
   });
 
-  it("浏览器（默认落点 download）⇒ 提示在；壳（落点 album）⇒ 提示不在", () => {
+  it("浏览器（默认落点 download）⇒ 提示在；壳（落点 album）⇒ 提示不在", async () => {
     // 壳里点「保存」直接进系统相册 ⇒ 再让用户去长按预览图是多余提示（B5-25）。
     // 两侧都钉：只钉壳侧的话，「提示被整段删掉」也会绿（那是另一种错）。
     const onBrowser = mountPanel();
+    await flushPromises();
     expect(onBrowser.text()).toContain("长按下面的预览图存进相册");
+    onBrowser.unmount();
 
-    setPlatform({ ...browserPlatform, album: { kind: "album", save: vi.fn(async () => undefined) } });
+    albumKind.value = "album";
     const inShell = mountPanel();
+    await flushPromises();
     expect(inShell.text()).not.toContain("长按下面的预览图存进相册");
+    inShell.unmount();
   });
 });
