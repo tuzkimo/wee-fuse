@@ -1,6 +1,8 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
+import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { toProjectDocument } from "@/core/project/file";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
@@ -15,7 +17,7 @@ vi.mock("vue-router", () => ({
 }));
 
 /**
- * 渲染通道替身（B6 任务 14）：下面的「施工图」用例会挂上真的 `SheetViewer`，而它**真的**去
+ * 渲染通道替身（B6 任务 14）：下面的「查看」用例会挂上真的 `SheetViewer`，而它**真的**去
  * `renderSheetBlob`。不替的话 happy-dom 里会为它建一张真画布（`getContext("2d")` 返回 `null`
  * ⇒ 组件以「无法获取 2D 上下文」告警/失败），成为一条与列表页无关的假红。
  * 本文件只断言「点开就挂上查看层」；查看层内部行为由 `SheetViewer.test.ts` 覆盖。
@@ -81,7 +83,7 @@ describe("LibraryPage", () => {
     expect(push).toHaveBeenCalledWith({ name: "pick" });
   });
 
-  it("点卡片打开编辑器", async () => {
+  it("点卡片上的「编辑」进编辑器", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
     await wrapper.findAll("[data-testid='open-project']")[0]?.trigger("click");
@@ -133,6 +135,77 @@ describe("LibraryPage", () => {
     expect(wrapper.find("[data-testid='confirm-dialog']").exists()).toBe(false);
   });
 
+  it("卡片的两颗主按钮：查看在前（黑底）、编辑在后（白底描边）（C8 第 1 项）", async () => {
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    const card = wrapper.findAll("[data-testid='project-card']")[0]!;
+    const texts = card.findAll("button").map((button) => button.text());
+    expect(texts.slice(0, 2)).toEqual(["查看", "编辑"]);
+
+    const view = card.get("[data-testid='view-sheet']");
+    const edit = card.get("[data-testid='open-project']");
+    // 主操作是「看图纸」：黑底在它身上，编辑是白底描边（与改名 / 删除同形）。
+    expect(view.classes()).toContain("bg-slate-900");
+    expect(edit.classes()).not.toContain("bg-slate-900");
+    expect(edit.classes()).toContain("border-slate-300");
+  });
+
+  it("不再显示存储占用那一行（C8 第 1 项：开发者读数不是用户信息）", async () => {
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("已用");
+    expect(wrapper.text()).not.toContain("可用约");
+  });
+
+  // 这条不是简报原文：上面那条用的是 `beforeEach` 的内存库（`estimateUsage` 恒返回 null），
+  // 所以**改动前它也是绿的**——它只挡「页面上写死一行字」，挡不住「读点被加回来」。
+  // 这条把读点本身钉死：库**能**报出数字时，`estimateUsage` 也一次都不许被调、那一行也不许出现。
+  it("刷新不再读存储占用：数字拿得到也不调 estimateUsage（C8 第 1 项）", async () => {
+    const base = await createMemoryProjectStore();
+    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
+    let calls = 0;
+    setProjectStore({
+      ...base,
+      estimateUsage: async () => {
+        calls += 1;
+        return { usage: 3 * 1024 * 1024, quota: 128 * 1024 * 1024 };
+      },
+    });
+
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    expect(calls).toBe(0);
+    expect(wrapper.text()).not.toContain("已用");
+    expect(wrapper.text()).not.toContain("可用约");
+  });
+
+  it("右上角按钮是「新建」，空列表提示同口径", async () => {
+    setProjectStore(await createMemoryProjectStore());
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    expect(wrapper.get("[data-testid='new-project']").text()).toBe("新建");
+    expect(wrapper.get("[data-testid='empty-hint']").text()).toContain("「新建」");
+  });
+
+  // 这条不是简报原文（简报第 3 步第 7 项要求把删除框接入覆盖层，却没给对应的断言）。
+  // 没有它时，`useOverlayBack(...)` 那三行**没有任何断言读过**：整段删掉照样全绿。
+  it("删除确认框进覆盖层返回栈：开着时按下返回先取消它（C8 规格 §3.6.2）", async () => {
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    // 没开对话框 ⇒ 页面上没有注册点，返回键该走导航栈（`closeTopOverlay()` 返回 false 就是那个信号）
+    expect(closeTopOverlay()).toBe(false);
+
+    await wrapper.findAll("[data-testid='delete-project']")[0]?.trigger("click");
+    expect(wrapper.find("[data-testid='confirm-dialog']").exists()).toBe(true);
+    // 覆盖层活着：返回键由它吃掉，不交给导航栈
+    expect(closeTopOverlay()).toBe(true);
+    await nextTick();
+    expect(wrapper.find("[data-testid='confirm-dialog']").exists()).toBe(false);
+    // 关掉之后条目要出栈，否则第二次返回会被一个已经关掉的框吃掉（页面看起来「返回键失灵」）
+    expect(closeTopOverlay()).toBe(false);
+  });
+
   it("存储不可用时给出提示并禁用新建，不静默失败", async () => {
     setProjectStore(null);
     const wrapper = mount(LibraryPage);
@@ -147,31 +220,6 @@ describe("LibraryPage", () => {
     expect(wrapper.find("[data-testid='error-hint']").exists()).toBe(false);
     // 也不该同时说「还没有图纸」（`!storeUnavailable` 的另一个合取项）
     expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(false);
-  });
-
-  // -------------------------------------------------------------------------
-  // 以下两条是**实现者自审时补的**（简报原文没有）。理由：简报的 9 条断言没有读过
-  // `estimateUsage` 那条分支（内存实现恒返回 null，占用行永远不渲染），也没有读过
-  // 「有 / 无封面」这一对分支——即两个从未被任何断言读过的输出。两条都与机器时钟无关。
-  // -------------------------------------------------------------------------
-
-  it("占用与配额：有数字时按 MB 显示，返回 null（浏览器不支持）时整行不出现", async () => {
-    const base = await createMemoryProjectStore();
-    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
-
-    setProjectStore({
-      ...base,
-      estimateUsage: async () => ({ usage: 3 * 1024 * 1024, quota: 128 * 1024 * 1024 }),
-    });
-    const shown = mount(LibraryPage);
-    await flushPromises();
-    // 恰好 3 MiB / 128 MiB，页面按 MB 保留一位小数。数字互换或漏乘除都会红。
-    expect(shown.text()).toContain("已用 3.0 MB / 可用约 128.0 MB");
-
-    setProjectStore({ ...base, estimateUsage: async () => null });
-    const hidden = mount(LibraryPage);
-    await flushPromises();
-    expect(hidden.text()).not.toContain("已用");
   });
 
   // -------------------------------------------------------------------------
@@ -252,6 +300,8 @@ describe("LibraryPage", () => {
     ).toBe(true);
   });
 
+  // 这条是**实现者自审时补的**（简报原文没有）：简报的断言没有读过「有 / 无封面」这一对分支
+  // ——一个从未被任何断言读过的输出。与机器时钟无关。
   it("有封面时渲染缩略图，无封面时给占位文字（而不是一张空 img）", async () => {
     const withThumbnail = await createMemoryProjectStore();
     await withThumbnail.put(
@@ -305,12 +355,13 @@ describe("LibraryPage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 首页「查看施工图」的接线（B6 任务 14）。只钉一件事：卡片上有这个按钮、点了会挂上查看层、
-  // 关掉会摘掉。**查看层内部**（垫场、保存、失败文案、object URL 释放）由
-  // `src/components/sheet/__tests__/SheetViewer.test.ts` 覆盖，这里不重复。
+  // 首页「查看」按钮的接线（B6 任务 14；C8 第 1 项把按钮文案从「施工图」改成「查看」，并把它
+  // 提为主操作）。只钉一件事：卡片上有这个按钮、点了会挂上查看层、关掉会摘掉。**查看层内部**
+  // （垫场、保存、失败文案、object URL 释放）由 `src/components/sheet/__tests__/SheetViewer.test.ts` 覆盖，
+  // 这里不重复。
   // -------------------------------------------------------------------------
 
-  it("卡片有「施工图」按钮，点开查看层", async () => {
+  it("卡片有「查看」按钮，点开查看层", async () => {
     const store = await createMemoryProjectStore();
     await store.put({
       meta: {
@@ -342,7 +393,7 @@ describe("LibraryPage", () => {
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
   });
 
-  it("查看层开着时点另一条工程的「施工图」，查看层按新工程**重新挂载**（`:key` 焊住的不变量）", async () => {
+  it("查看层开着时点另一条工程的「查看」，查看层按新工程**重新挂载**（`:key` 焊住的不变量）", async () => {
     // 两个工程都用**内置色卡**造 doc：`SheetViewer` 用 `getBuiltinPalette()` 解析记录，
     // 而 `makeRecord` 那份 "fake" 色卡的 doc 会被 `fromProjectDocument` 拒绝（色卡 id 不一致）。
     const store = await createMemoryProjectStore();
@@ -406,6 +457,7 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
       rename: async () => {
         throw new Error("unused");
       },
+      // 只为凑齐 `ProjectStore` 接口：C8 第 1 项之后本页不再有任何 `estimateUsage` 读点
       estimateUsage: async () => null,
     });
 
@@ -414,39 +466,6 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
 
     expect(wrapper.get("[data-testid='store-unavailable']").text()).toContain("库打不开");
     expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeDefined();
-  });
-
-  // 这条正是 B1-17：只有占用读不出来时，列表与新建都必须照常。
-  it("只有 estimateUsage 失败：列表正常、占用行消失、新建**不**禁用", async () => {
-    const store = await createMemoryProjectStore();
-    // `updatedAt` 是 `makeRecord` 的**必填**第三参（简报原文只传了两个；`npm run build` 的
-    // vue-tsc 会按 `src/**/*.ts` 类型检查测试文件，漏参直接编译不过）。
-    await store.put(makeRecord("p1", "小猫", "2026-10-03T01:00:00.000Z"));
-    setProjectStore({
-      ...store,
-      // 逐个 `bind` 再展开，而不是只写 `...store`：`store` 将来若换成 class 实现，原型上的方法
-      // 不会出现在展开里，这几行能让桩仍然是一个完整的 `ProjectStore`。
-      list: store.list.bind(store),
-      get: store.get.bind(store),
-      put: store.put.bind(store),
-      remove: store.remove.bind(store),
-      rename: store.rename.bind(store),
-      estimateUsage: async () => {
-        throw new Error("读不到占用");
-      },
-    });
-
-    const wrapper = mount(LibraryPage);
-    await flushPromises();
-
-    expect(wrapper.findAll("[data-testid='project-card']")).toHaveLength(1);
-    expect(wrapper.text()).not.toContain("已用");
-    expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeUndefined();
-    // 简报原文没有这一句——实测：**不加它，这条用例在旧实现上照样全绿**（跑 RED 时亲眼见到
-    // 16 passed / 1 failed）。旧代码里 `estimateUsage` 抛错走的是共享 try 的 catch，只置了一条
-    // 琥珀错误条，列表与新建本来就没被拖累，所以上面三句都读不到 B1-17。B1-17 的原话正是
-    // 「只 `estimateUsage` 失败**也会置错误条**」，故必须把「不置错误条」也断言上。
-    expect(wrapper.find("[data-testid='error-hint']").exists()).toBe(false);
   });
 
   it("失败态不是粘死的：库坏掉再恢复，红字与「新建禁用」都要跟着撤销", async () => {
@@ -486,37 +505,5 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
     expect(wrapper.find("[data-testid='store-unavailable']").exists()).toBe(false);
     expect(wrapper.get("[data-testid='new-project']").attributes("disabled")).toBeUndefined();
     expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(true);
-  });
-
-  it("占用读不到时，原先显示的那一行要撤掉（§8 说的是「占用行消失」，不是「从没显示过」）", async () => {
-    // 这条不是简报原文。简报那条「只有 estimateUsage 失败」里的 `not.toContain("已用")` 是在
-    // **占用从未显示过**的前提下成立的，读不到 ③ 的 `usage.value = null`——实测把它删掉，
-    // 当时本文件 18 条全绿（M6）。可它的作用是清掉**上一次成功读到的旧数字**：不清就是一行过期的
-    // 占用 / 配额挂在页面上，用户不会知道那是旧的。
-    const base = await createMemoryProjectStore();
-    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
-    let usageBroken = false;
-    setProjectStore({
-      ...base,
-      estimateUsage: async () => {
-        if (usageBroken) throw new Error("读不到占用");
-        return { usage: 1024 * 1024, quota: 2 * 1024 * 1024 };
-      },
-    });
-
-    const wrapper = mount(LibraryPage);
-    await flushPromises();
-    expect(wrapper.text()).toContain("已用 1.0 MB / 可用约 2.0 MB");
-
-    // 让占用开始读不出来，再走一次 refresh（删除本身是成功的，卡住的是占用那一步）。
-    usageBroken = true;
-    await wrapper.find("[data-testid='delete-project']").trigger("click");
-    await wrapper.find("[data-testid='delete-confirm']").trigger("click");
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain("已用");
-    // 列表该刷的照刷（那一条确实被删了），且不置错误条——占用读不到只是少一行字。
-    expect(wrapper.findAll("[data-testid='project-card']")).toHaveLength(0);
-    expect(wrapper.find("[data-testid='error-hint']").exists()).toBe(false);
   });
 });

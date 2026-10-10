@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
+import { useOverlayBack } from "@/composables/useOverlayBack";
 import { fromProjectDocument } from "@/core/project/file";
 import type { Palette } from "@/core/palette/types";
 import type { Pattern } from "@/core/pattern/types";
@@ -16,7 +17,6 @@ import { formatRelativeTime } from "@/views/relativeTime";
 
 const router = useRouter();
 const projects = ref<ProjectMeta[]>([]);
-const usage = ref<{ usage: number; quota: number } | null>(null);
 const error = ref("");
 
 /**
@@ -48,6 +48,16 @@ const renamingId = ref<string | null>(null);
 const renameDraft = ref("");
 const pendingDelete = ref<ProjectMeta | null>(null);
 /**
+ * 删除确认框是「临时界面」：Android 返回键先取消它，而不是离开页面（C8 规格 §3.6.2）。
+ * 判据用 `pendingDelete !== null`——对话框由 `ref` 控制显隐，不重新挂载组件。
+ */
+useOverlayBack(
+  () => {
+    pendingDelete.value = null;
+  },
+  () => pendingDelete.value !== null,
+);
+/**
  * 正在「查看施工图」的那一条（B6 任务 14）。整条 `meta` 而不是只存 id：查看层要的三样
  * （id / name / thumbnail）在这一刻全在手上，只存 id 就得再回库查一次——而查看层自己
  * **还要**回库拿 `doc`，那会变成同一份记录查两遍。
@@ -55,7 +65,7 @@ const pendingDelete = ref<ProjectMeta | null>(null);
  * 挂载处给了 `:key="sheetTarget.id"`（修复轮，控制者裁定）：查看层是 `fixed inset-0` 盖住列表，
  * 所以「开着的时候换一条工程」今天**不可达**；但只有 `v-if` 时 Vue 会复用实例、`onMounted`
  * 不再跑，屏幕上会**留着上一条工程的施工图**（预览还是旧的 object URL）——`:key` 把这条不变量
- * 焊死，不必指望「唯一的出口是关闭」。用例：`查看层开着时点另一条工程的「施工图」…`。
+ * 焊死，不必指望「唯一的出口是关闭」。用例：`查看层开着时点另一条工程的「查看」…`。
  */
 const sheetTarget = ref<ProjectMeta | null>(null);
 /**
@@ -81,10 +91,6 @@ async function openSheet(meta: ProjectMeta): Promise<void> {
 }
 
 const hasProjects = computed(() => projects.value.length > 0);
-
-function formatMb(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
 
 async function refresh(): Promise<void> {
   error.value = "";
@@ -112,14 +118,6 @@ async function refresh(): Promise<void> {
     storeFailure.value = "unreadable";
     error.value = e instanceof Error ? e.message : String(e);
     return;
-  }
-
-  // ③ 占用读不出来只是少一行字：**单独一个 `try`**，不置错误条、也不影响列表与新建
-  //    （闭合 B1-17：原先它与 `list()` 共用一个 `try`，只 `estimateUsage` 失败也会置错误条）。
-  try {
-    usage.value = await store.estimateUsage();
-  } catch {
-    usage.value = null;
   }
 }
 
@@ -169,7 +167,7 @@ function open(id: string): void {
         :disabled="storeUnavailable"
         @click="router.push({ name: 'pick' })"
       >
-        新建图纸
+        新建
       </button>
     </header>
 
@@ -181,7 +179,7 @@ function open(id: string): void {
     </p>
 
     <p v-if="!error && !storeUnavailable && !hasProjects" data-testid="empty-hint" class="mt-8 text-lg text-slate-500">
-      还没有图纸。点右上角「新建图纸」选一张图片开始吧。
+      还没有图纸。点右上角「新建」选一张图片开始吧。
     </p>
 
     <ul data-testid="project-list" class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -227,11 +225,19 @@ function open(id: string): void {
             {{ formatRelativeTime(meta.updatedAt, new Date()) }}
           </p>
           <div class="mt-3 flex flex-wrap gap-3">
-            <button data-testid="open-project" class="min-h-12 flex-1 rounded bg-slate-900 px-4 text-white" @click="open(meta.id)">
-              打开
+            <button
+              data-testid="view-sheet"
+              class="min-h-12 flex-1 rounded bg-slate-900 px-4 text-white"
+              @click="openSheet(meta)"
+            >
+              查看
             </button>
-            <button data-testid="view-sheet" class="min-h-12 rounded border border-slate-300 px-4" @click="openSheet(meta)">
-              施工图
+            <button
+              data-testid="open-project"
+              class="min-h-12 rounded border border-slate-300 px-4"
+              @click="open(meta.id)"
+            >
+              编辑
             </button>
             <button data-testid="rename-project" class="min-h-12 rounded border border-slate-300 px-4" @click="startRename(meta)">
               改名
@@ -243,10 +249,6 @@ function open(id: string): void {
         </template>
       </li>
     </ul>
-
-    <p v-if="usage" class="mt-8 text-base text-slate-500">
-      已用 {{ formatMb(usage.usage) }} / 可用约 {{ formatMb(usage.quota) }}
-    </p>
 
     <SheetViewer
       v-if="sheetTarget !== null && sheetPattern !== null"
