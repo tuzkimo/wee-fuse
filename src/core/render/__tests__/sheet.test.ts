@@ -464,12 +464,12 @@ describe("drawSheet 的共用步骤函数（回补覆盖）", () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     const palette = makePalette();
     const usages = makeUsages();
-    // 夹具里含一个「色号很小但仍可读」的尺寸（规格 §14 的要求）：`maxEdge = 500` 时每格 33px、
+    // 夹具里含一个「色号很小但仍可读」的尺寸（规格 §14 的要求）：`maxEdge = 500` 时每格 32px、
     // 字号 12px。旧口径的降级链会在这一档判「不画色号」；用例钉住「色号恒画」。
-    // （C8 起这个尺寸从 400 挪到 500：标题行高 + 两条刻度带 + 用料条的高度预算由 162px 涨到 261px，
-    //   上限 400 时格像素只剩 18、字号 6px ⇒ 已经低于下限、走的是「响亮失败」那一支。）
+    // （C8 修复后这个尺寸是 500：上限 400 时**量出来的**最大可行格像素只剩 25、字号 9px ⇒ 已低于
+    //   下限；而上限 500 下 32 是量出来的最大可行值 —— 33 时画布高 501 > 500，差 1px。）
     const plan = planSheet(pattern, palette, usages, PROJECT_NAME, { maxEdge: 500 });
-    expect(plan.cellPx).toBe(33);
+    expect(plan.cellPx).toBe(32);
     expect(plan.labelFontPx).toBe(12);
     expect(plan.labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
 

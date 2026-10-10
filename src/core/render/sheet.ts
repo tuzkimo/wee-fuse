@@ -303,8 +303,8 @@ function drawLabels(target: RenderTarget2D, cells: readonly LabelCell[], plan: G
 /**
  * 逐格真色 + 空格斜线 + **格内色号恒画**（单张与打印页共用）。
  *
- * 这里**没有**（也不许有）「色号画不下就省略」的分支：计划阶段（`planGridScale`）已经保证字号
- * 不低于 `SHEET_MIN_LABEL_FONT_PX`，画不下时在计划阶段响亮失败。
+ * 这里**没有**（也不许有）「色号画不下就省略」的分支：计划阶段（`planSheet` / `planBoardPage`
+ * 的格像素收敛）已经保证字号不低于 `SHEET_MIN_LABEL_FONT_PX`，画不下时在计划阶段响亮失败。
  */
 function drawCellsAndLabels(
   target: RenderTarget2D,
