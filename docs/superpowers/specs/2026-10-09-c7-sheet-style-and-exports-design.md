@@ -173,6 +173,11 @@ export interface RulerBandPlan {
 ② 查看施工图层（`SheetViewer` 增加一行声明）。
 被改动的是「导出图纸上也要有」那半句——三份文档（主规格 §11、B2 §187、B4 §416）需要同步改口径。
 
+**更正注记（2026-10-10，C8 §8.1）**：上面「只在 UI 显示」的两个落点**都已作废**——C8 把声明的 UI 渲染点
+也删掉（人类伙伴 2026-10-10 裁定全仓删除），`ParamPanel.vue` 的 `paletteAccuracy` 与 `SheetViewer` 的那一行
+都不在了。`Palette.accuracy` 字段**保留**为**数据来源说明**（消费者只有色卡加载校验与色卡数据用例），
+UI 渲染点为零。依据：`2026-10-10-c8-exits-viewer-and-layout-design.md` §8.1。
+
 ### 3.6 数据流与接口变更
 
 `SheetMeta` 当前有 6 个字段，图上删掉精度声明后：

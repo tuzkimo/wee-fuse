@@ -187,6 +187,9 @@ canvas 尺寸 = CSS 尺寸 × `devicePixelRatio`（happy-dom 的该属性有 set
 - **色卡**：卡片显示内置 `MARD 221 色` + `accuracy` 声明（「屏幕色仅供参考，以实物为准」，主规格 §11），
   **不可切换**（主规格 §2.2）。色卡数据仍只经 `services/palette.ts` 的 `getBuiltinPalette()` 取，
   不新增第二份来源。
+  **更正注记（2026-10-10，C8 §8.1）**：上面「+ `accuracy` 声明」那半句**已作废**——色卡卡片只留色卡名
+  （`paletteAccuracy` prop 与页面接线一起删），声明的 UI 渲染点归零；`accuracy` 字段保留为数据来源说明。
+  依据：`2026-10-10-c8-exits-viewer-and-layout-design.md` §8.1。
 - **尺寸摘要**（每次改动即时更新）：
 
   | 显示 | 算法 |
@@ -355,6 +358,10 @@ export interface GenerateRequest {
 > **色卡 `accuracy` 声明（主规格 §11）由参数面板的色卡卡片承载，不在结果面板重复**：
 > 主规格要求的是「显示在**色卡 UI** 上」，而色卡卡片就是那个 UI（平板结果阶段右栏常驻；
 > 手机点「改参数」可见）。结果面板只放结果本身——重复一遍声明只是噪声。
+>
+> **更正注记（2026-10-10，C8 §8.1）**：本段整条**已作废**——色卡卡片不再承载精度声明（`paletteAccuracy`
+> prop 与页面接线一起删，C7 留在查看层的那一行也在 C8 删掉）。`accuracy` 字段保留为**数据来源说明**，
+> UI 渲染点为零。依据：`2026-10-10-c8-exits-viewer-and-layout-design.md` §8.1。
 
 > **2026-10-03 修正（任务 11 审查发现）**：上面那句「列表封面 512 在 500×500 图纸上每格只有 1px、
 > 1024 给它 2px」的**理由不成立**——`renderPatternThumbnail` 是「**只缩不放**」

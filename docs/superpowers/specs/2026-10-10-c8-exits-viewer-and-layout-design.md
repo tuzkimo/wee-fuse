@@ -665,3 +665,83 @@ C7 把 `accuracy` 从图上删掉、留在「色卡 UI（参数面板）+ 查看
   （只加更正注记，见 `开发约定详解.md` §文档真源）。
 - 版本号：按逐阶段惯例在最后一个任务里定到 **0.12.0**（`package.json` / `package-lock.json` /
   `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock` 五处同步）。
+
+## 更正注记（实现期发现，2026-10-10）
+
+> 本仓口径是「**只加更正注记，不改历史正文**」（报告是**当时的**证据，见
+> `docs/开发约定详解.md` §文档真源）——所以上面被实现证伪的论断**原文照旧留着**，在这里逐条留痕。
+> 每条写「**原文断言 → 实测 → 实际实现**」。来源：任务 3 / 4 / 8 的实现报告与控制者账本
+> （`.superpowers/sdd/2026-10-10-c8-exits-viewer-and-layout/progress.md`）。
+
+### 1. 「预算用字号上限 ⇒ 只会高估行数 ⇒ 不会溢出画布」——**不成立**
+
+- **原文断言**（**实际落在计划的步骤 6**，那句原文引的是「C8 规格 §7.2 的最后一段」；本节 §7.2 正文里
+  并没有这一句，引用错位一并记在这里）：`planGridScale` 用**字号上限**做高度预算（标题行高 73、
+  用料行高 68、项宽 341），「这三者都比真实值大，所以由它定出的格像素只会偏保守、不会溢出画布」。
+- **实测**（审查者逐式手算，实现者复现）：预算的**列数**按 `availableWidth` 算，而真实换行宽是
+  **网格宽 / 页内可用宽**（更窄）⇒ 行数被**低估**（C7 时代 116×116 + 221 色就是按 7 行算、实际 8 行）；
+  C8 把项宽 120→179、行高 22→36、标题行高 34→73 一起放大后，这点低估不再被余量盖住：
+  - 单张 **30×92 + 221 色** ⇒ `canvasHeight 4340 > EXPORT_MAX_EDGE (4096)`（画布超上限）；
+  - 打印页 **70×58 + 58 板 + A4 第 2 页（12×58 格）+ 40 色** ⇒ 预算下的格像素 55、用料条 5 行 × 34px
+    ⇒ 底边约 **3621 > 纸高 3508**——最后约 3 行**静默画到纸外**，无异常、无警告。
+- **实际实现**：`planGridScale` 整个删除，改成「**有界定点 `fitCellPx` + 真实测量 `layoutFor`**」——
+  判据与产物取的是**同一份量**，「量的时候成立、产物却不成立」在结构上不可能发生。实测收敛结果：
+  单张 30×92 收敛到 `cellPx 27`（画布 914 × 4064 ≤ 4096）；打印页那一页收敛到 `cellPx 51`
+  （用料条 9 列 × 5 行、底边 3372 ≤ 3390 = 3508 − 两侧页边距 118），横向三条判据也一并量。
+
+### 2. §3.6.1 末段「用真 `createMemoryHistory` 的 router 做用例」——**不成立**
+
+- **原文断言**：「『历史为空』的判据是 vue-router 4 写在 `history.state.back` 里的上一页为 `null`。
+  这条判据抽成一个共用小函数（`backOrHome()`），用真 `createMemoryHistory` 的 router 做用例
+  （`EditorPageRouterLink.test.ts` 已有这个先例）」。判据本身（读 `state.back`）是对的，
+  错的是「用内存历史做用例」这半句。
+- **实测**：`buildState(...)` 只在 web 历史的 `useHistoryStateNavigation.changeLocation` 里被调用
+  （`vue-router.mjs` 的 `replace` / `push` 两处），而 `createMemoryHistory()` 的 `state` 是一颗普通 `{}`
+  ——`finalizeNavigation` 只把 `push` 的 `data` 塞进去。实测内存历史 `push("/")` 后 `state` 是
+  `{"scroll":null}`、再 `push("/edit/a")` 后是 `{}`，`back` 恒为 `undefined`；生产路由器
+  （`src/router/index.ts`）用的正是 `createWebHistory`。用内存历史写「有上一页 ⇒ `back()`」的用例是
+  **恒绿的假绿**（`back()` 那一支一次都没被走过）。`window.history.length` 同样不可用（内存历史下恒为 1）。
+- **实际实现**：`backOrHome` 的实现口径不变，但它的用例改用 **`createWebHistory`**
+  （`src/views/__tests__/backOrHome.test.ts`）；用内存历史的 `EditorPageRouterLink.test.ts` 在文件头
+  **显式声明**「本文件里 `backOrHome` 恒走『回图纸库』那一支」，不当判据用。
+
+### 3. §7.3 里 4×4 画布的示例读数（861 / 「48px 的标题约 800px」）——与实测不一致（**无断言依赖**）
+
+- **原文断言**：§7.3 末条写「4×4 的网格块宽 384px，而 48px 的标题约 800px」；控制者的派单预检表
+  （`progress.md` 第 37 行）进一步按 `SHEET_TITLE_FIXED_EM = 15` 手算出「4×4 ⇒ 画布 861 > 网格块 488」
+  ——**861 这个数字从来不在本规格正文里**，位置也一并如实记下。
+- **实测**：`SHEET_TITLE_FIXED_EM` 的真实值是 **20**（模板 `" · 116 × 116 格 · 221 色 · 13456 颗"` 在
+  `fontPx = 1` 下 = 18.95em × 1.05 ⇒ `ceil` 20）。4×4 + 8 色 + 工程名「小猫」时 `titleFontPx = 48`、
+  标题上界右沿 = `20 + 101 + 20 × 48 = 1081`，画布宽 = `1081 + 20 = 1101`（`layout.test.ts` 有一条断言
+  把 `SHEET_TITLE_FIXED_EM === 20` 与这条画布宽公式一起钉住）。
+- **实际实现**：断言只钉「画布宽 > 网格块右沿（488）」与「≤ `EXPORT_MAX_EDGE`」，**没有任何断言读到
+  861 或 800**。此处仅留痕，以免后人引用那两个错数。
+
+### 4. §6 的 `TierSlider` 草图（事件名与 testid 落点）与实际实现不一致
+
+- **原文断言**：草图写 `emits: "update:value": [number]`，并把数字输入框的 id 定为 `max-colors-value`。
+- **实测 / 实际实现**：组件实际是 `emits input: [{ value: number | null; error: string }]`
+  （每敲一次都 emit；非法时 `value` 为 `null`、`error` 是中文原因）。props 除草图里的
+  `min` / `max` / `value` / `nodes` / `disabled?` 外还有 `label` / `inputTestId` / `sliderTestId`
+  （两个 testid 由调用方给，组件不写死）。**数字输入框沿用旧 id `max-colors`**（避免无谓改名、
+  既有用例的 `.setValue()` 用法不动）；`max-colors-tier`（档位文字）与 `max-colors-value`（生效上限）
+  是滑条下方的**读数**，`max-colors` 容器仍在、滑条是 `max-colors-slider`。
+
+### 5. §6「自绘 `::-webkit-slider-thumb` 至少 28px」——**未实现**
+
+- **原文断言**（§6 的触控目标，也是 §9 R4 的处置）：「滑条轨道高度 ≥ 44px（**自绘
+  `::-webkit-slider-thumb` 至少 28px 见方**）」。
+- **实测 / 实际实现**：轨道 `h-11`（44px，含原生滑条的命中区）**已落地并有类名断言**；
+  **拇指用浏览器原生尺寸，没有自绘**（`TierSlider.vue` 的文件头注释如实写明理由：原生滑条在
+  Android WebView 上的触控与无障碍——方向键 / 读屏——行为都比自绘好，自绘是「引第三方库」之外的
+  另一种复杂度来源）。规格那句的**理由**（触控目标够大）由 44px 轨道满足；是否需要自绘留给真机目视
+  （§10 人工清单第 6 条）。
+
+### 6. §3.4 的 `ResultPanel` props 清单漏了 `name`
+
+- **原文断言**：props 只有 `pattern` / `palette` / `isNew` / `thumbnail?` / `canRerun`。
+- **实测 / 实际实现**：实现多一个**可选** `name?: string`（默认 `"图纸"`）——因为 `ResultPanel` 把内置
+  `SheetViewer` 渲染在自己里面，而 `SheetViewer` 的 `name` 是必填；这个默认值与两个宿主原来写的
+  `session.record?.meta.name ?? "图纸"` **逐字同源**，不是新造的静默值。两个宿主都传真名
+  （`SetupPage.vue` 传 `session.record?.meta.name ?? "图纸"` 与 `draft.name`，
+  `EditResultPage.vue` 传 `session.record?.meta.name ?? "图纸"`）。

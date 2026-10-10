@@ -16,7 +16,14 @@ export interface Palette {
   readonly name: string;
   /** 数据来源说明，会显示在界面上。 */
   readonly source: string;
-  /** 精度声明，会显示在界面与导出图纸上。 */
+  /**
+   * 精度声明（**仅作数据来源说明，零 UI 渲染点**）。
+   *
+   * 2026-10-10 由 C8 变更（C8 规格 §8.1，人类伙伴裁定）：它不显示在界面上、也不印在导出图纸上——
+   * 消费者只有色卡加载校验（`registry.ts` 的 `requireString(r.accuracy, "accuracy")`）与色卡数据用例
+   * （`mard221.test.ts` 断言文案含「第三方 / 实物 / 不同公开来源」）。**字段保留**，口径按本仓
+   * 「公开 API ≠ 被使用的 API」留痕。
+   */
   readonly accuracy: string;
   readonly colors: readonly PaletteColor[];
 }
