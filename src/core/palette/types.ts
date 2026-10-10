@@ -14,7 +14,14 @@ export interface Palette {
   /** 稳定 id，例如 "mard221"。落盘工程文件引用它。 */
   readonly id: string;
   readonly name: string;
-  /** 数据来源说明，会显示在界面上。 */
+  /**
+   * 数据来源说明（**零 UI 渲染点**：只作来源说明，不参与任何渲染）。
+   *
+   * 2026-10-10 由 C8 变更（与下方 `accuracy` 同一裁定、同因同形）：UI 只渲染色卡名
+   * （`ParamPanel.vue` 的 `paletteName`），它不显示在界面上——消费者只有色卡加载校验
+   * （`registry.ts` 的 `requireString(r.source, "source")`）与色卡数据用例（`mard221.test.ts`
+   * 断言它是 `https://` 开头的来源链接）。**字段保留**，口径按本仓「公开 API ≠ 被使用的 API」留痕。
+   */
   readonly source: string;
   /**
    * 精度声明（**仅作数据来源说明，零 UI 渲染点**）。
