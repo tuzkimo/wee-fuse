@@ -351,6 +351,34 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     expect(scaleOf(wrapper)).toBeCloseTo(fit, 5);
   });
 
+  it("鼠标的一次双击只算一次：指针序列 + 浏览器随后派发的 dblclick 不会一来一回抵消", async () => {
+    // **判死什么**：舞台把 `@dblclick="onDoubleTap"` 加回来时这条立刻红——真机鼠标在一次双击里
+    // 会先派发两轮 `pointerdown` / `pointerup`（指针路径放大到上限）、**紧接着**再派发一个
+    // `dblclick`（同一个处理器又判「已经放大了」⇒ 弹回适配），净效果是双击没反应。
+    // 所以这里如实复现浏览器的完整序列：两轮指针 + 一个 dblclick。
+    const wrapper = mountViewer();
+    await flushPromises();
+    await withViewport(wrapper);
+    const fit = scaleOf(wrapper);
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+
+    for (let i = 0; i < 2; i += 1) {
+      await stage.trigger("pointerdown", { pointerId: 1, pointerType: "mouse", clientX: 400, clientY: 300 });
+      await stage.trigger("pointerup", { pointerId: 1, pointerType: "mouse", clientX: 400, clientY: 300 });
+    }
+    (stage.element as HTMLElement).dispatchEvent(
+      new MouseEvent("dblclick", { bubbles: true, clientX: 400, clientY: 300 }),
+    );
+    // **必须等一帧**：`dispatchEvent` 是同步的，但它触发的 `view` 变更要等 Vue 的微任务补丁，
+    // 紧跟其后同步读 `style` 会拿到**旧**样式——那样这条用例在变异下也是绿的（假绿，实测过）。
+    await nextTick();
+
+    const zoomed = scaleOf(wrapper);
+    // 净效果停在**放大那一侧**，且明显大于适配（若被 dblclick 弹回去，这里会等于 fit）
+    expect(zoomed).toBeGreaterThan(fit);
+    expect(zoomed).toBeGreaterThan(fit * 2);
+  });
+
   it("单指拖动会平移视图（transform 的 translate 变化）", async () => {
     // **用 100×100 的图纸**：2×1 在 800×600 里默认视图是 64px/格（`minCellScale` 的上限），
     // 图像只有 128px 宽 < 视口 ⇒ `clampView` 把它按居中夹住，拖动**什么都不会变**（假绿）。

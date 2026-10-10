@@ -110,7 +110,15 @@ interface PinchState {
 let pinch: PinchState | null = null;
 /** 单指按下时的落点：抬手时用它判「这是一次轻点还是一次拖动」。 */
 let pressOrigin: { readonly x: number; readonly y: number } | null = null;
-/** 上一次轻点（双击判定用）。**不依赖 `dblclick`**：Android WebView 不保证派发它。 */
+/**
+ * 上一次轻点（双击判定用）。
+ *
+ * **双击只由指针序列判定，舞台不绑 `dblclick`**（2026-10-10 人类伙伴裁定）：指针事件是统一模型，
+ * 鼠标点击同样会派发 `pointerdown` / `pointerup`，所以下面这套「两次轻点 + 位移容差 + 300ms」
+ * 在鼠标与触摸两种输入上都成立；而两条入口绑同一个处理器时，一次**鼠标**双击会跑两遍
+ * （先放大到上限、紧接着 `dblclick` 又弹回适配），净效果是双击没反应。
+ * `dblclick` 没有任何一种输入形态是它独有的（Android WebView 反而不保证派发它）。
+ */
 let lastTap: { readonly at: number; readonly x: number; readonly y: number } | null = null;
 const DOUBLE_TAP_MS = 300;
 const TAP_SLOP_PX = 12;
@@ -388,13 +396,14 @@ async function save(): Promise<void> {
       **组件不自己算坐标**（`offsetX/offsetY/scale` 全部来自 `core/pattern/view.ts`）。
       `touch-none`（Tailwind 的 `touch-action: none`）把手势从浏览器的滚动 / 双击缩放手里拿回来，
       否则真机上双指捏合会被页面的滚动接管。
+      **舞台刻意不绑 `@dblclick`**：双击只由指针序列判定（见 `lastTap` 的 JSDoc）——两条入口并存时，
+      一次鼠标双击会跑两遍处理器、一来一回互相抵消。
     -->
     <div
       ref="stage"
       data-testid="sheet-stage"
       class="mx-auto mt-3 w-full max-w-6xl flex-1 touch-none overflow-hidden rounded bg-slate-100"
       @wheel="onWheel"
-      @dblclick="onDoubleTap"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
