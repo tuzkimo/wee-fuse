@@ -170,6 +170,9 @@ export function mmToPx(mm: number): number {
  *
  * CJK / 全角按 `1em`、其余按 `0.55em`，再乘 `TEXT_WIDTH_SAFETY`。**它是估算**：判别力靠人工目视
  * （C8 规格 §10 第 7 条），所以留了 5% 余量。只用于「装不装得下」与画布宽度，不参与任何格坐标。
+ *
+ * **为何公开**：导出是为了让用例能独立复算公式（生产消费者都在本文件内：两份 `*_TITLE_FIXED_EM`
+ * 常量与各计划里「画布要多宽」的那个上界）。
  */
 export function estimateTextWidthPx(text: string, fontPx: number): number {
   if (typeof text !== "string") {
@@ -221,7 +224,11 @@ function legendFontAt(cellPx: number): number {
   );
 }
 
-/** 用料条几何：**全部由用料字号推出**（`LegendBandPlan` 的取值口径只此一份）。 */
+/**
+ * 用料条几何：**全部由用料字号推出**（`LegendBandPlan` 的取值口径只此一份）。
+ *
+ * **为何公开**：导出是为了让用例能独立复算公式（生产消费者都在本文件内：`planLegendBands`）。
+ */
 export function legendGeometry(fontPx: number): {
   readonly rowHeight: number;
   readonly swatchSize: number;
@@ -243,6 +250,9 @@ export function legendGeometry(fontPx: number): {
  * 标题（打印页的标题含 `1 格 = X mm`，那要计划先算出来），但模板里除名字之外那部分是固定且
  * 长度有界的 ⇒ 上界只多不少。**逐 1px 下调而不是解方程**：估算函数带 `ceil`，不保证线性，
  * 而最坏情况只有 40 次迭代。
+ *
+ * **为何公开**：导出是为了让用例能独立复算公式（生产消费者都在本文件内：`planSheet` 与
+ * `planBoardPage` 各自那处 `layoutFor`）。
  */
 export function planTitleFont(input: {
   readonly projectName: string;
@@ -331,6 +341,7 @@ export interface RulerBandPlan {
    * 换个名字正好把这条界线写在类型上。
    */
   readonly stepPx: number;
+  /** 刻度字号；**由 `rulerFontAt(cellPx)` 推出**（唯一口径，`planLegendBands` 里算好带出来）。 */
   readonly fontPx: number;
   /** 上带顶边。 */
   readonly topY: number;
@@ -630,7 +641,6 @@ export function planSheet(
       rows: pattern.height,
       gridX,
       gridY,
-      rulerFontPx: rulerFontAt(cellPx),
     });
     // 标题（身份信息）允许把画布撑宽：用料条那条纪律仍然成立（它按网格宽换行）。上界右沿
     // 与 `planTitleFont` 用的是同一个式子，「标题永远落在自己的画布内」由它保证。
@@ -867,8 +877,10 @@ function fitCellPx(cap: number, fits: (cellPx: number) => boolean): number {
  * **`legendAlign` 不给默认值**：单张传 `"center"`、打印页传 `"start"`，两处都显式写出来。
  * 默认值会让「忘了传」表现为「条带跑到了别处」，而那是看不出来的静默偏差。
  *
- * **用料字号由 `cellPx` 推出**（2026-10-10 C8 修复）：`legendFontAt` 是唯一口径，所以这里**不收**
- * 字号入参 —— 收一个「外部算好的字号」就是留一个「计划量到的高度与产物的字号不是同一个数」的失败面。
+ * **两个字号都由 `cellPx` 推出**（2026-10-10 C8 修复 / 收口）：用料字号走 `legendFontAt`、刻度字号
+ * 走 `rulerFontAt`，各只有一份口径，所以这里**不收任何字号入参** —— 收一个「外部算好的字号」就是留
+ * 一个「计划量到的高度与产物的字号不是同一个数」的失败面。刻度字号曾是一个入参（**同一个失败面**：
+ * 非法值乃至 `undefined` 都会直接进产物、没有任何守卫），收口时删掉，改为函数内推导。
  *
  * **为什么不等价于旧的 `planLegendBand`**：旧函数的 `itemCols` 按「可用宽」算，返回的画布宽度
  * 反过来被条带撑大（29 格 + 13 色 ⇒ 画布 2648px、网格 1160px）。新函数把换行宽度交给调用方，
@@ -885,7 +897,6 @@ export function planLegendBands(input: {
   readonly rows: number;
   readonly gridX: number;
   readonly gridY: number;
-  readonly rulerFontPx: number;
 }): {
   readonly legend: LegendBandPlan;
   readonly legendTop: number;
@@ -935,7 +946,7 @@ export function planLegendBands(input: {
   };
   const ruler: RulerBandPlan = {
     stepPx: cellPx,
-    fontPx: input.rulerFontPx,
+    fontPx: rulerFontAt(cellPx),
     topY: input.gridY - SHEET_RULER_TOP,
     bottomY: input.gridY + rows * cellPx,
     leftX: input.gridX - SHEET_RULER_LEFT,
@@ -1070,7 +1081,6 @@ export function planBoardPage(
       rows,
       gridX,
       gridY,
-      rulerFontPx: rulerFontAt(cellPx),
     });
     return {
       cellPx,

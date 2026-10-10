@@ -39,7 +39,7 @@ const storeFailureText = computed(() => {
   }
   if (storeFailure.value === "unreadable") {
     // **必须带上原始原因**：只写「打不开」，用户拿不到任何可操作的信息。
-    return `本地图纸库现在打不开（${error.value}）。在它恢复之前，新建图纸也没法保存，先别开工。`;
+    return `本地图纸库现在打不开（${error.value}）。在它恢复之前，新建也没法保存，先别开工。`;
   }
   return "";
 });

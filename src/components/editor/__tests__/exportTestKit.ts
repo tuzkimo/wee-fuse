@@ -4,9 +4,12 @@ import type * as exporterModule from "@/services/exporter";
 
 /**
  * 导出用例共用的**测试桩**（任务 4 修复轮 F2）：
- * `src/components/editor/__tests__/ExportPanel.test.ts` / `src/views/__tests__/EditorPage.test.ts` /
- * `src/services/__tests__/sheetExport.test.ts`。**消费者清单以本行为准**（不写数量，免得每加一处
- * 都要回来改两个地方）。
+ * `src/components/editor/__tests__/ExportPanel.test.ts` / `src/services/__tests__/sheetExport.test.ts`。
+ * **消费者清单以本行为准**（不写数量，免得每加一处都要回来改两个地方）。
+ * **2026-10-10 由 C8 收口按 grep 重列**：原清单里的 `src/views/__tests__/EditorPage.test.ts` 已不再
+ * import 本文件（该页在 C8 第 3 项之后不再渲染任何覆盖层，也就不必替 `@/services/exporter`）；
+ * `src/views/__tests__/LibraryPage.test.ts` 只是**照同一手法自建**了 object URL 桩（见它的
+ * `beforeEach`），**不 import 本文件**，故不进清单。
  *
  * **为什么它必须存在**：这两份桩原来逐字重复了约 65 行——`@/services/exporter` 的五个函数替身、
  * `RenderTarget2D` 的记录型普通对象桩、object URL 的桩、假画布与顺序表。重复的两份桩不是
