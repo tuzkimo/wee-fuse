@@ -184,6 +184,11 @@ canvas 尺寸 = CSS 尺寸 × `devicePixelRatio`（happy-dom 的该属性有 set
 - **长边豆数**：整数 1–500（`MIN_LONG_SIDE` / `MAX_LONG_SIDE`），默认 **58**，快捷值 29 / 58 / 116。
   越界时禁用生成并说明原因；**`>300` 只提示「导出会分片」，不阻止**（主规格 §8）。
 - **用色档位**：16 / 32 / **不限**（`null`），默认 **32**（`MaxColors`）。
+  **更正注记（2026-10-10，C8 §8.2）**：上面这行的枚举**已作废**——C7 已改成
+  `8 | 16 | 24 | "custom" | "all"`，默认值也随 `DEFAULT_MAX_COLORS` 变成 **16**
+  （`core/pattern/types.ts`；`stores/draft.ts` 的初始值与 `"custom"` 的数值档 `customMaxColors` 同批落地）。
+  `docs/开发约定详解.md` 的两处当时同样漏改、已于 2026-10-10 由 C8 补正；**本文是历史正文，按口径只加注记**。
+  依据：`2026-10-10-c8-exits-viewer-and-layout-design.md` §8.2。
 - **色卡**：卡片显示内置 `MARD 221 色` + `accuracy` 声明（「屏幕色仅供参考，以实物为准」，主规格 §11），
   **不可切换**（主规格 §2.2）。色卡数据仍只经 `services/palette.ts` 的 `getBuiltinPalette()` 取，
   不新增第二份来源。

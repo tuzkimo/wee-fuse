@@ -725,7 +725,8 @@ C7 把 `accuracy` 从图上删掉、留在「色卡 UI（参数面板）+ 查看
   `min` / `max` / `value` / `nodes` / `disabled?` 外还有 `label` / `inputTestId` / `sliderTestId`
   （两个 testid 由调用方给，组件不写死）。**数字输入框沿用旧 id `max-colors`**（避免无谓改名、
   既有用例的 `.setValue()` 用法不动）；`max-colors-tier`（档位文字）与 `max-colors-value`（生效上限）
-  是滑条下方的**读数**，`max-colors` 容器仍在、滑条是 `max-colors-slider`。
+  是滑条下方的**读数**；**`max-colors` 就是那个数字输入框**（`input-test-id="max-colors"`，
+  外层 div 与 `TierSlider` 根节点都没有 testid，不存在「容器」这个落点）、滑条是 `max-colors-slider`。
 
 ### 5. §6「自绘 `::-webkit-slider-thumb` 至少 28px」——**未实现**
 
@@ -742,6 +743,7 @@ C7 把 `accuracy` 从图上删掉、留在「色卡 UI（参数面板）+ 查看
 - **原文断言**：props 只有 `pattern` / `palette` / `isNew` / `thumbnail?` / `canRerun`。
 - **实测 / 实际实现**：实现多一个**可选** `name?: string`（默认 `"图纸"`）——因为 `ResultPanel` 把内置
   `SheetViewer` 渲染在自己里面，而 `SheetViewer` 的 `name` 是必填；这个默认值与两个宿主原来写的
-  `session.record?.meta.name ?? "图纸"` **逐字同源**，不是新造的静默值。两个宿主都传真名
-  （`SetupPage.vue` 传 `session.record?.meta.name ?? "图纸"` 与 `draft.name`，
-  `EditResultPage.vue` 传 `session.record?.meta.name ?? "图纸"`）。
+  `session.record?.meta.name ?? "图纸"` **逐字同源**，不是新造的静默值。`ResultPanel` 的两个宿主
+  （`SetupPage.vue:422` / `EditResultPage.vue:74`）都传真名 `session.record?.meta.name ?? "图纸"`；
+  而 `draft.name` 走的是**另一条线**——`SetupPage.vue:432` 把它当 `:name` 传给 `ParamPanel` 的工程名
+  输入框，**不是** `ResultPanel` 的入参。
