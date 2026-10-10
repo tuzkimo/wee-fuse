@@ -307,11 +307,13 @@ export function closeTopOverlay(): boolean;
 ```
 
 - **删除**：`sheet-accuracy`（精度声明，人类伙伴 2026-10-10 裁定全仓删除，见 §8.1）、
-  `sheet-zoom-fit`（「适配」按钮）、`sheet-close`（改为 `sheet-back` 返回箭头）、
-  以及「{{Math.round(scale)}} px/格」与「捏合或拖动可缩放平移」两行说明（工具条被底部操作条取代）。
+  `sheet-zoom-fit`（「适配」按钮）、以及「{{Math.round(scale)}} px/格」与「捏合或拖动可缩放平移」
+  两行说明（工具条被底部操作条取代）。
+  **`sheet-close` 这个 `data-testid` 保留不变**（按钮从「关闭」变成标题前的返回箭头）：
+  四个测试文件在读它，改 id 只换来一次全仓改名、不换来任何行为（`export-close` 同理，见 §5.3）。
 - 保留：`sheet-viewer` / `sheet-title` / `sheet-stage` / `sheet-preview` / `sheet-save` /
-  `sheet-save-state` / `sheet-loading` / `sheet-error` / `sheet-zoom-in` / `sheet-zoom-out`。
-- 新增：`sheet-back`、`sheet-print`。
+  `sheet-save-state` / `sheet-loading` / `sheet-error` / `sheet-zoom-in` / `sheet-zoom-out` / `sheet-close`。
+- 新增：`sheet-print`。
 
 ### 4.2 手势与缩放（全部走 `core/pattern/view.ts`，不在组件里算坐标）
 
@@ -406,8 +408,7 @@ export function closeTopOverlay(): boolean;
 
 | 动作 | 名字 |
 |---|---|
-| 保留 | `export-panel` / `export-summary-print` / `export-empty-note` / `print-board-29` / `print-board-58` / `print-paper-a4` / `print-paper-a3` |
-| 改名 | `export-close` → `export-back` |
+| 保留 | `export-panel` / `export-summary-print` / `export-empty-note` / `print-board-29` / `print-board-58` / `print-paper-a4` / `print-paper-a3` / **`export-close`**（按钮从「关闭」变成返回箭头，id 不变） |
 | 新增 | `print-preview-strip` / `print-preview-page-<i>` / `print-page-indicator` / `print-page-prev` / `print-page-next` / `print-save-all` / `print-save-state` |
 | **删除** | `export-item-*` / `export-save-*` / `export-preview-*`（逐项状态机被单一按钮取代） |
 
@@ -507,20 +508,35 @@ emits:  "update:value": [number];
 
 - **文本宽度只能估算**：core 不许引用 DOM（`coreBoundary` 闸门），量不了字。
   新增纯函数 `estimateTextWidthPx(text, fontPx)`：CJK / 全角按 `1.0em`、其余按 `0.55em`，
-  再乘 `1.05` 的余量。它是**估算**，判别力靠人工目视（§10），这一点如实写进 JSDoc。
-- **标题必须完整**：不再假设「标题一定比网格窄」。画布宽度改为
-  `max(网格块右沿, 标题右沿, 用料条右沿) + SHEET_MARGIN`——**这是对 C7「用料条永不撑宽画布」的补充，
-  不是推翻**：用料条仍然按网格宽换行，只有标题（身份信息）允许把画布撑宽，
-  且只在小图纸上生效（4×4 的网格块宽 384px，而 48px 的标题约 800px）。
-- 标题字号的顺序：先按 `0.5 × cellPx` 取（夹进 24–56），再按**可用宽**压小
-  （`floor(可用宽 / estimateEm(标题))`），**硬底是 `TITLE_FONT_HARD_MIN_PX = 16`**：
+  再乘 `1.05` 的余量。它是**估算**，判别力靠人工目视（§10 第 7 条），这一点如实写进 JSDoc。
+- **计划只收「工程名」，不收整条标题**（这是本节的关键取舍）：打印页的标题文本里含
+  `1 格 = X mm` 与页身份，而那些量只能由计划自己算出来 ⇒ 把整条标题喂给计划是循环依赖。
+  但标题模板里**除名字之外那部分是固定且长度有界的**，于是宽度上界可写成
 
-  | 渲染器 | 可用宽 | 连 16px 都放不下时 |
+  ```
+  标题宽度上界(f) = estimateTextWidthPx(工程名, f) + FIXED_EM × f
+  ```
+
+  `FIXED_EM` **不手写**：用同一个估算函数在模块加载时从**最长模板字面量**量出来
+  （单张 `" · 116 × 116 格 · 221 色 · 13456 颗"`、打印页那条含板号 / 页范围 / 毫米的长模板），
+  所以它不会与真实文案漂移。**上界只多不少** ⇒ 标题永远不会冲出自己的画布/纸张。
+- 标题字数顺序：先取比例值 `clamp(round(cellPx × 0.5), 24, 56)`；若上界超可用宽则**逐 1px 下调**，
+  硬底 `TITLE_FONT_HARD_MIN_PX = 16`；连 16px 都放不下就**响亮失败**（消息写明是「工程名太长」）。
+
+  | 渲染器 | 可用宽 | 备注 |
   |---|---|---|
-  | 单张施工图 | `EXPORT_MAX_EDGE − 2 × SHEET_MARGIN`（画布可以为了标题加宽，上限是它） | **响亮失败**，消息写明「工程名太长」 |
-  | 打印页 | 可打印宽（**纸宽是硬的**，画布不能加宽） | 同上（同样响亮失败，不静默压成噪点） |
+  | 单张施工图 | `EXPORT_MAX_EDGE − 2 × SHEET_MARGIN` | 画布可以为了标题加宽，上限是它 |
+  | 打印页 | 可打印区右沿 − 标题左沿（= 网格块左沿） | **纸宽是硬的**，所以打印页的标题可能落在 24px 比例下限以下 |
 
-  即：比例值只保证「尽量大」，可用宽只保证「装得下」，16px 是两者的共同硬底——**没有静默溢出**。
+- **画布宽度（单张）**：`max(网格块右沿, 标题上界右沿, 用料条右沿) + SHEET_MARGIN`。
+  这是对 C7「用料条永不撑宽画布」的**补充**而非推翻：用料条仍然按网格宽换行，
+  只有标题（身份信息）允许把画布撑宽，且只在小图纸上生效（4×4 的网格块宽 384px，
+  而 48px 的标题约 800px）。
+- **签名变更**：`planSheet` 与 `planBoardPage` 因此都要多收一个 `projectName`
+  （计划要用它算标题字号）。调用方：`renderSheetBlob` / `renderBoardPageBlob` 有名字 ✓；
+  `boardPageTile` 与 `ExportPanel` 的 `pageUsages` 只取页身份与本页格范围，但同样要按新签名传名
+  （前者由 `ExportPanel` 多传一个实参）。**不给默认值**：默认 `""` 会让「调用方忘了传」表现为
+  「标题字号偏大、图能出但标题可能溢出」，正是本项目要消灭的静默形态。
 - **打印页的标题文案一个字不改**（板号 / 页范围 / `1 格 = X mm（实物大小）`全部保留，见 §2 非目标）。
 
 ### 7.4 打印页左沿对齐（第 8 项，裁定 A：保持 1:1）
@@ -537,7 +553,7 @@ emits:  "update:value": [number];
 
 | 动作 | 常量 |
 |---|---|
-| 新增 | `SHEET_TITLE_FONT_RATIO = 0.5`、`SHEET_TITLE_FONT_MIN_PX = 24`、`SHEET_TITLE_FONT_MAX_PX = 56`、`SHEET_TITLE_LINE_RATIO = 1.3`、`SHEET_TITLE_GAP = 18`、`LEGEND_FONT_RATIO = 0.36`、`LEGEND_FONT_MIN_PX = 18`、`LEGEND_FONT_MAX_PX = 40`、`LEGEND_ROW_RATIO = 1.7`、`LEGEND_SWATCH_RATIO = 1.25`、`LEGEND_CODE_GAP_RATIO = 0.5`、`LEGEND_ITEM_PAD_RATIO = 0.4`、`LEGEND_ITEM_SAMPLE = "F25 (12345)"`、`TITLE_FONT_HARD_MIN_PX = 16` |
+| 新增 | `SHEET_TITLE_FONT_RATIO = 0.5`、`SHEET_TITLE_FONT_MIN_PX = 24`、`SHEET_TITLE_FONT_MAX_PX = 56`、`SHEET_TITLE_LINE_RATIO = 1.3`、`SHEET_TITLE_GAP = 18`、`TEXT_WIDTH_SAFETY = 1.05`、`SHEET_TITLE_FIXED_EM` / `BOARD_TITLE_FIXED_EM`（由最长模板字面量量出，非手写）、`LEGEND_FONT_RATIO = 0.36`、`LEGEND_FONT_MIN_PX = 18`、`LEGEND_FONT_MAX_PX = 40`、`LEGEND_ROW_RATIO = 1.7`、`LEGEND_SWATCH_RATIO = 1.25`、`LEGEND_CODE_GAP_RATIO = 0.5`、`LEGEND_ITEM_PAD_RATIO = 0.4`、`LEGEND_ITEM_SAMPLE = "F25 (12345)"`、`TITLE_FONT_HARD_MIN_PX = 16` |
 | 改值 | `LEGEND_PAD_TOP` 12 → **24** |
 | 删除 | `SHEET_TITLE_FONT_PX`、`SHEET_TITLE_H`（由 `titleH` 推出）、`LEGEND_ITEM_W`、`LEGEND_ROW_H`、`LEGEND_SWATCH_SIZE`、`LEGEND_CODE_X`、`LEGEND_COUNT_RIGHT_PAD`（全部由用料字号推出）、`sheet.ts` 里的私有常量 `LEGEND_FONT_PX` |
 
