@@ -26,6 +26,7 @@
 // `boardPageTile`（内部走 `planBoardPage`）、本页用量取 `usagesInRange`——面板自己**不写除法**。
 // 导出**不乘 DPR**、**不经过 `renderPatternThumbnail`**（R-6）。
 import { computed, onUnmounted, ref, watch } from "vue";
+import { pageFromScroll, scrollLeftForPage } from "@/components/editor/printPreviewScroll";
 import { useOverlayBack } from "@/composables/useOverlayBack";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
@@ -271,24 +272,43 @@ async function showPreview(index: number): Promise<void> {
     return;
   }
   if (stale(token) || index !== currentPage.value) return;
-  previewUrl.value = URL.createObjectURL(blob);
+  // **先造新的、再销旧的**（C8 任务 7 第 1 轮审查的「重要 2」）：同一页可以被两次渲染同时握着
+  // （▶ → ◀ → ▶：第 1 页起飞的 R1a 还没结算，R1b 又发了一次），只赋值不销号时 R1a 写进来的 URL
+  // 会被 R1b 直接覆盖、**永不 `revokeObjectURL`**（一张全分辨率 PNG 钉到页面生命周期结束）。
+  // 顺序也不能反过来（先销后造）：`createObjectURL` 抛错时旧图已经没了，`<img>` 会空掉。
+  const next = URL.createObjectURL(blob);
+  revokePreview();
+  previewUrl.value = next;
 }
 
-/** 换到第 `index` 页（越界夹取；`showPreview` 里还有一道代数判据兜住飞行中的换页）。 */
+/**
+ * 换到第 `index` 页（越界夹取；`showPreview` 里还有一道代数判据兜住飞行中的换页）。
+ *
+ * **必须同步滚动条**（第 1 轮审查的「重要 1」）：预览条的每格是 `w-full shrink-0`（一屏一格），
+ * 只改 `currentPage` 的话新页的 `<img>` 落在屏外，用户看到的是「点一下 ▶ 预览凭空消失」。
+ * 写 `scrollLeft` 会触发 `@scroll` ⇒ `onStripScroll` 读到同一个页号 ⇒ `goToPage` 早退，不会打环。
+ * 宽度量不到（`clientWidth === 0`，含 happy-dom）时**不动滚动条**，也**不调用**纯函数（它对此抛错）。
+ */
 function goToPage(index: number): void {
   const clamped = Math.min(Math.max(index, 0), Math.max(pageCount.value - 1, 0));
   if (clamped === currentPage.value) return;
   currentPage.value = clamped;
+  const element = strip.value;
+  if (element === null || element.clientWidth <= 0) return;
+  element.scrollLeft = scrollLeftForPage(clamped, element.clientWidth);
 }
 
 /**
  * 预览条横向滑动 ⇒ 当前页。`scroll-snap-type: x mandatory` 保证它总是整页对齐，
- * 所以「第几页」就是 `Math.round(scrollLeft / clientWidth)`（不写第二份翻页数学）。
+ * 所以「第几页」就是 `pageFromScroll(scrollLeft, clientWidth)`——**算式只有那一份**
+ * （`printPreviewScroll.ts`；它同时被 `goToPage` 用来把滚动条挪到指定页，两个方向必须互逆）。
+ *
+ * 宽度量不到时**直接返回**（happy-dom / 首次布局前）：不动页号，也不调那个会抛错的纯函数。
  */
 function onStripScroll(): void {
   const element = strip.value;
   if (element === null || element.clientWidth === 0) return;
-  goToPage(Math.round(element.scrollLeft / element.clientWidth));
+  goToPage(pageFromScroll(element.scrollLeft, element.clientWidth));
 }
 
 // 换页（含滑动）就重渲染那一页的预览：**先把上一页的图销号**（换页 = 放弃当前预览），
@@ -385,7 +405,9 @@ const saveStateText = computed(() => {
     return `正在保存 第 ${savingDone.value}/${savingTotal.value} 页`;
   }
   if (savePhase.value === "error") {
-    return `已存 ${saved.value.size} 张 · 第 ${failedCount.value} 张失败：${saveError.value}`;
+    // 分隔符与规格引文逐字一致（「已存 X 张，第 Y 张失败」）——第 1 轮审查的「次要 4」：
+    // 这里原先用的是「·」，而规格引文是「，」，用例只断子串所以两边都不红。
+    return `已存 ${saved.value.size} 张，第 ${failedCount.value} 张失败：${saveError.value}`;
   }
   if (savePhase.value === "done") return successText();
   return "";
