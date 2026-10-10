@@ -1,12 +1,18 @@
 import { mount } from "@vue/test-utils";
-import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getBuiltinPalette } from "@/services/palette";
 import ResultPanel from "@/components/result/ResultPanel.vue";
 
 /**
  * 结果卡片（C8 规格 §3.4）：两个宿主共用，纯展示（不 import store）。
  * 预览缩略图走替身——happy-dom 的 canvas 没有像素语义，本文件只钉按钮与文案。
+ *
+ * **本文件刻意不建 pinia（没有 `createPinia` / `setActivePinia`）**，与 `ExportPanel.test.ts`
+ * 的文件头是同一条纪律：那两行一旦加进来，就成了「组件在 setup / 渲染里读 store」的免死金牌。
+ * 本仓把「测试文件全程不建 pinia、而组件照样挂得上」当作「组件不 import store」这条纪律的
+ * **运行时证明**——真读了 store 又没有 active pinia 时，挂载期会以 `no active Pinia` 抛错。
+ * `ResultPanel` 是本任务新引入的 store-free 组件，它唯一的运行时证明就是这一条；
+ * 加 pinia 等于把这条证明悄悄关掉（这不是打磨，是判据丢失）。
  */
 vi.mock("@/services/patternThumbnail", () => ({
   renderPatternThumbnail: () => "data:image/png;base64,AAAA",
@@ -24,12 +30,6 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
     props: { pattern, palette, isNew: true, canRerun: true, ...overrides },
   });
 }
-
-beforeEach(() => {
-  setActivePinia(createPinia());
-  URL.createObjectURL = vi.fn(() => "blob:result-1") as unknown as typeof URL.createObjectURL;
-  URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL;
-});
 
 describe("ResultPanel（C8：四颗按钮、没有打印）", () => {
   it("四颗按钮的顺序与文案：重做 / 查看 / 编辑 / OK", () => {

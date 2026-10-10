@@ -22,18 +22,25 @@ import EditResultPage from "@/views/EditResultPage.vue";
  * `adopt` / 真 `memoryProjectStore`，只替 `vue-router` 与两个平台边界服务
  * （`renderSheetBlob` / `renderPatternThumbnail`——happy-dom 的 canvas 没有像素语义）。
  */
-const { pushMock, routeState } = vi.hoisted(() => ({
+const { pushMock, backMock, routeState, historyState } = vi.hoisted(() => ({
   pushMock: vi.fn(),
+  backMock: vi.fn(),
   routeState: { params: { id: "a" } as Record<string, string> },
+  /**
+   * 替身路由器的历史状态。**`back` 刻意是 `"/edit/a"`（非空）而不是 `null`**：本页的正常入口
+   * 就是「编辑器保存成功」，真实历史**必然非空**。写 `null` 只能覆盖 push 分支，于是「顺手把返回
+   * 箭头换成 `backOrHome(router)`」这个变异在测试里**完全瞎**——而它恰恰是最像对的错误改法
+   * （规格裁定的正是「结果页不许 `back()`」）。用例还要**直接读它**来确认前提成立。
+   */
+  historyState: { back: "/edit/a" } as { back: string | null },
 }));
 
 vi.mock("vue-router", () => ({
   useRoute: () => routeState,
   useRouter: () => ({
     push: pushMock,
-    back: vi.fn(),
-    // `backOrHome` 读的是 `router.options.history.state.back`——本页的返回箭头要能挂得上。
-    options: { history: { state: { back: null } } },
+    back: backMock,
+    options: { history: { state: historyState } },
   }),
 }));
 
@@ -206,15 +213,31 @@ describe("EditResultPage（/edit/:id/result）", () => {
     expect(pushMock).toHaveBeenCalledWith({ name: "home" });
   });
 
-  it("返回箭头走统一判据（历史为空时回图纸库，而不是按了没反应）", async () => {
+  /**
+   * **返回箭头：恒回图纸库，绝不许 `back()`**（C8 规格 §3.4 的 `result-back`）。
+   *
+   * 这一条是本文件里判别力最讲究的一条：替身的 `history.state.back` **刻意非空**
+   * （`"/edit/a"`，与「从编辑器保存完进来」的真实历史同形），所以
+   *
+   * - 「把 `@click` 换成 `backOrHome(router)`」⇒ 走 `back()` ⇒ **本条的 `push` 断言红**；
+   * - 「把 `@click` 换成 `router.back()`」⇒ 同样红。
+   *
+   * 反过来，替身若按常规写成 `{ back: null }`，上面两种改法都会**静默通过**（判据走 push 分支），
+   * 而那正是规格点名要禁的方向：「`back()` 会退回刚保存完的编辑器」。
+   * 变异实测读数见 `task-4-report.md` 的修复轮 §变异对照。
+   */
+  it("返回箭头恒回图纸库：有上一页时也 push({name:'home'})，且绝不调 back()", async () => {
     adoptSavedRecord();
 
     const wrapper = mount(EditResultPage);
     await flushPromises();
 
-    // 替身的 `router.options.history.state.back` 是 `null`（与「直接打开这一页」同形）⇒ 必须 push。
+    // 前提：这一页**确实**处在「有上一页」的历史里（否则本条的负向断言是白送的）。
+    expect(historyState.back).toBe("/edit/a");
+
     await wrapper.get("[data-testid='result-back']").trigger("click");
 
     expect(pushMock).toHaveBeenCalledWith({ name: "home" });
+    expect(backMock).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,12 @@
 // `/edit/:id/result`：编辑保存成功后的结果页（C8 规格 §3.4）。标题行「修改成功」+ 共用结果卡片。
 // 正常路径下 `session.pattern` 就是刚保存的那份（内存态，不重新读库）；刷新 / 直链进来时它为空，
 // 这时按 id 补一次 `load`，仍取不到就回首页。
+//
+// **返回箭头恒 `push({ name: "home" })`，不走 `backOrHome`**（C8 规格 §3.4 的 `result-back`）：
+// 这一页的正常入口是「编辑器保存成功」，历史非空 ⇒ `back()` 会退回**刚保存完的编辑器**，那是错的
+// 方向（用户按的是「结束」而不是「继续改」）。统一口径：**生图页 / 编辑页的返回箭头 = `backOrHome`
+// （真正意义上的「上一页」）；两个结果页（含生图页的 result 阶段）= 恒回图纸库**。
+// （`task-4-brief.md` 的骨架在这里用了 `backOrHome(router)`，与本条规格冲突——按规格落地。）
 import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ResultPanel from "@/components/result/ResultPanel.vue";
@@ -11,7 +17,6 @@ import { seedRerunDraft } from "@/services/rerunDraft";
 import { getBuiltinPalette } from "@/services/palette";
 import { useDraft } from "@/stores/draft";
 import { useProjectSession } from "@/stores/project";
-import { backOrHome } from "@/views/backOrHome";
 
 const route = useRoute();
 const router = useRouter();
@@ -46,14 +51,20 @@ function rerun(): void {
         data-testid="result-back"
         aria-label="返回"
         class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
-        @click="backOrHome(router)"
+        @click="router.push({ name: 'home' })"
       >
         ←
       </button>
       <h1 class="text-2xl font-bold text-slate-900">修改成功</h1>
     </header>
 
-    <!-- `result-pane` 这个 testid 归**宿主**（与 `SetupPage` 同口径）：卡片本体是共用组件。 -->
+    <!--
+      `result-pane` 这个 testid 归**宿主**（与 `SetupPage` 同口径）：卡片本体是共用组件。
+
+      `:thumbnail` 用 `|| undefined` 而不是 `?? ''`：`ProjectMeta.thumbnail` 的契约**允许空串**
+      （= 无封面），而空串不算 nullish ⇒ 传下去之后 `ResultPanel` 里 `thumbnail ?? preview` 的
+      兜底会变成死代码，没有封面的记录进查看层时连垫场图都拿不到。空串在这里的语义就是「没有」。
+    -->
     <div v-if="pattern !== null" data-testid="result-pane" class="mt-6">
       <ResultPanel
         :pattern="pattern"
@@ -61,7 +72,7 @@ function rerun(): void {
         :is-new="false"
         :can-rerun="canRerun"
         :name="session.record?.meta.name ?? '图纸'"
-        :thumbnail="session.record?.meta.thumbnail ?? ''"
+        :thumbnail="session.record?.meta.thumbnail || undefined"
         @rerun="rerun"
         @edit="router.push({ name: 'editor', params: { id: route.params.id } })"
         @ok="router.push({ name: 'home' })"
