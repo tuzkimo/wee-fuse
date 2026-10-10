@@ -339,6 +339,35 @@ describe("断点布局", () => {
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
   });
 
+  /**
+   * **修复轮 1（审查发现）**：容器类起初只看 `isWide`，于是平板的结果阶段照样切成
+   * `grid lg:grid-cols-[2fr_1fr]`，而那一栏只剩结果卡片一个子元素 ⇒ 卡片只占左侧 2/3、
+   * 右边留一条空白。判据必须把 `showEditor` 也算进去。
+   *
+   * 判别力（不依赖布局引擎，只读类名）：把容器类改回 `isWide ? …`，本用例生成之后那三条立刻红。
+   */
+  it("平板结果阶段占满整行（容器不再分两栏：结果阶段只剩一个子元素）", async () => {
+    const { breakpoint } = stubPlatform();
+    seedDraft();
+    window.innerWidth = 1024;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    // 前提：≥768px 确实是平板布局（编辑阶段两栏），否则下面的断言可能靠「断点没生效」蒙过去。
+    expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
+    expect(wrapper.get("main div.mt-6").classes()).toContain("lg:grid-cols-[2fr_1fr]");
+
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    const layout = wrapper.get("main div.mt-6");
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    expect(layout.classes()).not.toContain("lg:grid-cols-[2fr_1fr]");
+    expect(layout.classes()).not.toContain("grid");
+    expect(layout.classes()).toContain("space-y-6");
+  });
+
   it("断点查询串就是 768px（写错这个串 = 平板布局静默失效）", async () => {
     const { breakpoint } = stubPlatform();
     seedDraft();
@@ -1286,14 +1315,17 @@ describe("结果阶段", () => {
   });
 
   /**
-   * 「重做」：C8 规格 §3.4 起，结果页回选区的路径就是这一颗——页内切阶段，**不跳路由**
-   * （平板上右栏参数常驻、左栏当场换回画布；手机单页与 stage 收敛在任务 8）。
+   * 「重做」：C8 规格 §3.4 起，结果页回编辑的路径就是这一颗——页内切阶段，**不跳路由**。
+   *
+   * **修复轮 1 的注释更正**：本条原先写「平板上右栏参数常驻、左栏当场换回画布」——单页化之后
+   * 结果阶段整页只有结果卡片（`showEditor = stage !== "result"`，参数面板与画布都不在），
+   * 「重做」是把**它们一起**换回来。下面 :1336 / :1340 的断言正是这件事的判据。
    *
    * 本条是原「平板结果阶段能页内回选区」用例的**改名 + 改判据版**：`back-to-crop` 那颗按钮
-   * 按规格被删掉了，同一件事现在走 `result-rerun`，行为（`draft.stage` 变 `crop`）一字未变。
+   * 按规格被删掉了，同一件事现在走 `result-rerun`，行为（`draft.stage` 变 `"edit"`）一字未变。
    * 加 `expect(push).not.toHaveBeenCalled()`：0 次调用才排得掉「切了阶段又跳走了」这种接法。
    */
-  it("结果页的「重做」页内回选区（左栏当场换回画布，不跳路由）", async () => {
+  it("结果页的「重做」页内回编辑（画布与参数一起换回来，不跳路由）", async () => {
     stubPlatform();
     const draft = seedDraft();
     window.innerWidth = 1024;

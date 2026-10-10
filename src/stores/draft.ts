@@ -296,8 +296,11 @@ export const useDraft = defineStore("draft", () => {
   /**
    * 选了一张新图：选区回到居中正方（与 B1 临时入口逐位等价），参数与视图回落默认值。
    *
-   * 尺寸校验在**任何写操作之前**：否则一个非法尺寸会先落进 `sourceSize`、再由 `centerSquare`
-   * 抛错，留下「尺寸是新的、选区还是上一张图的」半截草稿——而调用方只看到一句抛错。
+   * **两处校验都落在任何写操作之前**：
+   * ① 尺寸——否则非法尺寸会先落进 `sourceSize`、再由 `centerSquare` 抛错；
+   * ② 名字派生——`defaultProjectName` 在文件名不是字符串时抛「文件名必须是字符串」，少了这一步
+   * 一个坏文件名会先落进 `source`，再由名字派生抛错，留下「原图是新的、名字还是上一张图的」
+   * 半截草稿（与 `adoptProject` 的 `normalizeProjectName` 同一条纪律）。
    */
   function adoptImage(input: {
     readonly source: DraftSource;
@@ -305,12 +308,13 @@ export const useDraft = defineStore("draft", () => {
     readonly preview: HTMLCanvasElement;
   }): void {
     const nextSize = requireSourceSizeInput(input.sourceSize);
+    const nextName = defaultProjectName(input.source.name);
 
     source.value = input.source;
     sourceSize.value = nextSize;
     preview.value = markRaw(input.preview);
     rerunOf.value = null;
-    name.value = defaultProjectName(input.source.name);
+    name.value = nextName;
     pendingCrop.value = null;
     crop.value = centerSquare(nextSize);
     rotation.value = 0;
@@ -375,9 +379,15 @@ export const useDraft = defineStore("draft", () => {
    * 校验（trim → 非空 → ≤ `PROJECT_NAME_MAX`）与图纸库的 `rename` / 存储的 `put` **同一个函数**
    * （`normalizeProjectName`），不是第三份副本：写状态之前先响亮失败，非法输入不会留下
    * 「名字被清成空串、图纸标题印不出来」这种半截草稿。
+   *
+   * **它和其它参数 setter 一样让 `generated` 失效**：名字会被写进那条落盘记录
+   * （`generate()` 的 `meta.name`），属于「影响产物」的字段。少了这一步，「生成 → 重做 →
+   * 只改名字 → 离开」时那次改名会被 `onLeaveSetup()` 的作废分支**静默丢掉**，而只改 `longSide`
+   * 之类的参数就会保留草稿——同一个字段比别的参数低一等，没有任何理由。
    */
   function setName(value: string): void {
     name.value = normalizeProjectName(value);
+    generated.value = false;
   }
 
   /**

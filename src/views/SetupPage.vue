@@ -356,7 +356,11 @@ function resetCrop(): void {
     </p>
     <p v-if="preparing" class="mt-4 text-lg text-slate-500">正在准备预览…</p>
 
-    <div :class="isWide ? 'mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]' : 'mt-6 space-y-6'">
+    <!--
+      两栏只在「编辑阶段 + 平板」成立（**`showEditor` 也是这个判据的一部分**）：结果阶段一页里
+      只剩结果卡片，若容器照样切成 `2fr 1fr`，卡片会只占左边 2/3、右侧留一条空白。
+    -->
+    <div :class="isWide && showEditor ? 'mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]' : 'mt-6 space-y-6'">
       <section v-if="showEditor" data-testid="crop-pane" class="rounded bg-white p-3 shadow">
         <div class="h-[55vh] min-h-64">
           <CropCanvas

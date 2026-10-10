@@ -2,7 +2,11 @@
 // src/components/param/ParamPanel.vue
 //
 // 参数面板：工程名 / 长边 / 用色档位 / 色卡卡片 / 尺寸摘要 / 生成按钮。props 进、事件出，
-// 不读 store、不 import services（本组件是纯展示层）。
+// 不读 store（本组件是纯展示层）。
+//
+// **唯一的 services 依赖是 `PROJECT_NAME_MAX` 这个纯常量**（`@/services/projectStore`，第 22 行）：
+// 名字长度上限必须与存储层的 `normalizeProjectName` 同源，不能在这里另抄一个 100。
+// （文件头这句原先写的是「不 import services」，C8 第 4 项起已不成立——修复轮 1 更正。）
 //
 // **摘要的豆数用 `computeGridSize`**——与 `services/pipeline.ts` 是**同一个函数**，
 // 不是同一份算法抄两遍：本项目最贵的缺陷形态是「两端各自正确、错在接线」，

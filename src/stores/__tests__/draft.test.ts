@@ -101,6 +101,34 @@ describe("adoptImage：新图进来时的初始态", () => {
     expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
     expect(draft.longSide).toBe(116);
   });
+
+  /**
+   * **修复轮 1（审查发现）**：名字派生（`defaultProjectName` 在非字符串文件名上抛
+   * 「文件名必须是字符串」）此前落在四次写操作**之后**，与 `adoptProject` 的
+   * `normalizeProjectName` 顺序不一致。
+   *
+   * 可达性低（`File.name` 在 TS 里是 `string`），但「校验写在任何写操作之前」是 `AGENTS.md` 的
+   * 硬约束：顺序错了就会留下「原图是新的、名字还是上一张图的」半截草稿，而调用方只看到一句抛错。
+   * 判别力：把 `nextName` 挪回写操作之后，本用例的后四条立刻红。
+   */
+  it("非字符串文件名在写操作之前抛错（不留半截草稿）", () => {
+    const draft = seedImage();
+    expect(draft.name).toBe("小猫");
+
+    expect(() =>
+      draft.adoptImage({
+        source: { blob: new Blob([]), type: "image/png", name: 42 as unknown as string },
+        sourceSize: { width: 10, height: 10 },
+        preview: fakePreview(),
+      }),
+    ).toThrow(/文件名/);
+
+    // 名字校验若落在写操作之后：source / sourceSize / crop 全被换成新的，名字却还停在旧值。
+    expect(toRaw(draft.source)).toBe(SOURCE);
+    expect(draft.sourceSize).toEqual({ width: 800, height: 600 });
+    expect(draft.crop).toEqual({ x: 100, y: 0, width: 600, height: 600 });
+    expect(draft.name).toBe("小猫");
+  });
 });
 
 describe("generated 的失效规则", () => {
@@ -122,6 +150,24 @@ describe("generated 的失效规则", () => {
     expect(draft.generated).toBe(false);
     draft.markGenerated();
     draft.setMaxColors("all");
+    expect(draft.generated).toBe(false);
+  });
+
+  /**
+   * **修复轮 1（审查发现）**：`setName` 起初不参与失效，于是「生成 → 重做 → 只改名 → 离开」时
+   * 那次改名被 `onLeaveSetup()` 的作废分支静默丢掉，而只改 `longSide` 之类的参数就会保留草稿。
+   *
+   * 名字会被写进那条落盘记录（`generate()` 的 `meta.name`），属于影响产物的字段——与其它参数
+   * setter 同形才对称。判别力：把 `setName` 里的 `generated.value = false;` 删掉，这条红。
+   */
+  it("改工程名也让「已生成」失效（名字是一等草稿字段，会被写进记录）", () => {
+    const draft = seedImage();
+    draft.markGenerated();
+    expect(draft.generated).toBe(true);
+
+    draft.setName("新名字");
+
+    expect(draft.name).toBe("新名字");
     expect(draft.generated).toBe(false);
   });
 
@@ -208,6 +254,21 @@ describe("离开 SetupPage 时的生死规则（规格 §9）", () => {
     draft.setLongSide(29);
     draft.onLeaveSetup();
     expect(toRaw(draft.source)).toBe(SOURCE);
+    expect(draft.preview).toBeNull();
+  });
+
+  /**
+   * **修复轮 1（审查发现）**：只改名的出口必须与「只改长边」一致——`setName` 纳入 `generated`
+   * 失效之前，这条路会走「已生成且无改动」的作废分支，改名与整份草稿一起消失。
+   */
+  it("生成后只改了名字再离开 → 同样按「中途退出」处理（改名不会被静默作废）", () => {
+    const draft = seedImage();
+    draft.markGenerated();
+    draft.setName("新名字");
+    draft.onLeaveSetup();
+
+    expect(toRaw(draft.source)).toBe(SOURCE);
+    expect(draft.name).toBe("新名字");
     expect(draft.preview).toBeNull();
   });
 });
