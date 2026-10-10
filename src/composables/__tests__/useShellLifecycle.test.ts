@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import App from "@/App.vue";
+import { useOverlayBack } from "@/composables/useOverlayBack";
 import { useShellLifecycle } from "@/composables/useShellLifecycle";
 import { browserPlatform } from "@/services/platform/browserPlatform";
 import { setPlatform } from "@/services/platform/capabilities";
@@ -218,6 +219,54 @@ describe("useShellLifecycle", () => {
     wrapper.unmount();
     expect(spies.offBack).toHaveBeenCalledTimes(1);
     expect(spies.offExit).toHaveBeenCalledTimes(1);
+  });
+
+  it("有覆盖层 ⇒ 先关覆盖层：既不 history.back() 也不 push、也不 exit", () => {
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const spies = lifecycleSpies();
+    setPlatform(spies.platform);
+    // 覆盖层宿主只注册覆盖层，不装 shell 生命周期（`pressBack` 会断言 handler 恰好一个）。
+    const closed = vi.fn();
+    const Overlay = defineComponent({
+      setup() {
+        useOverlayBack(closed);
+      },
+      template: `<div />`,
+    });
+    const overlay = mount(Overlay);
+    const host = mountHost();
+
+    pressBack(spies, { canGoBack: true });
+
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(back).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(spies.exit).not.toHaveBeenCalled();
+    overlay.unmount();
+    host.unmount();
+  });
+
+  it("覆盖层关掉之后再按返回键 ⇒ 回到既有的三分支（不遮蔽）", () => {
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const spies = lifecycleSpies();
+    setPlatform(spies.platform);
+    const closed = vi.fn();
+    const Overlay = defineComponent({
+      setup() {
+        useOverlayBack(closed);
+      },
+      template: `<div />`,
+    });
+    const overlay = mount(Overlay);
+    const host = mountHost();
+
+    pressBack(spies, { canGoBack: true });
+    pressBack(spies, { canGoBack: true });
+
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(back).toHaveBeenCalledTimes(1);
+    overlay.unmount();
+    host.unmount();
   });
 });
 

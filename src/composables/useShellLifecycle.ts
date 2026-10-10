@@ -1,6 +1,7 @@
 // src/composables/useShellLifecycle.ts
 import { onUnmounted } from "vue";
 import { useRouter } from "vue-router";
+import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { getPlatform } from "@/services/platform/capabilities";
 import { useProjectSession } from "@/stores/project";
 
@@ -12,16 +13,17 @@ import { useProjectSession } from "@/stores/project";
  * **必须在 setup 的同步执行期调用**：本函数用 `onUnmounted` 登记解绑，挪进条件分支或事件回调里
  * 会让解绑登记不到（Vue 只在 setup 同步执行期收集生命周期钩子）。
  *
- * **为什么三个分支这么分**（不是随手写的）：
- * ① `canGoBack` ⇒ `history.back()`：**让既有机制原样生效**——Vue Router 的 popstate → `EditorPage` 的
+ * **为什么四个分支这么分**（不是随手写的）：
+ * ① 覆盖层栈非空 ⇒ 关栈顶（C8 新增，见规格 §3.6.2）；②③④ 与 B5 逐字相同。
+ * ② `canGoBack` ⇒ `history.back()`：**让既有机制原样生效**——Vue Router 的 popstate → `EditorPage` 的
  *    `onBeforeRouteLeave` → 有未保存改动就取消导航并弹出**同一条**页面内确认条。这里**绝不新增第二套确认 UI**。
  *    这一支优先于 dirty：在编辑器里按返回键正是「有历史 + 有未保存改动」，若让 dirty 先判，返回键会
  *    变成「push 到图纸库」——那会把「回上一页」这个动作整个换掉。
- * ② 无历史且有未保存改动 ⇒ `router.push({ name: "home" })`：主动走到图纸库，守卫照常拦下。
+ * ③ 无历史且有未保存改动 ⇒ `router.push({ name: "home" })`：主动走到图纸库，守卫照常拦下。
  *    **绝不 `exit()`** —— 那正是「静默丢稿」，也是本任务存在的唯一理由。
- * ③ 无历史且干净 ⇒ 正常退出。
+ * ④ 无历史且干净 ⇒ 正常退出。
  *
- * **注册返回键会抑制 Tauri 自带的默认导航**（规格 D3）⇒ 这三个分支**就是**返回键的全部行为，
+ * **注册返回键会抑制 Tauri 自带的默认导航**（规格 D3）⇒ 这四个分支**就是**返回键的全部行为，
  * 没有第二份默认逻辑兜底：任何一支漏掉都是用户可见的行为缺口，而不是「退回默认」。
  *
  * **为什么 `onExitRequested` 只返回 `session.dirty`**（不弹任何东西）：此时用户看到的是「App 还在」，
@@ -50,8 +52,11 @@ export function useShellLifecycle(): void {
   // 退出请求：dirty 时拦一次。Android 上「关闭请求」是否真被触发见构建记录；**不触发也不构成缺陷**（B5-R6）。
   const offExit = platform.lifecycle.onExitRequested(() => session.dirty);
 
-  // 返回键：三个分支互不遮蔽。
+  // 返回键：**覆盖层优先**，其余三个分支互不遮蔽（C8 规格 §3.6.2）。
   const offBack = platform.lifecycle.onBackButton((info) => {
+    // ① Android 标准：最上层的临时界面（查看层 / 打印页 / 对话框 / 确认条）先关，
+    //    这一步**消费掉**本次返回，不落到导航栈。
+    if (closeTopOverlay()) return;
     if (info.canGoBack) {
       history.back();
       return;
