@@ -47,8 +47,9 @@ import type { PixelRect, RenderTarget2D } from "./types";
 // 图上常量（**集中定义在这里，各带 JSDoc**）
 //
 // 两类常量必须分清，免得后人以为这里是第二份坐标数学：
-// - **字号**：只有格内色号 `labelFontPx` 与刻度 `ruler.fontPx` 由 plan 给（它们随格子缩放，
-//   且刻度字号受带高约束 ⇒ 属于布局）；标题与用料条字号是固定值，不参与布局预算。
+// - **字号**：**一个都不留在这**（C8 §7.1）——格内色号 `labelFontPx`、刻度 `ruler.fontPx`、标题
+//   `titleFontPx`、用料条 `legend.fontPx` 全部由 plan 给（它们都随格子缩放）。留一个「用料条 14px」
+//   这样的私有常量就是第二份真相：它不会与计划一起变，图会看起来正常但排不下。
 // - **带内落位偏移**：plan 只给带的位置与格子步长，文字在带内的落位由本文件算（它不来自格子坐标，
 //   所以**不是**格子↔像素映射）。**格子坐标一律来自 plan**。
 // ---------------------------------------------------------------------------
@@ -63,8 +64,6 @@ const GRID_THIN_STROKE = "#dcdcdc";
 const EMPTY_STROKE = "#e2e8f0";
 /** 文字墨色（标题 / 刻度 / 用料条正文）。格内色号**不**用它，仍取 `labelInk`。 */
 const TEXT_INK = "#0f172a";
-/** 用料条正文字号（px）：带内只有**色号 + 数量**，没有表头。**不随格子缩放**。 */
-const LEGEND_FONT_PX = 14;
 /** 色块外框：画在真色填充**之上**的细框，让浅色块在白底上也有边界（用该色本身）。 */
 const SWATCH_FRAME_WIDTH = 2;
 /**
@@ -408,7 +407,8 @@ function drawGridFrame(target: RenderTarget2D, plan: GridStepPlan): void {
  * 用料条：色块（同色描边）+ 色号 + 数量的多列排布。
  *
  * **几何全部来自 `LegendBandPlan`**（`top` / `left` / `itemCols` / `itemWidth` / `rowHeight` /
- * `swatchSize` / `codeX` / `countRightPad`）——渲染器不自己乘除。
+ * `swatchSize` / `codeX` / `fontPx`）——渲染器不自己乘除，也**不留自己的字号常量**（C8 §7.1：
+ * 那个私有常量 `LEGEND_FONT_PX = 14` 已删，字号由格像素推出、住在计划里）。
  * **`usages` 是入参**：单张施工图传全图用量，打印页传**本页**用量。
  *
  * **空表早退**：`usages` 为空时什么都不画（带高为 0，没有数据行的用料条是噪声）。
@@ -448,7 +448,7 @@ export function drawLegendBand(
     target.strokeRect(cellX, swatchY, band.swatchSize, band.swatchSize);
 
     target.fillStyle = TEXT_INK;
-    target.font = `${LEGEND_FONT_PX}px sans-serif`;
+    target.font = `${band.fontPx}px sans-serif`;
     target.textAlign = "left";
     target.textBaseline = "middle";
     target.fillText(`${usage.code} (${usage.count})`, cellX + band.codeX, centerY);

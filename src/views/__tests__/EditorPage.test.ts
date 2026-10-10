@@ -1699,7 +1699,9 @@ describe("导出面板接线（任务 4 / 任务 10）", () => {
 
     // 判据 = 渲染器**实际收到的**那一格 `fillRect` 的颜色（规格 §13.2 第 1 条逐字）。
     // 计划与坐标都由真 core 现算：单张施工图覆盖全图，`(1,0)` 的像素由 `cellBox` 给出。
-    const plan = planSheet(pattern, palette, patternStats(pattern, palette).usages);
+    // 工程名必须与夹具 A 的 `meta.name` 同源（C8 §7.3 起标题字号由名字宽度决定 ⇒ 名字不同、
+    // 标题行高就不同、`grid.y` 也不同）。
+    const plan = planSheet(pattern, palette, patternStats(pattern, palette).usages, "小猫");
     const box = cellBox(plan, 1, 0);
     const painted = recording.fills.filter(
       (fill) => fill.x === box.x && fill.y === box.y && fill.w === box.width && fill.h === box.height,

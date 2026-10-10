@@ -73,7 +73,7 @@ async function renderWithPlan(
 
 /** 单张施工图（含底部用料条）。 */
 export async function renderSheetBlob(input: SheetRenderInput): Promise<Blob> {
-  const plan = planSheet(input.pattern, input.palette, input.usages);
+  const plan = planSheet(input.pattern, input.palette, input.usages, input.projectName);
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
     drawSheet(target, input.pattern, input.palette, input.usages, plan, sheetMeta(input));
   });
@@ -121,6 +121,8 @@ export async function renderBoardPageBlob(
     boardSize: input.boardSize,
     paper: input.paper,
     index: input.pageIndex,
+    // C8 §7.3：标题字号由名字宽度与纸宽共同决定 ⇒ 页计划也必须拿到名字（与用料条那份同源）
+    projectName: input.projectName,
   });
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
     // `totalBeads` / `colorCount` 全部由 `sheetMeta` 从 `input.usages`（全图）算，**这里不再覆写**：
@@ -167,15 +169,24 @@ export function usagesInRange(
  * **为什么它必须在这里**（B6 任务 10）：页身份（`boardRow` / `boardCol`）与页数（`printBoardCount`）
  * 是同一份分页数学的两个出口；调用方各自写一遍 `Math.floor(index / cols)` 就是第二份实现——
  * 它不会报错，只会在某一天与 `planBoardPage` 的网格口径漂移，而文件名看起来完全正常。
+ *
+ * **`projectName` 插在 `usages` 之后**（C8 §7.3，与 `planSheet` 同序）：它只用于页计划的标题字号，
+ * 与页身份无关；但签名必须一起变——否则「忘了传」会变成编译期无关、运行期静默的偏差。
  */
 export function boardPageTile(
   pattern: Pattern,
   palette: Palette,
   usages: readonly ColorUsage[],
+  projectName: string,
   boardSize: 29 | 58,
   paper: "a4" | "a3",
   pageIndex: number,
 ): { readonly rowIndex: number; readonly colIndex: number } {
-  const plan = planBoardPage(pattern, palette, usages, { boardSize, paper, index: pageIndex });
+  const plan = planBoardPage(pattern, palette, usages, {
+    boardSize,
+    paper,
+    index: pageIndex,
+    projectName,
+  });
   return { rowIndex: plan.boardRow, colIndex: plan.boardCol };
 }

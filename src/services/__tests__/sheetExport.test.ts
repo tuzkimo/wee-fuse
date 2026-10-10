@@ -148,7 +148,7 @@ describe("renderSheetBlob", () => {
   it("画布尺寸取自 planSheet（不是自己算的）", async () => {
     const pattern = makePattern(6, 6, CELLS_6X6);
     await renderSheetBlob({ pattern, palette: makePalette(), usages: makeUsages(), projectName: "测试工程" });
-    const plan = planSheet(pattern, makePalette(), makeUsages());
+    const plan = planSheet(pattern, makePalette(), makeUsages(), "测试工程");
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(plan.canvasWidth, plan.canvasHeight);
   });
 });

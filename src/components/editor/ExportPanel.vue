@@ -227,6 +227,7 @@ function pageUsages(snapshot: SaveSnapshot, index: number): readonly ColorUsage[
     boardSize: snapshot.boardSize,
     paper: snapshot.paper,
     index,
+    projectName: snapshot.projectName,
   });
   return usagesInRange(snapshot.pattern, snapshot.palette, plan);
 }
@@ -278,6 +279,7 @@ async function saveItem(item: ExportItem): Promise<void> {
         snapshot.pattern,
         snapshot.palette,
         snapshot.usages,
+        snapshot.projectName,
         snapshot.boardSize,
         snapshot.paper,
         item.pageIndex,

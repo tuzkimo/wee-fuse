@@ -6,9 +6,15 @@ import type { Palette } from "../../palette/types";
 import {
   EXPORT_CELL_MAX_PX,
   EXPORT_MAX_EDGE,
-  LEGEND_ITEM_W,
+  LEGEND_CODE_GAP_RATIO,
+  LEGEND_FONT_MAX_PX,
+  LEGEND_FONT_MIN_PX,
+  LEGEND_FONT_RATIO,
+  LEGEND_ITEM_PAD_RATIO,
+  LEGEND_ITEM_SAMPLE,
   LEGEND_PAD_TOP,
-  LEGEND_ROW_H,
+  LEGEND_ROW_RATIO,
+  LEGEND_SWATCH_RATIO,
   PAPER_MM,
   PRINT_BEAD_PX,
   PRINT_BOARD_SIZES,
@@ -19,12 +25,21 @@ import {
   SHEET_RULER_FONT_MIN_PX,
   SHEET_RULER_LEFT,
   SHEET_RULER_TOP,
-  SHEET_TITLE_H,
+  SHEET_TITLE_FIXED_EM,
+  SHEET_TITLE_FONT_MAX_PX,
+  SHEET_TITLE_FONT_MIN_PX,
+  SHEET_TITLE_FONT_RATIO,
+  SHEET_TITLE_GAP,
+  SHEET_TITLE_LINE_RATIO,
+  TEXT_WIDTH_SAFETY,
   TICK_EVERY,
   TILE_STEP,
+  TITLE_FONT_HARD_MIN_PX,
   cellBox,
   countTileBeads,
+  estimateTextWidthPx,
   labelInk,
+  legendGeometry,
   mmToPx,
   planBoardPage,
   planSheet,
@@ -54,18 +69,39 @@ function makePattern(width: number, height: number, fill = 0): Pattern {
   return { width, height, paletteId: "test-palette", cells };
 }
 
-describe("布局常量（B4 + B6 + C7）", () => {
+/**
+ * 工程名（C8 §7.3 起 `planSheet` / `planBoardPage` 都**必须**收它：标题字号由「名字有多宽」与格像素 /
+ * 纸宽共同决定）。测试里用同一个名字，是为了让「29×25 ⇒ 标题 48px」这类读数有一个固定的名字宽度前提。
+ */
+const PROJECT_NAME = "测试工程";
+
+describe("布局常量（B4 + B6 + C7 + C8）", () => {
   it("常量值就是规格定的那一组（改坏即红）", () => {
     expect(EXPORT_MAX_EDGE).toBe(4096);
     expect(EXPORT_CELL_MAX_PX).toBe(96);
     expect(TICK_EVERY).toBe(5);
-    expect(LEGEND_ROW_H).toBe(22);
+    // C8 §7.5：用料条与标题的**像素常量全部删除**（`LEGEND_ROW_H` / `LEGEND_ITEM_W` /
+    // `LEGEND_SWATCH_SIZE` / `LEGEND_CODE_X` / `LEGEND_COUNT_RIGHT_PAD` / `SHEET_TITLE_H` /
+    // `SHEET_TITLE_FONT_PX`），改成下面这一组比例值 —— 它们就是新的契约。
+    expect(SHEET_TITLE_FONT_RATIO).toBe(0.5);
+    expect(SHEET_TITLE_FONT_MIN_PX).toBe(24);
+    expect(SHEET_TITLE_FONT_MAX_PX).toBe(56);
+    expect(SHEET_TITLE_LINE_RATIO).toBe(1.3);
+    expect(SHEET_TITLE_GAP).toBe(18);
+    expect(TITLE_FONT_HARD_MIN_PX).toBe(16);
+    expect(TEXT_WIDTH_SAFETY).toBe(1.05);
+    expect(LEGEND_FONT_RATIO).toBe(0.36);
+    expect(LEGEND_FONT_MIN_PX).toBe(18);
+    expect(LEGEND_FONT_MAX_PX).toBe(40);
+    expect(LEGEND_ROW_RATIO).toBe(1.7);
+    expect(LEGEND_SWATCH_RATIO).toBe(1.25);
+    expect(LEGEND_CODE_GAP_RATIO).toBe(0.5);
+    expect(LEGEND_ITEM_PAD_RATIO).toBe(0.4);
+    expect(LEGEND_ITEM_SAMPLE).toBe("F25 (12345)");
     expect(SHEET_MARGIN).toBe(20);
     expect(SHEET_RULER_LEFT).toBe(42);
     expect(SHEET_RULER_TOP).toBe(36);
-    expect(SHEET_TITLE_H).toBe(34);
-    expect(LEGEND_ITEM_W).toBe(120);
-    expect(LEGEND_PAD_TOP).toBe(12);
+    expect(LEGEND_PAD_TOP).toBe(24);
     expect(SHEET_RULER_FONT_MIN_PX).toBe(11);
     // 板步长必须来自 board.ts，不是另一份字面量 29
     expect(TILE_STEP).toBe(BOARD_COLS);
@@ -99,81 +135,93 @@ describe("C7：内容驱动的施工图几何", () => {
     Array.from({ length: count }, (_, i) => ({ code: `A${i + 1}`, name: `色 ${i + 1}`, count: 10 }));
 
   it("用料条永远不撑宽画布：29x25 + 13 色时，用料条右沿不超过网格右沿加右刻度带", () => {
-    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), PROJECT_NAME);
     const bandRight = plan.legend.left + plan.legend.itemCols * plan.legend.itemWidth;
     const gridRight = plan.grid.x + plan.grid.width;
     expect(bandRight).toBeLessThanOrEqual(gridRight + SHEET_RULER_LEFT + 1);
   });
 
   it("网格占画布宽度不少于 85%（旧实现是 47%）", () => {
-    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), PROJECT_NAME);
     expect(plan.grid.width / plan.canvasWidth).toBeGreaterThanOrEqual(0.85);
   });
 
   it("底部刻度带与用料条不重叠：用料条顶边 ≥ 网格下沿 + 刻度带高 + 间隔", () => {
-    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), PROJECT_NAME);
     const gridBottom = plan.grid.y + plan.grid.height;
     expect(plan.ruler.bottomY).toBe(gridBottom);
     expect(plan.legendTop).toBeGreaterThanOrEqual(gridBottom + SHEET_RULER_TOP + LEGEND_PAD_TOP);
   });
 
-  it("画布高度含上下两条刻度带（漏算底部会让用料条压住刻度数字）", () => {
-    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+  it("画布高度含标题行、上下两条刻度带与用料条（漏算底部会让用料条压住刻度数字）", () => {
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), PROJECT_NAME);
+    // C8 §7.1 起标题行高不再是常量：`round(标题字号 × 1.3)`，且下面多了一条 `SHEET_TITLE_GAP`。
+    const titleHeight = Math.round(plan.titleFontPx * SHEET_TITLE_LINE_RATIO);
     expect(plan.canvasHeight).toBe(
       SHEET_MARGIN +
-        SHEET_TITLE_H +
+        titleHeight +
+        SHEET_TITLE_GAP +
         SHEET_RULER_TOP +
         plan.grid.height +
         SHEET_RULER_TOP +
         LEGEND_PAD_TOP +
-        plan.legend.itemRows * LEGEND_ROW_H +
+        plan.legend.itemRows * plan.legend.rowHeight +
         SHEET_MARGIN,
     );
+    // 逐字读数（由上面那条式子推出）：20 + 62 + 18 + 36 + 2400 + 36 + 24 + 2×60 + 20 = 2736
+    expect(plan.canvasHeight).toBe(2736);
   });
 
   it("标题行在网格上方，且标题行底边不侵入上刻度带", () => {
-    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), PROJECT_NAME);
     expect(plan.titleY).toBe(SHEET_MARGIN);
-    expect(plan.grid.y).toBe(SHEET_MARGIN + SHEET_TITLE_H + SHEET_RULER_TOP);
+    expect(plan.grid.y).toBe(
+      SHEET_MARGIN +
+        Math.round(plan.titleFontPx * SHEET_TITLE_LINE_RATIO) +
+        SHEET_TITLE_GAP +
+        SHEET_RULER_TOP,
+    );
     expect(plan.ruler.topY).toBe(plan.grid.y - SHEET_RULER_TOP);
   });
 
   it("29x25 这类常用尺寸的格像素取到上限 96", () => {
-    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13));
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), PROJECT_NAME);
     expect(plan.cellPx).toBe(EXPORT_CELL_MAX_PX);
   });
 
   it("大图纸仍受画布上限约束，且色号字号不低于下限", () => {
-    const plan = planSheet(makePattern(116, 116), makePalette(24), usages(24));
+    const plan = planSheet(makePattern(116, 116), makePalette(24), usages(24), PROJECT_NAME);
     expect(plan.canvasWidth).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     expect(plan.canvasHeight).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     expect(plan.labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
   });
 
   it("116 宽 + maxEdge 300 放不下就响亮失败（宽度与字号两条守卫，只断言「抛」）", () => {
-    expect(() => planSheet(makePattern(116, 116), makePalette(24), usages(24), { maxEdge: 300 })).toThrow();
+    expect(() => planSheet(makePattern(116, 116), makePalette(24), usages(24), PROJECT_NAME, { maxEdge: 300 })).toThrow();
   });
 
-  it("用料条按网格宽换行：4x4 网格（格像素 96、网格宽 384）⇒ 列数 floor(384 / 120) = 3", () => {
-    const plan = planSheet(makePattern(4, 4), makePalette(8), usages(8));
+  it("用料条按网格宽换行：4x4 网格（格像素 96、网格宽 384、项宽 299）⇒ 列数 floor(384 / 299) = 1", () => {
+    const plan = planSheet(makePattern(4, 4), makePalette(8), usages(8), PROJECT_NAME);
     expect(plan.cellPx).toBe(EXPORT_CELL_MAX_PX);
-    expect(plan.legend.itemCols).toBe(Math.floor(plan.grid.width / LEGEND_ITEM_W));
-    expect(plan.legend.itemRows).toBe(Math.ceil(8 / plan.legend.itemCols));
+    // **判别力**：按画布宽（1202px）算会得到 4 列 —— 只有「按网格宽换行」才给 1 列
+    expect(plan.legend.itemCols).toBe(1);
+    expect(plan.legend.itemRows).toBe(Math.ceil(8 / 1));
   });
 });
 
 describe("cellBox：唯一映射", () => {
-  const plan = planSheet(makePattern(116, 116), makePalette(), []);
+  const plan = planSheet(makePattern(116, 116), makePalette(), [], PROJECT_NAME);
 
   it("首格与末格的片内像素落位逐位正确", () => {
-    // 前提（用例自己先钉住）：116×116 的格像素是 33、网格落位是 (62, 90)（C7 起边距 20 / 刻度带 42 / 标题行 34）
+    // 前提（用例自己先钉住）：116×116 的格像素是 33、网格落位是 (62, 105)
+    // （C8 起边距 20 / 刻度带 42 / 标题行 = round(clamp(round(33 × 0.5), 24, 56) × 1.3) = 31 / 净距 18）
     expect(plan.cellPx).toBe(33);
     expect(plan.grid.x).toBe(62);
-    expect(plan.grid.y).toBe(90);
-    expect(cellBox(plan, 0, 0)).toEqual({ x: 62, y: 90, width: 33, height: 33 });
+    expect(plan.grid.y).toBe(105);
+    expect(cellBox(plan, 0, 0)).toEqual({ x: 62, y: 105, width: 33, height: 33 });
     expect(cellBox(plan, 115, 115)).toEqual({
       x: 62 + 115 * 33,
-      y: 90 + 115 * 33,
+      y: 105 + 115 * 33,
       width: 33,
       height: 33,
     });
@@ -193,13 +241,13 @@ describe("countTileBeads", () => {
     const pattern = makePattern(58, 58, 0);
     pattern.cells[0] = EMPTY;
     pattern.cells[1] = EMPTY;
-    const plan = planSheet(pattern, makePalette(), []);
+    const plan = planSheet(pattern, makePalette(), [], PROJECT_NAME);
     expect(countTileBeads(pattern, plan)).toBe(58 * 58 - 2);
   });
 
   it("片范围超出图纸时响亮拒绝（否则 cellAt 会静默返回 EMPTY、数出一个偏小的数）", () => {
     const pattern = makePattern(10, 10);
-    const plan = planSheet(pattern, makePalette(), []);
+    const plan = planSheet(pattern, makePalette(), [], PROJECT_NAME);
     const broken = { ...plan, cols: 20 };
     expect(() => countTileBeads(pattern, broken)).toThrow("超出图纸");
   });
@@ -226,39 +274,40 @@ describe("labelInk 与 rgbCss", () => {
 });
 
 describe("网格线、刻度与板边界", () => {
-  const single = planSheet(makePattern(58, 58), makePalette(), []);
+  const single = planSheet(makePattern(58, 58), makePalette(), [], PROJECT_NAME);
 
   it("线按全局坐标分档：每格细、每 5 格主、每 29 格板（board 优先）", () => {
-    // 前提：58×58 的格像素是 67（C7 起上限 96，被宽度预算夹到 67），网格落位是 (62, 90)
-    expect(single.cellPx).toBe(67);
+    // 前提：58×58 的格像素是 66（上限 96，被宽度预算/高度预算夹到 66；不用料 ⇒ 高度预算 187px），
+    // 网格落位是 (62, 117)（标题字号 33 ⇒ 行高 43、净距 18）
+    expect(single.cellPx).toBe(66);
     expect(single.grid.x).toBe(62);
-    expect(single.grid.y).toBe(90);
+    expect(single.grid.y).toBe(117);
     expect(single.vLines).toHaveLength(59);
     expect(single.vLines[0]).toEqual({ at: 62, kind: "board" });
-    expect(single.vLines[1]).toEqual({ at: 62 + 67, kind: "thin" });
-    expect(single.vLines[5]).toEqual({ at: 62 + 5 * 67, kind: "major" });
-    expect(single.vLines[29]).toEqual({ at: 62 + 29 * 67, kind: "board" });
+    expect(single.vLines[1]).toEqual({ at: 62 + 66, kind: "thin" });
+    expect(single.vLines[5]).toEqual({ at: 62 + 5 * 66, kind: "major" });
+    expect(single.vLines[29]).toEqual({ at: 62 + 29 * 66, kind: "board" });
     // 行轴与列轴是 `makeGridGeometry` 里两段独立循环，不是彼此的副产品 ⇒ 逐位对称地钉一遍。
     expect(single.hLines).toHaveLength(59);
-    expect(single.hLines[0]).toEqual({ at: 90, kind: "board" });
-    expect(single.hLines[1]).toEqual({ at: 90 + 67, kind: "thin" });
-    expect(single.hLines[5]).toEqual({ at: 90 + 5 * 67, kind: "major" });
-    expect(single.hLines[29]).toEqual({ at: 90 + 29 * 67, kind: "board" });
+    expect(single.hLines[0]).toEqual({ at: 117, kind: "board" });
+    expect(single.hLines[1]).toEqual({ at: 117 + 66, kind: "thin" });
+    expect(single.hLines[5]).toEqual({ at: 117 + 5 * 66, kind: "major" });
+    expect(single.hLines[29]).toEqual({ at: 117 + 29 * 66, kind: "board" });
     expect(single.lineWidths).toEqual({ thin: 1, major: 2, board: 3 });
   });
 
   it("刻度每 5 格一个、位置与全局列号一致；板边界带板序号", () => {
     expect(single.colTicks.map((t) => t.col)).toEqual([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
-    expect(single.colTicks[1]).toEqual({ col: 5, x: 62 + 5 * 67 });
+    expect(single.colTicks[1]).toEqual({ col: 5, x: 62 + 5 * 66 });
     expect(single.rowTicks.map((t) => t.row)).toEqual([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
-    expect(single.rowTicks[1]).toEqual({ row: 5, y: 90 + 5 * 67 });
+    expect(single.rowTicks[1]).toEqual({ row: 5, y: 117 + 5 * 66 });
     expect(single.colBoards).toEqual([
       { board: 1, col: 0, x: 62 },
-      { board: 2, col: 29, x: 62 + 29 * 67 },
+      { board: 2, col: 29, x: 62 + 29 * 66 },
     ]);
     expect(single.rowBoards).toEqual([
-      { board: 1, row: 0, y: 90 },
-      { board: 2, row: 29, y: 90 + 29 * 67 },
+      { board: 1, row: 0, y: 117 },
+      { board: 2, row: 29, y: 117 + 29 * 66 },
     ]);
   });
 
@@ -267,13 +316,14 @@ describe("网格线、刻度与板边界", () => {
    * 「只对原点为 0 成立」的错法（例如把片内坐标当全局坐标）在那里**对任何断言都不可见**
    * （2026-10-05 实测：把 `at` 里的 `− originCol` 删掉，原点为 0 的用例 30 passed / 0 红）。
    * 这里取 116×116 的第 6 页（index = 5 ⇒ 第 1 行第 1 列、列 29 行 29 起），两块板的原点都非零。
-   * 落位是 29 板 + A4 的实测值：格像素 59、网格 (416, 234)。
+   * 落位是 29 板 + A4 的实测值：格像素 59、网格 (405, 210)。
    */
   it("原点非零的一页（列 29 / 行 29 起）的网格线、刻度与板边界仍取全局坐标", () => {
     const page = planBoardPage(makePattern(116, 116), makePalette(), [], {
       boardSize: 29,
       paper: "a4",
       index: 5,
+      projectName: PROJECT_NAME,
     });
     // 前提：这一页真的带偏移（否则这条与上面两条等价、判别力是假的）
     expect(page.originCol).toBe(29);
@@ -287,12 +337,13 @@ describe("网格线、刻度与板边界", () => {
     // 刻度与板序号取**全局**格号（本页首刻度是第 30 列）、x 减掉本页原点
     expect(page.colTicks[0]).toEqual({ col: 30, x: 405 + (30 - 29) * 59 });
     expect(page.colBoards[0]).toEqual({ board: 2, col: 29, x: 405 });
-    // 行轴逐位对称（同一页的行原点也是 29）
-    expect(page.hLines[0]).toEqual({ at: 188, kind: "board" });
-    expect(page.hLines[1]).toEqual({ at: 188 + 59, kind: "major" });
-    expect(page.hLines[2]).toEqual({ at: 188 + 2 * 59, kind: "thin" });
-    expect(page.rowTicks[0]).toEqual({ row: 30, y: 188 + (30 - 29) * 59 });
-    expect(page.rowBoards[0]).toEqual({ board: 2, row: 29, y: 188 });
+    // 行轴逐位对称（同一页的行原点也是 29）。**网格顶边是 210**（C8 起 = 页边距 118 +
+    // 标题行 round(29 × 1.3) = 38 + 净距 18 + 上刻度带 36）
+    expect(page.hLines[0]).toEqual({ at: 210, kind: "board" });
+    expect(page.hLines[1]).toEqual({ at: 210 + 59, kind: "major" });
+    expect(page.hLines[2]).toEqual({ at: 210 + 2 * 59, kind: "thin" });
+    expect(page.rowTicks[0]).toEqual({ row: 30, y: 210 + (30 - 29) * 59 });
+    expect(page.rowBoards[0]).toEqual({ board: 2, row: 29, y: 210 });
   });
 });
 
@@ -326,13 +377,16 @@ function makeUsages(): ColorUsage[] {
 }
 
 describe("planSheet（B6：单张施工图）", () => {
-  it("116×116 + 221 色的最坏预算逐字钉住（30 / 11 / 4048 / 3996）", () => {
-    const plan = planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages());
-    // **字面量**，不是松上界：只断「>= / <=」的话，实现算出 27 / 3480 / 3800 也照样绿
-    expect(plan.cellPx).toBe(32);
-    expect(plan.labelFontPx).toBe(12);
-    expect(plan.canvasWidth).toBe(3816);
-    expect(plan.canvasHeight).toBe(4046);
+  it("116×116 + 221 色的最坏预算逐字钉住（30 / 11 / 3584 / 4006）", () => {
+    const plan = planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), PROJECT_NAME);
+    // **字面量**，不是松上界：只断「>= / <=」的话，实现算出 27 / 3000 / 3800 也照样绿。
+    // C8 起这三个数由「标题行高 + 净距 + 两条刻度带 + 用料条（行高由字号推出）」的高度预算决定：
+    // 高度预算 466px（标题 73 + 净距 18 + 刻度带 72 + 间隔 24 + 9 行 × 31px，用料上限字号 18）
+    // ⇒ 高度可给 3590px ⇒ 格像素 min(96, 宽度 34, 高度 30) = 30 ⇒ 色号 round(10.8) = 11。
+    expect(plan.cellPx).toBe(30);
+    expect(plan.labelFontPx).toBe(11);
+    expect(plan.canvasWidth).toBe(3584);
+    expect(plan.canvasHeight).toBe(4006);
     expect(plan.canvasWidth).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     expect(plan.canvasHeight).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
     // 判据与实现的守卫同源（`round(cellPx × 0.36) ≥ 10`）
@@ -341,48 +395,63 @@ describe("planSheet（B6：单张施工图）", () => {
 
   it("每一项用料都落在画布内（用料条按网格宽换行，永不撑宽画布）", () => {
     const usages = makeBigUsages();
-    const plan = planSheet(makePattern(116, 116), makeBigPalette(), usages);
+    const plan = planSheet(makePattern(116, 116), makeBigPalette(), usages, PROJECT_NAME);
     for (let i = 0; i < usages.length; i += 1) {
       const left = plan.legend.left + (i % plan.legend.itemCols) * plan.legend.itemWidth;
-      // 数量是右对齐的：右端 = 项左沿 + 项宽 − 右内缩
-      expect(left + plan.legend.itemWidth - plan.legend.countRightPad).toBeLessThanOrEqual(
-        plan.canvasWidth,
-      );
+      // 一项的全部像素（含项内右留白）都必须落在画布内
+      expect(left + plan.legend.itemWidth).toBeLessThanOrEqual(plan.canvasWidth);
     }
-    // 画布宽 = max(网格右沿 + 右刻度带, 用料条右沿 + 边距)；用料条按网格宽换行 ⇒ 后者通常更小
+    // 项宽的口径（C8 §7.2：它由用料字号推出，不再有 `LEGEND_COUNT_RIGHT_PAD` 这种右内缩常量）
+    expect(plan.legend.itemWidth).toBeGreaterThanOrEqual(
+      plan.legend.codeX +
+        estimateTextWidthPx(LEGEND_ITEM_SAMPLE, plan.legend.fontPx) +
+        Math.round(plan.legend.fontPx * LEGEND_ITEM_PAD_RATIO),
+    );
+    // 画布宽 = max(网格右沿 + 右刻度带, 用料条右沿 + 边距, 标题上界右沿 + 边距)；用料条按网格宽换行
+    // ⇒ 它通常不是上界（这正是 C7 那条纪律）
     expect(plan.canvasWidth).toBe(
       Math.max(
         plan.grid.x + plan.grid.width + SHEET_RULER_LEFT,
         plan.legend.left + plan.legend.itemCols * plan.legend.itemWidth + SHEET_MARGIN,
+        SHEET_MARGIN +
+          estimateTextWidthPx(PROJECT_NAME, plan.titleFontPx) +
+          SHEET_TITLE_FIXED_EM * plan.titleFontPx +
+          SHEET_MARGIN,
       ),
     );
-    // 用料条**不得**成为画布宽度的上界：它的换行宽度就是网格宽
-    expect(plan.legend.itemCols).toBe(Math.floor(plan.grid.width / LEGEND_ITEM_W));
-    // 小图纸同样：画布宽由网格与右刻度带决定
-    const small = planSheet(makePattern(4, 2), makePalette(), makeUsages());
-    expect(small.canvasWidth).toBe(small.grid.x + small.grid.width + SHEET_RULER_LEFT);
-    expect(small.canvasWidth).toBeLessThan(1000);
+    // 用料条**不得**成为画布宽度的上界：它的换行宽度就是网格宽（列数按网格宽算出来的）
+    expect(plan.legend.itemCols).toBe(Math.floor(plan.grid.width / plan.legend.itemWidth));
+    // 小图纸：C8 §7.3 起**标题**（身份信息）可以把画布撑宽，用料条仍然按网格宽换行
+    const small = planSheet(makePattern(4, 2), makePalette(), makeUsages(), PROJECT_NAME);
+    const smallBoxRight = small.grid.x + small.grid.width + SHEET_RULER_LEFT;
+    expect(small.canvasWidth).toBeGreaterThan(smallBoxRight);
+    expect(small.canvasWidth).toBeLessThan(EXPORT_MAX_EDGE);
+    expect(small.legend.left + small.legend.itemCols * small.legend.itemWidth).toBeLessThanOrEqual(
+      smallBoxRight + 1,
+    );
   });
 
   it("小图纸取 96 px/格上限（C7 起不再锁在 40，否则网格撑不满画布）", () => {
-    const plan = planSheet(makePattern(4, 2), makePalette(), makeUsages());
+    const plan = planSheet(makePattern(4, 2), makePalette(), makeUsages(), PROJECT_NAME);
     expect(plan.cellPx).toBe(EXPORT_CELL_MAX_PX);
     expect(plan.labelFontPx).toBe(Math.round(EXPORT_CELL_MAX_PX * 0.36));
   });
 
   it("画布上限太小 ⇒ 响亮失败：两种失败各有专门消息，用户可见文本里不出现负数格像素", () => {
     // ① 根本放不下（宽度先归零）：「放不下」+ 可用区域尺寸，**不许**把 `-1 px` 写进用户可见文本。
-    expect(() => planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), { maxEdge: 100 })).toThrow(
+    expect(() => planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), PROJECT_NAME, { maxEdge: 100 })).toThrow(
       /^可用区域 100×100 px 放不下 116×116 的图纸$/,
     );
-    // ② 放得下、但格子小到色号不可读：这一支报出格像素与字号下限（两种失败不许混成同一句）
+    // ② 放得下、但格子小到色号不可读：这一支报出格像素与字号下限（两种失败不许混成同一句）。
+    // **上限由 1200 改成 2400**：C8 起高度预算从 272px 涨到 652px（标题行高 + 净距 + 两条刻度带 +
+    // 用料条行高由字号推出），1200 已经连网格都放不下（cellPx < 1，走的是 ① 那一支）。
     let message = "";
     try {
-      planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), { maxEdge: 1200 });
+      planSheet(makePattern(116, 116), makeBigPalette(), makeBigUsages(), PROJECT_NAME, { maxEdge: 2400 });
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toMatch(/^可用区域放不下 116×116 的图纸：每格只有 4 px、色号字号 1 px，低于下限 10 px$/);
+    expect(message).toMatch(/^可用区域放不下 116×116 的图纸：每格只有 14 px、色号字号 5 px，低于下限 10 px$/);
     expect(message).not.toMatch(/扣掉用料条|没有可用高度/);
     expect(message).not.toMatch(/-\d+ px/);
   });
@@ -390,24 +459,25 @@ describe("planSheet（B6：单张施工图）", () => {
   it("画布上限小于两条刻度带加边距（连网格都放不下）⇒ 也是「放不下」，且排在渲染之前", () => {
     // 旧实现有一条专门的「画布上限太小」守卫；C7 起宽度守卫统一在 `planGridScale` 里，
     // 所以这一支改报「放不下」——**判据是「抛且消息说清放不下」，不再要求专用文案**。
-    expect(() => planSheet(makePattern(6, 6), makePalette(), makeUsages(), { maxEdge: 100 })).toThrow(
+    expect(() => planSheet(makePattern(6, 6), makePalette(), makeUsages(), PROJECT_NAME, { maxEdge: 100 })).toThrow(
       /放不下 6×6 的图纸/,
     );
   });
 
   it("用料条列数由网格宽决定、行数随色数变化，且 top 落在下刻度带之下", () => {
     const pattern = makePattern(6, 6);
-    const plan = planSheet(pattern, makePalette(), makeUsages());
-    expect(plan.legend.itemCols).toBe(Math.floor(plan.grid.width / LEGEND_ITEM_W));
-    expect(plan.legend.itemRows).toBe(Math.ceil(makeUsages().length / plan.legend.itemCols));
+    const plan = planSheet(pattern, makePalette(), makeUsages(), PROJECT_NAME);
+    // 6×6：网格宽 384px、格像素 96 ⇒ 用料字号 35、项宽 299 ⇒ 列数 floor(384 / 299) = 1
+    expect(plan.legend.itemCols).toBe(1);
+    expect(plan.legend.itemRows).toBe(makeUsages().length);
     expect(plan.legend.top).toBe(plan.grid.y + plan.grid.height + SHEET_RULER_TOP + LEGEND_PAD_TOP);
     expect(plan.canvasHeight).toBe(
-      plan.legend.top + plan.legend.itemRows * LEGEND_ROW_H + SHEET_MARGIN,
+      plan.legend.top + plan.legend.itemRows * plan.legend.rowHeight + SHEET_MARGIN,
     );
   });
 
   it("色号必须经 cellBox 取位：越界格抛错（计划与渲染共用的唯一映射）", () => {
-    const plan = planSheet(makePattern(6, 6), makePalette(), makeUsages());
+    const plan = planSheet(makePattern(6, 6), makePalette(), makeUsages(), PROJECT_NAME);
     expect(() => cellBox(plan, 6, 0)).toThrow("列 6 不在本片范围 0–5 内");
   });
 
@@ -420,15 +490,15 @@ describe("planSheet（B6：单张施工图）", () => {
   it("入口守卫：画布上限非法 / 色卡不一致 / `cells` 长度不符一律抛", () => {
     for (const bad of [Number.NaN, 4096.5, 0, -1, null]) {
       expect(() =>
-        planSheet(makePattern(4, 4), makePalette(), [], { maxEdge: bad as unknown as number }),
+        planSheet(makePattern(4, 4), makePalette(), [], PROJECT_NAME, { maxEdge: bad as unknown as number }),
       ).toThrow("画布上限必须是 ≥1 的整数");
     }
-    expect(() => planSheet(makePattern(4, 4), { ...makePalette(), id: "other" }, [])).toThrow(
+    expect(() => planSheet(makePattern(4, 4), { ...makePalette(), id: "other" }, [], PROJECT_NAME)).toThrow(
       "与传入的色卡 other 不一致",
     );
     const broken = makePattern(4, 4);
     const short = { ...broken, cells: new Uint16Array(15) };
-    expect(() => planSheet(short, makePalette(), [])).toThrow("需要 16 格，实际 15 格");
+    expect(() => planSheet(short, makePalette(), [], PROJECT_NAME)).toThrow("需要 16 格，实际 15 格");
   });
 });
 
@@ -451,12 +521,12 @@ describe("planBoardPage（B6：每块板一页）", () => {
   it("非法纸张 ⇒ 抛错；合法纸张逐个放行（`paper` 守卫不许可以静默回落）", () => {
     for (const paper of Object.keys(PAPER_MM)) {
       expect(() =>
-        planBoardPage(makePattern(29, 29), makePalette(), makeUsages(), { boardSize: 29, paper, index: 0 }),
+        planBoardPage(makePattern(29, 29), makePalette(), makeUsages(), { boardSize: 29, paper, index: 0, projectName: PROJECT_NAME }),
       ).not.toThrow();
     }
     for (const paper of ["a5", "A4", "", "b5"]) {
       expect(() =>
-        planBoardPage(makePattern(29, 29), makePalette(), makeUsages(), { boardSize: 29, paper, index: 0 }),
+        planBoardPage(makePattern(29, 29), makePalette(), makeUsages(), { boardSize: 29, paper, index: 0, projectName: PROJECT_NAME }),
       ).toThrow(/纸张/);
     }
   });
@@ -493,6 +563,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
       boardSize: 29,
       paper: "a4",
       index: 0,
+      projectName: PROJECT_NAME,
     });
     expect(plan.canvasWidth).toBe(mmToPx(210));
     expect(plan.canvasHeight).toBe(mmToPx(297));
@@ -513,6 +584,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
       boardSize: 29,
       paper: "a3",
       index: 0,
+      projectName: PROJECT_NAME,
     });
     expect(plan.cellPx).toBe(PRINT_BEAD_PX);
     expect(plan.scaleRatio).toBe(1);
@@ -525,6 +597,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
       boardSize: 58,
       paper: "a3",
       index: 0,
+      projectName: PROJECT_NAME,
     });
     const marginPx = mmToPx(PRINT_MARGIN_MM);
     expect(plan.grid.x - SHEET_RULER_LEFT).toBeGreaterThanOrEqual(marginPx);
@@ -537,6 +610,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
       boardSize: 29,
       paper: "a4",
       index: 0,
+      projectName: PROJECT_NAME,
     });
     const marginPx = mmToPx(PRINT_MARGIN_MM);
     const count = makeBigUsages().length;
@@ -552,6 +626,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
       boardSize: 58,
       paper: "a3",
       index: 0,
+      projectName: PROJECT_NAME,
     });
     expect(plan.cellPx).toBeLessThan(PRINT_BEAD_PX);
     expect(plan.scaleRatio).toBeGreaterThanOrEqual(0.9);
@@ -563,13 +638,14 @@ describe("planBoardPage（B6：每块板一页）", () => {
       boardSize: 58,
       paper: "a4",
       index: 0,
+      projectName: PROJECT_NAME,
     });
     expect(plan.scaleRatio).toBeLessThan(0.7);
   });
 
   it("最后一页 / 列收窄，且页与页不重叠", () => {
     const pattern = makePattern(100, 30);
-    const plan = planBoardPage(pattern, makePalette(), makeUsages(), { boardSize: 29, paper: "a4", index: 3 });
+    const plan = planBoardPage(pattern, makePalette(), makeUsages(), { boardSize: 29, paper: "a4", index: 3, projectName: PROJECT_NAME });
     // 100 = 29×3 + 13 ⇒ 第 3 列（index 3，0 起）覆盖列 87–99，行 0–28
     expect(plan.originCol).toBe(87);
     expect(plan.cols).toBe(13);
@@ -579,13 +655,14 @@ describe("planBoardPage（B6：每块板一页）", () => {
 
   it("页索引越界 / 枚举非法 ⇒ 抛错（不静默取模、不回落默认值）", () => {
     expect(() =>
-      planBoardPage(makePattern(30, 30), makePalette(), makeUsages(), { boardSize: 29, paper: "a4", index: 4 }),
+      planBoardPage(makePattern(30, 30), makePalette(), makeUsages(), { boardSize: 29, paper: "a4", index: 4, projectName: PROJECT_NAME }),
     ).toThrow(/页索引/);
     expect(() =>
       planBoardPage(makePattern(30, 30), makePalette(), makeUsages(), {
         boardSize: 30 as unknown as 29,
         paper: "a4",
         index: 0,
+        projectName: PROJECT_NAME,
       }),
     ).toThrow(/板大小/);
   });
@@ -613,6 +690,7 @@ describe("planBoardPage（B6：每块板一页）", () => {
         boardSize,
         paper,
         index: 0,
+        projectName: PROJECT_NAME,
       });
       const marginPx = mmToPx(PRINT_MARGIN_MM);
       expect(plan.canvasWidth).toBe(mmToPx(PAPER_MM[paper].width));
@@ -625,12 +703,182 @@ describe("planBoardPage（B6：每块板一页）", () => {
       expect(plan.grid.x + plan.grid.width).toBeLessThanOrEqual(plan.canvasWidth - marginPx);
       expect(plan.grid.y).toBeGreaterThanOrEqual(marginPx);
       expect(plan.canvasHeight - (plan.grid.y + plan.grid.height)).toBeGreaterThanOrEqual(marginPx);
-      // 标题行在最上留白之内，且不压住含刻度带的网格（`SHEET_TITLE_H` 必须真的被预算用上）
+      // 标题行在最上留白之内、与网格块左沿对齐，且不压住含刻度带的网格
+      // （C8 起标题行高 = `round(标题字号 × 1.3)`，不再是常量 `SHEET_TITLE_H`）
       expect(plan.titleY).toBe(marginPx);
-      expect(plan.titleLeft).toBe(marginPx);
-      expect(plan.grid.y).toBeGreaterThanOrEqual(plan.titleY + SHEET_TITLE_H);
+      expect(plan.titleLeft).toBe(plan.grid.x - SHEET_RULER_LEFT);
+      expect(plan.grid.y).toBeGreaterThanOrEqual(
+        plan.titleY + Math.round(plan.titleFontPx * SHEET_TITLE_LINE_RATIO),
+      );
       expect(plan.scaleRatio).toBeGreaterThanOrEqual(ratioMin);
       expect(plan.scaleRatio).toBeLessThanOrEqual(ratioMax);
     },
   );
+});
+
+/**
+ * C8 §7：标题与用料条的字号随格像素缩放，用料条几何全部由字号推出，打印页三处左沿对齐。
+ *
+ * **期望值全部由规格 §7 的公式独立复算**（不抄实现）：`estimateTextWidthPx` 是
+ * `ceil(Σem × fontPx × TEXT_WIDTH_SAFETY)`（CJK / 全角 1em、其余 0.55em），用料条几何是
+ * §7.2 的四条比例式，标题字号是「比例值 → 逐 1px 下调 → 硬底 16px」。
+ */
+describe("C8：字号随格像素缩放与标题宽度", () => {
+  const usages = (count: number): ColorUsage[] =>
+    Array.from({ length: count }, (_, i) => ({ code: `A${i + 1}`, name: `色 ${i + 1}`, count: 10 }));
+
+  it("估算函数：CJK 比 ASCII 宽，且带 5% 余量", () => {
+    // 「a」0.55em × 100px × 1.05 = 57.75 ⇒ 58；「aa」翻倍 ⇒ 116；「中」1em × 100px × 1.05 = 105。
+    // （简报原文这里写 55 / 110 —— 那是**没有乘余量**的两个读数，与同一段给的三条规格
+    //   「CJK 按 1em / 其余 0.55em / 再乘 1.05」以及本用例名里的「带 5% 余量」互相矛盾；
+    //   实现的公式是简报逐字给的，所以只改这两个期望值，见实现报告 D1。）
+    expect(estimateTextWidthPx("a", 100)).toBe(58);
+    expect(estimateTextWidthPx("aa", 100)).toBe(116);
+    expect(estimateTextWidthPx("中", 100)).toBe(105);
+    // 全角标点也算宽（`（` 是 U+FF08）
+    expect(estimateTextWidthPx("（", 100)).toBe(105);
+  });
+
+  it("估算函数的非法输入响亮失败", () => {
+    expect(() => estimateTextWidthPx(1 as never, 10)).toThrow(/字符串/);
+    expect(() => estimateTextWidthPx("x", 0)).toThrow(/正的有限数字/);
+    expect(() => estimateTextWidthPx("x", Number.NaN)).toThrow(/正的有限数字/);
+  });
+
+  it("用料条几何全部由字号推出，且行高放得下字号", () => {
+    for (const font of [18, 24, 35, 40]) {
+      const box = legendGeometry(font);
+      expect(box.rowHeight).toBeGreaterThan(font);
+      expect(box.itemWidth).toBeGreaterThan(box.codeX);
+      expect(box.swatchSize).toBeGreaterThan(0);
+    }
+    expect(legendGeometry(40).rowHeight).toBeGreaterThan(legendGeometry(18).rowHeight);
+    expect(legendGeometry(40).itemWidth).toBeGreaterThan(legendGeometry(18).itemWidth);
+    // 逐条对上 §7.2 的比例式（18px 字号：色块 round(22.5)=23、缩进 23+round(9)=32、
+    // 行高 round(30.6)=31、项宽 32 + ceil(6.05×18×1.05)=115 + round(7.2)=7 = 154）
+    expect(legendGeometry(18)).toEqual({ rowHeight: 31, swatchSize: 23, codeX: 32, itemWidth: 154 });
+    expect(legendGeometry(40)).toEqual({ rowHeight: 68, swatchSize: 50, codeX: 70, itemWidth: 341 });
+  });
+
+  it("29×25（格像素取上限 96）⇒ 标题 48px、用料条 35px，都随格像素走", () => {
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), "小猫");
+    expect(plan.cellPx).toBe(EXPORT_CELL_MAX_PX);
+    expect(plan.titleFontPx).toBe(48);
+    expect(plan.legend.fontPx).toBe(35);
+    expect(plan.labelFontPx).toBe(35);
+    // 三个字号各自的来路：0.5 / 0.36 / 0.36 × 96，都夹进各自区间
+    expect(plan.titleFontPx).toBe(Math.round(plan.cellPx * SHEET_TITLE_FONT_RATIO));
+    expect(plan.legend.fontPx).toBe(Math.round(plan.cellPx * LEGEND_FONT_RATIO));
+  });
+
+  it("标题与上刻度带之间有净距，用料条与下刻度带之间也有（第 7 项：不紧贴）", () => {
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), "小猫");
+    const titleHeight = Math.round(plan.titleFontPx * SHEET_TITLE_LINE_RATIO);
+    expect(plan.titleY).toBe(SHEET_MARGIN);
+    expect(plan.ruler.topY).toBe(SHEET_MARGIN + titleHeight + SHEET_TITLE_GAP);
+    const gridBottom = plan.grid.y + plan.grid.height;
+    expect(plan.ruler.bottomY).toBe(gridBottom);
+    expect(plan.legendTop).toBe(gridBottom + SHEET_RULER_TOP + LEGEND_PAD_TOP);
+    expect(SHEET_TITLE_GAP).toBeGreaterThanOrEqual(16);
+    expect(LEGEND_PAD_TOP).toBeGreaterThanOrEqual(20);
+  });
+
+  it("画布高度含标题行、两条刻度带与用料条（漏算任一项都会叠字）", () => {
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), "小猫");
+    const titleHeight = Math.round(plan.titleFontPx * SHEET_TITLE_LINE_RATIO);
+    expect(plan.canvasHeight).toBe(
+      SHEET_MARGIN +
+        titleHeight +
+        SHEET_TITLE_GAP +
+        SHEET_RULER_TOP +
+        plan.grid.height +
+        SHEET_RULER_TOP +
+        LEGEND_PAD_TOP +
+        plan.legend.itemRows * plan.legend.rowHeight +
+        SHEET_MARGIN,
+    );
+    // 逐字读数（由上面那条公式推出）：20 + 62 + 18 + 36 + 2400 + 36 + 24 + 2×60 + 20 = 2736
+    expect(plan.canvasHeight).toBe(2736);
+  });
+
+  it("超长工程名：字号被压小、但不低于硬底，且标题上界落在画布内（不静默裁字）", () => {
+    // **62 个全角字**（不是简报原文的 60）：48px 时上界 = ceil(60×1.05×48) + 20×48 = 3984 ≤ 可用宽 4056
+    // ⇒ 60 个仍然放得下、字号不会变小，那条 `toBeLessThan(48)` 就成了空断言。62 个才是「刚好压小一格」
+    // 的第一个长度（47px 时上界 4000 ≤ 4056），见实现报告 D2。
+    const long = "阿".repeat(62);
+    const plan = planSheet(makePattern(29, 25), makePalette(13), usages(13), long);
+    expect(plan.titleFontPx).toBeLessThan(48);
+    expect(plan.titleFontPx).toBeGreaterThanOrEqual(TITLE_FONT_HARD_MIN_PX);
+    const bound =
+      SHEET_MARGIN + estimateTextWidthPx(long, plan.titleFontPx) + SHEET_TITLE_FIXED_EM * plan.titleFontPx;
+    expect(bound).toBeLessThanOrEqual(plan.canvasWidth);
+  });
+
+  it("名字长到硬底都放不下 ⇒ 响亮失败", () => {
+    // **不加 `{ maxEdge: 400 }`**（简报原文有）：maxEdge 400 时 29×25 的网格本身就放不下
+    // （高度预算 1071 > 400），先抛的是「可用区域 400×400 px 放不下 29×25 的图纸」——那条断言
+    // 达不到它要守的 `planTitleFont` 分支。240 个全角字在**默认上限**下连 16px 都放不下
+    // （16px 上界 = ceil(240×1.05×16) + 20×16 = 4352 > 4056），见实现报告 D3。
+    expect(() =>
+      planSheet(makePattern(29, 25), makePalette(13), usages(13), "阿".repeat(240)),
+    ).toThrow(/工程名太长/);
+  });
+
+  it("工程名必须是非空字符串", () => {
+    expect(() => planSheet(makePattern(4, 4), makePalette(4), [], 5 as never)).toThrow(/工程名/);
+    expect(() => planSheet(makePattern(4, 4), makePalette(4), [], "   ")).toThrow(/工程名/);
+  });
+
+  it("小图纸的画布为标题让路（4×4 的网格块只有 384px 宽）", () => {
+    const plan = planSheet(makePattern(4, 4), makePalette(8), usages(8), "小猫");
+    const gridBlockRight = plan.grid.x + plan.grid.width + SHEET_RULER_LEFT;
+    expect(plan.canvasWidth).toBeGreaterThan(gridBlockRight);
+    expect(plan.canvasWidth).toBeLessThanOrEqual(EXPORT_MAX_EDGE);
+    // 画布宽 = max(网格块右沿 488, 标题上界右沿 + SHEET_MARGIN)：20 + 101 + 20×48 + 20 = 1101
+    expect(plan.canvasWidth).toBe(
+      Math.max(gridBlockRight, SHEET_MARGIN + estimateTextWidthPx("小猫", plan.titleFontPx) + SHEET_TITLE_FIXED_EM * plan.titleFontPx + SHEET_MARGIN),
+    );
+  });
+
+  it("打印页：标题 / 用料条 / 网格块三者左沿对齐（第 8 项）", () => {
+    const plan = planBoardPage(makePattern(29, 29), makePalette(4), usages(4), {
+      boardSize: 29,
+      paper: "a4",
+      index: 0,
+      projectName: "小猫",
+    });
+    expect(plan.titleLeft).toBe(plan.grid.x - SHEET_RULER_LEFT);
+    expect(plan.legend.left).toBe(plan.titleLeft);
+    // **29 板 + A4 的左沿都是实测值**：格像素 59 ⇒ 网格 (405, 210)、块左沿 363（不是页边距 118）
+    expect(plan.cellPx).toBe(PRINT_BEAD_PX);
+    expect(plan.grid.x).toBe(405);
+    expect(plan.titleLeft).toBe(363);
+    // 打印版面规则一个字没动：29 板 + A4 仍是实物大小
+    // **不能写 `toBeCloseTo(5, 5)`**（简报原文那一句）：`cellMm` 由取整后的 `cellPx` 推出
+    // （59 / 300 × 25.4 = 4.9953…），与 5 差 0.0047 = 一个像素量化步长（见实现报告 D4）。
+    expect(Math.abs(plan.cellMm - BEAD_MM)).toBeLessThanOrEqual(25.4 / PRINT_DPI / 4);
+    expect(plan.scaleRatio).toBe(1);
+  });
+
+  it("打印页：纸越宽，长名字的标题字号只会更大或持平", () => {
+    const name = "名字".repeat(20);
+    const a4 = planBoardPage(makePattern(29, 29), makePalette(4), usages(4), {
+      boardSize: 29, paper: "a4", index: 0, projectName: name,
+    });
+    const a3 = planBoardPage(makePattern(29, 29), makePalette(4), usages(4), {
+      boardSize: 29, paper: "a3", index: 0, projectName: name,
+    });
+    expect(a3.titleFontPx).toBeGreaterThanOrEqual(a4.titleFontPx);
+    // 前提：这个名字真的被纸宽压到了比例值以下（否则两者都会顶到 30px、比较是空的）
+    expect(a4.titleFontPx).toBeLessThan(Math.round(PRINT_BEAD_PX * SHEET_TITLE_FONT_RATIO));
+  });
+
+  it("模板 em 上界不小于真实模板的估算宽（改了文案必须同步）", () => {
+    const tpl = `小猫 · 116 × 116 格 · 221 色 · 13456 颗`;
+    expect(SHEET_TITLE_FIXED_EM).toBeGreaterThanOrEqual(
+      estimateTextWidthPx(tpl.replace("小猫", ""), 1),
+    );
+    // 上界的口径：`fontPx = 1` 时读数就是 em 数（29 个窄字符 + 3 个全角 = 18.95em × 1.05 ⇒ 20）
+    expect(SHEET_TITLE_FIXED_EM).toBe(20);
+  });
 });
