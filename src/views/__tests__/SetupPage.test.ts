@@ -5,7 +5,6 @@ import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { defaultProjectName, setProjectStore } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
-import ExportPanel from "@/components/editor/ExportPanel.vue";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import SetupPage from "@/views/SetupPage.vue";
@@ -1028,7 +1027,7 @@ describe("结果阶段", () => {
     expect(wrapper.get("[data-testid='result-size']").text()).toContain("成品 58 × 44 颗");
   });
 
-  it("「去编辑」跳转的载荷是刚落盘那条记录的 id", async () => {
+  it("结果页的「编辑」跳转的载荷是刚落盘那条记录的 id", async () => {
     stubPlatform();
     seedDraft();
 
@@ -1048,9 +1047,18 @@ describe("结果阶段", () => {
     expect(push).toHaveBeenCalledWith({ name: "editor", params: { id } });
   });
 
-  it("结果页的「查看施工图」就地打开查看层（不跳编辑器）；「打印」就地打开打印面板", async () => {
+  /**
+   * 「查看」那颗按钮的接线（C8 规格 §3.4 的按钮改版）。
+   *
+   * **本条是原「查看施工图 + 打印面板」用例的收窄版**（改动逐条登记在 `task-4-report.md`）：
+   * 查看层从「页面的覆盖层」搬进了共用组件 `ResultPanel`，打印入口（`result-print` /
+   * `ExportPanel`）按规格**整条删除**——单张施工图只剩查看层这一个出口，打印从查看层里进。
+   * 因此这里保留并仍需断言的是**接线**（宿主传下去的图纸 / 色卡 / 名字，与 `@close` 的落点），
+   * 那些断言原来读的就是本页渲染出来的数字，换个组件渲染同样成立。
+   */
+  it("结果页的「查看」就地打开查看层（不跳编辑器），且接的是刚生成的那张图纸与那个名字", async () => {
     // 沿用本文件已有的「跑到结果阶段」路径：seedDraft() → mount → 点 generate → flushPromises()
-    // **`stubPlatform()` 是必需的**：happy-dom 没有 `createImageBitmap`（见下面那条用例），没有桩时
+    // **`stubPlatform()` 是必需的**：happy-dom 没有 `createImageBitmap`（见后面那条用例），没有桩时
     // 流水线在第一步就抛，`result-pane` 根本不出现。本文件其余跑到结果阶段的用例都先调它。
     stubPlatform();
     seedDraft();
@@ -1060,7 +1068,7 @@ describe("结果阶段", () => {
     await flushPromises();
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
 
-    // ① **C7 起结果页的入口是「查看施工图」**（旧的「导出」删掉了：它与查看层是同一张图）
+    // **C7 起结果页的入口是「查看」**（旧的「导出」删掉了：它与查看层是同一张图）
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
     await wrapper.get("[data-testid='result-view-sheet']").trigger("click");
     // 用例名里的「不跳编辑器」必须真的读一次路由：`push` 是本文件 mock 掉的唯一出口，
@@ -1071,36 +1079,33 @@ describe("结果阶段", () => {
     // ---- 接线断言：查看层**收到什么** ------------------------------------------------
     // 只钉「挂上来了」的话，把 `:pattern` 接成另一张图纸也照样绿——正是本项目记过账的
     // 「两端各自正确、错在接线」。期望值取自**同一次生成**在屏幕上渲染出来的数字。
+    //
+    // **`SheetViewer` 现在由 `ResultPanel` 渲染**（不是本页的覆盖层），所以这几条同时钉住了
+    // 「宿主 → ResultPanel → SheetViewer」两跳转发；任一跳把参数接错都会红。
     const viewer = wrapper.findComponent(SheetViewer);
     const session = useProjectSession();
     expect(viewer.props("pattern").width).toBe(session.pattern?.width);
     expect(viewer.props("pattern").height).toBe(session.pattern?.height);
     expect(viewer.props("palette").id).toBe(getBuiltinPalette().id);
-    const statsText = wrapper.get("[data-testid='result-stats']").text();
-    const shownBeads = /共 (\d+) 颗豆/.exec(statsText)?.[1];
-    expect(shownBeads).toBeDefined();
-    // `:name` 的期望值**现算**（`defaultProjectName`）：首生成取 `defaultProjectName(source.name)`
+    // `:name` 的期望值**现算**（`defaultProjectName`）：首生成时落盘 meta.name 就是它。
     expect(viewer.props("name")).toBe(defaultProjectName(FILE.name));
 
-    // ② `@close` 接线：删掉 `@close="sheetOpen = false"` 时这一条立刻红（用户再也退不出查看态）
+    // `@close` 接线：删掉 `ResultPanel` 的 `@close="sheetOpen = false"` 时这一条立刻红
+    // （用户再也退不出查看态）。
     await wrapper.get("[data-testid='sheet-close']").trigger("click");
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
-
-    // ③ 打印入口走的是打印面板（不是查看层）：两者是两件事，接错时这里红
-    await wrapper.get("[data-testid='result-print']").trigger("click");
-    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='export-summary-print']").exists()).toBe(true);
-    const panelUsages = wrapper.findComponent(ExportPanel).props("usages");
-    const shownColors = /实际用了 (\d+) 种颜色/.exec(statsText)?.[1];
-    expect(panelUsages).toHaveLength(Number(shownColors));
-    expect(panelUsages.reduce((sum, usage) => sum + usage.count, 0)).toBe(Number(shownBeads));
-    expect(wrapper.findComponent(ExportPanel).props("projectName")).toBe(defaultProjectName(FILE.name));
-    await wrapper.get("[data-testid='export-close']").trigger("click");
-    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
   });
 
-  it("平板结果阶段能页内回选区（左栏当场换回画布）", async () => {
+  /**
+   * 「重做」：C8 规格 §3.4 起，结果页回选区的路径就是这一颗——页内切阶段，**不跳路由**
+   * （平板上右栏参数常驻、左栏当场换回画布；手机单页与 stage 收敛在任务 8）。
+   *
+   * 本条是原「平板结果阶段能页内回选区」用例的**改名 + 改判据版**：`back-to-crop` 那颗按钮
+   * 按规格被删掉了，同一件事现在走 `result-rerun`，行为（`draft.stage` 变 `crop`）一字未变。
+   * 加 `expect(push).not.toHaveBeenCalled()`：0 次调用才排得掉「切了阶段又跳走了」这种接法。
+   */
+  it("结果页的「重做」页内回选区（左栏当场换回画布，不跳路由）", async () => {
     stubPlatform();
     const draft = seedDraft();
     window.innerWidth = 1024;
@@ -1113,15 +1118,34 @@ describe("结果阶段", () => {
     expect(draft.stage).toBe("result");
     expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(false);
 
-    // 平板上「改参数」与「上一步」都是 `v-if="!isWide"`，结果阶段没有别的页内路径回选区
-    // （只能绕图纸库 → 编辑器）。这一条按钮就是那条路径。
-    await wrapper.get("[data-testid='back-to-crop']").trigger("click");
+    await wrapper.get("[data-testid='result-rerun']").trigger("click");
 
     expect(draft.stage).toBe("crop");
     expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it("手机结果阶段不渲染平板的「改选区」（手机走 改参数 → 上一步）", async () => {
+  /**
+   * 「OK」：主操作（结束回家）——四颗按钮里**唯一**的收尾动作。
+   *
+   * 新增（规格 §3.4 的按钮表点名了这一颗，而旧结果页没有它）。判别力：把 `@ok` 的接线删掉
+   * 或改成跳别的名字，这里立刻红。
+   */
+  it("结果页的「OK」回图纸库", async () => {
+    stubPlatform();
+    seedDraft();
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    await wrapper.get("[data-testid='result-ok']").trigger("click");
+
+    expect(push).toHaveBeenCalledWith({ name: "home" });
+  });
+
+  it("手机结果阶段四颗按钮与平板完全一致（「重做」不再按断点分叉）", async () => {
     stubPlatform();
     seedDraft();
     window.innerWidth = 500;
@@ -1133,8 +1157,16 @@ describe("结果阶段", () => {
     await flushPromises();
 
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
-    // 同名 testid 的另一条（底部工具条）只在参数阶段出现，这里确认结果阶段两条都不在
+    // **语义变更登记**：旧实现按断点分叉（平板「改选区」/ 手机「改参数」），而 768px 这道判据
+    // 在结果阶段**只决定按钮摆在哪一栏**、用户想要的是同一件事——回到选区重来。C8 规格 §3.4 把它
+    // 收敛成一颗「重做」（`result-rerun`），两档断点下都渲染，行为都是 `draft.setStage('crop')`
+    // （手机单页与 stage 的收敛在任务 8）。所以这里断言的是「两颗都不在、重做在」。
     expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='back-to-params']").exists()).toBe(false);
+    await wrapper.get("[data-testid='result-rerun']").trigger("click");
+    expect(useDraft().stage).toBe("crop");
+    // 手机这一步与平板同样**当场**换回画布（不是只改了 store 里的 stage）
+    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
   });
 
   it("离开页面时草稿按 §9 的规则处理（已生成且保存成功 → 清空）", async () => {

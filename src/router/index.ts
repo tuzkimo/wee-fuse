@@ -12,6 +12,9 @@ export const router = createRouter({
     // /edit/:id 是 B3 的编辑器宿主：载入图纸 → 缩放平移 / 画笔 / 框选 / 吸管 / 撤销 → 显式保存。
     // 有未保存改动时离开会被页面内的确认条拦下（同页重载由 `watch(route.params.id)` 处理，B1-8）。
     { path: "/edit/:id", name: "editor", component: () => import("@/views/EditorPage.vue") },
+    // `/edit/:id/result` 是**编辑来源的结果页**（C8 规格 §3.4）：编辑器保存成功后落到这里，
+    // 内容与生成结果页共用同一个 `ResultPanel`，只是标题是「修改成功」、来源是刚落盘的那份。
+    { path: "/edit/:id/result", name: "edit-result", component: () => import("@/views/EditResultPage.vue") },
     { path: "/lab/decode", name: "decode-lab", component: () => import("@/views/DecodeLabPage.vue") },
     // /lab/canvas 是 B4 的 canvas 上限探针页（R-7：**开发期实验台**，不进任何用户入口、页面自标「CI 不测」；
     // 真机实测结果回写 `EXPORT_MAX_EDGE`、主规格 §12 的 R2 与 B4 规格 §16 的 B4-R1）。

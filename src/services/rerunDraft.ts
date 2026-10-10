@@ -1,0 +1,37 @@
+// src/services/rerunDraft.ts
+import type { useDraft } from "@/stores/draft";
+import type { useProjectSession } from "@/stores/project";
+
+/**
+ * 把当前工程的原图与参数播种进向导草稿（B2 规格 §7），返回是否真的播种了。
+ *
+ * **编辑页的「重做」与编辑来源结果页的「重做」共用这一份**（C8 规格 §3.4）：两处各写一遍就是
+ * 「同一件事的第二份实现」，而它写错的形态是静默的——草稿身份不对 ⇒ 覆盖到别的记录。
+ *
+ * **顺带修一个既有缺陷**（C8 实现时发现，如实登记）：原实现（`EditorPage.vue`）**没有**把
+ * `params.customMaxColors` 带进草稿，于是重跑一条「自定义 20 色」的工程时，草稿里的
+ * `customMaxColors` 还是 store 里的残留值（默认 32），而 `maxColors === "custom"` ⇒
+ * **生成出来的用色数与记录不一致，且没有任何报错**。这里补上，并由 `rerunDraft.test.ts` 钉住。
+ */
+export function seedRerunDraft(
+  draft: ReturnType<typeof useDraft>,
+  session: ReturnType<typeof useProjectSession>,
+): boolean {
+  const record = session.record;
+  const params = session.params;
+  if (record === null || record.source === null || params === null) return false;
+  draft.adoptProject({
+    source: { blob: record.source.blob, type: record.source.type, name: record.meta.name },
+    params: {
+      longSide: params.longSide,
+      maxColors: params.maxColors,
+      ...(params.customMaxColors === undefined
+        ? {}
+        : { customMaxColors: params.customMaxColors }),
+      crop: { x: params.crop.x, y: params.crop.y, width: params.crop.width, height: params.crop.height },
+      rotation: params.rotation,
+    },
+    meta: { id: record.meta.id, name: record.meta.name, createdAt: record.meta.createdAt },
+  });
+  return true;
+}

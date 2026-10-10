@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { router } from "@/router";
 import CanvasLabPage from "@/views/CanvasLabPage.vue";
+import EditResultPage from "@/views/EditResultPage.vue";
 import PickPage from "@/views/PickPage.vue";
 import SetupPage from "@/views/SetupPage.vue";
 import ShellProbePage from "@/views/ShellProbePage.vue";
@@ -53,6 +54,20 @@ describe("router", () => {
     expect(typeof loader).toBe("function");
     const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
     expect(mod.default).toBe(SetupPage);
+  });
+
+  it("/edit/:id/result 是编辑来源的结果页：名字 edit-result、路径 /edit/a/result、组件就是 EditResultPage", async () => {
+    // C8 任务 4 新增（规格 §3.4）：编辑器保存成功后落到这里，与生成结果页共用 `ResultPanel`。
+    // 与上面几条同形——页面用例一律整替 `vue-router`，名字打错 / 指向别的组件在这里以外全是盲区。
+    const route = router.resolve({ name: "edit-result", params: { id: "a" } });
+
+    expect(route.name).toBe("edit-result");
+    expect(route.path).toBe("/edit/a/result");
+
+    const loader = route.matched[0]?.components?.default;
+    expect(typeof loader).toBe("function");
+    const mod = await (loader as unknown as () => Promise<{ default: unknown }>)();
+    expect(mod.default).toBe(EditResultPage);
   });
 
   it("B1 的临时入口不再占着路由名 generate（任务 14 删页前先把名字腾空）", () => {

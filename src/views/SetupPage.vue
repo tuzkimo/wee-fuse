@@ -11,19 +11,16 @@ import { useRouter } from "vue-router";
 import { centerSquare, isCropResolvable, type AspectLock } from "@/core/crop/rect";
 import type { ZoomLevel } from "@/core/crop/view";
 import { rotatedSize } from "@/core/image/rotate";
-import { boardCount, beadsToCm, formatCm } from "@/core/pattern/board";
 import { computeGridSize } from "@/core/pattern/build";
-import { patternStats } from "@/core/pattern/stats";
 import { EMPTY } from "@/core/pattern/types";
 import { toProjectDocument } from "@/core/project/file";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
-import ExportPanel from "@/components/editor/ExportPanel.vue";
-import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
+import ResultPanel from "@/components/result/ResultPanel.vue";
 import { createDomBitmapPlatform, createExactDecoder, createFastDecoder } from "@/services/decoders";
 import { loadImageSource } from "@/services/imageSource";
 import { getBuiltinPalette } from "@/services/palette";
-import { RESULT_PREVIEW_MAX_EDGE, renderPatternThumbnail } from "@/services/patternThumbnail";
+import { renderPatternThumbnail } from "@/services/patternThumbnail";
 import { generatePattern } from "@/services/pipeline";
 import { defaultProjectName, getProjectStore, type ProjectMeta } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
@@ -115,50 +112,6 @@ const blockedReason = computed(() => {
   }
   if (storeError.value !== "") return storeError.value;
   return "";
-});
-
-/** 结果预览缩略图（结果面板的那张小图，也是查看施工图现算完成前的垫场图）。 */
-const resultImage = computed(() =>
-  session.pattern === null ? "" : renderPatternThumbnail(session.pattern, palette, RESULT_PREVIEW_MAX_EDGE),
-);
-/** 与 `resultImage` 同一个值，名字按「给查看层的垫场图」这一用途取（避免调用点读成另一种意思）。 */
-const resultThumbnail = computed(() => resultImage.value);
-
-const resultStats = computed(() =>
-  session.pattern === null ? null : patternStats(session.pattern, palette),
-);
-
-/**
- * 打印面板 / 查看施工图是否打开（就地打开，不跳编辑器：结果页已经有图纸与用量，跳走反而打断
- * 「改参数再生成」这条路）。
- *
- * **C7 起「导出」按钮被删除**：单张施工图原本有两个出口（本页的导出面板与查看施工图），
- * 现在是同一个组件 ⇒ 结果页也走「查看施工图」。
- */
-const exporting = ref(false);
-const sheetOpen = ref(false);
-const resultUsages = computed(() => resultStats.value?.usages ?? []);
-
-/**
- * 结果阶段的尺寸三行（规格 §6.3）。
- *
- * **口径是产物自身**（`session.pattern.width/height`），不是「裁剪 + 长边 → 预测网格」那套重算
- * ——后者是 `ParamPanel` 的来源，两者互为校验（规格 §6.3 的 2026-10-03 修正）：生成之后用户还能
- * 在右栏改长边（平板两栏常驻），此刻预测值会变，而**已经落盘的产物**没有变，结果面板必须报产物
- * 那一份，否则用户看到的尺寸与库里的图纸对不上。
- *
- * 厘米与板数复用 `core/pattern/board.ts` 的 `beadsToCm` / `formatCm` / `boardCount`，与参数面板
- * 同一组换算、不写第二份。
- */
-const resultSize = computed(() => {
-  if (session.pattern === null) return null;
-  const { width, height } = session.pattern;
-  const boards = boardCount(width, height);
-  return {
-    size: `成品 ${width} × ${height} 颗`,
-    cm: `约 ${formatCm(beadsToCm(width))} × ${formatCm(beadsToCm(height))} 厘米`,
-    boards: `需要 ${boards.cols} × ${boards.rows} = ${boards.total} 块板`,
-  };
 });
 
 function onMediaChange(event: MediaQueryListEvent): void {
@@ -420,54 +373,23 @@ function resetCrop(): void {
         </div>
       </section>
 
+      <!--
+        结果阶段：卡片本体是共用组件 `ResultPanel`（C8 规格 §3.4，与编辑来源的结果页同一份）。
+        宿主只负责接线：图纸 / 色卡 / 文案分叉 / 重跑动作 / 跳转。
+        `result-pane` 这个 testid 留在宿主的 `<section>` 上（组件根节点是单根 section，不抢这个 id）。
+      -->
       <section v-if="showResult" data-testid="result-pane" class="rounded bg-white p-4 shadow">
-        <img v-if="resultImage" data-testid="result-preview" :src="resultImage" alt="" class="w-full rounded bg-slate-100" />
-        <p data-testid="result-save-state" class="mt-3 text-lg font-semibold text-slate-900">
-          {{ resultIsNew ? "已保存到图纸库" : "已更新这张图纸" }}
-        </p>
-        <p v-if="resultStats" data-testid="result-stats" class="mt-1 text-base text-slate-600">
-          实际用了 {{ resultStats.colorCount }} 种颜色，共 {{ resultStats.total }} 颗豆
-        </p>
-        <p v-if="resultSize" data-testid="result-size" class="mt-1 text-base text-slate-600">{{ resultSize.size }}，{{ resultSize.cm }}，{{ resultSize.boards }}</p>
-        <div class="mt-4 flex flex-wrap gap-3">
-          <button
-            v-if="!isWide"
-            data-testid="back-to-params"
-            class="min-h-12 rounded border border-slate-300 px-4 text-base"
-            @click="draft.setStage('params')"
-          >
-            改参数
-          </button>
-          <button
-            v-if="isWide"
-            data-testid="back-to-crop"
-            class="min-h-12 rounded border border-slate-300 px-4 text-base"
-            @click="draft.setStage('crop')"
-          >
-            改选区
-          </button>
-          <button
-            data-testid="result-view-sheet"
-            class="min-h-12 rounded border border-slate-300 px-4 text-base"
-            @click="sheetOpen = true"
-          >
-            查看施工图
-          </button>
-          <button
-            data-testid="result-print"
-            class="min-h-12 rounded border border-slate-300 px-4 text-base"
-            @click="exporting = true"
-          >
-            打印
-          </button>
-          <button
-            data-testid="open-editor"
-            class="min-h-12 rounded bg-slate-900 px-4 text-base text-white"
-            @click="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
-          >
-            去编辑
-          </button>
-        </div>
+        <ResultPanel
+          v-if="session.pattern !== null"
+          :pattern="session.pattern"
+          :palette="palette"
+          :is-new="resultIsNew"
+          :can-rerun="true"
+          :name="session.record?.meta.name ?? '图纸'"
+          @rerun="draft.setStage('crop')"
+          @edit="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
+          @ok="router.push({ name: 'home' })"
+        />
       </section>
 
       <section v-if="showParams" data-testid="param-pane" class="rounded bg-white p-4 shadow">
@@ -522,26 +444,4 @@ function resetCrop(): void {
       重试保存
     </button>
   </main>
-
-  <ExportPanel
-    v-if="exporting && session.pattern !== null"
-    :pattern="session.pattern"
-    :palette="palette"
-    :usages="resultUsages"
-    :project-name="session.record?.meta.name ?? '图纸'"
-    @close="exporting = false"
-  />
-
-  <!--
-    查看施工图（C7 起是单张施工图的唯一出口）。吃 `session.pattern`（结果页刚生成的那一份），
-    不读落盘记录里的图纸字段——用户可能还没保存就点了它。
-  -->
-  <SheetViewer
-    v-if="sheetOpen && session.pattern !== null"
-    :pattern="session.pattern"
-    :palette="palette"
-    :name="session.record?.meta.name ?? '图纸'"
-    :thumbnail="resultThumbnail"
-    @close="sheetOpen = false"
-  />
 </template>
