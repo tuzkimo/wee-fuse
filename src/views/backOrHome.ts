@@ -25,9 +25,52 @@ import type { Router } from "vue-router";
  *
  * 历史为空时回图纸库，而不是什么都不做：那是用户眼里的「按了没反应」。
  */
-export function backOrHome(router: Router): void {
+
+/**
+ * `backOrHome` 的可选判据。
+ */
+export interface BackOrHomeOptions {
+  /**
+   * 「一条会失效的流程页」的路径前缀（本轮修复）。上一页的 fullPath 命中它时**不回去**，改回图纸库。
+   *
+   * **为什么需要这个判据**（实机缺陷「结果页 → 编辑 → 返回 ⇒ 却回到选图页，此后返回键全无反应」）：
+   * 生图流程的两页（`/new` 选图 / `/new/setup` 生图）在**离开时**会把草稿作废——
+   * `SetupPage` 卸载 ⇒ `draft.onLeaveSetup()` 见 `generated` 为真 ⇒ `reset()` ⇒ `draft.source = null`。
+   * 于是那条 `/new/setup` 变成一条**死条目**：退回去只会被 `SetupPage` 的入口守卫
+   * （`router.replace({ name: "pick" })`）再弹一次；而选图页没有返回入口，Android 返回键
+   * （`useShellLifecycle` 的 `history.back()`）又落回同一条死条目 ⇒ 原地乒乓、每次多塞一条历史。
+   *
+   * 所以「上一页是流程页」不是「上一页」，是「一个已经作废的状态」——回去没有意义，回图纸库才是出路。
+   *
+   * 判据是**前缀**（不是相等）：`/new` 这一个前缀同时覆盖选图页与生图页，将来流程里多一页也不必
+   * 再加一处口径。hit 即视为失效，不做「页面是否真的作废」的二次判断——那需要跨页面读 store，
+   * 正是本项目要避免的「两端各自正确、错在接线」。
+   */
+  readonly avoidPathPrefix?: string;
+}
+
+/** 入口校验（项目约定：非法输入响亮失败，且在任何写操作之前）。 */
+function requirePathPrefix(value: string): string {
+  if (!value.startsWith("/")) {
+    throw new Error(`avoidPathPrefix 必须是以 "/" 开头的路径前缀（当前 ${JSON.stringify(value)}）`);
+  }
+  return value;
+}
+
+/**
+ * 上一页是否命中「会失效的流程页」前缀。`back` 是 `history.state.back` 里的 **fullPath**
+ * （可能带 query / hash），前缀比对天然覆盖它们。
+ */
+function isAvoided(back: string, avoidPathPrefix: string | undefined): boolean {
+  return avoidPathPrefix !== undefined && back.startsWith(avoidPathPrefix);
+}
+
+export function backOrHome(router: Router, options: BackOrHomeOptions = {}): void {
+  const avoidPathPrefix =
+    options.avoidPathPrefix === undefined ? undefined : requirePathPrefix(options.avoidPathPrefix);
   const state = router.options.history.state as { readonly back?: unknown } | undefined;
-  if (typeof state?.back === "string") {
+  const back = state?.back;
+  if (typeof back === "string" && !isAvoided(back, avoidPathPrefix)) {
     router.back();
     return;
   }

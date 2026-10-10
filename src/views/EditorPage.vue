@@ -77,6 +77,19 @@ const pendingRerun = ref(false);
 const allowLeave = ref(false);
 
 /**
+ * 返回箭头要**避开**的上一页：生图流程的两页（`/new` 选图、`/new/setup` 生图）都在这一个前缀下。
+ *
+ * 这条判据的来历（实机缺陷：「结果页 → 编辑 → 返回 ⇒ 却回到选图页，此后返回键全无反应」）：
+ * 离开生成页时 `draft.onLeaveSetup()` 见 `generated` 为真就把整份草稿 `reset()` 了，于是历史里
+ * 那条 `/new/setup` 已经**作废**——`back()` 退回去只会被 `SetupPage` 的入口守卫弹到选图页，
+ * 而选图页没有返回入口 ⇒ 用户按返回原地乒乓。所以上一页是流程页时**不回它**，回图纸库。
+ *
+ * 一个常量、一处口径：判据本体在 `views/backOrHome.ts`（**不在这里再写一份历史判据**），
+ * 本文件只声明「哪一段路径算流程页」。
+ */
+const AVOID_BACK_PREFIX = "/new";
+
+/**
  * **已经载入**的 id。
  *
  * 必须是 state 而不是 `computed(() => route.params.id)`（那是**当前路由**的 id）：`watch` 回调
@@ -485,8 +498,12 @@ function rerun(): void {
 
         - 为什么不是 `RouterLink`：规格 §3.6.1 要的是「有上一页就退回去、历史为空才回图纸库」——
           那是一次**判断**，声明式目标做不到（F1 那版只会回图纸库）。
+        - 为什么把 `avoidPathPrefix` 传进来：上一页若是一条**已经作废**的生图流程页（`/new` 前缀），
+          退回去会被 `SetupPage` 的入口守卫弹到选图页，而选图页没有返回入口 ⇒ 实机上是
+          「按返回却回选图页、之后再怎么按都没反应」（判据本体与理由见 `views/backOrHome.ts`）。
         - `backOrHome` 内部走 `router.push` / `router.back`，所以离场守卫**照常生效**：有未保存
-          改动时会被同一条页面内确认条拦下（`onBeforeRouteLeave` 那段就是那条守卫）。
+          改动时会被同一条页面内确认条拦下（`onBeforeRouteLeave` 那段就是那条守卫）——
+          「改回首页」这一支与 `back()` 一样**不绕过**它（`EditorPageRouterLink.test.ts` 钉这一跳）。
         - 触控目标 ≥44px（`min-h-11 min-w-11`）、`aria-label` 必给（箭头没有文字，读屏用户否则
           听到一个没有名字的按钮；主规格 §6.4）。
       -->
@@ -495,7 +512,7 @@ function rerun(): void {
           data-testid="editor-back"
           aria-label="返回"
           class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
-          @click="backOrHome(router)"
+          @click="backOrHome(router, { avoidPathPrefix: AVOID_BACK_PREFIX })"
         >
           ←
         </button>

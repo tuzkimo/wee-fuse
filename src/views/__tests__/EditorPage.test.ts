@@ -1525,11 +1525,13 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
     expect(back.text()).toContain("←");
   });
 
-  // 返回箭头的接线判据：**两个分支各走一次**。只断言「历史为空 ⇒ push home」时，把实现写成
-  // `router.push({ name: "home" })`（永远回首页）照样绿——而规格 §3.6.1 要的是「有上一页就退回去」。
-  // 反过来只断言 `back()` 时，「历史为空 ⇒ 回首页」这条兜底（用户眼里的「按了没反应」）没人守。
+  // 返回箭头的接线判据：**三个分支各走一次**（本轮修复从两支变三支）。只断言「历史为空 ⇒ push home」
+  // 时，把实现写成 `router.push({ name: "home" })`（永远回首页）照样绿——而规格 §3.6.1 要的是
+  // 「有上一页就退回去」。反过来只断言 `back()` 时，「历史为空 ⇒ 回首页」这条兜底
+  // （用户眼里的「按了没反应」）没人守；再加「上一页是流程页 ⇒ 不 back()」那条，才把
+  // 「永远 back()」（修复前的形态）判死。
   //
-  // 这里的 `historyState` 就是 `backOrHome` 读的那个字段，**直接喂值**让两支都可判。生产路由器会
+  // 这里的 `historyState` 就是 `backOrHome` 读的那个字段，**直接喂值**让三支都可判。生产路由器会
   // 自己写它（`backOrHome.test.ts` 因此必须用 `createWebHistory`——内存历史不写这个字段，用它写
   // 「有上一页 ⇒ back()」是恒绿的假绿）。
   it("返回箭头接的是 backOrHome：历史为空回图纸库、有上一页就退回去", async () => {
@@ -1550,6 +1552,35 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
     await back.trigger("click");
     expect(backMock).toHaveBeenCalledTimes(1);
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **修 2（本轮修复）**：上一页是**生图流程**（`/new` 前缀）时**不能退回去**——那是一条已经
+   * 作废的流程页。离开生成页时 `onLeaveSetup()` 见 `generated` 为真就把整份草稿 `reset()` 了
+   * （第 3 步），退回去会被 `SetupPage` 的入口守卫弹到选图页，而选图页没有返回入口
+   * （第 5/6 步）⇒ 实机上表现为「按返回却回到选图页，之后再怎么按都没反应」。
+   *
+   * 判据两条，缺一不可：改去图纸库（`push home`）**且 `router.back()` 一次都没被调**。
+   * 只断言前者时，实现写成「先 `back()` 再 `push()`」照样绿——而那一 `back()` 正是死条目的来源。
+   */
+  it("上一页是生图流程页（/new 前缀）⇒ 改回图纸库，不退回那条已作废的流程页", async () => {
+    const wrapper = await mountPage();
+    const back = wrapper.get("[data-testid='editor-back']");
+
+    // `/new/setup`（生成页，实机缺陷里上一页逐字就是它）
+    historyState.back = "/new/setup";
+    await back.trigger("click");
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith({ name: "home" });
+    expect(backMock).not.toHaveBeenCalled();
+
+    // `/new`（选图页）同样在 `avoidPathPrefix` 的口径内：前缀判据覆盖整条流程，不是一个点。
+    pushMock.mockClear();
+    historyState.back = "/new";
+    await back.trigger("click");
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith({ name: "home" });
+    expect(backMock).not.toHaveBeenCalled();
   });
 
   it("不再有改参重生的两行提示（C8 第 3 项）", async () => {

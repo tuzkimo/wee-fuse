@@ -26,24 +26,29 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 路由替身：**三样东西**。`push` 是页面所有跳转的出口；`back` 与 `options.history.state` 归
- * 页头返回箭头（`backOrHome(router)` 要读后两样才能决定「退回去」还是「回图纸库」，
- * 见 `views/backOrHome.ts` 的文件头）。`historyState` 由用例直接喂值，让两支都可判——
- * 生产路由器自己写 `state.back`（`backOrHome.test.ts` 因此必须用 `createWebHistory`）。
+ * 路由替身：**四样东西**。`push` / `replace` 是页面所有跳转的两个出口（入口守卫走 `replace`，
+ * 见「入口守卫与准备阶段」那条 replace 用例——**替身必须同时给出这两个**，否则 `replace` 与
+ * `push` 在用例里分不开）；`back` 与 `options.history.state` 归页头返回箭头（`backOrHome(router)`
+ * 要读后两样才能决定「退回去」还是「回图纸库」，见 `views/backOrHome.ts` 的文件头）。
+ * `historyState` 由用例直接喂值，让两支都可判——生产路由器自己写 `state.back`
+ * （`backOrHome.test.ts` 因此必须用 `createWebHistory`）。
  */
 const routerMock = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
   back: vi.fn(),
   historyState: {} as { back?: unknown },
 }));
 vi.mock("vue-router", () => ({
   useRouter: () => ({
     push: routerMock.push,
+    replace: routerMock.replace,
     back: routerMock.back,
     options: { history: { state: routerMock.historyState } },
   }),
 }));
 const push = routerMock.push;
+const replaceMock = routerMock.replace;
 const backMock = routerMock.back;
 const historyState = routerMock.historyState;
 
@@ -276,6 +281,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   push.mockClear();
+  replaceMock.mockClear();
   backMock.mockClear();
   pipelineSpy.maxColors.length = 0;
   // 历史里默认没有上一页（`backOrHome` 走「回图纸库」那一支）；要测另一支的用例自己喂值。
@@ -284,12 +290,23 @@ afterEach(() => {
 });
 
 describe("入口守卫与准备阶段", () => {
-  it("草稿里没有图时重定向回选图页，而不是拿 null 算几何", async () => {
+  /**
+   * 入口守卫的**语义是「这一页现在不成立」**，所以它必须 `replace` 而不是 `push`：`push` 会在
+   * 历史里**新增**一条选图页，用户从选图页再按返回时退到的是这条新增的重复条目（看起来
+   * 就是「按了没反应」），而正确的一页是**进流程之前**的那一页。
+   *
+   * **两条断言缺一不可**：只断言「去了选图页」时 `push` 与 `replace` 分不开——把实现写成
+   * `push`（本轮修复前的形态）照样绿，而本轮实机缺陷的根因 ⑤/⑥ 正是这个 `push` 造出的
+   * 死条目与乒乓。`push` 一次都没被调，才把这个变异判死。
+   */
+  it("草稿里没有图时**替换**回选图页（replace、不 push），而不是拿 null 算几何", async () => {
     stubPlatform();
     mount(SetupPage);
     await flushPromises();
 
-    expect(push).toHaveBeenCalledWith({ name: "pick" });
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    expect(replaceMock).toHaveBeenCalledWith({ name: "pick" });
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("重跑路径（有 source 无预览）在挂载时解码并补上原图尺寸，选区按旧参数还原", async () => {

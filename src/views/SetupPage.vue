@@ -146,8 +146,18 @@ onMounted(async () => {
   isWide.value = media.matches;
   media.addEventListener("change", onMediaChange);
 
+  /*
+   * 入口守卫：草稿被作废了（`/new/setup` 直接进来、或从编辑器的返回箭头退到一条**已经被
+   * `onLeaveSetup()` 作废**的历史条目上）⇒ 这一页现在不成立，回选图页。
+   *
+   * **必须是 `replace`，不是 `push`**：守卫的语义是「这一页现在不成立」，它不该在历史里**新增**
+   * 一条。`push` 留下的是一条重复的选图页条目——用户从选图页再按返回时退到的是这条重复条目
+   * （看起来就是「按了没反应」），而正确的一页是**进流程之前**的那一页；实机上「返回键原地乒乓、
+   * 每次多塞一条历史」正是被这个 `push` 放大的（判据见 `SetupPage.test.ts` 那条 replace 用例，
+   * 与 `EditorBackNavFlow.test.ts` 的端到端用例）。
+   */
   if (draft.source === null) {
-    await router.push({ name: "pick" });
+    await router.replace({ name: "pick" });
     return;
   }
 
