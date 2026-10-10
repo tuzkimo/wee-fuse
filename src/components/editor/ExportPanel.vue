@@ -249,9 +249,11 @@ function stale(token: number): boolean {
  * **代数 / 卸载判据排在 `createObjectURL` 之前**——URL 根本不诞生，就没有「诞生在面板被丢弃之后」
  * 这一形态（比「诞生了再销号」更强）。
  *
- * **`revokePreview` 与「换上新的 URL」在同一个同步块里**（判据之后）：中间没有 `await`，
- * 于是不会出现「旧图已销号、新图还没到」的空窗，也不会把**正在显示**的那张误销号
- * （销号排在判据之前时，一次被丢弃的渲染会顺手把当前页的图撤掉）。
+ * **销号不在这里做**（C8 任务 7 的自审修正）：换页由 `currentPage` 那个侦听器先销号，换选项 / 换图纸
+ * 由重建侦听器先销号。若这里也销一次，重建路径就会**销号两次**：第二次把 `previewUrl` 清空之后，
+ * 一次**被丢弃**的渲染（判据只查 `unmounted` / 代数 / 当前页）会趁这个空档把**旧选项**的图写回来
+ * ——重新绑定之后用户看到的是一张旧版面的预览，而它看起来完全正常。销号只由「放弃当前预览」的
+ * 那两个入口做，这里只负责「把新图换上」。
  *
  * 渲染失败只写中文原因：预览失败是一件事，**落盘失败是另一件事**——两者不共用一个状态，
  * 预览失败也不许把面板卡住（「一键保存」自己渲染、自己报错）。
@@ -269,7 +271,6 @@ async function showPreview(index: number): Promise<void> {
     return;
   }
   if (stale(token) || index !== currentPage.value) return;
-  revokePreview();
   previewUrl.value = URL.createObjectURL(blob);
 }
 
@@ -290,8 +291,10 @@ function onStripScroll(): void {
   goToPage(Math.round(element.scrollLeft / element.clientWidth));
 }
 
-// 换页（含滑动）就重渲染那一页的预览。
+// 换页（含滑动）就重渲染那一页的预览：**先把上一页的图销号**（换页 = 放弃当前预览），
+// 再渲染新的那一页（`showPreview` 只负责把新图换上）。
 watch(currentPage, (index) => {
+  revokePreview();
   void showPreview(index);
 });
 
