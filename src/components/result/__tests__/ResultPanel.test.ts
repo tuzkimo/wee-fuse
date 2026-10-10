@@ -1,5 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { planSheet } from "@/core/render/layout";
 import { getBuiltinPalette } from "@/services/palette";
 import type { SheetRenderInput } from "@/services/sheetExport";
 import ResultPanel from "@/components/result/ResultPanel.vue";
@@ -26,6 +27,9 @@ vi.mock("@/services/patternThumbnail", () => ({
  * 原先由编辑页那条端到端用例守着——C8 把编辑页的出口收敛掉之后，那条链就没了。本文件末尾那条
  * 端到端用例要断言 `renderSheetBlob` 收到的 `input.pattern` **就是**这一份图纸的格子值
  * （只断言「传了个对象」的话，接错成另一张、或接成一份全 0 的副本都会绿）。
+ *
+ * **C8 修复 ② 起返回 `{ blob, plan }`**：查看层要用计划把 `<img>` 的画布像素换算回「格」。
+ * 计划用真 `planSheet` 现算（替身不该伪造几何），在 `beforeEach` 的默认实现里给。
  */
 const renderSheetBlob = vi.hoisted(() => vi.fn());
 vi.mock("@/services/sheetExport", () => ({ renderSheetBlob }));
@@ -34,9 +38,10 @@ const palette = getBuiltinPalette();
 const pattern = { width: 4, height: 4, paletteId: palette.id, cells: new Uint16Array(16) };
 
 beforeEach(() => {
-  renderSheetBlob
-    .mockReset()
-    .mockImplementation(async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+  renderSheetBlob.mockReset().mockImplementation(async (input: SheetRenderInput) => ({
+    blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    plan: planSheet(input.pattern, input.palette, input.usages, input.projectName),
+  }));
 });
 
 function mountPanel(overrides: Record<string, unknown> = {}) {

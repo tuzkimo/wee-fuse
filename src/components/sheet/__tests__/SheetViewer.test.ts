@@ -5,8 +5,10 @@ import { closeTopOverlay } from "@/composables/useOverlayBack";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
+import { maxCellScale, minCellScale } from "@/core/pattern/view";
+import { planSheet, type SheetPlan } from "@/core/render/layout";
 import { getBuiltinPalette } from "@/services/palette";
-import type { SheetRenderInput } from "@/services/sheetExport";
+import type { SheetRenderInput, SheetRenderResult } from "@/services/sheetExport";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
 
@@ -23,14 +25,45 @@ vi.mock("@/services/platform/capabilities", () => ({
 }));
 
 /**
- * 渲染通道替身：默认给一颗非空 blob（真画布与自检不在组件用例里测）。
+ * 渲染通道替身：默认给一颗非空 blob + 一份**真几何**的施工图计划。
  *
  * **做成 `vi.fn()` 而不是写死的箭头函数**：失败路径（渲染抛错）必须能被驱动。
+ *
+ * **为什么连计划一起替**（C8 修复 ②）：通道的返回值是 `{ blob, plan }`，查看层要用 `plan` 把
+ * `<img>` 的画布像素换算回「格」——旧的替身只给一颗 blob，查看层就永远进不了可缩放视图。
+ * 计划用真 `planSheet` 现算（不是手写的残缺对象）：几何（画布像素 / 格像素）正是本文件最重要的
+ * 那条不变量所依赖的东西，替身伪造它等于把判据架空。
  */
 const renderSheetBlob = vi.hoisted(() => vi.fn());
 vi.mock("@/services/sheetExport", () => ({ renderSheetBlob }));
 
 const palette = getBuiltinPalette();
+
+/**
+ * 替身最近交出来的那份计划。
+ *
+ * **为什么留这个口**：若干条期望值必须**按几何现算**（默认视图 = 整张图的适配比例等），硬写一个
+ * 数字（旧文件里的 `toBe(6)`）既会在布局常量变化时无意义地红，也钉不住「适配的是哪张图」。
+ * 每个用例挂载时由替身重写；没走到现算那一步的用例里它是 `null`（`requireRenderedPlan` 会响亮失败）。
+ */
+let renderedPlan: SheetPlan | null = null;
+
+/** 整张图的格尺寸。**与组件同一条口径**：画布像素 ÷ 格像素、向上取整（core 的图像尺寸守卫只收整数）。 */
+function sheetCellsOf(plan: SheetPlan): { readonly width: number; readonly height: number } {
+  return {
+    width: Math.ceil(plan.canvasWidth / plan.cellPx),
+    height: Math.ceil(plan.canvasHeight / plan.cellPx),
+  };
+}
+
+/** 替身交给查看层的那份计划；没现算过就响亮失败（而不是拿 `null` 硬算出一个假期望值）。 */
+function requireRenderedPlan(): SheetPlan {
+  if (renderedPlan === null) throw new Error("本用例还没走到现算那一步：替身没返回过计划");
+  return renderedPlan;
+}
+
+/** `withViewport()` 的默认视口（CSS px）：凡是要对着 core 现算期望值的地方都用它。 */
+const VIEWPORT = { width: 800, height: 600 } as const;
 
 /**
  * object URL 的两个替身**留具名引用**：本组件最承重的一条纪律是「预览用的与落盘的**是同一颗
@@ -57,9 +90,12 @@ function makePattern(width = 2, height = 1) {
 beforeEach(() => {
   albumSave.mockReset();
   albumKind.value = "album";
-  renderSheetBlob
-    .mockReset()
-    .mockImplementation(async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+  renderedPlan = null;
+  renderSheetBlob.mockReset().mockImplementation(async (input: SheetRenderInput) => {
+    const plan = planSheet(input.pattern, input.palette, input.usages, input.projectName);
+    renderedPlan = plan;
+    return { blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), plan };
+  });
   // happy-dom 下这两个方法可能不存在，所以直接赋值
   createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:test-1");
   revokeObjectUrl = vi.fn<(url: string) => void>();
@@ -242,9 +278,9 @@ describe("SheetViewer（C7：吃 pattern 入参 + 可缩放）", () => {
   });
 
   it("卸载发生在现算结算之前时不再建 object URL（否则整颗位图钉到页面生命周期结束）", async () => {
-    let settle: (blob: Blob) => void = () => undefined;
+    let settle: (result: SheetRenderResult) => void = () => undefined;
     renderSheetBlob.mockImplementationOnce(
-      () => new Promise<Blob>((resolve) => {
+      () => new Promise<SheetRenderResult>((resolve) => {
         settle = resolve;
       }),
     );
@@ -254,7 +290,10 @@ describe("SheetViewer（C7：吃 pattern 入参 + 可缩放）", () => {
     expect(createObjectUrl).not.toHaveBeenCalled();
 
     wrapper.unmount(); // 用户在现算结算前点了「关闭」
-    settle(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+    settle({
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+      plan: planSheet(makePattern(), palette, [], "测试工程"),
+    });
     await flushPromises();
     expect(createObjectUrl).not.toHaveBeenCalled();
     expect(revokeObjectUrl).not.toHaveBeenCalled();
@@ -262,9 +301,11 @@ describe("SheetViewer（C7：吃 pattern 入参 + 可缩放）", () => {
 });
 
 /**
- * 缩放（C7 新增）：**判别力在 core 的纯函数用例里**（`core/pattern/view.test.ts`），
- * 这一组只证明「按钮接上了 core 的视图数学」——happy-dom 的 `getBoundingClientRect()` 返回全 0，
- * 视口尺寸在 CI 里恒为 0，任何「缩放到某个具体比例」的断言在这里都是假的。
+ * 缩放（C7 新增）：视图数学本身（上下界、夹取、锚点）的判别力在 core 的纯函数用例里
+ * （`core/pattern/view.test.ts`），这一组只证明「按钮接上了 core 的视图数学」。
+ *
+ * **下面这一组是唯一不需要假造视口的**：`getBoundingClientRect()` 在 happy-dom 里恒为 0，
+ * 视口为 0 ⇒ `view` 保持 `null` ⇒ 按钮什么都不该做。其余各组用 `withViewport()` 假造尺寸。
  */
 describe("SheetViewer 的缩放接线", () => {
   it("视口量不到尺寸（happy-dom 返回 0）时缩放按钮不改变视图，也不抛错", async () => {
@@ -376,23 +417,30 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     await nextTick();
 
     const zoomed = scaleOf(wrapper);
-    // 净效果停在**放大那一侧**，且明显大于适配（若被 dblclick 弹回去，这里会等于 fit）
+    // 净效果停在**放大那一侧**，且明显大于适配（若被 dblclick 弹回去，这里会等于 fit）。
+    // **C8 修复 ② 改判据**：双击的目标是缩放的**上界**，而它按定义是 `max(64, 适配 × 2)`——
+    // 2×1 的整图适配比例（≈61.5 > 32）下上界恰好 = 适配 × 2，旧的 `> fit * 2` 因此**恰好不成立**
+    // （浮点相等）。这里不放松，改成对着 core 现算的上界做精确断言（比原来更紧）。
     expect(zoomed).toBeGreaterThan(fit);
-    expect(zoomed).toBeGreaterThan(fit * 2);
+    const plan = requireRenderedPlan();
+    expect(zoomed).toBeCloseTo(maxCellScale(VIEWPORT, sheetCellsOf(plan)) / plan.cellPx, 6);
   });
 
   it("单指拖动会平移视图（transform 的 translate 变化）", async () => {
-    // **用 100×100 的图纸**：2×1 在 800×600 里默认视图是 64px/格（`minCellScale` 的上限），
-    // 图像只有 128px 宽 < 视口 ⇒ `clampView` 把它按居中夹住，拖动**什么都不会变**（假绿）。
-    // 100×100 的适配比例是 6px/格，连点 8 次放大后 6×1.25⁸ ≈ 35 → 图像 3500px，横向真的可拖。
+    // **用 100×100 的图纸**：2×1 的整图适配比例会落在 `minCellScale` 的上限 64px/格上，图像只有
+    // 几百 px 宽 < 视口 ⇒ `clampView` 把它按居中夹住，拖动**什么都不会变**（假绿）。
+    // 100×100 的整图适配比例远小于 64（整张画布在 800×600 里），连点 12 次放大后横向 / 纵向都远大于视口。
     const wrapper = mount(SheetViewer, {
       props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
     });
     await flushPromises();
     await withViewport(wrapper);
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 12; i += 1) {
       await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
     }
+    // **前提检查**（用例自己钉住）：图像必须真的比视口大，否则「拖动什么都不变」是假绿而不是接线错。
+    // 渲染出来的 CSS 宽度 = `<img>` 的固有宽度（= 画布像素）× 样式里的 scale。
+    expect(scaleOf(wrapper) * requireRenderedPlan().canvasWidth).toBeGreaterThan(VIEWPORT.width);
     const before = wrapper.get("[data-testid='sheet-preview']").attributes("style");
     const stage = wrapper.get("[data-testid='sheet-stage']");
     await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 400, clientY: 300 });
@@ -405,26 +453,29 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
   });
 
   it("双指捏合按两指间距改比例：分开变大、靠拢变小", async () => {
-    // 100×100 在 800×600 里适配恰好 6px/格（上界 64）⇒ 2 倍 / 0.75 倍都落在可缩放区间内，
+    // 期望值**按整张图的适配比例现算**（C8 修复 ② 的新口径：适配的对象是整张图，不是格数）：
+    // 100×100 的整图在 800×600 里适配远小于上界 64 ⇒ 2 倍 / 0.75 倍都落在可缩放区间内，
     // 不会被 `zoomCellView` 的夹取掩盖（夹住了就分辨不出「比例真的按间距算」还是「没动」）。
-    // **判别力**：把捏合分支删掉、只留单指平移，这里的比例会停在 6 ⇒ 三条断言全红。
+    // **判别力**：把捏合分支删掉、只留单指平移，这里的比例会停在默认值 ⇒ 三条断言全红。
     const wrapper = mount(SheetViewer, {
       props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
     });
     await flushPromises();
     await withViewport(wrapper);
-    expect(scaleOf(wrapper)).toBe(6);
+    const plan = requireRenderedPlan();
+    const fit = minCellScale(VIEWPORT, sheetCellsOf(plan)) / plan.cellPx;
+    expect(scaleOf(wrapper)).toBeCloseTo(fit, 6);
     const stage = wrapper.get("[data-testid='sheet-stage']");
 
     await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 300, clientY: 300 });
     await stage.trigger("pointerdown", { pointerId: 2, button: 0, buttons: 1, clientX: 400, clientY: 300 });
     // 两指间距 100 → 200：比例 ×2（`buttons: 1`：两指都还按在屏幕上，理由同拖动那条）
     await stage.trigger("pointermove", { pointerId: 2, buttons: 1, clientX: 500, clientY: 300 });
-    expect(scaleOf(wrapper)).toBeCloseTo(12, 5);
+    expect(scaleOf(wrapper)).toBeCloseTo(fit * 2, 5);
 
     // 间距 200 → 150：比例 ×0.75（增量口径：比值是 150/200）
     await stage.trigger("pointermove", { pointerId: 2, buttons: 1, clientX: 450, clientY: 300 });
-    expect(scaleOf(wrapper)).toBeCloseTo(9, 5);
+    expect(scaleOf(wrapper)).toBeCloseTo(fit * 1.5, 5);
 
     await stage.trigger("pointerup", { pointerId: 1, clientX: 300, clientY: 300 });
     await stage.trigger("pointerup", { pointerId: 2, clientX: 450, clientY: 300 });
@@ -440,9 +491,11 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     });
     await flushPromises();
     await withViewport(wrapper);
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 12; i += 1) {
       await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
     }
+    // **前提检查**（同拖动那条）：图像必须真的比视口大，否则「拖动仍然生效」测不到平移。
+    expect(scaleOf(wrapper) * requireRenderedPlan().canvasWidth).toBeGreaterThan(VIEWPORT.width);
     const stage = wrapper.get("[data-testid='sheet-stage']");
     const preview = () => wrapper.get("[data-testid='sheet-preview']").attributes("style");
     const before = preview();
@@ -536,5 +589,91 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     expect(closeTopOverlay()).toBe(true);
     expect(wrapper.emitted("close")).toEqual([[]]);
     wrapper.unmount();
+  });
+});
+
+/**
+ * 「已知尺寸」的计划夹具：一组**真实量级**的数字——29×25 那条施工图的画布是
+ * **2888×2736 画布像素**、每格 **96 画布像素**（网格 2784×2400 = 29×96 宽 × 25×96 高）。
+ *
+ * 其余字段（刻度带 / 用料条 / 标题…）用真 `planSheet` 的产物补齐，替身不该是残缺对象；
+ * **本用例只读三个几何量**（`cellPx` / `canvasWidth` / `canvasHeight`），覆写它们是为了让判据不随
+ * `core/render/layout.ts` 的版面常量漂移——这里要钉的是**「画布像素 ↔ 格」的换算**，不是某个具体常量；
+ * `grid` 一并同步覆写，只为夹具自洽（29×96 = 2784、25×96 = 2400）。
+ */
+const KNOWN_PLAN: SheetPlan = {
+  ...planSheet(makePattern(29, 25), palette, [], "已知尺寸"),
+  cellPx: 96,
+  canvasWidth: 2888,
+  canvasHeight: 2736,
+  grid: { x: 52, y: 136, width: 2784, height: 2400 },
+};
+
+/**
+ * **C8 修复 ② 的承重判据**（真机 bug：查看页只显示左上角一条刻度带、只能放大不能缩小）。
+ *
+ * **为什么必须有这一组**：上一轮的全部断言都只对着 `view.scale` 自己（「点放大比例变大」），
+ * 而缺陷恰恰是「`view.scale` 的语义（每格 CSS px）与被变换的 `<img>` 的坐标系（画布像素）不是
+ * 同一个」——两条各自正确的量接在一起才出错，只读其中一条的断言在变异下全绿。这里的判据把
+ * **两端钉在一起**：`<img>` 的固有尺寸（画布像素）× 样式里的 scale 必须等于「整张图的格宽 ×
+ * 视图比例」，并且真的落在视口内。
+ */
+describe("SheetViewer 的画布像素 → 格 映射（C8 修复 ②）", () => {
+  it("scale 除以 cellPx；默认视图整图可见；放大后能缩回整图", async () => {
+    renderSheetBlob.mockResolvedValueOnce({
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+      plan: KNOWN_PLAN,
+    });
+    const wrapper = mountViewer();
+    await flushPromises();
+    await withViewport(wrapper, VIEWPORT.width, VIEWPORT.height);
+
+    const plan = KNOWN_PLAN;
+    const cells = sheetCellsOf(plan);
+    /** 组件该用的**整图适配**比例（格单位）：core 的 `minCellScale` 对着整张图的格尺寸算。 */
+    const viewScale = minCellScale(VIEWPORT, cells);
+    const scale = scaleOf(wrapper);
+
+    // ① `<img>` 的 CSS scale = view.scale / cellPx（画布像素 → 格）。少了这一除，一个画布像素被
+    //    放大 view.scale 倍（2888 × 20.7 ≈ 59,700 CSS px），屏幕上只剩左上角。
+    expect(scale).toBeCloseTo(viewScale / plan.cellPx, 6);
+
+    // ② **两端钉在一起**：渲染出来的 CSS 宽度（画布像素 × scale）= 整张图的格宽 × view.scale。
+    expect(scale * plan.canvasWidth).toBeCloseTo((plan.canvasWidth / plan.cellPx) * viewScale, 6);
+
+    // ③ 默认视图**整图可见**（1px 容差）：这里量的是**真实画布**，不是格数。
+    expect(scale * plan.canvasWidth).toBeLessThanOrEqual(VIEWPORT.width + 0.5);
+    expect(scale * plan.canvasHeight).toBeLessThanOrEqual(VIEWPORT.height + 0.5);
+
+    // ④ 坐标口径的**夹具说明**（如实标注：这几条不是对组件的判据）：整张图的格尺寸严格大于网格
+    //    本身（2888/96 = 30.1 ⇒ 31 > 29；2736/96 = 28.5 ⇒ 29 > 25），且它在适配比例下也落在视口内
+    //    （contain 口径的复述）。钉住的是**测试侧**的 `sheetCellsOf` 不被「简化」成
+    //    `pattern.width/height`——那样 ① 的期望值会跟着一起漂，判据就自洽地错了。
+    //    **组件**用错坐标系（拿格数当整图）由 ① 直接抓住：实测把 `sheetGrid` 改回
+    //    `pattern.width/height` ⇒ ① 报 `expected 0.6667 to be close to 0.2155`。
+    expect(cells.width).toBeGreaterThan(29);
+    expect(cells.height).toBeGreaterThan(25);
+    expect(cells.width * viewScale).toBeLessThanOrEqual(VIEWPORT.width + 0.5);
+    expect(cells.height * viewScale).toBeLessThanOrEqual(VIEWPORT.height + 0.5);
+
+    // ⑤ 能缩回来：默认视图就是缩放下限（`core/pattern/view.ts` 的 `defaultCellView` 取
+    //    `minCellScale`），所以从放大态连点「缩小」必须**严格回落**并停在整图贴合；
+    //    停在整图贴合时整张图仍然可见——这正是旧实现缺的那一半（缩不回整图）。
+    //    **如实记录**：字面上的「点缩小后比例**小于**默认比例」在本仓库不可能成立
+    //    （默认 ≡ 下限），见 `fix-realia-report.md` 的规格冲突登记。
+    for (let i = 0; i < 4; i += 1) {
+      await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
+    }
+    const zoomed = scaleOf(wrapper);
+    expect(zoomed).toBeGreaterThan(scale);
+
+    for (let i = 0; i < 8; i += 1) {
+      await wrapper.get("[data-testid='sheet-zoom-out']").trigger("click");
+    }
+    const shrunk = scaleOf(wrapper);
+    expect(shrunk).toBeLessThan(zoomed);
+    expect(shrunk).toBeCloseTo(scale, 6);
+    expect(shrunk * plan.canvasWidth).toBeLessThanOrEqual(VIEWPORT.width + 0.5);
+    expect(shrunk * plan.canvasHeight).toBeLessThanOrEqual(VIEWPORT.height + 0.5);
   });
 });

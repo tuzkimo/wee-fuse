@@ -17,6 +17,18 @@
 // （**结构照搬 `PatternCanvas.vue`**，但不合并抽象——那个组件要区分工具手势与视图手势，这里只有
 // 视图手势，硬合并会造出一个谁都不像的中间层）。
 //
+// **2026-10-10（C8 修复 ②，承重）三处坐标系修正**（真机症状：只显示左上角一条刻度带、且缩不回整图）：
+// 原先把 `view.scale`（语义是**每格多少 CSS px**）直接当 `scale()` 乘在 `<img>` 上，而 `<img>` 的
+// **固有尺寸是整张施工图的画布像素**——29×25 那条图是 2888×2736 画布像素（每格 96），而视图数学
+// 又按 `pattern.width/height`（29×25 格）算，于是默认比例是 24「px/格」却被当成 24「px/画布像素」用：
+// 渲染出来是 2888 × 24 ≈ **69,000 CSS px**（视口只有 800），屏幕上只剩左上角；`minCellScale` 用的
+// 又是同一把错比例尺，所以缩不回去。现在：
+// ① 渲染通道把计划一起交出来（`renderSheetBlob` → `{ blob, plan }`）——「画布像素 ↔ 格」的换算
+//    只算一次，查看层不重算第二遍 `planSheet`；
+// ② 视图数学的坐标系 = **整张图的格尺寸**（`sheetGrid`，含标题行 / 上下刻度带 / 用料条）；
+// ③ `<img>` 的变换除以 `plan.cellPx`（画布像素 → 格）。`origin-top-left` 已经让 img 原点落在
+//    画布原点，所以**不需要**额外 `translate`。
+//
 // 三条纪律：
 // 1. 打开瞬间用调用方给的缩略图垫场（可能没有），现算完成后换成真正的施工图；
 // 2. 渲染只经 `renderSheetBlob`（与打印面板同一条通道），本组件不建画布、不调 core 渲染器；
@@ -36,6 +48,7 @@ import {
   panCellView,
   zoomCellView,
 } from "@/core/pattern/view";
+import type { SheetPlan } from "@/core/render/layout";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
 import { useOverlayBack } from "@/composables/useOverlayBack";
 import { getPlatform } from "@/services/platform/capabilities";
@@ -66,6 +79,14 @@ const usages = ref<readonly ColorUsage[]>([]);
  * 那会在内存里多复制一份全分辨率位图（29 格的单张施工图约 30MB）。
  */
 const sheetBlob = shallowRef<Blob | null>(null);
+/**
+ * 现算返回的**施工图计划**（C8 修复 ②）。它是「画布像素 ↔ 格」的**唯一**换算来源
+ * （`plan.cellPx` / `plan.canvasWidth` / `plan.canvasHeight`），也是「视图数学的坐标系是格」这件事
+ * 与「被变换的 `<img>` 是画布像素」这件事之间的那座桥。
+ *
+ * `shallowRef`：它是个大对象（刻度带 / 用料条计划都在里面），不需要也不该被深代理。
+ */
+const sheetPlan = shallowRef<SheetPlan | null>(null);
 const blobUrl = ref("");
 const error = ref("");
 const busy = ref(true);
@@ -87,8 +108,32 @@ let disposed = false;
 
 /* ---------------------------------------------------------------- 缩放平移 */
 
-/** 网格尺寸（core 的视图数学吃 `Size`）。 */
-const grid = computed<Size>(() => ({ width: props.pattern.width, height: props.pattern.height }));
+/**
+ * 视图数学的坐标系 = **整张施工图的格尺寸**（含标题行、上下刻度带与用料条），单位是**格**。
+ *
+ * **为什么不是 `pattern.width/height`（C8 修复 ② 的承重点）**：被变换的 `<img>` 的固有尺寸是
+ * **画布像素**（`plan.canvasWidth × plan.canvasHeight`），它比网格本身大一圈（刻度带 / 标题 / 用料条），
+ * 且与「格数」根本不是同一个量。把 `pattern.width/height` 喂给 `defaultCellView` / `minCellScale` /
+ * `clampView`，夹的就是 29×29 格（≈2800 CSS px），而屏幕上被撑开的是 2888×2736 画布像素——
+ * 真机症状正是「只剩左上角、且怎么缩都回不到整图」。视图数学与 `<img>` 必须对着**同一张图**算。
+ *
+ * **`Math.ceil` 是必须的、且方向是安全的**：`core/crop/view.ts` 的 `requireImageSize`（经
+ * `fitTransform` / `clampView` 进来）只收**整数**尺寸，而画布像素除以格像素一般带小数
+ * （2888 / 96 = 30.08）——那条守卫是 B2 的既有口径，**不放宽**。上取整让夹取盒子 ≥ 真实画布，
+ * 于是 `scale × 真实画布 ≤ 视口`：默认视图与缩放下限都**保证整图可见**（代价是全图最多空出半格，
+ * 如实记录）。
+ *
+ * `pattern.width/height` 的「格」语义**不变**，它继续用于统计与渲染入参；换掉的只有视图数学的
+ * 这个 `oriented` 参数。计划到手之前它是 `null`（视图保持 `null`，渲染走 `maxWidth: 100%` 兜底）。
+ */
+const sheetGrid = computed<Size | null>(() => {
+  const plan = sheetPlan.value;
+  if (plan === null) return null;
+  return {
+    width: Math.ceil(plan.canvasWidth / plan.cellPx),
+    height: Math.ceil(plan.canvasHeight / plan.cellPx),
+  };
+});
 /** 视口尺寸（CSS px）。happy-dom 下 `getBoundingClientRect()` 返回全 0 ⇒ 用例用 `withViewport()` 覆写。 */
 const viewport = ref<Size>({ width: 0, height: 0 });
 const view = ref<ViewTransform | null>(null);
@@ -132,12 +177,21 @@ function measure(): void {
   const rect = element.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return;
   viewport.value = { width: rect.width, height: rect.height };
+  const grid = sheetGrid.value;
+  /**
+   * 计划还没到手 ⇒ 视图保持 `null`（渲染走 `maxWidth: 100%` 兜底那一支）。
+   *
+   * **为什么不能拿 `pattern` 先顶一会儿**（C8 修复 ②）：视图数学的坐标系必须是**整张图**；用格数
+   * 先算一次、等计划到手再换，等于让用户在「只剩左上角」的视图上停留一瞬，而且 `sized` 已经被置位，
+   * 第二次不会再算默认视图。计划到手后 `onMounted` 会再量一次（那时 `sized` 仍是 false）。
+   */
+  if (grid === null) return;
   if (!sized) {
-    view.value = defaultCellView(viewport.value, grid.value);
+    view.value = defaultCellView(viewport.value, grid);
     sized = true;
     return;
   }
-  if (view.value !== null) view.value = clampView(view.value, viewport.value, grid.value);
+  if (view.value !== null) view.value = clampView(view.value, viewport.value, grid);
 }
 
 /**
@@ -198,7 +252,8 @@ function onPointerDown(event: PointerEvent): void {
 function onPointerMove(event: PointerEvent): void {
   const element = stage.value;
   const current = view.value;
-  if (element === null || current === null || !canTransform.value) return;
+  const grid = sheetGrid.value;
+  if (element === null || current === null || grid === null || !canTransform.value) return;
   if (!pointers.has(event.pointerId)) return;
   /**
    * **按键已经松开 ⇒ 这条指针是陈旧的，清干净再早退**。
@@ -233,14 +288,14 @@ function onPointerMove(event: PointerEvent): void {
       const scaled = zoomCellView(
         current,
         viewport.value,
-        grid.value,
+        grid,
         current.scale * (distance / pinch.lastDistance),
         centre,
       );
       view.value = panCellView(
         scaled,
         viewport.value,
-        grid.value,
+        grid,
         centre.x - pinch.lastCentre.x,
         centre.y - pinch.lastCentre.y,
       );
@@ -254,7 +309,7 @@ function onPointerMove(event: PointerEvent): void {
     view.value = panCellView(
       current,
       viewport.value,
-      grid.value,
+      grid,
       point.x - previous.x,
       point.y - previous.y,
     );
@@ -295,13 +350,14 @@ function onPointerUp(event: PointerEvent): void {
 /** 双击：在「整图适配」与「放大到上限」之间切换（看图 app 的通用动作）。 */
 function onDoubleTap(): void {
   const current = view.value;
-  if (current === null || !canTransform.value) return;
-  const fit = defaultCellView(viewport.value, grid.value);
+  const grid = sheetGrid.value;
+  if (current === null || grid === null || !canTransform.value) return;
+  const fit = defaultCellView(viewport.value, grid);
   if (current.scale > fit.scale * 1.01) {
     zoomFit();
     return;
   }
-  zoomAt(maxCellScale(viewport.value, grid.value), {
+  zoomAt(maxCellScale(viewport.value, grid), {
     x: viewport.value.width / 2,
     y: viewport.value.height / 2,
   });
@@ -309,8 +365,9 @@ function onDoubleTap(): void {
 
 function zoomAt(nextScale: number, anchor: { x: number; y: number }): void {
   const current = view.value;
-  if (current === null || !canTransform.value) return;
-  view.value = zoomCellView(current, viewport.value, grid.value, nextScale, anchor);
+  const grid = sheetGrid.value;
+  if (current === null || grid === null || !canTransform.value) return;
+  view.value = zoomCellView(current, viewport.value, grid, nextScale, anchor);
 }
 
 /** 底部操作条：以视口中心为锚点放大 / 缩小（与编辑器工具栏同一口径）。 */
@@ -323,8 +380,9 @@ function zoomBy(factor: number): void {
 
 /** 整图适配：现在**只给双击用**（「适配」那颗按钮按 C8 规格删掉了）。 */
 function zoomFit(): void {
-  if (!canTransform.value) return;
-  view.value = defaultCellView(viewport.value, grid.value);
+  const grid = sheetGrid.value;
+  if (grid === null || !canTransform.value) return;
+  view.value = defaultCellView(viewport.value, grid);
 }
 
 /** 滚轮缩放（桌面调试）；锚点取指针位置。 */
@@ -348,7 +406,8 @@ onMounted(async () => {
     const stats = patternStats(props.pattern, props.palette);
     // 这一份用量同时喂渲染通道与打印页（不重算第二遍统计）。
     usages.value = stats.usages;
-    const blob = await renderSheetBlob({
+    // 通道把 blob 与**计划**一起交出来（C8 修复 ②）：计划是「画布像素 ↔ 格」的唯一换算来源。
+    const { blob, plan } = await renderSheetBlob({
       pattern: props.pattern,
       palette: props.palette,
       usages: usages.value,
@@ -358,6 +417,11 @@ onMounted(async () => {
     // object URL 再没有人能销号。
     if (disposed) return;
     sheetBlob.value = blob;
+    sheetPlan.value = plan;
+    // **计划到手后补量一次**：`onMounted` 开头那次 `measure()` 可能已经量到视口尺寸，但那时还没有
+    // 坐标系（`sheetGrid` 是 null）⇒ 视图仍是 null。不补这一次的话，真机上「尺寸早就量到了」的
+    // 常见路径会永远停在 `maxWidth: 100%` 兜底那一支（计划到了却永远不进入可缩放视图）。
+    measure();
     // **预览 URL 单独兜错**：它与「图纸生成」是两件事——URL 造不出来时图纸**已经算完了**
     // （保存按钮因此可点），报成「图纸生成失败」是失实；也不该落进下面那个 catch 把一颗已生成的
     // blob 说成失败。预览失败只影响垫场图，保存路径不受影响。
@@ -380,6 +444,7 @@ onUnmounted(() => {
   if (blobUrl.value !== "") URL.revokeObjectURL(blobUrl.value);
   blobUrl.value = "";
   sheetBlob.value = null;
+  sheetPlan.value = null;
 });
 
 async function save(): Promise<void> {
@@ -433,6 +498,13 @@ async function save(): Promise<void> {
       **也**不绑 `@pointerleave`（与 `PatternCanvas.vue` 同构）：拖出舞台就中止平移不是想要的行为；
       「松手点落在舞台之外」那一条由 `onPointerDown` 的 `setPointerCapture` + `onPointerMove` 的
       `buttons === 0` 兜底来收尾（两者都保证 `pointers` / `dragging` 被清干净）。
+
+      **`scale()` 必须除以 `plan.cellPx`（C8 修复 ②）**：`view.scale` 的语义是**每格多少 CSS px**
+      （`screen = offset + cell × cellPx`），而 `<img>` 的固有尺寸是**画布像素**——变换乘在画布像素上，
+      所以要先把画布像素换算成格（÷ `cellPx`）。少了这一除，整张图会被放大 `cellPx` 倍左右
+      （29×25 那条图：2888 × 20.69 ≈ 59,700 CSS px，屏幕只有 800 px）⇒ 只剩左上角。
+      `origin-top-left` 已经让 img 原点落在画布原点，
+      因此**不需要**额外的 `translate`。计划未到手（`sheetPlan === null`）时仍是 `maxWidth: 100%` 兜底。
     -->
     <div
       ref="stage"
@@ -451,10 +523,10 @@ async function save(): Promise<void> {
         alt="施工图"
         class="origin-top-left select-none"
         :style="
-          view === null
+          view === null || sheetPlan === null
             ? { maxWidth: '100%' }
             : {
-                transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`,
+                transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale / sheetPlan.cellPx})`,
                 maxWidth: 'none',
                 imageRendering: 'auto',
               }

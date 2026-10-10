@@ -3,9 +3,11 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { toProjectDocument } from "@/core/project/file";
+import { planSheet } from "@/core/render/layout";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import { setProjectStore, type ProjectMeta } from "@/services/projectStore";
+import type { SheetRenderInput } from "@/services/sheetExport";
 import { useDraft } from "@/stores/draft";
 import { useProjectSession, type RuntimeParams } from "@/stores/project";
 import EditResultPage from "@/views/EditResultPage.vue";
@@ -48,8 +50,17 @@ vi.mock("@/services/patternThumbnail", () => ({
   renderPatternThumbnail: () => "data:image/png;base64,AAAA",
   RESULT_PREVIEW_MAX_EDGE: 1024,
 }));
+/**
+ * 渲染通道替身（happy-dom 的 canvas 没有像素语义）。
+ *
+ * **C8 修复 ② 起返回 `{ blob, plan }`**：查看层要用计划把 `<img>` 的画布像素换算回「格」。
+ * 计划用真 `planSheet` 现算（替身不该伪造几何）——它在**调用时**才解引用，那时静态 import 早已初始化。
+ */
 vi.mock("@/services/sheetExport", () => ({
-  renderSheetBlob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+  renderSheetBlob: async (input: SheetRenderInput) => ({
+    blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    plan: planSheet(input.pattern, input.palette, input.usages, input.projectName),
+  }),
 }));
 
 const palette = getBuiltinPalette();

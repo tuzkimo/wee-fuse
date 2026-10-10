@@ -108,6 +108,25 @@ describe("当前画笔槽（§9.1 第 1 条）", () => {
     expect(wrapper.findAll("[data-testid='palette-row']")).toHaveLength(1);
     expect(wrapper.get("[data-testid='palette-current']").text()).toContain("A1");
   });
+
+  /**
+   * 【C8 修复 ③a，真机截图】当前色槽**必须与一行色号带同宽**。
+   *
+   * **判死什么**：`<button>` 是 inline-block，`display: flex` 只让它成为 flex 容器、不会让它占满
+   * 整行——少了 `w-full`，当前色槽就比下面的色号带窄一截（真机截图里就是这样）。所以这里**逐类**
+   * 断言宽度类的每一项：只断言「色槽有 `w-full`」时，把色号带的 `w-full` 删掉（于是两边又不等宽）
+   * 照样绿。
+   */
+  it("当前色槽与一行色号带同一组宽度类（含 w-full）", () => {
+    const wrapper = mountPanel();
+    const slot = wrapper.get("[data-testid='palette-current']");
+    const row = wrapper.findAll("[data-testid='palette-row']")[0];
+    expect(row).toBeDefined();
+    for (const className of ["w-full", "flex", "min-h-11", "items-center", "gap-2", "px-3", "text-base", "rounded"]) {
+      expect(slot.classes()).toContain(className);
+      expect(row?.classes()).toContain(className);
+    }
+  });
 });
 
 describe("已用色列表（§9.1 第 2 条）", () => {
@@ -179,6 +198,27 @@ describe("当前色槽即入口（§9.1 第 3 条）", () => {
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
     await slot.trigger("click");
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(true);
+  });
+
+  /**
+   * 【C8 修复 ③b，真机截图】选择器必须在 DOM 里**紧跟在当前色槽之后**。
+   *
+   * **判死什么**：它原先是 `<section>` 的最后一个子元素（排在色号列表之后），手机竖排下被整块色号带
+   * 挤到**整页最底部**——用户点开当前色槽后还得滚很远才看得到选择器。只断言「picker 存在」时，
+   * 它挪到哪里都绿；所以这里断言的是**兄弟顺序**：`palette-current` 的下一个元素就是 picker 本尊，
+   * 并且色号带确实排在 picker **之后**（反向前提，缺了它「picker 挪回列表后面」也可能绿）。
+   */
+  it("选择器紧跟在当前色槽之后（下一个兄弟），不在色号列表下面", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
+
+    const slot = wrapper.get("[data-testid='palette-current']");
+    const picker = wrapper.get("[data-testid='picker']");
+    expect(slot.element.nextElementSibling).toBe(picker.element);
+
+    const row = wrapper.get("[data-testid='palette-row']").element;
+    const follows = picker.element.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(follows).toBeTruthy();
   });
 
   // 两颗按钮都不许留个壳：`palette-add` 的入口功能已并入当前色槽，

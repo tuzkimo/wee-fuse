@@ -4,9 +4,11 @@ import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { toProjectDocument } from "@/core/project/file";
+import { planSheet } from "@/core/render/layout";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import { getBuiltinPalette } from "@/services/palette";
 import { setProjectStore } from "@/services/projectStore";
+import type { SheetRenderInput } from "@/services/sheetExport";
 import { makeRecord } from "@/services/__tests__/projectStoreContract";
 import LibraryPage from "@/views/LibraryPage.vue";
 
@@ -21,9 +23,15 @@ vi.mock("vue-router", () => ({
  * `renderSheetBlob`。不替的话 happy-dom 里会为它建一张真画布（`getContext("2d")` 返回 `null`
  * ⇒ 组件以「无法获取 2D 上下文」告警/失败），成为一条与列表页无关的假红。
  * 本文件只断言「点开就挂上查看层」；查看层内部行为由 `SheetViewer.test.ts` 覆盖。
+ *
+ * **C8 修复 ② 起返回 `{ blob, plan }`**：查看层要用计划把 `<img>` 的画布像素换算回「格」。
+ * 计划用真 `planSheet` 现算（替身不该伪造几何）——它在**调用时**才解引用，那时静态 import 早已初始化。
  */
 vi.mock("@/services/sheetExport", () => ({
-  renderSheetBlob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+  renderSheetBlob: async (input: SheetRenderInput) => ({
+    blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    plan: planSheet(input.pattern, input.palette, input.usages, input.projectName),
+  }),
 }));
 
 /** `URL.createObjectURL` 的序号（见 `beforeEach` 里的桩：每次调用给一个**不同**的串）。 */

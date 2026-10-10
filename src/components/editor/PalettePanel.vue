@@ -123,13 +123,17 @@ function onPick(index: number): void {
 
       C8 第 3 项起它还是**选择器的唯一入口**：原来那颗「添加颜色」按钮删除，改成点色槽本身开合
       （`picking = !picking`）。`aria-expanded` 是它对辅助技术的状态陈述——绑错或恒为某一个值，
-      读屏用户听到的就是反的。`display: flex` 是块级盒子，所以按钮仍然占满整行（与原来的 `div` 同宽）。
+      读屏用户听到的就是反的。
+
+      **`w-full` 不能省**（C8 修复 ③a）：`<button>` 是 inline-block，`display: flex` 只是把它变成
+      flex **容器**、不会让它占满整行——旧注释写「`display: flex` 是块级盒子，所以按钮仍然占满
+      整行」，已被真机截图推翻（当前色槽比下面的色号带窄一截）。宽度类与 `palette-row` 逐字对齐。
     -->
     <button
       type="button"
       data-testid="palette-current"
       :aria-expanded="picking"
-      class="flex min-h-11 items-center gap-2 rounded border border-slate-300 bg-white px-3 text-base"
+      class="flex min-h-11 w-full items-center gap-2 rounded border border-slate-300 bg-white px-3 text-base"
       @click="picking = !picking"
     >
       <template v-if="current">
@@ -143,6 +147,19 @@ function onPick(index: number): void {
       <!-- 橡皮态只在这儿显示「橡皮」：独立的橡皮按钮在工具栏上（C8 第 3 项） -->
       <span v-else class="font-semibold">橡皮</span>
     </button>
+
+    <!--
+      选择器**紧跟当前色槽**（C8 修复 ③b）：它原先在色号列表之后（`<section>` 的最后一个子元素），
+      手机竖排下被整块色号带挤到**整页最底部**——用户点开当前色槽之后还得滚很远才看得到它。
+      `v-if="picking"` 与 `@pick` / `@close` 的语义都不变，只换位置。
+    -->
+    <PalettePicker
+      v-if="picking"
+      :palette="palette"
+      :used-indices="usedIndices"
+      @pick="onPick"
+      @close="picking = false"
+    />
 
     <ul class="space-y-1">
       <li v-for="row in rows" :key="row.code">
@@ -162,13 +179,5 @@ function onPick(index: number): void {
         </button>
       </li>
     </ul>
-
-    <PalettePicker
-      v-if="picking"
-      :palette="palette"
-      :used-indices="usedIndices"
-      @pick="onPick"
-      @close="picking = false"
-    />
   </section>
 </template>

@@ -10,7 +10,7 @@ import type { Palette } from "@/core/palette/types";
 import { cellAt } from "@/core/pattern/edit";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { planBoardPage, planSheet } from "@/core/render/layout";
+import { planBoardPage, planSheet, type SheetPlan } from "@/core/render/layout";
 import { drawBoardPage, drawSheet, type SheetMeta } from "@/core/render/sheet";
 import type { RenderTarget2D } from "@/core/render/types";
 import {
@@ -71,12 +71,26 @@ async function renderWithPlan(
   }
 }
 
+/**
+ * 单张施工图的产物：**blob 连计划一起交出来**（C8 修复）。
+ *
+ * **为什么计划要跟着 blob 走**：查看层必须知道「一个画布像素等于多少格」才能把 `<img>` 的固有尺寸
+ * （= 整张图的画布像素）映射回 `core` 视图数学的坐标系（格）：它是 `plan.cellPx` 与
+ * `plan.canvasWidth/Height` 的唯一来源。让调用方自己再调一次 `planSheet` 会变成第二遍 O(格数)
+ * 的几何计算，而且两份计划的几何随时可能漂移（画布尺寸与实际渲染的那一份不一致）。
+ */
+export interface SheetRenderResult {
+  readonly blob: Blob;
+  readonly plan: SheetPlan;
+}
+
 /** 单张施工图（含底部用料条）。 */
-export async function renderSheetBlob(input: SheetRenderInput): Promise<Blob> {
+export async function renderSheetBlob(input: SheetRenderInput): Promise<SheetRenderResult> {
   const plan = planSheet(input.pattern, input.palette, input.usages, input.projectName);
-  return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
+  const blob = await renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
     drawSheet(target, input.pattern, input.palette, input.usages, plan, sheetMeta(input));
   });
+  return { blob, plan };
 }
 
 /**
