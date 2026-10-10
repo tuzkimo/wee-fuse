@@ -2,7 +2,9 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { closeTopOverlay } from "@/composables/useOverlayBack";
+import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
+import type { Pattern } from "@/core/pattern/types";
 import { getBuiltinPalette } from "@/services/palette";
 import type { SheetRenderInput } from "@/services/sheetExport";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
@@ -393,8 +395,11 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     }
     const before = wrapper.get("[data-testid='sheet-preview']").attributes("style");
     const stage = wrapper.get("[data-testid='sheet-stage']");
-    await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
-    await stage.trigger("pointermove", { pointerId: 1, clientX: 430, clientY: 310 });
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    // `buttons: 1`：**拖动中的 `pointermove` 本来就带着按下的键**（真机如此），而组件现在会读它
+    // 把「没按键的移动」当陈旧指针清掉（见「松手点落在舞台之外」那条用例）。不显式给，
+    // happy-dom 造出来的事件 `buttons` 恒为 0，拖动会被当成悬停。
+    await stage.trigger("pointermove", { pointerId: 1, buttons: 1, clientX: 430, clientY: 310 });
     await stage.trigger("pointerup", { pointerId: 1, clientX: 430, clientY: 310 });
     expect(wrapper.get("[data-testid='sheet-preview']").attributes("style")).not.toBe(before);
   });
@@ -411,18 +416,67 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     expect(scaleOf(wrapper)).toBe(6);
     const stage = wrapper.get("[data-testid='sheet-stage']");
 
-    await stage.trigger("pointerdown", { pointerId: 1, clientX: 300, clientY: 300 });
-    await stage.trigger("pointerdown", { pointerId: 2, clientX: 400, clientY: 300 });
-    // 两指间距 100 → 200：比例 ×2
-    await stage.trigger("pointermove", { pointerId: 2, clientX: 500, clientY: 300 });
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 300, clientY: 300 });
+    await stage.trigger("pointerdown", { pointerId: 2, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    // 两指间距 100 → 200：比例 ×2（`buttons: 1`：两指都还按在屏幕上，理由同拖动那条）
+    await stage.trigger("pointermove", { pointerId: 2, buttons: 1, clientX: 500, clientY: 300 });
     expect(scaleOf(wrapper)).toBeCloseTo(12, 5);
 
     // 间距 200 → 150：比例 ×0.75（增量口径：比值是 150/200）
-    await stage.trigger("pointermove", { pointerId: 2, clientX: 450, clientY: 300 });
+    await stage.trigger("pointermove", { pointerId: 2, buttons: 1, clientX: 450, clientY: 300 });
     expect(scaleOf(wrapper)).toBeCloseTo(9, 5);
 
     await stage.trigger("pointerup", { pointerId: 1, clientX: 300, clientY: 300 });
     await stage.trigger("pointerup", { pointerId: 2, clientX: 450, clientY: 300 });
+  });
+
+  it("松手点落在舞台之外（舞台收不到 pointerup）后，仅仅悬停不再平移，且下一次正常拖动仍然生效", async () => {
+    // **判死什么**（C8 任务 6 第 1 轮审查的「重要 2」）：舞台内按下 → 在舞台外松手（松手点常常落在
+    // 底部操作条上，它是舞台的**兄弟**、不是后代 ⇒ 舞台收不到 `pointerup`）之后，`pointers` 里那条
+    // 陈旧指针若还在，用户只是把鼠标移回舞台，图就会跟着跑。这里用 `document.body` 上派发 `pointerup`
+    // 复现这条路径（body 是舞台的**祖先**，所以这个事件不会落到舞台的处理器上）。
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+    });
+    await flushPromises();
+    await withViewport(wrapper);
+    for (let i = 0; i < 8; i += 1) {
+      await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
+    }
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+    const preview = () => wrapper.get("[data-testid='sheet-preview']").attributes("style");
+    const before = preview();
+
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    document.body.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 430, clientY: 310 }));
+    // 之后仅仅悬停（**没有按键**）：旧实现会在这一步继续平移
+    await stage.trigger("pointermove", { pointerId: 1, buttons: 0, clientX: 430, clientY: 310 });
+    expect(preview()).toBe(before);
+
+    // 清干净之后，正常的一次拖动仍然生效（守卫没有把手势状态机弄坏）
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointermove", { pointerId: 1, buttons: 1, clientX: 470, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 470, clientY: 300 });
+    expect(preview()).not.toBe(before);
+  });
+
+  it("捏合收拢后的最后一抬不算轻点：紧接着的一次轻点不会被误判成双击", async () => {
+    // **判死什么**（C8 任务 6 第 1 轮审查的「次要 4」）：第二指落下时若不清 `pressOrigin`，
+    // 两指落回第一指落点 12px 内时，最后一抬会被记成一次轻点 ⇒ 紧接着的一次真轻点就成了双击。
+    const wrapper = mountViewer();
+    await flushPromises();
+    await withViewport(wrapper);
+    const fit = scaleOf(wrapper);
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerdown", { pointerId: 2, button: 0, buttons: 1, clientX: 600, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 2, clientX: 600, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    // 紧接着一次轻点：若上一抬被记成 lastTap，这里就是「双击」⇒ 比例会跳到上限
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    expect(scaleOf(wrapper)).toBeCloseTo(fit, 5);
   });
 
   it("「打印」在查看层里打开打印页，关掉它回到查看层", async () => {
@@ -437,22 +491,43 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(true);
   });
 
-  it("打印页的接线：`:usages` / `:project-name` 就是查看层自己那一份，不是空数组、不是别的名字", async () => {
-    const wrapper = mountViewer();
+  it("打印页的接线：pattern / palette / usages / project-name 四项都读过，且不是空数组、不是别的名字", async () => {
+    // 名字与图纸都用**可辨识**的值：
+    // - 名字取「另一个名字」而不是 fixture 默认的「测试工程」⇒ 组件里**写死常量**也会红；
+    // - 图纸 2×2、格子值 `[0, 2, 2, 2]`（与 `makePattern()` 那份全 0 的同尺寸图纸不同）⇒
+    //   把 `:pattern` 接成另一份**同尺寸**图纸也会红（同尺寸是为了排除「尺寸对不上才红」的假判据）。
+    const sheet = {
+      width: 2,
+      height: 2,
+      paletteId: palette.id,
+      cells: new Uint16Array([0, 2, 2, 2]),
+    };
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: sheet, palette, name: "另一个名字", thumbnail: "" },
+    });
     await flushPromises();
     await wrapper.get("[data-testid='sheet-print']").trigger("click");
 
     const input = renderSheetBlob.mock.calls[0]?.[0] as SheetRenderInput;
     const panel = wrapper.findComponent(ExportPanel);
-    // 名字：字面量 + 与查看层自己的 props 同源（把 `:project-name` 接成常量 / 别的字段都会红）
-    expect(wrapper.props("name")).toBe("测试工程");
-    expect(panel.props("projectName")).toBe("测试工程");
+    // ① pattern：逐格取值 + 尺寸。**不用** `toBe(wrapper.props("pattern"))`：VTU 的 `mount` 把 props
+    //    塞进 `reactive({})`，身份断言恒红（同一处记录见 `ResultPanel.test.ts` 的端到端用例）。
+    const passedPattern = panel.props("pattern") as Pattern;
+    expect(passedPattern.width).toBe(2);
+    expect(passedPattern.height).toBe(2);
+    expect(Array.from(passedPattern.cells)).toEqual([0, 2, 2, 2]);
+    // ② palette：必须是查看层自己那一份色卡（漏传 / 接成 pattern 都会红）
+    expect((panel.props("palette") as Palette).id).toBe(palette.id);
+    // ③ project-name：字面量 + 与查看层自己的 props 同源（接成常量 / 别的字段都会红）
+    expect(wrapper.props("name")).toBe("另一个名字");
+    expect(panel.props("projectName")).toBe("另一个名字");
     expect(panel.props("projectName")).toBe(wrapper.props("name"));
-    // 用量：**同一份对象**（重算一遍统计、或传空数组都会红），且不是空表
+    // ④ usages：**同一份对象**（重算一遍统计、或传空数组都会红），且不是空表：
+    //    2×2 里 3 格第 2 色 + 1 格第 0 色
     const usages = panel.props("usages") as readonly ColorUsage[];
     expect(usages).toBe(input.usages);
-    expect(usages).toHaveLength(1);
-    expect(usages[0]?.count).toBe(2);
+    expect(usages).toHaveLength(2);
+    expect(usages.map((usage) => usage.count).sort((a, b) => a - b)).toEqual([1, 3]);
   });
 
   it("接进覆盖层返回栈：closeTopOverlay() 关掉查看层", async () => {

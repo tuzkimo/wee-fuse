@@ -160,8 +160,18 @@ function localPoint(event: PointerEvent, element: HTMLElement): { x: number; y: 
 function onPointerDown(event: PointerEvent): void {
   const element = stage.value;
   if (element === null) return;
+  // 只认主键（与 `PatternCanvas.vue` 同一条守卫）：右键 / 中键不该平移。
+  if (event.button !== 0) return;
   const point = localPoint(event, element);
   pointers.set(event.pointerId, point);
+  /**
+   * 捕获指针（与 `PatternCanvas.vue` 同构）：在舞台内按下、拖到**舞台之外**再松手时，
+   * 松手那一下以及之后的移动都会回到捕获元素上。少了它，舞台收不到 `pointerup`，
+   * `pointers` / `dragging` 会留在原地——用户只是把鼠标移回舞台，图就跟着跑
+   * （C8 任务 6 第 1 轮审查的「重要 2」）。可选调用：happy-dom 有这个方法但是空转
+   * （不重定向事件），`?.` 也让没有它的环境不炸。
+   */
+  (event.target as Element | null)?.setPointerCapture?.(event.pointerId);
   if (pointers.size === 1) {
     pressOrigin = point;
     dragging = point;
@@ -177,6 +187,10 @@ function onPointerDown(event: PointerEvent): void {
         lastCentre: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       };
     }
+    // **第二指落下就不再有「单指轻点」这回事**：不清 `pressOrigin` 的话，捏合收拢后最后一抬
+    // 只要落回第一指落点 12px 内就会被记成一次轻点，紧接着的一次轻点于是被误判成双击
+    // （与 `onPointerUp` 里「多指不算」的注释是同一件事）。
+    pressOrigin = null;
     dragging = null;
   }
 }
@@ -186,6 +200,24 @@ function onPointerMove(event: PointerEvent): void {
   const current = view.value;
   if (element === null || current === null || !canTransform.value) return;
   if (!pointers.has(event.pointerId)) return;
+  /**
+   * **按键已经松开 ⇒ 这条指针是陈旧的，清干净再早退**。
+   *
+   * 来路：真机鼠标在舞台内按下、到舞台外松手（松手点常常落在底部操作条上——它是舞台的**兄弟**、
+   * 不是后代），舞台收不到 `pointerup`。上面的 `setPointerCapture` 能救回绝大多数情况，但捕获
+   * 也可能被系统丢掉（切窗口 / 手势被浏览器接管），所以这里再按**事件自身的按键状态**兜底：
+   * 一次没有按键的 `pointermove` 只可能是悬停，不该平移。
+   * 少了它，用户把鼠标移回舞台，图就会自己跑（C8 任务 6 第 1 轮审查的「重要 2」）。
+   */
+  if (event.buttons === 0) {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 0) {
+      dragging = null;
+      pressOrigin = null;
+    }
+    return;
+  }
   const previous = pointers.get(event.pointerId) as { x: number; y: number };
   const point = localPoint(event, element);
   pointers.set(event.pointerId, point);
@@ -398,6 +430,9 @@ async function save(): Promise<void> {
       否则真机上双指捏合会被页面的滚动接管。
       **舞台刻意不绑 `@dblclick`**：双击只由指针序列判定（见 `lastTap` 的 JSDoc）——两条入口并存时，
       一次鼠标双击会跑两遍处理器、一来一回互相抵消。
+      **也**不绑 `@pointerleave`（与 `PatternCanvas.vue` 同构）：拖出舞台就中止平移不是想要的行为；
+      「松手点落在舞台之外」那一条由 `onPointerDown` 的 `setPointerCapture` + `onPointerMove` 的
+      `buttons === 0` 兜底来收尾（两者都保证 `pointers` / `dragging` 被清干净）。
     -->
     <div
       ref="stage"
