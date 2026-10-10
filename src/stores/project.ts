@@ -9,9 +9,8 @@ import { getProjectStore, type ProjectMeta, type ProjectRecord } from "@/service
 /** `fromProjectDocument` 的返回类型里参数那一半。 */
 export interface RuntimeParams {
   readonly longSide: number;
+  /** 用色数：1..色卡色数 的整数，等于色卡色数即「不限」（2026-10-10 口径简化）。 */
   readonly maxColors: ProjectParams["maxColors"];
-  /** 仅当 `maxColors === "custom"` 时有意义（C7 §6.1）。 */
-  readonly customMaxColors?: number;
   readonly crop: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   readonly rotation: 0 | 1 | 2 | 3;
 }
@@ -146,9 +145,6 @@ export const useProjectSession = defineStore("projectSession", () => {
       const doc = toProjectDocument(pattern.value, getBuiltinPalette(), {
         longSide: params.value.longSide,
         maxColors: params.value.maxColors,
-        ...(params.value.customMaxColors === undefined
-          ? {}
-          : { customMaxColors: params.value.customMaxColors }),
         crop: {
           x: params.value.crop.x,
           y: params.value.crop.y,

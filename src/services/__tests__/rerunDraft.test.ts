@@ -13,25 +13,26 @@ import { useProjectSession, type RuntimeParams } from "@/stores/project";
  * `seedRerunDraft` 的用例（C8 规格 §3.4）。
  *
  * **为什么单独测它**：编辑页的「重做」与编辑来源结果页的「重做」共用这一份，两处各写一遍就是
- * 「同一件事的第二份实现」，而它写错的形态是**静默的**——草稿身份不对 ⇒ 覆盖到别的记录。
- * 这里同时钉住 C8 顺带修的那个既有缺陷：原实现（`EditorPage.vue`）没有把
- * `params.customMaxColors` 带进草稿，于是重跑一条「自定义 20 色」的工程时草稿里还是残留值。
+ * 「同一件事的第二份实现」，而它写错的形态是**静默的**——草稿身份不对 ⇒ 覆盖到别的记录；
+ * 参数漏播 ⇒ 生成出来的图纸与记录不一致。
+ *
+ * **2026-10-10 口径简化**：用色数只剩一个数字字段，所以这里钉的判据从
+ * 「`maxColors: "custom"` + `customMaxColors: 20` 两个字段一起过」收敛成
+ * 「`maxColors: 20` 这一个数字过」——用色数取 20（草稿默认 16），播种与默认才分得开。
  */
 const palette = getBuiltinPalette();
 
-/** 夹具：2×1 图纸，参数是 `custom` 档 + 20 色（简报点名的那组取值）。 */
+/** 夹具：2×1 图纸，用色数是 20（草稿默认 16 ⇒ 「播进去了」与「本来就是默认值」可区分）。 */
 const DOC_PARAMS: ProjectParams = {
   longSide: 2,
-  maxColors: "custom",
-  customMaxColors: 20,
+  maxColors: 20,
   crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 },
 };
 
 /** 同一组参数的**运行期**形状（与 `stores/project.ts` 的 `RuntimeParams` 同口径）。 */
 const RUNTIME_PARAMS: RuntimeParams = {
   longSide: 2,
-  maxColors: "custom",
-  customMaxColors: 20,
+  maxColors: 20,
   crop: { x: 0, y: 0, width: 8, height: 8 },
   rotation: 0,
 };
@@ -62,12 +63,11 @@ beforeEach(() => {
 });
 
 describe("seedRerunDraft（C8：编辑页与编辑结果页共用的一份播种）", () => {
-  it("播种草稿时把自定义色数一起带过去（重跑 custom 工程必须用回那个数）", () => {
+  it("播种草稿时把记录里的用色数一起带过去（重跑必须用回那个数）", () => {
     const session = useProjectSession();
     const draft = useDraft();
-    // 草稿里的残留值刻意不是 20：`adoptProject` 若不带 `customMaxColors`，读回来就是 32。
-    draft.setMaxColors("all");
-    draft.setCustomMaxColors(32);
+    // 起点刻意不是 20（草稿默认 16）：`adoptProject` 若不播种 maxColors，读回来的就是默认值。
+    expect(draft.maxColors).toBe(16);
     session.adopt(
       makePattern(),
       RUNTIME_PARAMS,
@@ -77,8 +77,7 @@ describe("seedRerunDraft（C8：编辑页与编辑结果页共用的一份播种
     );
 
     expect(seedRerunDraft(draft, session)).toBe(true);
-    expect(draft.maxColors).toBe("custom");
-    expect(draft.customMaxColors).toBe(20);
+    expect(draft.maxColors).toBe(20);
     expect(draft.rerunOf?.id).toBe("a");
   });
 

@@ -70,10 +70,14 @@ function makePattern(): Pattern {
   return { width: 2, height: 1, paletteId: palette.id, cells: Uint16Array.from([0, EMPTY]) };
 }
 
+/**
+ * 运行期参数。用色数取 20（草稿默认 16）：播种进去与默认值才分得开。
+ * **2026-10-10 口径简化**：原来是 `maxColors: "custom"` + `customMaxColors: 20` 两个字段，
+ * 现在只剩 `maxColors: 20` 这一个数字。
+ */
 const RUNTIME_PARAMS: RuntimeParams = {
   longSide: 2,
-  maxColors: "custom",
-  customMaxColors: 20,
+  maxColors: 20,
   crop: { x: 0, y: 0, width: 8, height: 8 },
   rotation: 0,
 };
@@ -92,8 +96,7 @@ const META: ProjectMeta = {
 function makeDoc() {
   return toProjectDocument(makePattern(), palette, {
     longSide: 2,
-    maxColors: "custom",
-    customMaxColors: 20,
+    maxColors: 20,
     crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 },
   });
 }
@@ -191,9 +194,8 @@ describe("EditResultPage（/edit/:id/result）", () => {
     expect(draft.source).not.toBeNull();
     expect(draft.rerunOf).toEqual({ id: "a", createdAt: META.createdAt });
     expect(draft.name).toBe("小猫");
-    // ② 参数一并带过去（含 C8 顺带修的 `customMaxColors`）
-    expect(draft.maxColors).toBe("custom");
-    expect(draft.customMaxColors).toBe(20);
+    // ② 参数一并带过去（用色数 20 ⇒ 与草稿默认 16 可区分）
+    expect(draft.maxColors).toBe(20);
     expect(session.record?.meta.id).toBe("a");
     // ③ 落点是生图页
     expect(pushMock).toHaveBeenCalledWith({ name: "setup" });

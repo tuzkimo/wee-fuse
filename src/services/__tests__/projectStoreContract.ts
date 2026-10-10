@@ -5,6 +5,13 @@ import { toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import type { ProjectMeta, ProjectRecord, ProjectStore } from "@/services/projectStore";
 
+/**
+ * 契约夹具色卡：**3 个原色 + 20 个中灰填充 = 23 色**。
+ *
+ * **为什么要填充**：2026-10-10 起 `maxColors` 的上界**就是色卡色数**，而本文件的
+ * `contractParams.maxColors` 是 16——3 色夹具会让它当场变成非法值（`toProjectDocument` 直接抛）。
+ * 填充色取中灰，与 A1–A3 都不撞色，也不参与任何断言（doc 的 codes 只有一个 A3）。
+ */
 export const contractPalette = loadPalette({
   id: "fake",
   name: "测试色卡",
@@ -14,6 +21,10 @@ export const contractPalette = loadPalette({
     { code: "A1", hex: "#ffffff" },
     { code: "A2", hex: "#000000" },
     { code: "A3", hex: "#ff0000" },
+    ...Array.from({ length: 20 }, (_, i) => {
+      const level = ((i + 1) * 10).toString(16).padStart(2, "0");
+      return { code: `G${i}`, hex: `#${level}${level}${level}` };
+    }),
   ],
 });
 
@@ -394,7 +405,13 @@ export function describeProjectStoreContract(
       const mine = makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z");
       await store.put(mine);
       (mine.doc.params as { longSide: number }).longSide = 999;
-      (mine.doc.params as { maxColors: number | null }).maxColors = 32;
+      /*
+       * **2026-10-10 口径简化**：这里原来写的是 `maxColors = 32`，并在类型上断言成
+       * `number | null`（旧枚举的两种取值）。新口径下 `maxColors` 就是「1..色卡色数 的整数」，
+       * `32` 不再承载「旧枚举值」的语义、也不再是 `null` 的兄弟——所以改成一个明显合法的
+       * 不同值 5，并把类型断言收成纯 `number`。判据（库里仍是 16）一字未变。
+       */
+      (mine.doc.params as { maxColors: number }).maxColors = 5;
 
       const after = await store.get("a");
       expect(after?.doc.params.longSide).toBe(2);

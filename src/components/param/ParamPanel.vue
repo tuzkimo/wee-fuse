@@ -16,12 +16,18 @@
 // （`preset-*` / `max-colors-*`）与独立的 `custom-max-colors` 输入框整块删除——档位现在由
 // 滑条上的节点表示，滑条的上界就是该参数的上界（用色数那条的上界**就是「不限」**）。
 // 工程名输入框加在最上面（§3.7：名字在这里就能改，不用等生成完去图纸库）。
+//
+// **2026-10-10 口径简化**：用色数只剩一个**数字**（没有档位枚举、没有 `customMaxColors`）。
+// 用色条上只有 8 / 16 / 24 三个纯数字档位，`labels="below"`——它们在 1–221 上只隔 3.18% /
+// 6.82% / 10.45%，画在 220px 轨道上必然重叠，所以改成刻度线 + 滑条下方一行数字。
+// 长边那条（29 / 58 / 116 落在 24% / 50% / 100%）不重叠，保持 `labels="track"`。
+// 两条滑条都**吸附**（阈值在 `TierSlider` 里：行程的 2%、至少 1）。
 import { computed, ref, watch } from "vue";
 import { rotatedSize } from "@/core/image/rotate";
 import type { Rect, Rotation } from "@/core/image/types";
 import { boardCount, beadsToCm, formatCm } from "@/core/pattern/board";
 import { computeGridSize } from "@/core/pattern/build";
-import { MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/types";
+import { MAX_LONG_SIDE, MIN_LONG_SIDE } from "@/core/pattern/types";
 import TierSlider, { type TierNode } from "@/components/param/TierSlider.vue";
 import { PROJECT_NAME_MAX } from "@/services/projectStore";
 
@@ -36,9 +42,8 @@ const props = defineProps<{
   /** 工程名（父级持有真相；本组件只回显与上报）。 */
   name: string;
   longSide: number;
-  maxColors: MaxColors;
-  /** `maxColors === "custom"` 时的具体色数（由父级的 store 持有）。 */
-  customMaxColors: number;
+  /** 用色数：1..色卡色数 的整数，等于色卡色数即「不限」（2026-10-10 口径简化后只剩这一个数字）。 */
+  maxColors: number;
   /** 内置色卡的色数：用色滑条的上界（也就是「不限」那一档）。 */
   paletteColorCount: number;
   /** 非空由父级保证（设计规格 §4.1 的可空契约只在页面级）。 */
@@ -53,8 +58,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:name": [string];
   "update:longSide": [number];
-  "update:maxColors": [MaxColors];
-  "update:customMaxColors": [number];
+  "update:maxColors": [number];
   generate: [];
 }>();
 
@@ -116,54 +120,41 @@ function onLongSideInput(state: { readonly value: number | null; readonly error:
 }
 
 // ---------------------------------------------------------------------------
-// 用色档位
+// 用色数（2026-10-10 口径简化：就是一个数字，没有档位枚举、没有第二个字段）
 // ---------------------------------------------------------------------------
 
 const colorError = ref("");
 
-/** 用色滑条的档位节点：三个预设 + **最右端的「不限」**（滑条上界就是色卡色数）。 */
-const COLOR_NODES = computed<readonly TierNode[]>(() => [
-  { value: 8, label: "8 色" },
-  { value: 16, label: "16 色" },
-  { value: 24, label: "24 色" },
-  { value: props.paletteColorCount, label: "不限" },
-]);
-
-/** 滑条上的位置：`"all"` 停在最右端，`"custom"` 停在自定义值上。 */
-const colorSliderValue = computed(() =>
-  props.maxColors === "all"
-    ? props.paletteColorCount
-    : props.maxColors === "custom"
-      ? props.customMaxColors
-      : props.maxColors,
-);
-
-const colorTierText = computed(() => {
-  if (props.maxColors === "all") return "用色：不限（跳过分簇，能少则少）";
-  if (props.maxColors === "custom") return `用色：自定义 ${props.customMaxColors} 色`;
-  return `用色：${props.maxColors} 色`;
-});
+/**
+ * 用色滑条上的三个**纯数字档位**（会画成刻度线、也是吸附点）。
+ *
+ * 「不限」不再单列一档：**拉满滑条（= 色卡色数）就是它**，所以这里只有 8 / 16 / 24 三个数字。
+ * 标签就是数字本身（人类伙伴原话：「每个档位就显示 8/16/24 的数字就行」）。
+ */
+const COLOR_NODES: readonly TierNode[] = [
+  { value: 8, label: "8" },
+  { value: 16, label: "16" },
+  { value: 24, label: "24" },
+];
 
 /**
- * 用色数：**滑条上界就是「不限」**（C8 规格 §6 裁定 B）。三个预设值原样映射到档位，
- * 其余整数走 `"custom"` + 该数值；填到上界（= 色卡色数）就是「不限」。
+ * 用色数：**滑条/输入框上是什么数字就 emit 什么数字**（不再有 `"all"` / `"custom"` 分支，
+ * 也不再往第二个字段里写值）。上界是色卡色数，「拉满」由调用方（父级）与 `buildPattern` 的
+ * `maxColors >= palette.colors.length` 同一判据解释成「不限」，组件不需要知道这件事。
  */
 function onMaxColorsInput(state: { readonly value: number | null; readonly error: string }): void {
   colorError.value = state.error === "" ? "" : `色数${state.error}`;
   if (state.value === null) return;
-  if (state.value >= props.paletteColorCount) {
-    emit("update:maxColors", "all");
-    return;
-  }
-  if (state.value === 8 || state.value === 16 || state.value === 24) {
-    emit("update:maxColors", state.value);
-    return;
-  }
-  // 先写数值再切档位：反过来的话，父级在「档位已是 custom、数值还是旧值」的那一拍里会拿旧
-  // 数值去重算（同一拍内 Vue 还没 patch 完 props），用户看到的摘要与最终产物就对不上。
-  emit("update:customMaxColors", state.value);
-  emit("update:maxColors", "custom");
+  emit("update:maxColors", state.value);
 }
+
+/**
+ * 读数：`maxColors >= 色卡色数` 时写「不限」——与 `core/pattern/build.ts` 里
+ * 「`maxColors >= palette.colors.length` ⇒ 跳过分簇」是**同一条判据**，界面不会与产物说两套。
+ */
+const colorReadout = computed(() =>
+  props.maxColors >= props.paletteColorCount ? "不限" : `${props.maxColors} 种`,
+);
 
 // ---------------------------------------------------------------------------
 // 摘要 / 生成闸门
@@ -230,6 +221,7 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
       :max="MAX_LONG_SIDE"
       :value="longSide"
       :nodes="LONG_SIDE_NODES"
+      labels="track"
       :disabled="busy"
       input-test-id="long-side"
       slider-test-id="long-side-slider"
@@ -241,22 +233,20 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
         label="用几种颜色"
         :min="1"
         :max="paletteColorCount"
-        :value="colorSliderValue"
+        :value="maxColors"
         :nodes="COLOR_NODES"
+        labels="below"
         :disabled="busy"
         input-test-id="max-colors"
         slider-test-id="max-colors-slider"
         @input="onMaxColorsInput"
       />
       <!--
-        档位的文字读数 + **生效上限**。上限那一项读的是滑条位置（`colorSliderValue`）：
-        「不限」那一档就是色卡色数（`paletteColorCount`），这正是 C8 规格 §6 裁定 B 的口径。
+        读数**只有一行**：`max-colors-value` 写「N 种」或「不限」。
+        `max-colors-tier`（档位文字）已随「档位」这个概念一起删除——它承载的东西不存在了。
       -->
       <p class="text-base text-slate-500">
-        <span data-testid="max-colors-tier">{{ colorTierText }}</span>
-        <span class="ml-2 text-slate-400">
-          生成时最多用 <span data-testid="max-colors-value">{{ colorSliderValue }}</span> 种
-        </span>
+        生成时用色上限：<span data-testid="max-colors-value">{{ colorReadout }}</span>
       </p>
     </div>
 

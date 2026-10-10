@@ -4,6 +4,7 @@ import { centerSquare, clampRectToSource, type AspectLock } from "@/core/crop/re
 import type { Size, ZoomLevel } from "@/core/crop/view";
 import type { Rect, Rotation } from "@/core/image/types";
 import { DEFAULT_MAX_COLORS, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/types";
+import { getBuiltinPalette } from "@/services/palette";
 import { defaultProjectName, normalizeProjectName } from "@/services/projectStore";
 
 /**
@@ -71,16 +72,13 @@ export interface AdoptMeta {
 /** 一张图纸的全部输入参数（`crop` 是**原图未旋转坐标**上的选区）。 */
 export interface DraftParams {
   readonly longSide: number;
+  /** 用色数：1..色卡色数 的整数，等于色卡色数即「不限」（2026-10-10 口径简化）。 */
   readonly maxColors: MaxColors;
-  /** 仅当 `maxColors === "custom"` 时有意义；其它档位下原样存着（用户可能来回切档位）。 */
-  readonly customMaxColors?: number;
   readonly crop: Rect;
   readonly rotation: Rotation;
 }
 
 const DEFAULT_LONG_SIDE = 58;
-/** 自定义色数的上界（内置色卡色数）。**与 `core/pattern/build.ts` 的上界同源**，见守卫的 JSDoc。 */
-const MAX_CUSTOM_MAX_COLORS = 221;
 
 // ---------------------------------------------------------------------------
 // 入口校验（规格 §12）
@@ -93,14 +91,21 @@ const MAX_CUSTOM_MAX_COLORS = 221;
 // 执行，现在不抽模块。
 //
 // **如实记录**：这份决定要付的代价——「错误信息口径漂移」——**已经实际发生**：
-// `core/project/types.ts` 的档位措辞（`用色档位非法：…（只允许 16 / 32 / null）`）与旋转措辞
-// （`旋转角度非法：…（必须是 0–3 的整数）`）与本文件**逐字相同**（`core/pattern/build.ts` 的档位
-// 也是同一句），而长边措辞已经分叉：`core/project/types.ts` 与 `core/pattern/build.ts` 写
-// 「长边豆数必须在 1–116 之间」，本文件写「长边豆数必须是 1–116 的整数」。
+// `core/project/types.ts` 的旋转措辞（`旋转角度非法：…（必须是 0–3 的整数）`）与本文件**逐字
+// 相同**（`core/pattern/build.ts` 的档位也是同一句），而长边措辞已经分叉：
+// `core/project/types.ts` 与 `core/pattern/build.ts` 写「长边豆数必须在 1–116 之间」，
+// 本文件写「长边豆数必须是 1–116 的整数」。
 //
 // 因此「统一口径留到第五处消费者出现时再评估」这个条件**已经到达**（第五处就是 `build.ts`）：
 // 按规格 §13 第 8 条与 `AGENTS.md` 的口径仍维持内联就地校验，本轮**不动代码**——改的是账目，
 // 不是行为。下次再有人想抽共享模块时，从这份账目出发，别再当成「还没到第五处」。
+//
+// **2026-10-10 口径简化的账目更新**：用色数从 5 值枚举改成「1..色卡色数 的整数」之后，
+// 这一口径仍是**四份内联副本**（`core/pattern/build.ts` 的 `requireMaxColors`、
+// `core/project/types.ts` 的落盘校验、`core/project/file.ts` 的落盘方向守卫、本文件的
+// `requireMaxColors`）。**上界现在四处同源**：三处 core 用 `palette.colors.length`，
+// 本文件用 `getBuiltinPalette().colors.length`（内置色卡的唯一生产入口，见 `services/palette.ts`）
+// ——原先那份写死的常量 `MAX_CUSTOM_MAX_COLORS = 221` 已删除。
 //
 // 与那两处 core 副本的**实质差异**：这里的守卫要挂在「任何写操作之前」（`AGENTS.md` 入口校验
 // 硬约束），而 core 的守卫是「夹取 / 映射之前的最后一道」。两者的触发时机不同，抽成一个模块会把
@@ -115,26 +120,14 @@ function requireLongSide(next: number): number {
 }
 
 function requireMaxColors(next: MaxColors): MaxColors {
-  // **只认新枚举**（C7 规格 §6.2）：旧值 `32` / `null` 一律响亮失败，不做迁移。
-  if (next !== 8 && next !== 16 && next !== 24 && next !== "custom" && next !== "all") {
-    throw new Error(`用色档位非法：${String(next)}（只允许 8 / 16 / 24 / "custom" / "all"）`);
-  }
-  return next;
-}
-
-/**
- * 自定义色数守卫。上界是**内置色卡的色数**（221）：想要比色卡还多的色没有意义——
- * `medianCut` 在超过实际色数时会提前收敛，静默接受会让用户以为「设了 300」真的生效了。
- *
- * **它与 `core/pattern/build.ts` 的同名守卫是两处**（本文件是「写状态之前」那一道、
- * core 是「进算法之前」那一道），措辞一致；上界在本文件是常量（内置 MARD 221），
- * core 那处用 `palette.colors.length`——store 手上没有色卡（色卡归 `services/palette.ts`），
- * 所以这里写常量。**不要把这句话读成「store 一律不许 import services」**：C8 §3.7 之后本文件
- * 确实 import 了 `services/projectStore` 的两个纯函数（见文件头），这里说的只是色卡不在手上。
- */
-function requireCustomMaxColors(next: number): number {
-  if (!Number.isInteger(next) || next < 1 || next > MAX_CUSTOM_MAX_COLORS) {
-    throw new Error(`用色数必须是 1–${MAX_CUSTOM_MAX_COLORS} 的整数（当前 ${String(next)}）`);
+  // **只认数字口径**（2026-10-10 口径简化）：1..色卡色数 的整数。
+  // 上界**只有一处来源**——内置色卡色数（`getBuiltinPalette()`，与 `core/pattern/build.ts` 的
+  // `palette.colors.length` 同一个数）。这里原先写的是常量 `MAX_CUSTOM_MAX_COLORS = 221`，
+  // 那正是「同一口径的第二份副本」；`stores/project.ts` 已经这么用色卡，照同一手法即可。
+  // 旧记录的 `"custom"` / `"all"` / `null` 一律响亮失败，**不做映射**（裁定 A1）。
+  const paletteSize = getBuiltinPalette().colors.length;
+  if (!Number.isInteger(next) || next < 1 || next > paletteSize) {
+    throw new Error(`用色档位非法：${String(next)}（只允许 1..${paletteSize} 的整数）`);
   }
   return next;
 }
@@ -244,14 +237,13 @@ export const useDraft = defineStore("draft", () => {
   const pan = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const longSide = ref(DEFAULT_LONG_SIDE);
-  const maxColors = ref<MaxColors>(DEFAULT_MAX_COLORS);
   /**
-   * `maxColors === "custom"` 时的具体色数（C7 规格 §6.1）。
+   * 用色数（2026-10-10 口径简化：**就是一个数字**，没有档位枚举、没有第二个字段）。
    *
-   * **不做成 `number | null`**：那会多出「档位是 custom 但数值为空」这个非法态，而每个消费者
-   * 都得再写一条守卫。默认 32（与旧默认档位同值，用户的直觉不变）。
+   * 1..色卡色数 的整数；**等于色卡色数即「不限」**（跳过分簇，见 `core/pattern/build.ts`）。
+   * 默认 16（`DEFAULT_MAX_COLORS`）。
    */
-  const customMaxColors = ref(32);
+  const maxColors = ref<MaxColors>(DEFAULT_MAX_COLORS);
 
   const stage = ref<Stage>("edit");
   const generated = ref(false);
@@ -321,7 +313,6 @@ export const useDraft = defineStore("draft", () => {
     resetView();
     longSide.value = DEFAULT_LONG_SIDE;
     maxColors.value = DEFAULT_MAX_COLORS;
-    customMaxColors.value = 32;
     stage.value = "edit";
     generated.value = false;
     busy.value = false;
@@ -366,7 +357,6 @@ export const useDraft = defineStore("draft", () => {
     resetView();
     longSide.value = nextLongSide;
     maxColors.value = nextMaxColors;
-    customMaxColors.value = input.params.customMaxColors ?? customMaxColors.value;
     stage.value = "edit";
     generated.value = false;
     busy.value = false;
@@ -472,17 +462,9 @@ export const useDraft = defineStore("draft", () => {
     generated.value = false;
   }
 
+  /** 改用色数（1..色卡色数 的整数；等于色卡色数即「不限」）。 */
   function setMaxColors(next: MaxColors): void {
     maxColors.value = requireMaxColors(next);
-    generated.value = false;
-  }
-
-  /**
-   * 改自定义色数（只有档位是 `"custom"` 时它在 UI 上出现，但**任何时候都可以先设**——
-   * 用户可能先填数字再切档位，那时不该把数字丢掉）。
-   */
-  function setCustomMaxColors(next: number): void {
-    customMaxColors.value = requireCustomMaxColors(next);
     generated.value = false;
   }
 
@@ -548,7 +530,6 @@ export const useDraft = defineStore("draft", () => {
     resetView();
     longSide.value = DEFAULT_LONG_SIDE;
     maxColors.value = DEFAULT_MAX_COLORS;
-    customMaxColors.value = 32;
     stage.value = "edit";
     generated.value = false;
     busy.value = false;
@@ -568,7 +549,6 @@ export const useDraft = defineStore("draft", () => {
     pan,
     longSide,
     maxColors,
-    customMaxColors,
     stage,
     generated,
     busy,
@@ -584,7 +564,6 @@ export const useDraft = defineStore("draft", () => {
     setAspect,
     setLongSide,
     setMaxColors,
-    setCustomMaxColors,
     setZoom,
     setPan,
     setStage,

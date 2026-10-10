@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { loadPalette } from "../../palette/registry";
-import { EMPTY, type Pattern } from "../../pattern/types";
+import { EMPTY, type MaxColors, type Pattern } from "../../pattern/types";
 import { fromProjectDocument, toProjectDocument } from "../file";
 import { validateProjectDocument, type ProjectParams } from "../types";
 
+/**
+ * 测试色卡：**221 色**（与内置 MARD 同数），前五色是 A1–A5（下标 0–4，既有断言依赖这组下标）。
+ *
+ * **为什么不是 5 色**：2026-10-10 起 `maxColors` 的口径是「1..色卡色数 的整数」，上界**就是
+ * 色卡色数**。夹具只有 5 色时，本文件既有的 `maxColors: 16` / `24`（以及新加的 220 / 221
+ * 边界值）会当场变成非法值——那等于用夹具的尺寸去测规格。其余 216 个只是占位色号。
+ */
 const palette = loadPalette({
   id: "fake",
   name: "测试色卡",
@@ -15,6 +22,10 @@ const palette = loadPalette({
     { code: "A3", hex: "#ff0000" }, // 2
     { code: "A4", hex: "#00ff00" }, // 3
     { code: "A5", hex: "#0000ff" }, // 4
+    ...Array.from({ length: 216 }, (_, i) => ({
+      code: `X${i}`,
+      hex: `#${(1 + i).toString(16).padStart(2, "0")}0000`,
+    })),
   ],
 });
 
@@ -138,11 +149,13 @@ describe("toProjectDocument", () => {
   });
 
   it("cells 里有超出色卡长度的下标时抛错", () => {
+    // 探针取 999：夹具色卡改成 221 色之后，原来那个 99 已经落在合法下标范围里
+    // （值本身没变，是夹具变大了），换一个仍然越界的值才继续钉住这条守卫。
     const bad: Pattern = {
       width: 1,
       height: 1,
       paletteId: "fake",
-      cells: Uint16Array.from([99]),
+      cells: Uint16Array.from([999]),
     };
     expect(() => toProjectDocument(bad, palette, params)).toThrow(/越界|色卡/);
   });
@@ -157,19 +170,24 @@ describe("toProjectDocument", () => {
     expect(() => toProjectDocument(bad, palette, params)).toThrow(/长度/);
   });
 
-  it("非法参数抛错（长边越界 / 档位非法 / 自定义色数越界 / 旋转非法）", () => {
+  it("非法参数抛错（长边越界 / 用色数非法 / 旋转非法）", () => {
     const p = pattern3x3();
     expect(() => toProjectDocument(p, palette, { ...params, longSide: 117 })).toThrow(/长边/);
-    // **C7 起旧枚举的 32 / null 也是非法值**（不做旧数据兼容，见 C7 规格 §6.2）
-    for (const bad of [32, null, 0, "16"]) {
+    /*
+     * **2026-10-10 口径简化**：用色数从 5 值枚举改成「1..色卡色数 的整数」。旧断言里
+     * `32` 与 `null` 是「旧枚举值 ⇒ 非法」，现在 `32` **是合法数字**（32 种色）——
+     * 所以它从这条 bad 列表里移出，移到下面「合法数字原样落盘」的断言里；
+     * `"16"` / `"custom"` / `"all"` / `null` 仍是非法值（字符串与 null 都不再是任何档位的表示）。
+     */
+    for (const bad of [0, -1, 1.5, Number.NaN, 222, "16", "custom", "all", null]) {
       expect(() =>
-        toProjectDocument(p, palette, { ...params, maxColors: bad as unknown as 16 }),
+        toProjectDocument(p, palette, { ...params, maxColors: bad as unknown as MaxColors }),
       ).toThrow(/档位/);
     }
-    // 自定义色数只在 `"custom"` 档位下有意义，但**写了就必须合法**（上界是色卡色数）
-    expect(() =>
-      toProjectDocument(p, palette, { ...params, customMaxColors: 999 }),
-    ).toThrow(/用色数非法/);
+    for (const good of [1, 8, 16, 24, 32, 220, 221]) {
+      const doc = toProjectDocument(p, palette, { ...params, maxColors: good });
+      expect(doc.params.maxColors).toBe(good);
+    }
     expect(() =>
       toProjectDocument(p, palette, { ...params, crop: { ...params.crop, rotate: 4 } }),
     ).toThrow(/旋转/);
@@ -290,27 +308,42 @@ describe("fromProjectDocument", () => {
     expect(loaded).toEqual({ x: -8.5, y: 0, width: 12, height: 12 });
   });
 
-  it("maxColors = 'all'（不限色）往返后仍是 'all'，不静默回落成 16", () => {
-    // 此前只断言过 16 与 32：`checked.params.maxColors ?? 16` 这类静默回落会全绿。
-    // C7 起「不限」的表示是字符串 `"all"`（旧枚举的 `null` 已作废，见 C7 规格 §6.2）。
+  /**
+   * 用色数的上下界都要**逐位往返**：上界 = 色卡色数（= 「不限」，跳过分簇）。
+   * 此前只断言过 16 与 32：`checked.params.maxColors ?? 16` 这类静默回落会全绿。
+   * 旧的「不限」表示是字符串 `"all"`，2026-10-10 的口径简化后就是**这个数字本身**。
+   */
+  it("用色数 = 色卡色数（221，即「不限」）往返后仍是 221，不静默回落成 16", () => {
     const p = pattern3x3();
-    const doc = toProjectDocument(p, palette, { ...params, maxColors: "all" });
-    expect(doc.params.maxColors).toBe("all");
+    const doc = toProjectDocument(p, palette, { ...params, maxColors: 221 });
+    expect(doc.params.maxColors).toBe(221);
     const reparsed: unknown = JSON.parse(JSON.stringify(doc));
     const back = fromProjectDocument(reparsed, palette);
-    expect(back.params.maxColors).toBe("all");
+    expect(back.params.maxColors).toBe(221);
     expect([...back.pattern.cells]).toEqual([...p.cells]);
   });
 
-  it("maxColors = 'custom' 时自定义色数一起往返（不能只存档位不存数值）", () => {
+  it("旧记录（'custom' / 'all' / null）读盘响亮失败，不做映射", () => {
+    // 人类伙伴裁定 A1：旧记录不兼容，一律按「用色档位非法」响亮失败（清库测试的先例）。
     const p = pattern3x3();
-    const doc = toProjectDocument(p, palette, { ...params, maxColors: "custom", customMaxColors: 3 });
-    expect(doc.params.maxColors).toBe("custom");
-    expect(doc.params.customMaxColors).toBe(3);
-    const reparsed: unknown = JSON.parse(JSON.stringify(doc));
-    const back = fromProjectDocument(reparsed, palette);
-    expect(back.params.maxColors).toBe("custom");
-    expect(back.params.customMaxColors).toBe(3);
+    const base = toProjectDocument(p, palette, params);
+    for (const legacy of ["custom", "all", null]) {
+      expect(() =>
+        fromProjectDocument(
+          { ...base, params: { ...base.params, maxColors: legacy } },
+          palette,
+        ),
+      ).toThrow(/用色档位非法/);
+    }
+  });
+
+  it("写出物里不再有 customMaxColors 字段（口径简化后只有一个数字）", () => {
+    const doc = toProjectDocument(pattern3x3(), palette, params);
+    expect(doc.params).not.toHaveProperty("customMaxColors");
+    expect(Object.keys(doc.params).sort()).toEqual(["crop", "longSide", "maxColors"]);
+    // 回读方向也只有一个数字：返回的 params 里不存在第二个用色字段。
+    const back = fromProjectDocument(JSON.parse(JSON.stringify(doc)), palette);
+    expect(back.params).not.toHaveProperty("customMaxColors");
   });
 
   it("用到全色卡下标 0（A1）时往返仍忠实，不被 falsy 判断当成空格跳过", () => {

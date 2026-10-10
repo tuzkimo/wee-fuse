@@ -514,35 +514,31 @@ describe("改参数重新生成（B2 规格 §7）", () => {
   });
 
   /**
-   * **C8 顺带修的静默缺陷，本任务必须真的落地**（任务 4 的审查点名）：编辑页原先有一份**本地**
-   * `seedRerunDraft`，它漏传 `params.customMaxColors` ⇒ 从编辑器点「重做」跑一条自定义 N 色的
-   * 工程时，草稿里还是残留值（默认 32），而 `maxColors === "custom"` ⇒ **静默产出用色数与记录
-   * 不一致的图纸**，全程没有任何报错。本任务删掉本地那份、改成 import 共用的实现
-   * （`@/services/rerunDraft`，任务 4 已建，编辑来源结果页在用）。
+   * **重跑必须把落盘的用色数原样播进草稿**（本项目的静默缺陷形态：记录是 20 色、草稿是 16 色
+   * ⇒ 生成出来的用色数与记录不一致，而全程没有任何报错）。
    *
-   * 判据就是**读草稿里那个数**：参数来自落盘记录（`customMaxColors: 20`），点一下「重做」之后
-   * 草稿里必须是 20。起点**刻意不是 20**——否则「播种对了」与「本来就是 20」不可区分
-   * （`adoptProject` 在不传这个字段时保留残留值，残留值正是 32）。
+   * **2026-10-10 口径简化**：用色数只剩一个数字字段，所以判据从「`maxColors: "custom"` +
+   * `customMaxColors: 20` 两个字段一起过」收敛成「`maxColors: 20` 这一个数字过」。
+   * 起点刻意不是 20（草稿默认 16）——否则「播种对了」与「本来就是默认值」不可区分。
    */
-  it("「重做」把落盘参数（含自定义用色数）整份播种进草稿", async () => {
+  it("「重做」把落盘参数（含用色数）整份播种进草稿", async () => {
     const store = await createMemoryProjectStore();
     await store.put(
       makeEditorRecord({
         withSource: true,
-        params: { ...RERUN_PARAMS, maxColors: "custom", customMaxColors: 20 },
+        params: { ...RERUN_PARAMS, maxColors: 20 },
       }),
     );
     setProjectStore(store);
 
     const wrapper = await mountPage();
     const draft = useDraft();
-    expect(draft.customMaxColors).not.toBe(20); // 草稿层的残留值：默认 32
+    expect(draft.maxColors).toBe(16); // 草稿默认值，与记录里的 20 不同
 
     await wrapper.get("[data-testid='rerun']").trigger("click");
 
     expect(draft.rerunOf?.id).toBe("a");
-    expect(draft.maxColors).toBe("custom");
-    expect(draft.customMaxColors).toBe(20);
+    expect(draft.maxColors).toBe(20);
   });
 });
 

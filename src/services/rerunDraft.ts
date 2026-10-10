@@ -8,10 +8,9 @@ import type { useProjectSession } from "@/stores/project";
  * **编辑页的「重做」与编辑来源结果页的「重做」共用这一份**（C8 规格 §3.4）：两处各写一遍就是
  * 「同一件事的第二份实现」，而它写错的形态是静默的——草稿身份不对 ⇒ 覆盖到别的记录。
  *
- * **顺带修一个既有缺陷**（C8 实现时发现，如实登记）：原实现（`EditorPage.vue`）**没有**把
- * `params.customMaxColors` 带进草稿，于是重跑一条「自定义 20 色」的工程时，草稿里的
- * `customMaxColors` 还是 store 里的残留值（默认 32），而 `maxColors === "custom"` ⇒
- * **生成出来的用色数与记录不一致，且没有任何报错**。这里补上，并由 `rerunDraft.test.ts` 钉住。
+ * **2026-10-10 口径简化后本函数的形状也更简单**：用色数只剩 `params.maxColors` 一个数字，
+ * 原来那个「档位 + 自定义数值」的双字段（以及 C8 顺带修的「漏传 `customMaxColors`」缺陷面）
+ * 已经不存在——少一个字段就少一处能漏的地方。
  */
 export function seedRerunDraft(
   draft: ReturnType<typeof useDraft>,
@@ -25,9 +24,6 @@ export function seedRerunDraft(
     params: {
       longSide: params.longSide,
       maxColors: params.maxColors,
-      ...(params.customMaxColors === undefined
-        ? {}
-        : { customMaxColors: params.customMaxColors }),
       crop: { x: params.crop.x, y: params.crop.y, width: params.crop.width, height: params.crop.height },
       rotation: params.rotation,
     },

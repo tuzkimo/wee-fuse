@@ -218,7 +218,6 @@ async function generate(): Promise<void> {
         rotation: draft.rotation,
         longSide: draft.longSide,
         maxColors: draft.maxColors,
-        customMaxColors: draft.customMaxColors,
       },
       {
         exactDecoder: createExactDecoder(platform),
@@ -264,7 +263,6 @@ async function generate(): Promise<void> {
       {
         longSide: draft.longSide,
         maxColors: draft.maxColors,
-        customMaxColors: draft.customMaxColors,
         crop: { x: crop.x, y: crop.y, width: crop.width, height: crop.height },
         rotation: draft.rotation,
       },
@@ -273,7 +271,6 @@ async function generate(): Promise<void> {
       toProjectDocument(pattern, palette, {
         longSide: draft.longSide,
         maxColors: draft.maxColors,
-        customMaxColors: draft.customMaxColors,
         crop: { x: crop.x, y: crop.y, w: crop.width, h: crop.height, rotate: draft.rotation },
       }),
     );
@@ -432,7 +429,6 @@ function resetCrop(): void {
           :name="draft.name"
           :long-side="draft.longSide"
           :max-colors="draft.maxColors"
-          :custom-max-colors="draft.customMaxColors"
           :palette-color-count="palette.colors.length"
           :crop="draft.crop"
           :rotation="draft.rotation"
@@ -442,7 +438,6 @@ function resetCrop(): void {
           @update:name="draft.setName"
           @update:long-side="draft.setLongSide($event)"
           @update:max-colors="draft.setMaxColors($event)"
-          @update:custom-max-colors="draft.setCustomMaxColors($event)"
           @generate="generate"
         />
       </section>

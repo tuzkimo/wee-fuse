@@ -47,6 +47,29 @@ const push = routerMock.push;
 const backMock = routerMock.back;
 const historyState = routerMock.historyState;
 
+/**
+ * 流水线**透传替身**：`generatePattern` 仍走真实现，只在入口记下 `request.maxColors` 就转交。
+ *
+ * 为什么需要它：`SetupPage` 直接 `import { generatePattern }`，没有别的可观察点能证明
+ * 「用户拨的用色数真的交给了流水线」——落盘的 `params.maxColors` 读的是 `draft.maxColors`，
+ * 那是**另一条线**（store 的接线），两条都断不了才算接线正确。透传保证其余端到端用例的行为
+ * 一字未变。
+ */
+const pipelineSpy = vi.hoisted(() => ({ maxColors: [] as number[] }));
+vi.mock("@/services/pipeline", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/pipeline")>();
+  return {
+    ...actual,
+    generatePattern: (
+      request: Parameters<typeof actual.generatePattern>[0],
+      deps: Parameters<typeof actual.generatePattern>[1],
+    ) => {
+      pipelineSpy.maxColors.push(request.maxColors);
+      return actual.generatePattern(request, deps);
+    },
+  };
+});
+
 const FILE = new File([new Uint8Array([1, 2, 3, 4])], "小猫照片.png", { type: "image/png" });
 
 /**
@@ -147,8 +170,18 @@ function stubBreakpoint(): { resizeTo(width: number): void; queries: string[] } 
  * 平台边界桩：真流水线、真几何、真 store、真 `toProjectDocument`。
  * `createImageBitmap` 的调用参数（源矩形）就是端到端用例 1 的断言对象。
  */
-function stubPlatform(options: { alpha?: number } = {}) {
+function stubPlatform(
+  options: {
+    alpha?: number;
+    /**
+     * 像素生成器。默认统一填 `(200, 60, 60)`（既有用例都建立在这张纯色图上）；
+     * 传它就能造一张**多色图**——「用色数拉满就不再被分簇限制」那条用例需要它。
+     */
+    pixel?: (index: number, width: number) => readonly [number, number, number];
+  } = {},
+) {
   const alpha = options.alpha ?? 255;
+  const pixelColor = options.pixel ?? ((): readonly [number, number, number] => [200, 60, 60]);
   const createBitmap = vi.fn(async (_source: Blob, sx: number, sy: number, sw: number, sh: number) => ({
     width: sw,
     height: sh,
@@ -163,9 +196,10 @@ function stubPlatform(options: { alpha?: number } = {}) {
       this.height = height;
       const pixels = new Uint8ClampedArray(width * height * 4);
       for (let i = 0; i < width * height; i += 1) {
-        pixels[i * 4] = 200;
-        pixels[i * 4 + 1] = 60;
-        pixels[i * 4 + 2] = 60;
+        const [r, g, b] = pixelColor(i, width);
+        pixels[i * 4] = r;
+        pixels[i * 4 + 1] = g;
+        pixels[i * 4 + 2] = b;
         pixels[i * 4 + 3] = alpha;
       }
       this.ctx = makeCtx(pixels);
@@ -243,6 +277,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   push.mockClear();
   backMock.mockClear();
+  pipelineSpy.maxColors.length = 0;
   // 历史里默认没有上一页（`backOrHome` 走「回图纸库」那一支）；要测另一支的用例自己喂值。
   delete historyState.back;
   setProjectStore(null);
@@ -262,7 +297,7 @@ describe("入口守卫与准备阶段", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: { blob: FILE, type: "image/png", name: "旧图.png" },
-      params: { longSide: 116, maxColors: "all", crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
+      params: { longSide: 116, maxColors: 221, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
       meta: { id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" },
     });
 
@@ -533,12 +568,10 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     const metas = await store.list();
     expect(metas).toHaveLength(1);
     const record = await store.get(metas[0]!.id);
-    // C7 起 `customMaxColors` 与档位一起落盘（默认 32）：它在其它档位下不参与生成，但**必须存着**
-    // ——用户来回切到「自定义」时那个数字还在。
+    // 2026-10-10 口径简化：用色数只有一个数字字段（`customMaxColors` 已删除）。
     expect(record?.doc.params).toEqual({
       longSide: 58,
       maxColors: 16,
-      customMaxColors: 32,
       crop: { x: 200, y: 100, w: 400, h: 300, rotate: 1 },
     });
 
@@ -670,50 +703,97 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     }
   });
 
-  it("档位五档落盘分别是 8 / 16 / 24 / all / custom（含自定义色数的数值）", async () => {
+  /**
+   * **2026-10-10 口径简化**：用色数从 5 值枚举（8 / 16 / 24 / custom / all）收敛成
+   * 「1..色卡色数 的整数」，滑条上界 = 色卡色数 = 「不限」。所以这条从原来那个
+   * 「档位五档落盘」用例改成「拨到哪就是哪个数字」：`221` **不再**变成 `"all"`。
+   *
+   * 每次生成之后都要经结果卡片的「重做」回编辑阶段：结果阶段不渲染参数面板
+   * （`showEditor = stage !== "result"`），否则下一条的 `max-colors-slider` 取不到。
+   */
+  it("用色滑条拨到哪就落盘哪个数字：8 / 16 / 24 / 220 / 221（221 不再变成 'all'）", async () => {
     stubPlatform();
     seedDraft();
     const wrapper = mount(SetupPage);
     await flushPromises();
     const store = (await import("@/services/projectStore")).getProjectStore();
 
-    /*
-     * C8 第 4 项：档位从**滑条**读（`max-colors-slider`），五个按钮（`max-colors-*`）与那个
-     * 独立的 `custom-max-colors` 输入框整块删除——「自定义」现在是滑条上任何非预设、非上界的
-     * 数值。滑条上界 = 色卡色数 = 「不限」。
-     *
-     * 每次生成之后都要经结果卡片的「重做」回编辑阶段：结果阶段不渲染参数面板
-     * （`showEditor = stage !== "result"`），否则下一条的 `max-colors-slider` 取不到。
-     */
-    for (const [value, expected] of [
-      [8, 8],
-      [16, 16],
-      [24, 24],
-      [221, "all"],
-    ] as const) {
+    for (const value of [8, 16, 24, 220, 221] as const) {
       await wrapper.get("[data-testid='max-colors-slider']").setValue(String(value));
       await wrapper.get("[data-testid='generate']").trigger("click");
       await flushPromises();
       const id = (await store.list())[0]!.id;
-      expect((await store.get(id))?.doc.params.maxColors).toBe(expected);
+      expect((await store.get(id))?.doc.params.maxColors).toBe(value);
       await wrapper.get("[data-testid='result-rerun']").trigger("click");
       await flushPromises();
     }
 
-    // 「自定义」档位：滑条拨到一个既不是预设、也不是上界的整数，**数值也要落盘**
-    // （只存档位不存数值，回读时就生成不出用户要的色数）。
-    await wrapper.get("[data-testid='max-colors-slider']").setValue("40");
-    // `setValue` 触发 input ⇒ `TierSlider` emit ⇒ 面板 emit `update:customMaxColors` ⇒ store 跟着变
-    expect(useDraft().customMaxColors).toBe(40);
-    await wrapper.get("[data-testid='generate']").trigger("click");
-    await flushPromises();
-    const id = (await store.list())[0]!.id;
-    const doc = (await store.get(id))?.doc;
-    expect(doc?.params.maxColors).toBe("custom");
-    expect(doc?.params.customMaxColors).toBe(40);
-
     // 五次生成落在同一条记录上（重跑的语义），不是五条。
     expect(await store.list()).toHaveLength(1);
+  });
+
+  /**
+   * 「拨的用色数真的交给了流水线」+「非档位整数一样落盘」。
+   *
+   * 取值用 **9**，走的是**数字输入框**（`max-colors`）而不是滑条：滑条对靠近档位的值会
+   * **吸附**（阈值 `max(1, round(220 × 0.02))` = 4），9 会被吸到 8——所以「填多少就是多少」
+   * 这条口径只有数字输入框能表达（滑条的吸附另有用例钉住）。
+   */
+  it("数字输入框填 9 ⇒ 流水线收到 9、落盘也是 9（非档位整数不再折成 custom）", async () => {
+    stubPlatform();
+    seedDraft();
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    await wrapper.get("[data-testid='max-colors']").setValue("9");
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    expect(pipelineSpy.maxColors.at(-1)).toBe(9);
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    const id = (await store.list())[0]!.id;
+    expect((await store.get(id))?.doc.params.maxColors).toBe(9);
+  });
+
+  /**
+   * **「拉满 = 不限」的端到端读法**：同一张多色图，用色数 8 时被分簇压到 ≤8 色；
+   * 拉到色卡色数（221 = 不限）后跳过分簇、用色显著变多。
+   *
+   * 为什么必须用多色图：纯色图下「聚类到 8」与「不限」都是 1 色，这条判据没有判别力
+   * （`stubPlatform` 因此多了 `pixel` 选项）。
+   */
+  it("用色数拉满（221）⇒ 不再被分簇限制：同一张多色图的用色数明显多于 8 档", async () => {
+    stubPlatform({
+      pixel: (i, width) => {
+        const x = i % width;
+        const y = Math.floor(i / width);
+        return [x % 256, (y * 7) % 256, (x * 3 + y) % 256];
+      },
+    });
+    seedDraft();
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    const usedColors = async (): Promise<number> => {
+      const id = (await store.list())[0]!.id;
+      return (await store.get(id))!.doc.palette.codes.length;
+    };
+
+    await wrapper.get("[data-testid='max-colors-slider']").setValue("8");
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    const limited = await usedColors();
+
+    await wrapper.get("[data-testid='result-rerun']").trigger("click");
+    await flushPromises();
+    await wrapper.get("[data-testid='max-colors-slider']").setValue("221");
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+    const unlimited = await usedColors();
+
+    expect(limited).toBeGreaterThan(0);
+    expect(limited).toBeLessThanOrEqual(8);
+    expect(unlimited).toBeGreaterThan(limited);
   });
 
   /**

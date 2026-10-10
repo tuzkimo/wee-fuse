@@ -32,8 +32,8 @@ import { backOrHome } from "@/views/backOrHome";
  *
  * **C8 第 3 项起出口收敛**：查看施工图与打印这两块覆盖层不再由本页渲染（单张施工图的出口是
  * 「保存 → 修改成功结果页 → 查看」），本页因此也删掉了 `sheetOpen` / `panelMode` 两个 ref 与
- * **本地那份** `seedRerunDraft`（改成 import `@/services/rerunDraft` 的共用实现——本地那份漏传
- * `customMaxColors`，会静默产出用色数与记录不一致的图纸，见 `services/rerunDraft.ts` 的文件头）。
+ * **本地那份** `seedRerunDraft`（改成 import `@/services/rerunDraft` 的共用实现——本地那份当年
+ * 漏传一个参数就静默产出「用色数与记录不一致」的图纸，见 `services/rerunDraft.ts` 的文件头）。
  *
  * **两条静默错误的防线**（写错都不报错）：
  * 1. 尺寸与用色数读**图纸**（`patternStats`），不读 `session.record.meta.*`——那三个字段是
@@ -442,8 +442,9 @@ function onEraser(): void {
  * 「重做」入口（B2 规格 §7 + B3 规格 §8.5 的接缝；C8 第 3 项从页面中部搬进工具栏输出行）。
  *
  * **草稿播种走共用实现**（`@/services/rerunDraft` 的 `seedRerunDraft`）：本页原来有一份**本地**
- * 副本，它漏传 `params.customMaxColors` ⇒ 从编辑器点「重做」跑一条自定义 N 色的工程时，草稿里
- * 还是残留值（默认 32），而 `maxColors === "custom"` ⇒ **静默产出用色数与记录不一致的图纸**。
+ * 副本，它漏传了一个参数 ⇒ 从编辑器点「重做」跑一条记录时，草稿里的用色数还是残留值
+ * ⇒ **静默产出用色数与记录不一致的图纸**（2026-10-10 的口径简化把用色数并成了一个数字，
+ * 那类「漏传第二个字段」的缺陷面随之消失，但「播种走同一份实现」这条纪律不变）。
  * 现在它与编辑来源结果页的「重做」是**同一份**实现（两处各写一遍就是「同一件事的第二份实现」）。
  * 那条实现同时负责「只播种、不解码」：原图尺寸与预览位图统一在 `SetupPage` 解码（同一段解码逻辑
  * 出现在两处正是本项目最贵的缺陷形态）。

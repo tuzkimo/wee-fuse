@@ -14,7 +14,14 @@ function makeColors(base: PaletteColor, length: number): readonly PaletteColor[]
   return colors;
 }
 
-/** 测试色卡：5 色，code 与全色卡下标一一对应（A1=0 A2=1 A3=2 A4=3 A5=4）。 */
+/**
+ * 测试色卡：**221 色**（与内置 MARD 同数），前五色是 A1–A5（下标 0–4）。
+ *
+ * **为什么不是 5 色**：2026-10-10 起 `maxColors` 的口径是「1..色卡色数 的整数」，上界**就是
+ * 色卡色数**。夹具只有 5 色时，`validDoc()` 里既有的 `maxColors: 16` 会当场变成非法值——
+ * 那等于用夹具的尺寸去测规格；而 221 色才让「220 / 221 / 222」这三个边界值测得到。
+ * 其余的 216 个只是占位色号（本文件的校验只读 `colors.length` 与色号集合，不读色值）。
+ */
 const palette = loadPalette({
   id: "fake",
   name: "测试色卡",
@@ -26,6 +33,10 @@ const palette = loadPalette({
     { code: "A3", hex: "#ff0000" },
     { code: "A4", hex: "#00ff00" },
     { code: "A5", hex: "#0000ff" },
+    ...Array.from({ length: 216 }, (_, i) => ({
+      code: `X${i}`,
+      hex: `#${(1 + i).toString(16).padStart(2, "0")}0000`,
+    })),
   ],
 });
 
@@ -292,56 +303,59 @@ describe("validateProjectDocument", () => {
     }
   });
 
-  it("params.maxColors 只允许 8 / 16 / 24 / 'custom' / 'all'（旧枚举 32 / null 一律拒）", () => {
-    // C7 规格 §6.2：开发阶段清库测试，**不做旧数据兼容** ⇒ 旧值也是非法值。
-    for (const bad of [0, 16.5, Number.NaN, Number.POSITIVE_INFINITY, "16", 32, null]) {
-      expect(() =>
-        validateProjectDocument(
-          { ...validDoc(), params: { ...(validDoc().params as object), maxColors: bad } },
-          palette,
-        ),
-      ).toThrow(/档位/);
-    }
-    for (const good of [8, 16, 24, "custom", "all"]) {
-      expect(() =>
-        validateProjectDocument(
-          { ...validDoc(), params: { ...(validDoc().params as object), maxColors: good } },
-          palette,
-        ),
-      ).not.toThrow();
-    }
-    // 每个合法值都要真落到返回值上（只断言 not.toThrow 会漏掉「被换成 16」这类静默改写）
-    for (const good of [8, 16, 24, "custom", "all"] as const) {
-      const checked = validateProjectDocument(
-        { ...validDoc(), params: { ...(validDoc().params as object), maxColors: good } },
+  /**
+   * **2026-10-10 口径简化**：用色档位从 5 值枚举改成「1..色卡色数 的整数」，
+   * **等于色卡色数即「不限」**。
+   *
+   * 语义变化逐条说清：
+   * - `32` 旧枚举里是合法值、C7 起是非法值，**现在又是合法值**——它就是一个数字（32 种色），
+   *   只要不超过色卡色数（本文夹具 221）。
+   * - `"custom"` / `"all"` 是旧记录里的字符串，**不做兼容**，一律按「用色档位非法」响亮失败
+   *   （人类伙伴裁定 A1，与 C7「旧枚举不做兼容」同一先例）。
+   * - `null`（C7 之前的「不限」）同样响亮失败；新的「不限」表示是那个数字本身。
+   */
+  it("params.maxColors 只允许 1..色卡色数 的整数（= 色卡色数即「不限」；旧字符串一律拒）", () => {
+    const withMax = (maxColors: unknown) =>
+      validateProjectDocument(
+        { ...validDoc(), params: { ...(validDoc().params as object), maxColors } },
         palette,
       );
-      expect(checked.params.maxColors).toBe(good);
+
+    expect(palette.colors.length).toBe(221);
+    // 每个合法值都要真落到返回值上（只断言 not.toThrow 会漏掉「被换成 16」这类静默改写）
+    for (const good of [1, 8, 16, 24, 32, 220, 221]) {
+      expect(withMax(good).params.maxColors).toBe(good);
+    }
+    // 222 是上界紧邻外侧的探针；字符串与 null 是旧记录的表示，一律不做兼容。
+    for (const bad of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      222,
+      "16",
+      "custom",
+      "all",
+      null,
+      undefined,
+    ]) {
+      expect(() => withMax(bad)).toThrow(/档位/);
     }
   });
 
-  it("params.customMaxColors 可缺省；写了就必须是 1..色卡色数的整数", () => {
-    const withCustom = (customMaxColors: unknown) =>
-      validateProjectDocument(
-        {
-          ...validDoc(),
-          params: { ...(validDoc().params as object), maxColors: "custom", customMaxColors },
-        },
-        palette,
-      );
-    // 缺省合法（旧工程 / 非 custom 档位都不带这个字段）
-    expect(() =>
-      validateProjectDocument(
-        { ...validDoc(), params: { ...(validDoc().params as object), maxColors: "custom" } },
-        palette,
-      ),
-    ).not.toThrow();
-    for (const good of [1, 3, palette.colors.length]) {
-      expect(withCustom(good).params.customMaxColors).toBe(good);
-    }
-    for (const bad of [0, -1, 1.5, Number.NaN, palette.colors.length + 1, 999]) {
-      expect(() => withCustom(bad)).toThrow(/用色数非法/);
-    }
+  it("params.customMaxColors 已删除：带上它的旧文档不再有第二个字段，返回值里也不存在", () => {
+    // 口径简化把「档位 + 自定义数值」两个字段并成了一个数字：读旧文档时 `customMaxColors`
+    // 只是一个多余的未知字段，**不被搬进返回值**（照 `file.ts` 白名单式重建的口径）。
+    const checked = validateProjectDocument(
+      {
+        ...validDoc(),
+        params: { ...(validDoc().params as object), maxColors: 16, customMaxColors: 3 },
+      },
+      palette,
+    );
+    expect(checked.params).not.toHaveProperty("customMaxColors");
+    expect(Object.keys(checked.params).sort()).toEqual(["crop", "longSide", "maxColors"]);
   });
 
   it("params.crop 的 x/y 必须有限，w/h 必须有限且 ≥1，rotate 必须是 0–3 的整数", () => {

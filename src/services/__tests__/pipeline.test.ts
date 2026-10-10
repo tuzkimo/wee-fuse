@@ -10,6 +10,14 @@ import {
   type GenerateDeps,
 } from "../pipeline";
 
+/**
+ * 测试色卡：**5 个原色 + 20 个中灰填充 = 25 色**。
+ *
+ * **为什么要填充**：2026-10-10 起 `maxColors` 的口径是「1..色卡色数 的整数」，而上界**就是
+ * 色卡色数**。本文件几十处请求用的都是 `maxColors: 16`——夹具只有 5 色时这些请求会当场变成
+ * 非法值，等于用夹具的尺寸去测规格。填充色取中灰（彼此接近、且远离四象限的红/绿/蓝/黑），
+ * 既让 `16 <= 色卡色数` 成立，又不会在既有断言的**精确命中**里抢走最近色。
+ */
 const palette = loadPalette({
   id: "fake",
   name: "测试色卡",
@@ -21,6 +29,10 @@ const palette = loadPalette({
     { code: "A3", hex: "#ff0000" },
     { code: "A4", hex: "#00ff00" },
     { code: "A5", hex: "#0000ff" },
+    ...Array.from({ length: 20 }, (_, i) => {
+      const level = ((i + 1) * 10).toString(16).padStart(2, "0");
+      return { code: `G${i}`, hex: `#${level}${level}${level}` };
+    }),
   ],
 });
 

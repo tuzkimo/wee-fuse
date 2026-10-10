@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { toRaw } from "vue";
 import { beforeEach, describe, expect, it } from "vitest";
+import { getBuiltinPalette } from "@/services/palette";
 import { useDraft, type Stage } from "@/stores/draft";
 
 /**
@@ -59,7 +60,7 @@ describe("adoptImage：新图进来时的初始态", () => {
     expect(draft.zoom).toBe("fit");
   });
 
-  it("默认参数是 58 颗 / 32 色（字面量断言，常量被改坏时它会红）", () => {
+  it("默认参数是 58 颗 / 16 色（字面量断言，常量被改坏时它会红）", () => {
     const draft = seedImage();
     expect(draft.longSide).toBe(58);
     expect(draft.maxColors).toBe(16);
@@ -69,7 +70,7 @@ describe("adoptImage：新图进来时的初始态", () => {
     const draft = seedImage();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 116, maxColors: "all", crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 2 },
+      params: { longSide: 116, maxColors: 221, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 2 },
       meta: { id: "p1", name: "旧图", createdAt: "2026-10-01T00:00:00.000Z" },
     });
     draft.setError("上一次的错误");
@@ -149,7 +150,7 @@ describe("generated 的失效规则", () => {
     draft.setLongSide(116);
     expect(draft.generated).toBe(false);
     draft.markGenerated();
-    draft.setMaxColors("all");
+    draft.setMaxColors(221);
     expect(draft.generated).toBe(false);
   });
 
@@ -192,7 +193,7 @@ describe("setter 的写入值（把赋值整行删掉、只留守卫，这些用
   // 「值到底有没有写进去」从未被读过。控制者实测：把 `setZoom` / `setPan` / `setRotation` /
   // `setAspect` + `setMaxColors` 的赋值整行删掉（只留 `requireXxx(next);` 那半句守卫），
   // 26 条全绿。所以每条都**必须传入与默认值不同的值**——zoom 默认 "fit"、pan 默认 {0,0}、
-  // rotation 默认 0、aspect 默认 "free"、maxColors 默认 32。传默认值进去，赋值被删掉时
+  // rotation 默认 0、aspect 默认 "free"、maxColors 默认 16。传默认值进去，赋值被删掉时
   // 断言仍然是绿的，那是「读的是默认值」的假覆盖。
 
   it('setZoom 把传入的 "fit" 之外的档位写进 zoom', () => {
@@ -219,10 +220,10 @@ describe("setter 的写入值（把赋值整行删掉、只留守卫，这些用
     expect(draft.aspect).toBe("9:16");
   });
 
-  it("setMaxColors 把传入的 32 之外的档位写进 maxColors", () => {
+  it("setMaxColors 把传入的、与默认 16 不同的用色数写进 maxColors", () => {
     const draft = seedImage();
-    draft.setMaxColors(16);
-    expect(draft.maxColors).toBe(16);
+    draft.setMaxColors(32);
+    expect(draft.maxColors).toBe(32);
   });
 });
 
@@ -278,7 +279,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 116, maxColors: "all", crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
+      params: { longSide: 116, maxColors: 221, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
       meta: { id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" },
     });
 
@@ -292,7 +293,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     expect(draft.crop).toEqual({ x: 3, y: 5, width: 400, height: 200 });
     expect(draft.rotation).toBe(3);
     expect(draft.longSide).toBe(116);
-    expect(draft.maxColors).toBe("all");
+    expect(draft.maxColors).toBe(221);
     expect(draft.rerunOf).toEqual({ id: "p1", createdAt: "2026-10-01T00:00:00.000Z" });
     // C8 §3.7：名字随记录一起进草稿，成为**唯一真相**（不再挂在身份上）。
     expect(draft.name).toBe("小猫");
@@ -323,7 +324,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
         source: OTHER_SOURCE,
         params: {
           longSide: 116,
-          maxColors: "all",
+          maxColors: 221,
           crop: { x: 3, y: 5, width: 400, height: 200 },
           rotation: 7 as unknown as 0,
         },
@@ -376,15 +377,30 @@ describe("其他入口校验（规格 §12）", () => {
     }
   });
 
-  it("档位只允许 8 / 16 / 24 / custom / all（旧枚举 32 / null 一律拒）", () => {
+  /**
+   * **2026-10-10 口径简化**：用色档位从 5 值枚举改成「1..色卡色数 的整数」。
+   * 语义变化逐条说清：
+   * - `32` 从「旧枚举里的合法值 → C7 的非法值」**变回合法值**：它就是一个数字（32 种色）。
+   * - `"custom"` / `"all"` 与 `null` 是旧记录的表示，**不做兼容**，一律响亮失败（裁定 A1）。
+   * - 上界**只有一处来源**：内置色卡色数（`getBuiltinPalette().colors.length`），
+   *   store 不再自己写一份常量——所以下面的探针是 `size` / `size + 1` 而不是写死的 221 / 222。
+   */
+  it("用色数是 1..色卡色数 的整数（旧字符串 / null 一律拒；上界来自色卡）", () => {
     const draft = seedImage();
-    for (const bad of [32, null, 0, Number.NaN, "16"]) {
-      expect(() => draft.setMaxColors(bad as unknown as 16)).toThrow(/档位/);
+    const size = getBuiltinPalette().colors.length;
+    for (const bad of [0, -1, 1.5, Number.NaN, size + 1, null, "custom", "all", "16"]) {
+      expect(() => draft.setMaxColors(bad as unknown as number)).toThrow(/档位/);
     }
-    // 三个预设档 + 不限 + 自定义都放行
-    for (const good of [8, 16, 24, "all", "custom"] as const) {
+    for (const good of [1, 8, 16, 24, 32, size]) {
       expect(() => draft.setMaxColors(good)).not.toThrow();
     }
+  });
+
+  it("customMaxColors / setCustomMaxColors 已删除（口径简化：档位就是一个数字）", () => {
+    const draft = seedImage();
+    // 这两个名字若复活，等于把「档位 + 自定义数值」的双字段口径又装了回来。
+    expect("customMaxColors" in draft).toBe(false);
+    expect("setCustomMaxColors" in draft).toBe(false);
   });
 
   it("旋转 / 比例 / 缩放 / 平移的非法值抛错", () => {

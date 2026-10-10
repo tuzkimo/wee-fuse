@@ -11,18 +11,56 @@ import {
 import { EMPTY, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors, type Pattern } from "../types";
 import type { RgbaImage, SampledGrid } from "../../image/types";
 
+const hex2 = (value: number): string => `0${value.toString(16)}`.slice(-2);
+const hexOf = (rgb: readonly [number, number, number]): string =>
+  `#${hex2(rgb[0])}${hex2(rgb[1])}${hex2(rgb[2])}`;
+
+/**
+ * 填充色的 RGB 序列（216 个）：每通道取 8 档（步长 32）的组合，剔掉与 A2(`#000000`) 重合的那一个。
+ *
+ * **夹具色卡为什么要凑到 221 色**：2026-10-10 起 `maxColors` 的口径是「1..色卡色数 的整数」，
+ * 上界**就是色卡色数**。夹具只有 5 色时，既有的 `maxColors: 16` / `24` 会当场变成非法值——
+ * 那等于用夹具的尺寸去测规格。221 与内置 MARD 同数，「220 / 221 / 222」这三个边界值才测得到。
+ * 填充色刻意远离 A1–A5，不会抢走既有断言里的最近色。
+ */
+const FILLER_RGB: ReadonlyArray<readonly [number, number, number]> = (() => {
+  const result: Array<readonly [number, number, number]> = [];
+  const levels = [0, 32, 64, 96, 128, 160, 192, 224];
+  for (const r of levels) {
+    for (const g of levels) {
+      for (const b of levels) {
+        if (r === 0 && g === 0 && b === 0) continue; // 与 A2 撞色
+        result.push([r, g, b]);
+      }
+    }
+  }
+  const fillers = result.slice(0, 216);
+  // 末位换成一个**与 A2(`#000000`) 同桶**的近黑色（0–7 落在同一个 5bit 直方图桶里）。
+  // 「拉满即不限」那条用例靠它分辨「跳过聚类」与「medianCut(色卡色数)」：两个近黑格在跳过
+  // 聚类时各取各自最近的色号（2 色），走聚类则被并成一个簇、只剩一个候选（1 色）。
+  fillers[215] = [4, 4, 4];
+  return fillers;
+})();
+
+/** 夹具色卡的颜色序列，**下标即色卡下标**：0–4 是 A1–A5，其余是填充色。 */
+const PALETTE_RGB: ReadonlyArray<readonly [number, number, number]> = [
+  [255, 255, 255],
+  [0, 0, 0],
+  [255, 0, 0],
+  [0, 255, 0],
+  [0, 0, 255],
+  ...FILLER_RGB,
+];
+
 const palette = loadPalette({
   id: "fake",
   name: "测试色卡",
   source: "https://example.com",
   accuracy: "仅测试用",
-  colors: [
-    { code: "A1", hex: "#ffffff" },
-    { code: "A2", hex: "#000000" },
-    { code: "A3", hex: "#ff0000" },
-    { code: "A4", hex: "#00ff00" },
-    { code: "A5", hex: "#0000ff" },
-  ],
+  colors: PALETTE_RGB.map((rgb, i) => ({
+    code: i < 5 ? `A${i + 1}` : `X${i - 5}`,
+    hex: hexOf(rgb),
+  })),
 });
 
 function grid(width: number, height: number, cells: ReadonlyArray<readonly [number, number, number] | null>): SampledGrid {
@@ -221,7 +259,7 @@ describe("buildPattern", () => {
       [0, 250, 0],
       [0, 0, 250],
     ]);
-    const pattern = buildPattern(g, palette, { maxColors: "all" });
+    const pattern = buildPattern(g, palette, { maxColors: palette.colors.length });
     expect(codeAt(pattern, codes, 0)).toBe("A3");
     expect(codeAt(pattern, codes, 1)).toBe("A4");
     expect(codeAt(pattern, codes, 2)).toBe("A5");
@@ -242,8 +280,7 @@ const WIDE_RGB: ReadonlyArray<readonly [number, number, number]> = [0, 128, 255]
   [0, 128, 255].flatMap((g) => [0, 128, 255].map((b) => [r, g, b] as const)),
 ).slice(0, 24);
 
-const hex2 = (value: number): string => `0${value.toString(16)}`.slice(-2);
-
+/** 24 色测试色卡：夹具色卡之外的另一组颜色，用来分辨「档位真的把用色压住了」。 */
 const widePalette = loadPalette({
   id: "wide",
   name: "24 色测试色卡",
@@ -252,16 +289,16 @@ const widePalette = loadPalette({
   colors: WIDE_RGB.map(([r, g, b], i) => ({ code: `C${i}`, hex: `#${hex2(r)}${hex2(g)}${hex2(b)}` })),
 });
 
-describe("buildPattern（追加：maxColors=null 必须真的跳过聚类）", () => {
+describe("buildPattern（追加：拉满色卡色数必须真的跳过聚类）", () => {
   const usedOf = (pattern: Pattern): Set<number> =>
     new Set([...pattern.cells].filter((value) => value !== EMPTY));
 
-  it("不限档位时 24 个色号全部保留，逐格精确命中自己的色号", () => {
+  it("用色数 = 色卡色数时 24 个色号全部保留，逐格精确命中自己的色号", () => {
     const g = grid(24, 1, WIDE_RGB);
 
-    // 「不限」的正确语义是跳过 medianCut、在全色卡里取最近色。
-    // 若把 null 当成 16 档位走聚类，这条会红：用色被压到 ≤16。
-    const unlimited = buildPattern(g, widePalette, { maxColors: "all" });
+    // 「拉满即不限」的正确语义是跳过 medianCut、在全色卡里取最近色。
+    // 若把它当成 16 档位走聚类，这条会红：用色被压到 ≤16。
+    const unlimited = buildPattern(g, widePalette, { maxColors: widePalette.colors.length });
     expect([...unlimited.cells]).toEqual(WIDE_RGB.map((_, i) => i));
     expect(usedOf(unlimited).size).toBe(24);
 
@@ -272,7 +309,13 @@ describe("buildPattern（追加：maxColors=null 必须真的跳过聚类）", (
     expect(usedOf(limited).size).toBeLessThan(usedOf(unlimited).size);
   });
 
-  it("32 档位同样把 24 个色号原样保留（桶数少于档位时不切割）", () => {
+  /**
+   * **2026-10-10 改口径后本条名字与判据都更新**：原句是「32 档位同样把 24 个色号原样保留
+   * （桶数少于档位时不切割）」，取值写的是 24、名字写的是 32（旧枚里的一个值）。
+   * 现在 `24` 恰好**等于**这张夹具的色卡色数，走的是「拉满即不限」那条分支，不是
+   * `medianCut` 的早退——名字按真实语义改准，判据一字未变。
+   */
+  it("用色数 = 24 色夹具的色卡色数 ⇒ 不聚类，24 个色号原样保留", () => {
     const g = grid(24, 1, WIDE_RGB);
     const pattern = buildPattern(g, widePalette, { maxColors: 24 });
     expect([...pattern.cells]).toEqual(WIDE_RGB.map((_, i) => i));
@@ -315,38 +358,105 @@ const metricPalette = loadPalette({
 
 describe("buildPattern（追加：逐格阶段必须用 ΔE76，不是 CIEDE2000）", () => {
   it("两种度量结论相反时，逐格取色按 ΔE76 走", () => {
-    // maxColors=null → 两个色号都是候选。ΔE76 取青（色卡下标 0）；
+    // 用色数 = 色卡色数（2）⇒ 两个色号都是候选。ΔE76 取青（色卡下标 0）；
     // 若把 build.ts 里的度量换成 cie2000，会取紫（下标 1）→ 断言转红。
     const g = grid(1, 1, [[0, 34, 34]]);
-    expect([...buildPattern(g, metricPalette, { maxColors: "all" }).cells]).toEqual([0]);
+    expect([
+      ...buildPattern(g, metricPalette, { maxColors: metricPalette.colors.length }).cells,
+    ]).toEqual([0]);
   });
 });
 
 /**
- * —— 最终审查 F2 追加；C7 按新枚举改写 ——
- * `maxColors` 是规格 §4.4 里**要落盘并回读**的 `params.maxColors`，属外部输入；类型
- * `8 | 16 | 24 | "custom" | "all"` 只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转。实测过的形态：
+ * —— 最终审查 F2 追加；C7 改成枚举；2026-10-10 的口径简化改成**纯数字** ——
+ * `maxColors` 是规格 §4.4 里**要落盘并回读**的 `params.maxColors`，属外部输入；数字类型
+ * 只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转。实测过的形态：
  * `NaN` → `medianCut` 的 `while (boxes.length < NaN)` 一次都不进入，全部桶当一个盒子 →
  * **静默产出「整图仅 1 色」的图纸**；`0` / `-1` → 走 `maxColors <= 0` 早退 → 静默等价
- * 「不限」，与档位语义冲突；`16.5` → 可切出 17 个簇，超出档位；
+ * 「不限」，与档位语义冲突；`1.5` → 可切出 2 个簇，超出档位；
  * `Infinity` → 每桶各自成簇（7k → 7.2M 的 CIEDE2000 悬崖）。
  *
- * **2026-10-09（C7）**：旧枚举的 `32` / `null` 也归入「一律抛错」——人类伙伴裁定不做旧数据兼容。
+ * **2026-10-10（口径简化）**：`maxColors` 是「1..色卡色数 的整数」，**等于色卡色数即「不限」**
+ * （跳过分簇）。旧枚举的 `"custom"` / `"all"` 与 `null` 一律按非法值响亮失败（不做兼容）；
+ * **`32` 这类数字则按新口径重新判定**——在 221 色的夹具下它是合法值（32 种色）。
  */
-describe("buildPattern（追加：用色档位入口校验）", () => {
-  it("非法档位一律抛错，而不是静默产出单色图纸或静默「不限」", () => {
-    const g = grid(2, 1, [
-      [250, 0, 0],
-      [0, 0, 250],
-    ]);
-    // 含旧枚举的 32 / null：它们在 C7 起也是非法值（不做兼容）
-    const bads = [Number.NaN, 0, -1, 16.5, Number.POSITIVE_INFINITY, 32, null, "16"];
+describe("buildPattern（追加：用色数入口校验与「拉满即不限」）", () => {
+  const small = grid(2, 1, [
+    [250, 0, 0],
+    [0, 0, 250],
+  ]);
+  const usedOf = (pattern: Pattern): Set<number> =>
+    new Set([...pattern.cells].filter((value) => value !== EMPTY));
+
+  it("1..色卡色数 的整数一律接受（含旧枚举里的 32 与上界两侧的 220 / 221）", () => {
+    expect(palette.colors.length).toBe(221);
+    for (const good of [1, 8, 16, 24, 32, 220, 221]) {
+      expect(() => buildPattern(small, palette, { maxColors: good })).not.toThrow();
+    }
+    // 222 是上界紧邻外侧的探针：上界若被实现成「色卡色数 + 1」或干脆没有上界，这条会红。
+    expect(() => buildPattern(small, palette, { maxColors: 222 })).toThrow(/用色档位非法/);
+  });
+
+  it("非法值一律抛错，而不是静默产出单色图纸或静默「不限」", () => {
+    const bads: unknown[] = [
+      Number.NaN,
+      0,
+      -1,
+      1.5,
+      Number.POSITIVE_INFINITY,
+      222,
+      null,
+      "16",
+      "custom",
+      "all",
+      undefined,
+    ];
     for (const bad of bads) {
-      expect(() => buildPattern(g, palette, { maxColors: bad as MaxColors })).toThrow(/用色档位非法/);
+      expect(() => buildPattern(small, palette, { maxColors: bad as MaxColors })).toThrow(
+        /用色档位非法/,
+      );
     }
   });
 
-  it("三个预设档 + 自定义 + 不限都照常通过", () => {
+  /**
+   * 「拉满 = 不限」的**判别性**证据：221 格网格每格正好是夹具色卡里同下标的颜色。
+   * 跳过聚类时逐格精确命中自己（用色 221）；走 medianCut(220) 时候选最多 220 个，
+   * 用色必然少一个以上。把 `>=` 改成 `>` 会让 221 也走聚类 ⇒ 前一条断言立刻红。
+   */
+  it("用色数 = 色卡色数 ⇒ 跳过分簇（221 个色号逐格精确命中，与旧 'all' 语义逐位一致）", () => {
+    const g = grid(221, 1, PALETTE_RGB);
+
+    const unlimited = buildPattern(g, palette, { maxColors: palette.colors.length });
+    expect([...unlimited.cells]).toEqual(PALETTE_RGB.map((_, i) => i));
+    expect(usedOf(unlimited).size).toBe(221);
+
+    const limited = buildPattern(g, palette, { maxColors: 220 });
+    expect(usedOf(limited).size).toBeLessThanOrEqual(220);
+    expect(usedOf(limited).size).toBeLessThan(usedOf(unlimited).size);
+
+    /*
+     * **与「medianCut(色卡色数)」的判别性差异**：`#000000`（下标 1）与 `#040404`（末位填充色）
+     * 落在**同一个 5bit 直方图桶**里。跳过聚类时两个格各取各自最近的色号（2 色）；走聚类时它们
+     * 被并成一个簇、只剩一个候选（1 色）。
+     *
+     * 这条是「`>=` 写成 `>`」这个变异的唯一判死位：光看上面那条 221 格全命中是**抓不到**的
+     * ——`medianCut(221)` 在桶数 ≤ 221 时会早退、每个桶仍映射回自己的色号，结果与跳过聚类相同。
+     */
+    const nearBlackIndex = PALETTE_RGB.findIndex(([r, g, b]) => r === 4 && g === 4 && b === 4);
+    expect(nearBlackIndex).toBe(220);
+    const nearBlack = buildPattern(
+      grid(2, 1, [
+        [0, 0, 0],
+        [4, 4, 4],
+      ]),
+      palette,
+      { maxColors: palette.colors.length },
+    );
+    expect([...nearBlack.cells]).toEqual([1, nearBlackIndex]);
+    expect(usedOf(nearBlack).size).toBe(2);
+  });
+
+  it("三个预设档照常通过", () => {
     const g = grid(3, 1, [
       [250, 0, 0],
       [0, 250, 0],
@@ -355,24 +465,7 @@ describe("buildPattern（追加：用色档位入口校验）", () => {
     expect([...buildPattern(g, palette, { maxColors: 8 }).cells]).toEqual([2, 3, 4]);
     expect([...buildPattern(g, palette, { maxColors: 16 }).cells]).toEqual([2, 3, 4]);
     expect([...buildPattern(g, palette, { maxColors: 24 }).cells]).toEqual([2, 3, 4]);
-    expect([...buildPattern(g, palette, { maxColors: "all" }).cells]).toEqual([2, 3, 4]);
-    expect([
-      ...buildPattern(g, palette, { maxColors: "custom", customMaxColors: 5 }).cells,
-    ]).toEqual([2, 3, 4]);
-  });
-
-  it("自定义色数越界 / 非整数 / 缺失都响亮失败（消息与档位那条分开）", () => {
-    const g = grid(2, 1, [
-      [250, 0, 0],
-      [0, 0, 250],
-    ]);
-    for (const customMaxColors of [0, -1, 1.5, Number.NaN, 999]) {
-      expect(() => buildPattern(g, palette, { maxColors: "custom", customMaxColors })).toThrow(
-        /用色数非法/,
-      );
-    }
-    // 缺失：`undefined` 不是「用默认值」，而是「档位声明了自定义却没给数」——配置错，要响
-    expect(() => buildPattern(g, palette, { maxColors: "custom" })).toThrow(/用色数非法/);
+    expect([...buildPattern(g, palette, { maxColors: 221 }).cells]).toEqual([2, 3, 4]);
   });
 });
 

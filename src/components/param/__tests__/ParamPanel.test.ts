@@ -14,7 +14,6 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       name: "小猫",
       longSide: 58,
       maxColors: 24,
-      customMaxColors: 32,
       paletteColorCount: 221,
       crop: { x: 0, y: 0, width: 600, height: 600 },
       rotation: 0,
@@ -161,64 +160,83 @@ describe("长边输入", () => {
   });
 });
 
-describe("用色档位（滑条，C8 第 4 项）", () => {
-  it("滑条拨到 8 ⇒ emit 数字 8", async () => {
+describe("用色数（滑条 + 数字输入框，C8 第 4 项；2026-10-10 口径简化后只剩一个数字）", () => {
+  it.each([
+    ["8", 8],
+    ["16", 16],
+    ["24", 24],
+    ["220", 220],
+    ["221", 221],
+  ] as const)("滑条拨到 %s ⇒ 原样 emit 数字 %i（220 / 221 不再折成 'all'）", async (raw, expected) => {
     const wrapper = mountPanel();
-    await wrapper.get("[data-testid='max-colors-slider']").setValue("8");
-    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([8]);
-  });
-
-  it("滑条拨到 20（非预设、非上界）⇒ emit custom + 那个数值", async () => {
-    const wrapper = mountPanel();
-    await wrapper.get("[data-testid='max-colors-slider']").setValue("20");
-    expect(wrapper.emitted("update:customMaxColors")?.at(-1)).toEqual([20]);
-    // 顺序是「先数值、后档位」：只发 custom 而不发数值，回读时就生成不出用户要的色数。
-    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["custom"]);
-  });
-
-  it("滑条拖到最右端（= 色卡色数）⇒ emit 'all'（不是色卡色数那个数字）", async () => {
-    const wrapper = mountPanel({ paletteColorCount: 221 });
-    await wrapper.get("[data-testid='max-colors-slider']").setValue("221");
-    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual(["all"]);
-    // 「不限」不该顺手把色卡色数写进自定义值：那一档根本不读它。
-    expect(wrapper.emitted("update:customMaxColors")).toBeUndefined();
+    await wrapper.get("[data-testid='max-colors-slider']").setValue(raw);
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([expected]);
   });
 
   /**
-   * 上面三条只「写」滑条，读不出它有没有显示父级**当前**的档位——滑条位置不跟 props 走的话，
-   * 从「不限」切到「16 色」再切回来，拇指会停在旧位置而所有写入型断言照样绿。
+   * 滑条对**靠近档位节点**的值会吸附（阈值 4），所以「拨到 20」实际上会 emit 16。
+   * 这不是缺陷，是「滑动靠近时自动吸附到对应档位数量」这条口径；「非档位整数」则由数字输入框承载。
    */
-  it("滑条位置跟着父级档位走（all 停在最右端、custom 停在自定义值上）", () => {
+  it("滑条拨到吸附半径内的 20 ⇒ emit 档位值 16（吸附由 TierSlider 负责）", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("[data-testid='max-colors-slider']").setValue("20");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([16]);
+  });
+
+  it("数字输入框填 20 ⇒ 原样 emit 20（不吸附，用户填多少就多少）", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("[data-testid='max-colors']").setValue("20");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([20]);
+  });
+
+  /**
+   * 上面几条只「写」滑条，读不出它有没有显示父级**当前**的值——滑条位置不跟 props 走的话，
+   * 从 221 切到 16 再切回来，拇指会停在旧位置而所有写入型断言照样绿。
+   */
+  it("滑条位置与输入框回显都跟着父级的值走", () => {
     const at = (wrapper: ReturnType<typeof mountPanel>): string =>
       (wrapper.get("[data-testid='max-colors']").element as HTMLInputElement).value;
 
     expect(at(mountPanel({ maxColors: 8 }))).toBe("8");
     expect(at(mountPanel({ maxColors: 16 }))).toBe("16");
     expect(at(mountPanel({ maxColors: 24 }))).toBe("24");
-    expect(at(mountPanel({ maxColors: "all", paletteColorCount: 221 }))).toBe("221");
-    expect(at(mountPanel({ maxColors: "custom", customMaxColors: 20 }))).toBe("20");
+    expect(at(mountPanel({ maxColors: 221, paletteColorCount: 221 }))).toBe("221");
   });
 
-  it("档位文案与生效上限跟着档位走", () => {
-    const tierOf = (wrapper: ReturnType<typeof mountPanel>): string =>
-      wrapper.get("[data-testid='max-colors-tier']").text();
+  /**
+   * 读数只有一行（`max-colors-value`）：N ≥ 色卡色数时写「不限」——判据与 `build.ts` 里
+   * 「`clusterCount === null` = 跳过分簇」是同一条。
+   *
+   * **被删除的 testid**：`max-colors-tier`（它承载的「档位」概念已经不存在——档位就是一个数字）
+   * 与 `custom-max-colors`（自定义数值并入了那个数字）。两者都在这条里断言不存在，
+   * 复活会转红。
+   */
+  it("读数：N < 色卡色数写「N 种」，N ≥ 色卡色数写「不限」；档位/自定义那两个 testid 已删除", () => {
     const valueOf = (wrapper: ReturnType<typeof mountPanel>): string =>
       wrapper.get("[data-testid='max-colors-value']").text();
 
-    expect(tierOf(mountPanel({ maxColors: 24 }))).toBe("用色：24 色");
-    expect(valueOf(mountPanel({ maxColors: 24 }))).toBe("24");
-    expect(tierOf(mountPanel({ maxColors: "custom", customMaxColors: 20 }))).toBe("用色：自定义 20 色");
-    expect(valueOf(mountPanel({ maxColors: "custom", customMaxColors: 20 }))).toBe("20");
-    // 「不限」的滑条上界就是色卡色数（C8 规格 §6 裁定 B）——读数是它，不是 0、不是空串。
-    expect(tierOf(mountPanel({ maxColors: "all", paletteColorCount: 221 }))).toContain("用色：不限");
-    expect(valueOf(mountPanel({ maxColors: "all", paletteColorCount: 221 }))).toBe("221");
+    expect(valueOf(mountPanel({ maxColors: 24, paletteColorCount: 221 }))).toBe("24 种");
+    expect(valueOf(mountPanel({ maxColors: 220, paletteColorCount: 221 }))).toBe("220 种");
+    expect(valueOf(mountPanel({ maxColors: 221, paletteColorCount: 221 }))).toBe("不限");
+
+    const wrapper = mountPanel();
+    expect(wrapper.find("[data-testid='max-colors-tier']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='custom-max-colors']").exists()).toBe(false);
   });
 
-  /** 滑条上的节点：三个预设档 + **最右端的「不限」**（档位从按钮组搬到滑条上）。 */
-  it("用色滑条的档位节点是 8 / 16 / 24 / 不限", () => {
+  /**
+   * 用色滑条的节点是**三个纯数字档位**（8 / 16 / 24）——「不限」不再单列一档，
+   * 拉满滑条（= 色卡色数）就是它。数字画在滑条下方一行（`labels="below"`）：
+   * 1–221 上这三个节点分别落在 3.18% / 6.82% / 10.45%，画在轨道上必然重叠。
+   */
+  it("用色滑条的档位节点是 8 / 16 / 24 三个纯数字，数字行里同时给出上界", () => {
     const wrapper = mountPanel({ paletteColorCount: 221 });
-    const marks = colorSlider(wrapper).findAll("[data-node]").map((mark) => mark.text());
-    expect(marks).toEqual(["8 色", "16 色", "24 色", "不限"]);
+    const line = colorSlider(wrapper).get("[data-node-line]").text();
+    expect(line).toContain("8 / 16 / 24");
+    expect(line).toContain("221");
+    // 长边那条（节点间距够大）保持数字画在轨道上，两条各有各的画法。
+    expect(wrapper.findAllComponents(TierSlider)[0]!.findAll("[data-node]")).toHaveLength(3);
+    expect(colorSlider(wrapper).find("[data-node]").exists()).toBe(false);
   });
 
   it("色卡卡片显示名称（C8 起不再有精度声明那一行）", () => {
@@ -351,7 +369,8 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
 
   it("400 × 300 的裁剪在 rotation 1 下两端都换轴（44 × 58）", async () => {
     const crop = { x: 0, y: 0, width: 400, height: 300 };
-    const wrapper = mountPanel({ crop, rotation: 1, longSide: 58, maxColors: "all" });
+    // 用色数取 2 = 这张夹具色卡的色数（= 不限）：与流水线拿到的那份请求同口径。
+    const wrapper = mountPanel({ crop, rotation: 1, longSide: 58, maxColors: 2 });
 
     const pattern = await generatePattern(
       {
@@ -360,7 +379,7 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
         crop,
         rotation: 1,
         longSide: 58,
-        maxColors: "all",
+        maxColors: 2,
       },
       { exactDecoder: solid, fastDecoder: fastForbidden, palette },
     );
