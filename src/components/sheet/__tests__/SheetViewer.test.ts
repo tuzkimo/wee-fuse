@@ -1,7 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { closeTopOverlay } from "@/composables/useOverlayBack";
+import type { ColorUsage } from "@/core/pattern/stats";
 import { getBuiltinPalette } from "@/services/palette";
 import type { SheetRenderInput } from "@/services/sheetExport";
+import ExportPanel from "@/components/editor/ExportPanel.vue";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
 
 /**
@@ -116,14 +120,6 @@ describe("SheetViewer（C7：吃 pattern 入参 + 可缩放）", () => {
     // **预览 URL 与落盘用的是同一颗 blob**（不许 `fetch(objectUrl)` 再取一遍：那会白复制一份位图）
     expect(createObjectUrl.mock.calls[0]?.[0]).toBe(blob);
     expect(wrapper.get("[data-testid='sheet-save-state']").text()).toBe("已保存到相册");
-  });
-
-  it("查看层显示色卡精度声明（C7 起图上不印了，声明搬到这里）", async () => {
-    const wrapper = mountViewer();
-    await flushPromises();
-    const line = wrapper.get("[data-testid='sheet-accuracy']").text();
-    expect(line).toBe(palette.accuracy);
-    expect(line.length).toBeGreaterThan(0);
   });
 
   it("关闭 emit close；卸载时释放 object URL（恰好一次）", async () => {
@@ -269,24 +265,173 @@ describe("SheetViewer（C7：吃 pattern 入参 + 可缩放）", () => {
  * 视口尺寸在 CI 里恒为 0，任何「缩放到某个具体比例」的断言在这里都是假的。
  */
 describe("SheetViewer 的缩放接线", () => {
-  it("三个按钮都在（适配 / 放大 / 缩小）", async () => {
-    const wrapper = mountViewer();
-    await flushPromises();
-    expect(wrapper.find("[data-testid='sheet-zoom-fit']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='sheet-zoom-in']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='sheet-zoom-out']").exists()).toBe(true);
-    expect(wrapper.find("[data-testid='sheet-stage']").exists()).toBe(true);
-  });
-
   it("视口量不到尺寸（happy-dom 返回 0）时缩放按钮不改变视图，也不抛错", async () => {
     const wrapper = mountViewer();
     await flushPromises();
     const before = wrapper.get("[data-testid='sheet-stage']").attributes("style");
     await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
     await wrapper.get("[data-testid='sheet-zoom-out']").trigger("click");
-    await wrapper.get("[data-testid='sheet-zoom-fit']").trigger("click");
     // 视口为 0 ⇒ `view` 保持 null ⇒ `<img>` 仍是「垫场/全宽」那一支（内联样式不变）
     expect(wrapper.get("[data-testid='sheet-stage']").attributes("style")).toBe(before);
     expect(wrapper.find("[data-testid='sheet-error']").exists()).toBe(false);
+  });
+});
+
+/**
+ * 让舞台量到一个非零视口：happy-dom 的 `getBoundingClientRect()` 恒为 0，视图数学因此不可达。
+ *
+ * **这里比简报多了一条 `await nextTick()`（如实记录）**：`resize` 里 `measure()` 改的是响应式状态，
+ * DOM 补丁排在**微任务**里；同步紧跟着读 `attributes("style")` 拿到的是**旧**样式 ⇒ `fit` 恒为 0，
+ * 于是「默认整图适配」那条的 `expect(fit).toBeGreaterThan(0)` 永远红、双击那条的
+ * `expect(zoomed).toBeGreaterThan(fit)` 又成了恒真（假绿）。只补等待，**断言一条都没改**。
+ */
+async function withViewport(wrapper: ReturnType<typeof mountViewer>, width = 800, height = 600): Promise<void> {
+  const stage = wrapper.get("[data-testid='sheet-stage']").element as HTMLElement;
+  stage.getBoundingClientRect = () =>
+    ({
+      x: 0, y: 0, left: 0, top: 0, right: width, bottom: height, width, height,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  window.dispatchEvent(new Event("resize"));
+  await nextTick();
+}
+
+/** 从 `<img>` 的内联 transform 里读当前比例（视图为 null 时返回 0）。 */
+function scaleOf(wrapper: ReturnType<typeof mountViewer>): number {
+  const style = wrapper.get("[data-testid='sheet-preview']").attributes("style") ?? "";
+  const match = /scale\(([\d.]+)\)/.exec(style);
+  return match === null ? 0 : Number(match[1]);
+}
+
+describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
+  it("底部操作条是四颗按钮：放大 / 缩小 / 打印 / 保存；「适配」按钮与精度声明都没了", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='sheet-zoom-in']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='sheet-zoom-out']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='sheet-print']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='sheet-save']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='sheet-zoom-fit']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='sheet-accuracy']").exists()).toBe(false);
+  });
+
+  it("量到视口后：默认是整图适配，点放大比例变大、点缩小比例回落", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    await withViewport(wrapper);
+    const fit = scaleOf(wrapper);
+    expect(fit).toBeGreaterThan(0);
+
+    await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
+    const zoomed = scaleOf(wrapper);
+    expect(zoomed).toBeGreaterThan(fit);
+
+    await wrapper.get("[data-testid='sheet-zoom-out']").trigger("click");
+    expect(scaleOf(wrapper)).toBeLessThan(zoomed);
+  });
+
+  it("双击在「放大到上限」与「整图适配」之间切换", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    await withViewport(wrapper);
+    const fit = scaleOf(wrapper);
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+
+    await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    const zoomed = scaleOf(wrapper);
+    expect(zoomed).toBeGreaterThan(fit);
+
+    await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    expect(scaleOf(wrapper)).toBeCloseTo(fit, 5);
+  });
+
+  it("单指拖动会平移视图（transform 的 translate 变化）", async () => {
+    // **用 100×100 的图纸**：2×1 在 800×600 里默认视图是 64px/格（`minCellScale` 的上限），
+    // 图像只有 128px 宽 < 视口 ⇒ `clampView` 把它按居中夹住，拖动**什么都不会变**（假绿）。
+    // 100×100 的适配比例是 6px/格，连点 8 次放大后 6×1.25⁸ ≈ 35 → 图像 3500px，横向真的可拖。
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+    });
+    await flushPromises();
+    await withViewport(wrapper);
+    for (let i = 0; i < 8; i += 1) {
+      await wrapper.get("[data-testid='sheet-zoom-in']").trigger("click");
+    }
+    const before = wrapper.get("[data-testid='sheet-preview']").attributes("style");
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+    await stage.trigger("pointerdown", { pointerId: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointermove", { pointerId: 1, clientX: 430, clientY: 310 });
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 430, clientY: 310 });
+    expect(wrapper.get("[data-testid='sheet-preview']").attributes("style")).not.toBe(before);
+  });
+
+  it("双指捏合按两指间距改比例：分开变大、靠拢变小", async () => {
+    // 100×100 在 800×600 里适配恰好 6px/格（上界 64）⇒ 2 倍 / 0.75 倍都落在可缩放区间内，
+    // 不会被 `zoomCellView` 的夹取掩盖（夹住了就分辨不出「比例真的按间距算」还是「没动」）。
+    // **判别力**：把捏合分支删掉、只留单指平移，这里的比例会停在 6 ⇒ 三条断言全红。
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+    });
+    await flushPromises();
+    await withViewport(wrapper);
+    expect(scaleOf(wrapper)).toBe(6);
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+
+    await stage.trigger("pointerdown", { pointerId: 1, clientX: 300, clientY: 300 });
+    await stage.trigger("pointerdown", { pointerId: 2, clientX: 400, clientY: 300 });
+    // 两指间距 100 → 200：比例 ×2
+    await stage.trigger("pointermove", { pointerId: 2, clientX: 500, clientY: 300 });
+    expect(scaleOf(wrapper)).toBeCloseTo(12, 5);
+
+    // 间距 200 → 150：比例 ×0.75（增量口径：比值是 150/200）
+    await stage.trigger("pointermove", { pointerId: 2, clientX: 450, clientY: 300 });
+    expect(scaleOf(wrapper)).toBeCloseTo(9, 5);
+
+    await stage.trigger("pointerup", { pointerId: 1, clientX: 300, clientY: 300 });
+    await stage.trigger("pointerup", { pointerId: 2, clientX: 450, clientY: 300 });
+  });
+
+  it("「打印」在查看层里打开打印页，关掉它回到查看层", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    await wrapper.get("[data-testid='sheet-print']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(true);
+    await wrapper.get("[data-testid='export-close']").trigger("click");
+    expect(wrapper.find("[data-testid='export-panel']").exists()).toBe(false);
+    // 打印页用的是**同一份**用量（不重算第二遍统计）
+    expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(true);
+  });
+
+  it("打印页的接线：`:usages` / `:project-name` 就是查看层自己那一份，不是空数组、不是别的名字", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    await wrapper.get("[data-testid='sheet-print']").trigger("click");
+
+    const input = renderSheetBlob.mock.calls[0]?.[0] as SheetRenderInput;
+    const panel = wrapper.findComponent(ExportPanel);
+    // 名字：字面量 + 与查看层自己的 props 同源（把 `:project-name` 接成常量 / 别的字段都会红）
+    expect(wrapper.props("name")).toBe("测试工程");
+    expect(panel.props("projectName")).toBe("测试工程");
+    expect(panel.props("projectName")).toBe(wrapper.props("name"));
+    // 用量：**同一份对象**（重算一遍统计、或传空数组都会红），且不是空表
+    const usages = panel.props("usages") as readonly ColorUsage[];
+    expect(usages).toBe(input.usages);
+    expect(usages).toHaveLength(1);
+    expect(usages[0]?.count).toBe(2);
+  });
+
+  it("接进覆盖层返回栈：closeTopOverlay() 关掉查看层", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(closeTopOverlay()).toBe(true);
+    expect(wrapper.emitted("close")).toEqual([[]]);
+    wrapper.unmount();
   });
 });
