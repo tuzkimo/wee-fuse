@@ -263,6 +263,7 @@ function onPick(index: number): void {
           :data-code="row.code"
           :data-current="currentColor === row.index ? '1' : undefined"
           :data-selected="selectedSet.has(row.index) ? '1' : undefined"
+          :aria-pressed="selectedSet.has(row.index) ? 'true' : 'false'"
           class="flex min-h-11 w-full items-center gap-2 rounded px-3 text-base"
           :class="selectedSet.has(row.index) ? 'border-2 border-slate-900' : 'border border-slate-200'"
           @click="toggleRow(row.index)"

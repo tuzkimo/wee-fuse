@@ -275,10 +275,23 @@ describe("当前色槽即入口（§9.1 第 3 条）", () => {
 describe("选中与操作条", () => {
   it("已选中的行带 data-selected，未选中的不带", () => {
     const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
-    const marked = wrapper
-      .findAll("[data-testid='palette-row']")
-      .map((row) => row.attributes("data-selected"));
-    expect(marked).toEqual(["1", undefined]);
+    const rows = wrapper.findAll("[data-testid='palette-row']");
+    expect(rows.map((row) => row.attributes("data-selected"))).toEqual(["1", undefined]);
+    // 点行的语义是「切换选中」，读屏软件不认 `data-selected`。`aria-pressed` 必须**两个方向**
+    // 都断言（同一实例）：只断言选中行是 `true` 时，绑成常量 `true` 也绿。
+    expect(rows.map((row) => row.attributes("aria-pressed"))).toEqual(["true", "false"]);
+  });
+
+  // 【接受的偏差】`toggleRow` 从 props.selected 复制后增删，**从不按 usages 过滤**：选中期间被
+  // 涂光、从 usages 消失的色号仍留在集合里（§5.5「选中的是该色号的所有格子」）。它只是不计数
+  // （`selectedRows`），不是被悄悄抹掉。反向守卫：顺手 `filter` 成有效选中时，这条必红。
+  it("切换选中时保留已从 usages 消失的色号", async () => {
+    const wrapper = mountPanel({
+      usages: [usage("M1", 9)],
+      selected: [indexOf(palette, "M1"), indexOf(palette, "A1")],
+    });
+    await wrapper.findAll("[data-testid='palette-row']")[0].trigger("click");
+    expect(wrapper.emitted("update:selected")?.at(-1)).toEqual([[indexOf(palette, "A1")]]);
   });
 
   it("再点一次取消选中（载荷里去掉它）", async () => {

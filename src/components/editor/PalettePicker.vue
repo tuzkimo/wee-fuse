@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // src/components/editor/PalettePicker.vue
 //
-// MARD 221 全色卡选择器：按色号首字母分组、色块 + 色号、已用色加标记。
+// MARD 221 全色卡选择器：顶部一组「已用色」快捷入口（按 `usedIndices` 顺序），下面按色号首字母
+// 分组、色块 + 色号、已用色加标记。
+// `mode` 决定用途（§5.3）：`recolor` 时多一个橡皮项、交出的都是目标色；`brush` 时是画笔色。
 // props 进、事件出，**不读 store、不 import services**（色卡由父级以 props 给进来）。
 //
 // **分组顺序取数据里首次出现的顺序**，不硬编码九色系表、也不按字母排序：色卡是可插拔的

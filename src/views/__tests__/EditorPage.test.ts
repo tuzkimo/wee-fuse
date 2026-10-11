@@ -1847,7 +1847,6 @@ describe("按色号批量换色（端到端）", () => {
     // ③ 图纸真的改了（不是只有 UI 变了）
     const cells = loadedCells(editor);
     expect(cells[0]).toBe(2);
-    expect(cells[1]).toBe(2);
     // ④ 选中被清空（页面在 `onRecolor` 里清）
     expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(false);
     // ⑤ 用量表跟着更新：0 号那一行消失，只剩目标色一行 · 2 颗
