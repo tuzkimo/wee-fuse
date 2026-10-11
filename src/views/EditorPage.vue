@@ -90,6 +90,15 @@ const allowLeave = ref(false);
 const loadedId = ref("");
 
 /**
+ * 按色号批量换色的**选中集合**（全色卡下标，§5.6），页面自持。
+ *
+ * 它必须在这一层：面板与画布**都要读同一份**（面板算计数、画布高亮），而两者之间没有父子关系。
+ * 它是**页面局部 UI 状态**：不进 store、不进历史、不落盘——「谁被选中」不是图纸的内容，
+ * 换图纸或重新进页就该消失（规格 §5.6）。
+ */
+const selectedColors = ref<readonly number[]>([]);
+
+/**
  * 图纸统计。**`void editor.revision` 是承重的，删不得**：`cells` 是 `Uint16Array`，
  * `paint` / `applyRect` / `undo` / `redo` 都是**原地写入**，Vue 的响应式追踪看不到——
  * `pattern` 又是 `markRaw`。刷新只有一条显式通道：`revision` 自增。
@@ -136,6 +145,9 @@ function thumbnailFor(pattern: Pattern): string {
 async function activate(id: string): Promise<void> {
   // 先记下「这次载入的是谁」：重复触发时 `watch` 靠它挡掉无谓的第二次载入。
   loadedId.value = id;
+  // 选中是**上一次会话的 UI 状态**：换图纸（含 `session.load` 失败后 `editor.reset()` 的两条
+  // 提前 `return`）之后它必须清空。放在最顶上一行覆盖成功与两条失败三条路径（控制者裁决）。
+  selectedColors.value = [];
   const loaded = await session.load(id);
   if (!loaded) {
     editor.reset();
@@ -198,6 +210,20 @@ function onBackground(point: CellPoint): void {
     BACKGROUND_TOLERANCE,
   );
   editor.eraseCells(indices);
+}
+
+/**
+ * 按色号批量换色（§6）：把面板发来的 `sources`（有效选中的全色卡下标）与目标色转交 store。
+ *
+ * **`sources` 用面板那份，页面不自己从 `selectedColors` 再算一遍**：面板交出的就是操作条
+ * 计数用的那一份（§7 第 1 条——选中期间被涂光的色号不算数），另算一份的下场是「条上说改 1 个
+ * 色号，实际改了别的格子」。`to` 可以是 `EMPTY`（批量擦除，由选择器的橡皮项给出）。
+ *
+ * 换完清空选中：改动已落地，留在选中态会让用户接着误改同一批格子。
+ */
+function onRecolor(sources: readonly number[], to: number): void {
+  editor.recolor(sources, to);
+  selectedColors.value = [];
 }
 
 /**
@@ -553,6 +579,7 @@ function rerun(): void {
             :current-color="editor.currentColor"
             :show-grid="editor.showGrid"
             :show-labels="editor.showLabels"
+            :selected="selectedColors"
             @measure="onMeasure"
             @update:view="onView"
             @paint="onPaint"
@@ -595,7 +622,10 @@ function rerun(): void {
             :palette="palette"
             :usages="usages"
             :current-color="editor.currentColor"
+            :selected="selectedColors"
             @update:current-color="editor.setCurrentColor($event)"
+            @update:selected="selectedColors = $event"
+            @recolor="onRecolor"
           />
 
           <!--

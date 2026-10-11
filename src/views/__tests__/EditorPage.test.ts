@@ -1810,3 +1810,68 @@ describe("去背景工具", () => {
     expect(editor.canUndo).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 按色号批量换色（任务 6：页面接线）。
+//
+// 这一组走的是**真组件端到端**：`mountGrid` 造图纸、`PalettePanel` / `PatternCanvas` 都是真组件，
+// 只有平台边界是桩。断的是「接线接通了」——页面把选中集合既交给了面板又交给了画布，
+// 并且把面板交出的 `sources` 原样转给了 store（页面自己另算一份会让 UI 与实际改动不一致）。
+// ---------------------------------------------------------------------------
+
+describe("按色号批量换色（端到端）", () => {
+  it("点行选中 → 换成另一个色 ⇒ 那批格子真的变了、选中被清空、用量表跟着更新", async () => {
+    // 两个色号各 1 颗（外带一格空格）：换色后 0 号从用量表消失、目标色变 2 颗 ⇒ 行数必从 2 变 1。
+    // 若只用「1 颗的色号」当夹具，换色后仍是 1 行，「清单跟着更新」这条断言就失去判别力。
+    const wrapper = await mountGrid([0, 2, EMPTY], 3, 1);
+    const editor = useEditor();
+    const code0 = palette.colors[0]?.code ?? "";
+    const code2 = palette.colors[2]?.code ?? "";
+    const rows = () => wrapper.findAll("[data-testid='palette-row']");
+    expect(rows()).toHaveLength(2);
+
+    // ① 点色号 0 那一行 → 操作条出现，计数来自**面板自己**的有效选中（1 个色号 · 1 颗）
+    await wrapper.get(`[data-testid='palette-row'][data-code='${code0}']`).trigger("click");
+    const bar = wrapper.get("[data-testid='select-bar']");
+    expect(bar.text()).toContain("1 个色号");
+    expect(bar.text()).toContain("1 颗");
+
+    // ② 「换成…」开选择器 → 点目标色块。页面必须把**面板发来的** `sources` 转交 store：
+    //    自己另算一份的下场是「操作条数了 1 个色号，实际改了别的格子」。
+    await wrapper.get("[data-testid='select-bar-recolor']").trigger("click");
+    await wrapper
+      .get(`[data-testid='picker'] [data-testid='picker-color'][data-code='${code2}']`)
+      .trigger("click");
+    await nextTick();
+
+    // ③ 图纸真的改了（不是只有 UI 变了）
+    const cells = loadedCells(editor);
+    expect(cells[0]).toBe(2);
+    expect(cells[1]).toBe(2);
+    // ④ 选中被清空（页面在 `onRecolor` 里清）
+    expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(false);
+    // ⑤ 用量表跟着更新：0 号那一行消失，只剩目标色一行 · 2 颗
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]?.text()).toContain(code2);
+    expect(rows()[0]?.text()).toContain("2 颗");
+  });
+
+  it("[Review Focus 5] 载入另一份图纸后选中被清空", async () => {
+    const wrapper = await mountGrid([0, EMPTY], 2, 1);
+    const code0 = palette.colors[0]?.code ?? "";
+
+    await wrapper.get(`[data-testid='palette-row'][data-code='${code0}']`).trigger("click");
+    expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(true);
+
+    // b 的图纸几乎全是色号 0（15 格 + 末格空格）：选中若没清，它在 b 里会**命中同一行**、
+    // 操作条也会照旧出现——所以下面两条断言有判别力（不只是「恰好没有这一行」）。
+    await getProjectStore().put(makeReloadRecord());
+    router.params.id = "b";
+    await nextTick();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("海边的猫");
+    expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='palette-row'][data-selected='1']").exists()).toBe(false);
+  });
+});
