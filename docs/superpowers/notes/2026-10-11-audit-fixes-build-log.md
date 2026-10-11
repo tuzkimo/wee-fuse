@@ -121,6 +121,16 @@
 Task 8 的真机验收项即上文 Task 7 PENDING 清单的第 3 项（首页加载 → `blob:` 施工图 → 保存 → 分享），
 为避免两处记录漂移，此处不重复，结果仍为**未验证**。任何一步白屏即回退 CSP 并记录原因。
 
-补充口径（已由控制者核实，无需真机复核）：Tauri 的 `csp` 只注入 Tauri 自身 asset resolver 提供的 HTML，
-不注入外部 dev server；本应用 dev 流程（`tauri android dev` → Vite :1420）是外部服务，故该 CSP 不影响开发 HMR，
-`devCsp` 未设也不影响。
+**§4 更正（2026-10-11 实机）：上面那段「csp 不影响 dev」是错的，已按 logcat 读数推翻。**
+
+真机日志里页面 URL 是 `http://tauri.localhost/@vite/client`——`tauri android dev` 下页面**走 Tauri 自定义协议**，
+不是直接连 `http://<ip>:1420`，所以 Tauri 会把 `csp_header` 注入进来（`protocol/tauri.rs:182`），
+而 `SecurityConfig.csp` 的文档原文就是「If `devCsp` is not specified, this value is also injected on dev.」
+（`tauri-utils-2.10.1/src/config.rs:3040-3041`），`manager/mod.rs:361-370` 的 `csp()` 也是 `dev_csp.or(csp)`。
+
+**由此产生并已修掉的实机缺陷**：初版 `csp` 的 `connect-src` 只有 `ipc: http://ipc.localhost`、没有 `ws:` ⇒
+Vite 的 HMR WebSocket 被 CSP 拦死（logcat：`Tauri/Console: [vite] Direct websocket connection fallback ...
+the previous connection error`）⇒ Vite 客户端 polling 成功后 `location.reload()` ⇒ SPA 重启、内存里的 `draft` 丢失、
+当前路径 `/new` 原地重绘。用户看到的是「拍照 / 分享后自动跳回选图页」，且只在 `tauri android dev` 出现
+（装出来的 APK 没有 HMR ws）。修法是给 dev 单独一份策略 `app.security.devCsp`（`connect-src` 增加 `ws:` 与 `'self'`），
+生产 `csp` 保持不放 `ws:`；回归守卫是 `src/__tests__/tauriCsp.test.ts`。

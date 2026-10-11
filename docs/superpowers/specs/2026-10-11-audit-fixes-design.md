@@ -42,7 +42,10 @@
 - CI 能证明的：`npm run build` 通过、`cargo check` 经 `tauri::generate_context!` 解析配置通过、JSON 合法。
 - 真机 PENDING：首页加载（IPC + IndexedDB）→ `blob:` 施工图显示 → 保存 → 分享摄入；
   验收清单见 [`../notes/2026-10-11-audit-fixes-build-log.md`](../notes/2026-10-11-audit-fixes-build-log.md) 的 PENDING 清单第 3 项。任何一步白屏即回退。
-- `csp` 只注入 Tauri asset resolver 提供的 HTML，不影响外部 dev server（`tauri android dev` → Vite :1420），开发 HMR 不受影响。
+- **更正（2026-10-11 实机）**：`tauri android dev` 下页面 URL 是 `http://tauri.localhost`（走 Tauri 自定义协议），
+  所以 `csp` **会**被注入到 dev 页面（`devCsp` 未设 ⇒ 回退到 `csp`）。初版 CSP 没有 `ws:` 因而拦死了 Vite 的 HMR
+  WebSocket，引发实机「拍照 / 分享后跳回选图页」；已补 `app.security.devCsp`（`connect-src` 含 `ws:` 与 `'self'`），
+  生产 `csp` 仍不含 `ws:`。回归守卫：`src/__tests__/tauriCsp.test.ts`。
 
 ## 全局约束（执行计划继承）
 
