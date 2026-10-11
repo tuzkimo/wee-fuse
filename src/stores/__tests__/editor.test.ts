@@ -959,6 +959,18 @@ describe("recolor：按色号批量换色", () => {
     expect(editor.history.undoDepth).toBe(0);
   });
 
+  it("目标等于所有源色 ⇒ 什么都不做：不入栈、不动 revision、不置脏", () => {
+    // 默认夹具里就是 7 号色：换色前后没有一格变，命令为 null。若 store 少了这次 `null` 短路，
+    // 会记下一条空命令——撤销额度被凭空消耗、图纸看着没变却提示「未保存」。
+    const { editor, session } = seedEditor();
+
+    editor.recolor([7], 7);
+
+    expect(session.dirty).toBe(false);
+    expect(editor.revision).toBe(0);
+    expect(editor.canUndo).toBe(false);
+  });
+
   it("源色越界 / 目标越界 ⇒ 抛错，且不动图纸与状态", () => {
     const { editor, pattern, session } = seedEditor();
     const before = [...pattern.cells];
@@ -968,9 +980,9 @@ describe("recolor：按色号批量换色", () => {
     expect(() => editor.recolor([1.5], 1)).toThrow("换色源色号非法：1.5");
     expect(() => editor.recolor([Number.NaN], 1)).toThrow("换色源色号非法：NaN");
     // `COLOR_COUNT` 是色卡外的第一个值：core 的 `0..EMPTY` 会放行它，只有 store 的色卡上界拦得住。
-    expect(() => editor.recolor([COLOR_COUNT], 1)).toThrow("换色源色号非法：");
+    expect(() => editor.recolor([COLOR_COUNT], 1)).toThrow(`换色源色号非法：${COLOR_COUNT}`);
     // 空格不是合法源色（`usages` 不含它）；批量擦除走「目标是 EMPTY」那条。
-    expect(() => editor.recolor([EMPTY], 1)).toThrow("换色源色号非法：");
+    expect(() => editor.recolor([EMPTY], 1)).toThrow(`换色源色号非法：${EMPTY}`);
 
     expect(() => editor.recolor([7], COLOR_COUNT)).toThrow(`换色目标色号非法：${COLOR_COUNT}`);
     expect(() => editor.recolor([7], -1)).toThrow("换色目标色号非法：-1");
