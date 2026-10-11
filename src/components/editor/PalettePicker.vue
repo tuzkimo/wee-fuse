@@ -10,6 +10,7 @@
 //
 // 色号形如 `A1` / `H1` / `M1`，首字母即色系；`Map` 按插入顺序迭代，因此天然保序。
 import { computed } from "vue";
+import { EMPTY } from "@/core/pattern/types";
 import type { RGB } from "@/core/color/space";
 import type { Palette } from "@/core/palette/types";
 
@@ -17,6 +18,8 @@ const props = defineProps<{
   palette: Palette;
   /** 已用色的**全色卡下标**（与 `Pattern.cells` / `currentColor` 同一口径，§9.2）。 */
   usedIndices: readonly number[];
+  /** 选择器用途：`recolor` 时多给一个橡皮项（emit `EMPTY`），其余同 `brush`。 */
+  mode: "brush" | "recolor";
 }>();
 
 const emit = defineEmits<{
@@ -50,6 +53,11 @@ const groups = computed<ColorGroup[]>(() => {
 
 /** 已用色集合。只用于**标记**，不参与分组。 */
 const used = computed(() => new Set(props.usedIndices));
+
+/** 顶部快捷组：按 `usedIndices` 的顺序直接取 `palette.colors[i]`，不重算色号→下标。 */
+const usedItems = computed(() =>
+  props.usedIndices.map((index) => ({ index, color: props.palette.colors[index] })),
+);
 </script>
 
 <template>
@@ -64,6 +72,32 @@ const used = computed(() => new Set(props.usedIndices));
         关闭
       </button>
     </header>
+
+    <button
+      v-if="mode === 'recolor'"
+      data-testid="picker-eraser"
+      class="mt-3 min-h-11 min-w-11 rounded border border-slate-300 px-3 text-base"
+      @click="emit('pick', EMPTY)"
+    >
+      橡皮（空格）
+    </button>
+
+    <div v-if="usedItems.length > 0" class="mt-3">
+      <h3 class="text-base text-slate-600">已用色</h3>
+      <div class="mt-1 grid grid-cols-6 gap-1">
+        <button
+          v-for="item in usedItems"
+          :key="item.index"
+          data-testid="picker-used"
+          :data-used-code="item.color.code"
+          class="min-h-11 min-w-11 rounded border border-slate-200 text-base text-slate-700"
+          :style="{ backgroundColor: `rgb(${item.color.rgb[0]}, ${item.color.rgb[1]}, ${item.color.rgb[2]})` }"
+          @click="emit('pick', item.index)"
+        >
+          {{ item.color.code }}
+        </button>
+      </div>
+    </div>
 
     <div
       v-for="group in groups"

@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
+import { EMPTY } from "@/core/pattern/types";
 import { loadPalette } from "@/core/palette/registry";
 import type { Palette } from "@/core/palette/types";
 import { getBuiltinPalette } from "@/services/palette";
@@ -29,7 +30,7 @@ const SCRAMBLED: Palette = loadPalette({
 
 function mountPicker(overrides: Record<string, unknown> = {}) {
   return mount(PalettePicker, {
-    props: { palette, usedIndices: [], ...overrides },
+    props: { palette, usedIndices: [], mode: "brush", ...overrides },
   });
 }
 
@@ -129,6 +130,35 @@ describe("已用色标记", () => {
   it("usedIndices 为空数组时一个标记都没有", () => {
     const wrapper = mountPicker({ palette: SCRAMBLED, usedIndices: [] });
     expect(wrapper.findAll("[data-used='1']")).toHaveLength(0);
+  });
+});
+
+describe("顶部「已用色」组", () => {
+  it("按 usedIndices 的顺序列出色号，点一下 emit 该色的全色卡下标", async () => {
+    const wrapper = mountPicker({ palette: SCRAMBLED, usedIndices: [2, 0] });
+    const items = wrapper.findAll("[data-testid='picker-used']");
+    expect(items.map((el) => el.attributes("data-used-code"))).toEqual(["M1", "B1"]); // 顺序 = usedIndices，不是色卡顺序
+    await items[0].trigger("click");
+    expect(wrapper.emitted("pick")?.at(-1)).toEqual([2]);
+  });
+
+  it("usedIndices 为空时这一组不渲染", () => {
+    expect(mountPicker({ palette: SCRAMBLED, usedIndices: [] }).find("[data-testid='picker-used']").exists()).toBe(false);
+  });
+
+  it("[判别核心] 顶部组不占用色卡网格的 data-code / data-used 钩子", () => {
+    const wrapper = mountPicker({ palette: SCRAMBLED, usedIndices: [0, 2] });
+    expect(wrapper.findAll("[data-code='M1']")).toHaveLength(1); // 网格里那一个
+    expect(wrapper.findAll("[data-used='1']")).toHaveLength(2);  // 既有的标记数口径不变
+  });
+});
+
+describe("换色模式", () => {
+  it("mode=brush 时不渲染橡皮项；mode=recolor 时渲染，点它 emit EMPTY", async () => {
+    expect(mountPicker({ mode: "brush" }).find("[data-testid='picker-eraser']").exists()).toBe(false);
+    const wrapper = mountPicker({ mode: "recolor" });
+    await wrapper.get("[data-testid='picker-eraser']").trigger("click");
+    expect(wrapper.emitted("pick")?.at(-1)).toEqual([EMPTY]);
   });
 });
 
