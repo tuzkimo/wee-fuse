@@ -75,3 +75,52 @@
 
 > 说明：第 1、2 项对应任务 7 的验收；第 3 项属任务 8，集中记在此处避免两处记录漂移。
 > 上述均**未验证**，不得据此声称通过。
+
+---
+
+# 审计整改构建记录：Task 8 给 WebView 加 CSP
+
+- 日期：2026-10-11
+- 计划：`docs/superpowers/plans/2026-10-11-audit-fixes.md`，任务 8
+- 规格：`docs/superpowers/specs/2026-10-11-audit-fixes-design.md`
+- 提交信息：`chore(tauri): 为 WebView 配置内容安全策略`
+
+## 1. 改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/tauri.conf.json` | `app.security.csp` 由 `null` 改为策略字符串（保留 Tauri IPC 与 `data:` / `blob:` 图片） |
+
+改后的 `app.security` 块：
+
+```json
+"security": {
+  "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+}
+```
+
+`connect-src` 含 `ipc: http://ipc.localhost`（否则 `invoke` 全挂）；`img-src` 含 `data:`（缩略图）与 `blob:`（施工图 object URL）。
+
+## 2. 命令与结果
+
+- `node -e "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json','utf8')); console.log('config JSON valid')"`：**`config JSON valid`**。
+
+- `npm run build`（`vue-tsc --noEmit` + `vite build`）：**通过**，`✓ built in 1.80s`。
+
+- `cargo check --manifest-path src-tauri/Cargo.toml`：**通过**；该命令经 `tauri::generate_context!` 解析 `tauri.conf.json`，是 CI 里唯一能证明配置合法的检查。
+
+  ```
+     Compiling weefuse v0.12.1 (D:\projects\my\wee-fuse\src-tauri)
+      Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.09s
+  ```
+
+- `npm run test`：**82 文件 / 1462 用例全绿**（前端未改动，确认无回归）。
+
+## 3. PENDING 人工验证（本机无 adb 设备，**未做**）
+
+Task 8 的真机验收项即上文 Task 7 PENDING 清单的第 3 项（首页加载 → `blob:` 施工图 → 保存 → 分享），
+为避免两处记录漂移，此处不重复，结果仍为**未验证**。任何一步白屏即回退 CSP 并记录原因。
+
+补充口径（已由控制者核实，无需真机复核）：Tauri 的 `csp` 只注入 Tauri 自身 asset resolver 提供的 HTML，
+不注入外部 dev server；本应用 dev 流程（`tauri android dev` → Vite :1420）是外部服务，故该 CSP 不影响开发 HMR，
+`devCsp` 未设也不影响。

@@ -34,6 +34,16 @@
 所以 `content://**` 这个 glob 永远不会被匹配，收窄到它等于没改。正确的最小改动是**删掉 `fs:scope` allow 块**：
 应用只读分享进来的 `content://` URI，普通路径读取能力本就不需要，删掉即净收窄。设备验证项：分享一张图进 App 仍能摄入。
 
+## Task 8：CSP 已落地（配置），真机结果 PENDING
+
+`src-tauri/tauri.conf.json` 的 `app.security.csp` 已由 `null` 改为策略字符串（保留 `connect-src ipc: http://ipc.localhost`
+与 `img-src ... data: blob:`），落点为任务 8。**状态：已落地，但未真机验证。**
+
+- CI 能证明的：`npm run build` 通过、`cargo check` 经 `tauri::generate_context!` 解析配置通过、JSON 合法。
+- 真机 PENDING：首页加载（IPC + IndexedDB）→ `blob:` 施工图显示 → 保存 → 分享摄入；
+  验收清单见 [`../notes/2026-10-11-audit-fixes-build-log.md`](../notes/2026-10-11-audit-fixes-build-log.md) 的 PENDING 清单第 3 项。任何一步白屏即回退。
+- `csp` 只注入 Tauri asset resolver 提供的 HTML，不影响外部 dev server（`tauri android dev` → Vite :1420），开发 HMR 不受影响。
+
 ## 全局约束（执行计划继承）
 
 - `src/core/**` 零依赖、无 DOM 全局；`npm run build`（含 `vue-tsc`）与 `npm run test` 每条任务后都要绿。
