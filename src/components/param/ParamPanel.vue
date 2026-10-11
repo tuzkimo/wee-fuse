@@ -253,7 +253,7 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
       </p>
     </div>
 
-    <label class="block text-lg text-slate-800">
+    <label class="flex min-h-12 items-center text-lg text-slate-800">
       <input
         type="checkbox"
         data-testid="remove-background"

@@ -71,6 +71,18 @@ describe("floodBackground", () => {
     expect(eaten).toEqual([0]);
   });
 
+  it("[不许跨界] 行尾不看右邻：+1 不绕到下一行行首", () => {
+    // 3×2，行优先：上排 蓝红红 / 下排 红蓝蓝。种子 (2,0)：第一列被蓝挡住，红区只能横向走。
+    // 若行尾不看右邻这条守卫没了，(2,0) 的 +1 会落到下一行行首的 (0,1)，多吃一格。
+    const COLORS: readonly (readonly Lab[])[] = [
+      [BLUE, RED, RED],
+      [RED, BLUE, BLUE],
+    ];
+    const { labs, eatable } = make(3, 2, (x, y) => COLORS[y][x]);
+    const eaten = floodBackground(3, 2, labs, eatable, [2], BACKGROUND_TOLERANCE);
+    expect([...eaten].sort((a, b) => a - b)).toEqual([1, 2]); // 跨界实现会多出 3
+  });
+
   it("不可吃的格既不被吃、也不被穿越", () => {
     // 3×1：中间格不可吃（模拟空格），两侧红
     const { labs, eatable } = make(3, 1, () => RED, (x) => x !== 1);

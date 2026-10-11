@@ -122,7 +122,7 @@ export function floodBackground(
  * - 吃哪些格由 `floodBackground` 决定，**先收集下标再统一写 `filled`**，不在泛洪过程中
  *   边吃边改——`eatable` 同时充当「可吃位」与遍历边界，中途改它会让判定自相矛盾。
  *
- * 容差由调用方传入（默认取 `BACKGROUND_TOLERANCE`），非法入参由 `floodBackground`
+ * 容差由调用方传入（生产调用方传 `BACKGROUND_TOLERANCE`），非法入参由 `floodBackground`
  * 在**任何写入之前**响亮失败。
  */
 export function maskBackground(grid: SampledGrid, tolerance: number): void {
@@ -154,6 +154,9 @@ export function maskBackground(grid: SampledGrid, tolerance: number): void {
  *
  * 色号越界（`EMPTY` 或超出 `labs` 长度）一律按不可吃处理，不报错：图纸来自落盘校验，
  * 越界色号已被 `validateProjectDocument` 挡在门外。不修改 `pattern`。
+ *
+ * `cells` 长度必须等于 `width * height`（同 `patternStats`）：长度不符时下面按尺寸建表、
+ * 按尺寸遍历，读到的格与图纸格错位，`cells` 越界处还会抛 `undefined` 的读属性错误。
  */
 export function patternBackgroundIndices(
   pattern: Pattern,
@@ -162,6 +165,11 @@ export function patternBackgroundIndices(
   tolerance: number,
 ): number[] {
   const { width, height, cells } = pattern;
+  if (cells.length !== width * height) {
+    throw new Error(
+      `图纸数据与尺寸不一致：${width}×${height} 需要 ${width * height} 格，实际 ${cells.length} 格`,
+    );
+  }
   if (
     !Number.isInteger(seed.x) ||
     !Number.isInteger(seed.y) ||

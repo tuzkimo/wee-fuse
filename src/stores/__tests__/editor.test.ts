@@ -839,9 +839,11 @@ describe("去背景工具", () => {
   it("setTool 的错误信息列出四个工具并拒绝拼错的值", () => {
     const { editor } = seedEditor();
 
-    // 文案与判据必须同源：判据放行了 background、文案还写着三个工具，报错就会自相矛盾
-    expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(/background/);
-    expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(/background/);
+    // 文案与判据必须同源：判据放行了 background、文案还写着三个工具，报错就会自相矛盾。
+    // 断言整份允许清单（不是只查 background），漏掉任何一个工具名都要红。
+    const allowed = /只允许 "brush" \/ "select" \/ "pick" \/ "background"/;
+    expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(allowed);
+    expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(allowed);
 
     expect(editor.tool).toBe("brush");
   });
