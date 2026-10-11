@@ -35,6 +35,8 @@ const RUNTIME_PARAMS: RuntimeParams = {
   maxColors: 20,
   crop: { x: 0, y: 0, width: 8, height: 8 },
   rotation: 0,
+  // 简报未列这个夹具，但 `RuntimeParams.removeBackground` 是必填字段：不补上 `vue-tsc` 会红。
+  removeBackground: false,
 };
 
 const META: ProjectMeta = {
@@ -79,6 +81,38 @@ describe("seedRerunDraft（C8：编辑页与编辑结果页共用的一份播种
     expect(seedRerunDraft(draft, session)).toBe(true);
     expect(draft.maxColors).toBe(20);
     expect(draft.rerunOf?.id).toBe("a");
+  });
+
+  it("重做把会话里的 removeBackground 一并播种进草稿", () => {
+    const session = useProjectSession();
+    const draft = useDraft();
+    // 草稿默认是关：播种若漏了这个字段，读回来就是默认值 `false`，与「真播种了」分得开。
+    expect(draft.removeBackground).toBe(false);
+    session.adopt(
+      makePattern(),
+      { ...RUNTIME_PARAMS, removeBackground: true },
+      META,
+      { blob: new Blob([new Uint8Array([7, 8])]), type: "image/png" },
+      makeDoc(),
+    );
+
+    expect(seedRerunDraft(draft, session)).toBe(true);
+    expect(draft.removeBackground).toBe(true);
+  });
+
+  it("重做把关闭的开关也照搬（不是一律置真）", () => {
+    const session = useProjectSession();
+    const draft = useDraft();
+    session.adopt(
+      makePattern(),
+      { ...RUNTIME_PARAMS, removeBackground: false },
+      META,
+      { blob: new Blob([new Uint8Array([7, 8])]), type: "image/png" },
+      makeDoc(),
+    );
+
+    expect(seedRerunDraft(draft, session)).toBe(true);
+    expect(draft.removeBackground).toBe(false);
   });
 
   it("没有记录 / 没有原图 / 没有参数 ⇒ 返回 false 且一点草稿都不写", () => {

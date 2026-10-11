@@ -13,6 +13,11 @@ export interface RuntimeParams {
   readonly maxColors: ProjectParams["maxColors"];
   readonly crop: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   readonly rotation: 0 | 1 | 2 | 3;
+  /**
+   * 生成时是否排除背景。**必填**：运行期参数总是在手上（旧工程缺字段时
+   * `fromProjectDocument` 已归一为 `false`），留成可选只会让下游多一处 `?? false`。
+   */
+  readonly removeBackground: boolean;
 }
 
 /**
@@ -152,6 +157,7 @@ export const useProjectSession = defineStore("projectSession", () => {
           h: params.value.crop.height,
           rotate: params.value.rotation,
         },
+        removeBackground: params.value.removeBackground,
       });
       const saving: ProjectRecord = {
         meta: {

@@ -476,6 +476,44 @@ describe("框选与吸管：抬手才 emit", () => {
   });
 });
 
+// 去背景：与吸管同形态（只在按下那一刻记格），但走**自己的事件**。emit 落点是最容易写错的地方：
+// `finishToolGesture` 的 `pick` 那一支原本是无条件兜底，去背景如果掉进它就会 emit `pick`。
+describe('去背景 tool = "background"：按下定格、抬手才 emit', () => {
+  it("单指按下并抬起 emit 一次 background（取按下那一格），不带 paint / pick", async () => {
+    // 8×8 + VIEW_8 `{24, 0, 0}`：格坐标 = floor(屏幕坐标 / 24)。
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "background" });
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 24, 48); // 格 (1,2)
+    await pointer(wrapper, "pointerup", 24, 48);
+    expect(wrapper.emitted("background")).toEqual([[{ x: 1, y: 2 }]]);
+    // 串台守卫：去背景不该冒充画笔 / 吸管。`finishToolGesture` 的 pick 兜底一旦兜住它，
+    // 下面第二条立刻红。
+    expect(wrapper.emitted("paint")).toBeUndefined();
+    expect(wrapper.emitted("pick")).toBeUndefined();
+  });
+
+  it("拖动不改结果：取的是按下那一格", async () => {
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "background" });
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 0, 0); // 格 (0,0)
+    await pointer(wrapper, "pointermove", 120, 120); // 格 (5,5)：拖动不改取色目标
+    await pointer(wrapper, "pointerup", 120, 120);
+    expect(wrapper.emitted("background")).toEqual([[{ x: 0, y: 0 }]]);
+  });
+
+  it("落在图纸外不 emit", async () => {
+    const wrapper = mountCanvas({ pattern: solidPattern(2, 2), view: VIEW_8, tool: "background" });
+    await wrapper.vm.$nextTick();
+
+    // 2×2、24px/格 → 图纸只占屏幕左上角 48×48，(300,300) 在图纸外。
+    await pointer(wrapper, "pointerdown", 300, 300);
+    await pointer(wrapper, "pointerup", 300, 300);
+    expect(wrapper.emitted("background")).toBeUndefined();
+  });
+});
+
 describe("双指：视图手势与「第二指落下取消笔画」", () => {
   it("双指中点位移 → emit update:view（平移）", async () => {
     const wrapper = mountCanvas();

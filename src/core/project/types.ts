@@ -36,6 +36,13 @@ export interface ProjectParams {
    */
   readonly maxColors: MaxColors;
   readonly crop: CropRect;
+  /**
+   * 生成时是否在量化前排除背景（2026-10-11 新增）。
+   *
+   * **可选是旧工程兼容的唯一安全选择**：本模块一律「非法输入就抛错、不补默认值」，
+   * 把这个字段当必填就会让库里**所有**已有工程打不开。缺字段的语义就是老行为——不去背景。
+   */
+  readonly removeBackground?: boolean;
 }
 
 /**
@@ -167,6 +174,12 @@ export function validateProjectDocument(doc: unknown, fullPalette: Palette): Pro
   // **只认数字口径**（2026-10-10 口径简化）：1..色卡色数 的整数，等于色卡色数即「不限」。
   // 旧记录的字符串 `"custom"` / `"all"` 与 `null` 一律响亮失败，**不做迁移**（裁定 A1）。
   const maxColors = requireMaxColors(params.maxColors, fullPalette.colors.length);
+  // 去背景开关可缺省（旧工程，见 `ProjectParams.removeBackground`），但**在就位时必须是布尔**：
+  // `JSON.parse` + 强转能塞进任何东西，「true」这种字符串会被下游 `=== true` 静默当成关掉。
+  const removeBackground = params.removeBackground;
+  if (removeBackground !== undefined && typeof removeBackground !== "boolean") {
+    throw new Error(`removeBackground 必须是布尔值（当前 ${String(removeBackground)}）`);
+  }
 
   const cropRaw = requireObject(params.crop, "裁剪区域");
   const x = requireFiniteNumber(cropRaw.x, "裁剪区域 x");
@@ -192,6 +205,8 @@ export function validateProjectDocument(doc: unknown, fullPalette: Palette): Pro
       longSide,
       maxColors,
       crop: { x, y, w, h, rotate },
+      // 缺字段时**不写这个键**（而不是写个 undefined）：老工程的键集与落盘字节保持不变。
+      ...(removeBackground === undefined ? {} : { removeBackground }),
     },
   };
 }

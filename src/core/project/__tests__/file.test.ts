@@ -362,3 +362,38 @@ describe("fromProjectDocument", () => {
     expect([...back.cells]).toEqual([...p.cells]);
   });
 });
+
+describe("removeBackground 落盘", () => {
+  it("toProjectDocument 把 true / false 原样写入 params", () => {
+    expect(
+      toProjectDocument(pattern3x3(), palette, { ...params, removeBackground: true }).params
+        .removeBackground,
+    ).toBe(true);
+    expect(
+      toProjectDocument(pattern3x3(), palette, { ...params, removeBackground: false }).params
+        .removeBackground,
+    ).toBe(false);
+    expect(toProjectDocument(pattern3x3(), palette, params).params.removeBackground).toBeUndefined();
+  });
+
+  it("[旧工程] 落盘参数缺 removeBackground 时按 false 读，不报错", () => {
+    const doc = toProjectDocument(pattern3x3(), palette, params);
+    const { params: legacy } = doc;
+    const stripped = {
+      ...doc,
+      params: { longSide: legacy.longSide, maxColors: legacy.maxColors, crop: legacy.crop },
+    };
+    expect(fromProjectDocument(stripped, palette).params.removeBackground).toBe(false);
+  });
+
+  it("[旧工程] 字段不是布尔值时响亮失败", () => {
+    const doc = toProjectDocument(pattern3x3(), palette, params);
+    const bad = { ...doc, params: { ...doc.params, removeBackground: "true" } };
+    expect(() => fromProjectDocument(bad, palette)).toThrow(/removeBackground/);
+  });
+
+  it("true 往返仍是 true", () => {
+    const doc = toProjectDocument(pattern3x3(), palette, { ...params, removeBackground: true });
+    expect(fromProjectDocument(doc, palette).params.removeBackground).toBe(true);
+  });
+});

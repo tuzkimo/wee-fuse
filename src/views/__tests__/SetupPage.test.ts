@@ -64,7 +64,10 @@ const historyState = routerMock.historyState;
  * 那是**另一条线**（store 的接线），两条都断不了才算接线正确。透传保证其余端到端用例的行为
  * 一字未变。
  */
-const pipelineSpy = vi.hoisted(() => ({ maxColors: [] as number[] }));
+const pipelineSpy = vi.hoisted(() => ({
+  maxColors: [] as number[],
+  removeBackground: [] as (boolean | undefined)[],
+}));
 vi.mock("@/services/pipeline", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/pipeline")>();
   return {
@@ -74,6 +77,7 @@ vi.mock("@/services/pipeline", async (importOriginal) => {
       deps: Parameters<typeof actual.generatePattern>[1],
     ) => {
       pipelineSpy.maxColors.push(request.maxColors);
+      pipelineSpy.removeBackground.push(request.removeBackground);
       return actual.generatePattern(request, deps);
     },
   };
@@ -288,6 +292,7 @@ afterEach(() => {
   replaceMock.mockClear();
   backMock.mockClear();
   pipelineSpy.maxColors.length = 0;
+  pipelineSpy.removeBackground.length = 0;
   // 历史里默认没有上一页（`backOrHome` 走「回图纸库」那一支）；要测另一支的用例自己喂值。
   delete historyState.back;
   setProjectStore(null);
@@ -318,7 +323,7 @@ describe("入口守卫与准备阶段", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: { blob: FILE, type: "image/png", name: "旧图.png" },
-      params: { longSide: 116, maxColors: 221, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
+      params: { longSide: 116, maxColors: 221, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3, removeBackground: false },
       meta: { id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" },
     });
 
@@ -570,6 +575,45 @@ describe("参数面板的父级接线（子端 emit → store）", () => {
     // 见报告 §C 的守卫变异）。摘要与产物尺寸都拦不住这个变异——它们不读 `draft.longSide`。
     expect(draft.longSide).toBe(116);
   });
+
+  /**
+   * **R7（控制器裁定）**：`generate()` 里有**三个** `removeBackground` 拷贝点——流水线请求、
+   * `session.adopt` 的运行期参数、`toProjectDocument` 的落盘参数。漏掉任一处都是**静默**失败
+   * （界面打开了开关，产物却没去背景 / 落盘记错），而子端 emit 与 store 的用例都碰不到这三处接线。
+   *
+   * 用一张「中间竖条是主体、两侧是背景」的图：纯色图在去背景后会被整片吃掉、生成失败，
+   * 断言就读不到 adopt 与落盘两处。
+   */
+  it("面板里打开「去除背景」之后，流水线请求 / 会话参数 / 落盘参数三处都带上 true", async () => {
+    stubPlatform({
+      pixel: (i, width) =>
+        i % width < width * 0.3 || i % width >= width * 0.7 ? [255, 255, 255] : [200, 60, 60],
+    });
+    const draft = seedDraft();
+    // `session.save()` 会从运行期参数**重建** doc，所以落盘记录读不到 `generate()` 传给 `adopt`
+    // 的那份 doc（也就是 `toProjectDocument` 那个拷贝点）。用 spy 直接看 `adopt` 的两个入参。
+    const session = useProjectSession();
+    const adopt = vi.spyOn(session, "adopt");
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    // 面板勾选框 → `@update:remove-background` → store（接线断掉时 `draft.removeBackground` 还是 false）。
+    await wrapper.get("[data-testid='remove-background']").setValue(true);
+    expect(draft.removeBackground).toBe(true);
+
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    // 三个拷贝点逐个钉死：任一处写死 false，下面三条里对应的那条立刻红。
+    expect(pipelineSpy.removeBackground.at(-1)).toBe(true);
+    const [, runtimeParams, , , doc] = adopt.mock.calls[0]!;
+    expect(runtimeParams.removeBackground).toBe(true);
+    expect(doc.params.removeBackground).toBe(true);
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    const id = (await store.list())[0]!.id;
+    expect((await store.get(id))?.doc.params.removeBackground).toBe(true);
+  });
 });
 
 describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("用户选的选框就是交给解码器的源矩形，参数按落盘字段搬位，摘要豆数与成品一致", async () => {
@@ -599,10 +643,12 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     expect(metas).toHaveLength(1);
     const record = await store.get(metas[0]!.id);
     // 2026-10-10 口径简化：用色数只有一个数字字段（`customMaxColors` 已删除）。
+    // 2026-10-11：去背景开关也开始落盘（界面还没接，当前恒为 false）。
     expect(record?.doc.params).toEqual({
       longSide: 58,
       maxColors: 16,
       crop: { x: 200, y: 100, w: 400, h: 300, rotate: 1 },
+      removeBackground: false,
     });
 
     // ③（续）产物尺寸与刚才摘要说的是同一份：44 × 58

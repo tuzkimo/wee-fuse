@@ -4,10 +4,14 @@
 // 编辑器宿主页：只做「接线」——载入、播种 store、把四个展示组件的 props/emits 接起来、
 // 保存、未保存离开拦截、B1-8 重载、键盘撤销。**画与手势在 PatternCanvas，状态在 stores/editor.ts，
 // 视图数学在 core/pattern/view.ts**；本文件里不许出现第二份坐标数学或第二个 dirty 标志。
+// **去背景同样只接线**：出口多了一条「点一下去背景」，连通判定在 `core/pattern/background.ts`、
+// 入账在 `editor.eraseCells`，本页只把下标搬过去。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
 import type { Rect } from "@/core/image/types";
+import { createPaletteRuntime } from "@/core/palette/registry";
+import { BACKGROUND_TOLERANCE, patternBackgroundIndices } from "@/core/pattern/background";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { zoomCellView, type CellPoint } from "@/core/pattern/view";
@@ -176,6 +180,24 @@ function onSelect(rect: Rect): void {
 /** 吸管：设当前色并切回画笔（切换在 store 里做，页面不重复一遍）。 */
 function onPick(point: CellPoint): void {
   editor.pickFromCell(point.x, point.y);
+}
+
+/**
+ * 去背景：点一下 → 求连通背景下标 → 交给 store 入账。
+ *
+ * **判定在 core、入账在 store**，本页只做两件事之间的搬运：色卡的 Lab 表用页面已经持有的
+ * `palette` 生成（store 按设计不持有色卡），单次点击一条命令、一步可撤销。
+ */
+function onBackground(point: CellPoint): void {
+  const pattern = editor.pattern;
+  if (pattern === null) return;
+  const indices = patternBackgroundIndices(
+    pattern,
+    createPaletteRuntime(palette).labs,
+    point,
+    BACKGROUND_TOLERANCE,
+  );
+  editor.eraseCells(indices);
 }
 
 /**
@@ -536,6 +558,7 @@ function rerun(): void {
             @paint="onPaint"
             @select="onSelect"
             @pick="onPick"
+            @background="onBackground"
           />
         </div>
 

@@ -44,6 +44,8 @@ const props = defineProps<{
   longSide: number;
   /** 用色数：1..色卡色数 的整数，等于色卡色数即「不限」（2026-10-10 口径简化后只剩这一个数字）。 */
   maxColors: number;
+  /** 是否在量化前排除背景（打开时纯色 / 渐变背景会被当作不拼豆）。值只由父级持有，本组件不猜。 */
+  removeBackground: boolean;
   /** 内置色卡的色数：用色滑条的上界（也就是「不限」那一档）。 */
   paletteColorCount: number;
   /** 非空由父级保证（设计规格 §4.1 的可空契约只在页面级）。 */
@@ -59,6 +61,7 @@ const emit = defineEmits<{
   "update:name": [string];
   "update:longSide": [number];
   "update:maxColors": [number];
+  "update:removeBackground": [boolean];
   generate: [];
 }>();
 
@@ -249,6 +252,18 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
         生成时用色上限：<span data-testid="max-colors-value">{{ colorReadout }}</span>
       </p>
     </div>
+
+    <label class="flex min-h-12 items-center text-lg text-slate-800">
+      <input
+        type="checkbox"
+        data-testid="remove-background"
+        class="mr-2 h-5 w-5 align-middle"
+        :checked="removeBackground"
+        :disabled="busy"
+        @change="emit('update:removeBackground', ($event.target as HTMLInputElement).checked)"
+      />
+      去除背景（纯色 / 渐变背景会被当作不拼豆，用色名额留给主体）
+    </label>
 
     <div data-testid="palette-card" class="rounded border border-slate-200 bg-white p-4">
       <p class="text-lg font-semibold text-slate-900">{{ paletteName }}</p>
