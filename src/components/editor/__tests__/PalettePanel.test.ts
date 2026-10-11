@@ -42,7 +42,13 @@ const DEFAULT_USAGES: readonly ColorUsage[] = [usage("M1", 9), usage("A1", 2)];
 
 function mountPanel(overrides: Record<string, unknown> = {}) {
   return mount(PalettePanel, {
-    props: { palette, usages: DEFAULT_USAGES, currentColor: indexOf(palette, "A1"), ...overrides },
+    props: {
+      palette,
+      usages: DEFAULT_USAGES,
+      currentColor: indexOf(palette, "A1"),
+      selected: [],
+      ...overrides,
+    },
   });
 }
 
@@ -146,17 +152,19 @@ describe("已用色列表（§9.1 第 2 条）", () => {
     expect(rows.map((row) => row.attributes("data-code"))).toEqual(["M1", "A1"]);
   });
 
-  // 点选 emit 的必须是**全色卡下标**（§9.2：`currentColor` 与 `Pattern.cells` 同一口径）。
-  // A1 是「位置 1 / 下标 0」，M1 是「位置 0 / 下标 206」——两个方向都点一次，
+  // 点行 emit 的必须是**全色卡下标**（§9.2：`selected` 与 `currentColor` / `Pattern.cells` 同一口径）。
+  // **改写（规格 §8，人类伙伴确认）**：新规格里点行是**切换选中**（§5.1），载荷从
+  // `update:currentColor` 换到 `update:selected`；判别核心逐字保留——A1 是「位置 1 / 下标 0」，
+  // M1 是「位置 0 / 下标 206」，两个方向都点一次，
   // 「emit usages 里的位置」与「emit 色号」两种错法都拿不到这两个数。
-  it("点某一行 emit 的是全色卡下标（不是它在 usages 里的位置、也不是色号）", async () => {
+  it("点行 emit 的选中集合是全色卡下标（不是它在 usages 里的位置、也不是色号）", async () => {
     const wrapper = mountPanel();
     await wrapper.findAll("[data-testid='palette-row']")[1].trigger("click");
-    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([0]);
+    expect(wrapper.emitted("update:selected")?.at(-1)).toEqual([[0]]);
 
     expect(indexOf(palette, "M1")).toBe(206);
     await wrapper.findAll("[data-testid='palette-row']")[0].trigger("click");
-    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([206]);
+    expect(wrapper.emitted("update:selected")?.at(-1)).toEqual([[206]]);
   });
 
   // 当前色那行有高亮（§9.1 第 2 条）。同一实例上换一次当前色：高亮要跟着走。
@@ -171,19 +179,20 @@ describe("已用色列表（§9.1 第 2 条）", () => {
     expect(marked()).toEqual([undefined, "1"]);
   });
 
-  // 【修复轮 1，控制者裁决补】点行只该**换当前色**，不该把选择器也掀开。
-  // 这条反向不变式此前零守卫：在点行处理里顺手加一句 `picking = true`，37 条用例全绿。
-  // 它是用户可见的分支（点一行色块，整块 221 色选择器盖上来），不是实现细节。
+  // **改写（规格 §8，人类伙伴确认）**：点行只该**切换选中**——不该改当前色，也不该把选择器掀开。
+  // 后者是【修复轮 1，控制者裁决补】留下的反向不变式：在点行处理里顺手加一句 `picking = true`，
+  // 全量用例曾经全绿。它是用户可见的分支（点一行色块，整块 221 色选择器盖上来），不是实现细节。
   //
-  // 断言拆成两半、缺一不可：只断言「picker 不存在」时，把点行的 emit 一起删掉也绿；
-  // 只断言 emit 时，「顺手掀开选择器」绿。所以两件事一起断言。
-  it("点行只换当前色，不会顺手展开选择器", async () => {
+  // 三件事一起断言、缺一不可：只断言「picker 不存在」时，把点行的 emit 一起删掉也绿；只断言 emit
+  // 时，「顺手掀开选择器」或「顺手改当前色」都绿。
+  it("点行只切换选中：不改当前色、不展开选择器", async () => {
     const wrapper = mountPanel();
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
 
     await wrapper.findAll("[data-testid='palette-row']")[0].trigger("click");
 
-    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([206]); // M1 在位置 0 / 下标 206
+    expect(wrapper.emitted("update:selected")?.at(-1)).toEqual([[206]]); // M1 在位置 0 / 下标 206
+    expect(wrapper.emitted("update:currentColor")).toBeUndefined();
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
   });
 });
@@ -253,6 +262,133 @@ describe("当前色槽即入口（§9.1 第 3 条）", () => {
 
     expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([206]);
     expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+  });
+});
+
+/**
+ * 选中与操作条（§5.1–§5.4、§7 第 1 条）。
+ *
+ * 面板在这里第一次同时持两件 UI 状态：**选中集合**（父级 props 进 / 事件出）与
+ * **选择器的用途**（`pickMode`，组件内）。两者各有一组反向守卫：用途被接成同一条路
+ * （色槽也去换色 / `[换成…]` 也改画笔）时，判别用例必红。
+ */
+describe("选中与操作条", () => {
+  it("已选中的行带 data-selected，未选中的不带", () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
+    const marked = wrapper
+      .findAll("[data-testid='palette-row']")
+      .map((row) => row.attributes("data-selected"));
+    expect(marked).toEqual(["1", undefined]);
+  });
+
+  it("再点一次取消选中（载荷里去掉它）", async () => {
+    const selected = [indexOf(palette, "M1")];
+    const wrapper = mountPanel({ selected });
+    await wrapper.findAll("[data-testid='palette-row']")[0].trigger("click");
+    expect(wrapper.emitted("update:selected")?.at(-1)).toEqual([[]]);
+    // §6：集合**每次都是新数组、绝不原地改**。原地 `delete` / `push` 会把父级那份也改掉——
+    // 那是「不报错、高亮就是不刷新」的同族缺陷，这里直接拿父级数组当判据。
+    expect(selected).toEqual([206]);
+  });
+
+  it("没有有效选中时操作条不渲染", () => {
+    // 两种都不渲染：空集合，以及「集合里那个色号面板上根本没在用」。
+    expect(mountPanel({ selected: [] }).find("[data-testid='select-bar']").exists()).toBe(false);
+    expect(
+      mountPanel({ selected: [indexOf(palette, "A2")] })
+        .find("[data-testid='select-bar']")
+        .exists(),
+    ).toBe(false);
+  });
+
+  // 【Review Focus 1】操作条按**有效选中**计数（§7 第 1 条）：选中期间某个色号被手动涂光，
+  // 那一行从 `usages` 里消失、集合里还留着它。若按集合长度算，UI 就撒谎（说「已选 2 个」
+  // 而实际只改 1 个）。A1（下标 0）就是那个已消失的色号。
+  it("操作条按有效选中计数：选中集合里混着一个已从 usages 消失的色号", () => {
+    const wrapper = mountPanel({
+      usages: [usage("M1", 9)],
+      selected: [indexOf(palette, "M1"), indexOf(palette, "A1")],
+    });
+    const bar = wrapper.get("[data-testid='select-bar']").text();
+    expect(bar).toContain("已选 1 个色号");
+    expect(bar).toContain("共 9 颗");
+    expect(bar).not.toContain("2 个色号");
+  });
+
+  // 【Review Focus 2】全是已消失的色号 ⇒ 操作条不渲染，换色入口点不到（§7 第 1 条末句）。
+  it("选中集合里全是已消失的色号 ⇒ 操作条不渲染（点不到换色）", () => {
+    const wrapper = mountPanel({ usages: [usage("M1", 9)], selected: [indexOf(palette, "A1")] });
+    expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(false);
+  });
+
+  it("[取消选择] emit 空数组", async () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
+    await wrapper.get("[data-testid='select-bar-clear']").trigger("click");
+    expect(wrapper.emitted("update:selected")?.at(-1)).toEqual([[]]);
+  });
+
+  // 换色路径的判别核心：`sources` 是**有效选中**的全色卡下标，`to` 是刚点的那个下标。
+  // A1 同时是「usages 位置 1 / 全色卡下标 0」，两个数都在断言里，按位置搬的写法拿不到。
+  it("[换成…] 打开选择器且是换色模式（橡皮项在），点目标色 emit 有效源集合 + 目标值并收起", async () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
+    await wrapper.get("[data-testid='select-bar-recolor']").trigger("click");
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='picker-eraser']").exists()).toBe(true);
+
+    await wrapper.get("[data-testid='picker'] [data-code='A1']").trigger("click");
+    expect(wrapper.emitted("recolor")?.at(-1)).toEqual([[206], 0]);
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+  });
+
+  it("[换成…] 后点橡皮 ⇒ recolor 的目标是 EMPTY", async () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
+    await wrapper.get("[data-testid='select-bar-recolor']").trigger("click");
+    await wrapper.get("[data-testid='picker-eraser']").trigger("click");
+    expect(wrapper.emitted("recolor")?.at(-1)).toEqual([[206], EMPTY]);
+  });
+
+  // 顶部「已用色」组与色卡网格**服从同一条规则**（§5.3）：换色模式下它交出的也是目标色，
+  // 不是画笔色。反向守卫：这一组若写死成画笔色，这条必红。
+  it("[换成…] 后点顶部已用色组 ⇒ 目标就是那个色号，不是 update:currentColor", async () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "A1")] });
+    await wrapper.get("[data-testid='select-bar-recolor']").trigger("click");
+    await wrapper.get("[data-testid='picker-used'][data-used-code='M1']").trigger("click");
+
+    expect(wrapper.emitted("recolor")?.at(-1)).toEqual([[0], 206]);
+    expect(wrapper.emitted("update:currentColor")).toBeUndefined();
+  });
+
+  // §5.3 第 4 条 + §5.4：色槽**永远**是「改画笔色」的入口——挂着选中时点它进的是画笔模式，
+  // 挑完画笔色回来选中与操作条都还在。反向守卫：色槽被接成换色入口、或选完把选中清掉，这条必红。
+  it("有选中时点当前色槽进的仍是画笔模式：点目标色只 emit update:currentColor，选中与操作条都保留", async () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
+    expect(wrapper.find("[data-testid='picker-eraser']").exists()).toBe(false);
+
+    await wrapper.get("[data-testid='picker'] [data-code='A1']").trigger("click");
+    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([0]);
+    expect(wrapper.emitted("recolor")).toBeUndefined();
+    expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(true);
+  });
+
+  it("进入换色模式后点关闭：既不 emit recolor 也不 emit update:currentColor", async () => {
+    const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
+    await wrapper.get("[data-testid='select-bar-recolor']").trigger("click");
+    await wrapper.get("[data-testid='picker-close']").trigger("click");
+
+    expect(wrapper.find("[data-testid='picker']").exists()).toBe(false);
+    expect(wrapper.emitted("recolor")).toBeUndefined();
+    expect(wrapper.emitted("update:currentColor")).toBeUndefined();
+  });
+
+  // 反向守卫：把两种用途接成同一条路（画笔模式也走 recolor）时这条必红。
+  it("画笔模式（点当前色槽）下点目标色仍只 emit update:currentColor", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
+    await wrapper.get("[data-testid='picker'] [data-code='M1']").trigger("click");
+
+    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([206]);
+    expect(wrapper.emitted("recolor")).toBeUndefined();
   });
 });
 

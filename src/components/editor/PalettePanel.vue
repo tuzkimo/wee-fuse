@@ -3,8 +3,9 @@
 //
 // 当前画笔槽（**它同时是选择器的唯一入口**，C8 第 3 项）+ 已用色列表（实时颗数）
 // + 点当前色槽展开的选择器。
-// props 进、事件出，**不读 store**；唯一自持的状态是「选择器是否展开」——展开与否不是会话状态，
-// 页面重新挂载就该收起（CONTRACT §5）。
+// props 进、事件出，**不读 store**；自持的状态只有两件组件内状态：「选择器是否展开」与它的
+// **用途**（`pickMode`，§5.3）——两者都不是会话状态，页面重新挂载就该收起（CONTRACT §5）。
+// **选中集合不在这里**：画布也要读它，所以它放在 `EditorPage`（§5.6），本组件 props 进、事件出。
 //
 // **色号 → 全色卡下标这一层复用 core 的权威映射**（规格 §9.2）：`usages` 里只有
 // `code` / `name` / `count`、**没有下标**，自己再写一份 `code → index` 表就是本仓库第 3 份同源
@@ -26,10 +27,21 @@ const props = defineProps<{
   usages: readonly ColorUsage[];
   /** `0..palette.colors.length-1` 或 `EMPTY`（橡皮）。 */
   currentColor: number;
+  /**
+   * 选中的**全色卡下标**集合（多选，§5.1）。
+   *
+   * **它可以与 `usages` 不同步**：选中期间某个色号被手动涂光就从 `usages` 里消失，而集合里还留着它
+   * （§5.5「选中的是该色号的所有格子」）。那种色号只是**不计数**（`selectedRows`），不是被丢掉。
+   */
+  selected: readonly number[];
 }>();
 
 const emit = defineEmits<{
   "update:currentColor": [number];
+  /** 切换选中时发**新数组**（画布按浅比较重绘，原地改会变成「不报错、高亮就是不刷新」，§6）。 */
+  "update:selected": [readonly number[]];
+  /** `sources` 是**有效选中**的全色卡下标，`to` 可以是 `EMPTY`（批量擦除，§6）。 */
+  recolor: [sources: readonly number[], to: number];
 }>();
 
 /**
@@ -40,6 +52,14 @@ const emit = defineEmits<{
  * 也搬到了工具栏（`PatternToolbar`），本面板不再有第二个入口。
  */
 const picking = ref(false);
+
+/**
+ * 选择器的用途（§5.3）。点当前色槽永远是 `brush`，`[换成…]` 才是 `recolor`。
+ *
+ * **不做「有选中就是换色」的隐式语义**（§5.4）：用户挂着选择、只想改画笔色时，一按就误改一整片。
+ * 多一次点击换「不会误伤」。
+ */
+const pickMode = ref<"brush" | "recolor">("brush");
 
 /** 那张权威的 `code → 全色卡下标` 表（`createPaletteRuntime` 是既有导出）。 */
 const indexByCode = computed(() => createPaletteRuntime(props.palette).indexByCode);
@@ -108,9 +128,54 @@ const current = computed<PaletteColor | null>(() => {
 /** 喂给选择器的已用色下标——它就是 `rows` 的下标，来源仍是那一处权威映射。 */
 const usedIndices = computed(() => rows.value.map((row) => row.index));
 
-/** 「选中即设为当前色并关闭」（§9.1 第 3 条）：两件事必须一起做。 */
+/** 选中集合。只用于 O(1) 判定与行高亮；数组顺序不参与任何语义。 */
+const selectedSet = computed(() => new Set(props.selected));
+
+/**
+ * **有效选中**的行（§7 第 1 条）：集合里的色号可能在选中期间被涂光、从 `usages` 里消失，
+ * 那时它仍留在集合里但**不再算数**。操作条按这里计数——否则 UI 会撒谎（说「已选 2 个」而实际只改 1 个）。
+ */
+const selectedRows = computed(() => rows.value.filter((row) => selectedSet.value.has(row.index)));
+
+/** 操作条上的「共 N 颗」：有效选中的那些行自己的 `count` 之和（§5.2）。 */
+const selectedCount = computed(() => selectedRows.value.reduce((sum, row) => sum + row.count, 0));
+
+/**
+ * 点行 = 切换选中（§5.1），**发新数组**（§6）：原地改是「不报错、高亮就是不刷新」那类缺陷。
+ * 集合里**保留**已从 `usages` 消失的色号——它们只是不计数（`selectedRows`），不是被悄悄抹掉。
+ */
+function toggleRow(index: number): void {
+  const next = new Set(props.selected);
+  if (!next.delete(index)) next.add(index);
+  emit("update:selected", [...next]);
+}
+
+/**
+ * 当前色槽是「改画笔色」的入口（§5.3 第 4 条）：开合它**总是**画笔模式。
+ * 挂着选中时也如此——挑完画笔色回来，选中与操作条都还在。
+ */
+function togglePicker(): void {
+  pickMode.value = "brush";
+  picking.value = !picking.value;
+}
+
+/** `[换成…]`：打开选择器，并告诉它这次是「选目标色」。 */
+function beginRecolor(): void {
+  pickMode.value = "recolor";
+  picking.value = true;
+}
+
+/** 选择器里的两种用途（§5.3）；两条路径都必须收起选择器（「选完即收起」）。 */
 function onPick(index: number): void {
-  emit("update:currentColor", index);
+  if (pickMode.value === "recolor") {
+    emit(
+      "recolor",
+      selectedRows.value.map((row) => row.index),
+      index,
+    );
+  } else {
+    emit("update:currentColor", index);
+  }
   picking.value = false;
 }
 </script>
@@ -134,7 +199,7 @@ function onPick(index: number): void {
       data-testid="palette-current"
       :aria-expanded="picking"
       class="flex min-h-11 w-full items-center gap-2 rounded border border-slate-300 bg-white px-3 text-base"
-      @click="picking = !picking"
+      @click="togglePicker"
     >
       <template v-if="current">
         <span
@@ -157,9 +222,39 @@ function onPick(index: number): void {
       v-if="picking"
       :palette="palette"
       :used-indices="usedIndices"
+      :mode="pickMode"
       @pick="onPick"
       @close="picking = false"
     />
+
+    <!--
+      操作条（§5.2）：**只在有效选中 ≥ 1 个色号时渲染**。全都不算数时它不渲染，也就点不到换色
+      （§7 第 1 条）——把入口藏起来比让它交出一份空的 `sources` 诚实。
+
+      **位置只能是这里**（选择器之后、色号列表之前）：C8 修复 ③b 钉的不变式是「选择器是当前色槽的
+     下一个兄弟元素」，插到那两者之间会让那条（真机截图换来的）守卫转红，它是有意保留的。
+    -->
+    <div
+      v-if="selectedRows.length > 0"
+      data-testid="select-bar"
+      class="flex flex-wrap items-center gap-2 rounded border border-slate-300 bg-white px-3 py-2"
+    >
+      <span class="text-base text-slate-700">已选 {{ selectedRows.length }} 个色号 · 共 {{ selectedCount }} 颗</span>
+      <button
+        data-testid="select-bar-recolor"
+        class="min-h-11 rounded bg-slate-900 px-3 text-base text-white"
+        @click="beginRecolor"
+      >
+        换成…
+      </button>
+      <button
+        data-testid="select-bar-clear"
+        class="min-h-11 rounded border border-slate-300 px-3 text-base"
+        @click="emit('update:selected', [])"
+      >
+        取消选择
+      </button>
+    </div>
 
     <ul class="space-y-1">
       <li v-for="row in rows" :key="row.code">
@@ -167,8 +262,10 @@ function onPick(index: number): void {
           data-testid="palette-row"
           :data-code="row.code"
           :data-current="currentColor === row.index ? '1' : undefined"
-          class="flex min-h-11 w-full items-center gap-2 rounded border border-slate-200 px-3 text-base"
-          @click="emit('update:currentColor', row.index)"
+          :data-selected="selectedSet.has(row.index) ? '1' : undefined"
+          class="flex min-h-11 w-full items-center gap-2 rounded px-3 text-base"
+          :class="selectedSet.has(row.index) ? 'border-2 border-slate-900' : 'border border-slate-200'"
+          @click="toggleRow(row.index)"
         >
           <span
             class="inline-block h-6 w-6 rounded border border-slate-300"
