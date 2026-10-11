@@ -4,6 +4,7 @@ import {
   buildPaintCommand,
   buildRectPaintCommand,
   cellAt,
+  indicesWithValues,
   pointToCell,
   revertChanges,
 } from "../edit";
@@ -269,6 +270,35 @@ describe("编辑入口（追加：非整数下标与非有限坐标不得静默�
     expect(() => pointToCell(p, { x: 0, y: 0 }, { ...view, offsetY: Number.NaN })).toThrow(
       /偏移/,
     );
+  });
+});
+
+describe("indicesWithValues：值落在给定集合里的格子下标", () => {
+  it("多色号取并集，行优先升序", () => {
+    const cells = Uint16Array.from([1, 2, 3, 2, 1]);
+    expect(indicesWithValues(cells, [1, 2])).toEqual([0, 1, 3, 4]);
+  });
+
+  it("色卡里存在但图纸里没有的色号 → 空数组（不是抛错）", () => {
+    expect(indicesWithValues(Uint16Array.from([1, 1]), [7])).toEqual([]);
+  });
+
+  it("空集合 → 空数组", () => {
+    expect(indicesWithValues(Uint16Array.from([1, 2]), [])).toEqual([]);
+  });
+
+  it("EMPTY 是合法取值（匹配空格格）", () => {
+    expect(indicesWithValues(Uint16Array.from([1, EMPTY, 1]), [EMPTY])).toEqual([1]);
+  });
+
+  it("非法入口响亮失败", () => {
+    const cells = Uint16Array.from([1, 2]);
+    expect(() => indicesWithValues(cells, [NaN])).toThrow(/色号/);
+    expect(() => indicesWithValues(cells, [-1])).toThrow(/色号/);
+    expect(() => indicesWithValues(cells, [1.5])).toThrow(/色号/);
+    expect(() => indicesWithValues(cells, [EMPTY + 1])).toThrow(/色号/);
+    // values 不是数组：不校验就会在 Set 构造时抛出一个与「色号」无关的错误
+    expect(() => indicesWithValues(cells, null as never)).toThrow(/色号/);
   });
 });
 

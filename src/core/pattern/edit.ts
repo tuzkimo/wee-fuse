@@ -70,6 +70,29 @@ export function buildPaintCommand(
   return { label, changes };
 }
 
+/**
+ * 收集「色号落在 `values` 里」的格子下标，行优先升序。找不到任何一格时返回空数组（不是抛错）。
+ *
+ * `values` 里出现非整数 / 负数 / `> EMPTY` 的值时抛错，口径同 `buildPaintCommand` 的 `to`：
+ * 越界值会被 `Uint16Array` 静默截断，不校验就会静默匹配到别的色号。`EMPTY` 本身合法。
+ */
+export function indicesWithValues(cells: Uint16Array, values: readonly number[]): number[] {
+  // 非数组先挡掉：否则 `new Set(undefined)` 抛的是与「色号」无关的错误，调用方无从分辨。
+  if (!Array.isArray(values)) throw new Error(`色号集合非法：${values}`);
+  for (const value of values) {
+    if (!Number.isInteger(value) || value < 0 || value > EMPTY) {
+      throw new Error(`色号非法：${value}（必须是 0–${EMPTY} 的整数）`);
+    }
+  }
+
+  const wanted = new Set(values);
+  const indices: number[] = [];
+  for (let i = 0; i < cells.length; i++) {
+    if (wanted.has(cells[i] as number)) indices.push(i);
+  }
+  return indices;
+}
+
 /** 构造「把某个矩形区域设成某个色号」的命令，坐标超界部分自动裁剪。
  *
  * **为何公开**：`stores/editor.ts` 的 `applyRect()`（框选批量换色）是生产消费者；调用链是
