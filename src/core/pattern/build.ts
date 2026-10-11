@@ -7,8 +7,7 @@ import { medianCut } from "../quantize/medianCut";
 import { clustersToPaletteIndices, nearestIndexOf } from "../quantize/nearest";
 import {
   EMPTY,
-  MAX_LONG_SIDE,
-  MIN_LONG_SIDE,
+  requireLongSide,
   requireMaxColors,
   type MaxColors,
   type Pattern,
@@ -44,9 +43,7 @@ export function computeGridSize(
   ) {
     throw new Error("裁剪区域尺寸非法");
   }
-  if (!Number.isInteger(longSide) || longSide < MIN_LONG_SIDE || longSide > MAX_LONG_SIDE) {
-    throw new Error(`长边豆数必须在 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 之间`);
-  }
+  requireLongSide(longSide);
   if (cropWidth >= cropHeight) {
     return { width: longSide, height: Math.max(1, Math.round((longSide * cropHeight) / cropWidth)) };
   }

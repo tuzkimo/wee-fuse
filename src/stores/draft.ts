@@ -99,7 +99,7 @@ const DEFAULT_LONG_SIDE = 58;
 // 是判据与文案，不是触发时机。上界依旧同源：三处 core 用 `palette.colors.length`，本文件用
 // `getBuiltinPalette().colors.length`（内置色卡的唯一生产入口，见 `services/palette.ts`）。
 //
-// 几何 / 尺寸类守卫（`computeGridSize` 的长边守卫、finite / point / rect / size）按既有裁决
+// 几何 / 尺寸类守卫（finite / point / rect / size）按既有裁决
 // **保持内联**，本轮不动；旋转 / 选区 / 比例 / 缩放守卫同理。
 // ---------------------------------------------------------------------------
 
