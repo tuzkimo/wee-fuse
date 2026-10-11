@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { browserPlatform } from "../browserPlatform";
+import { PICKER_RETURN_GRACE_MS } from "../hiddenFileInput";
 import { runPlatformContract, type PlatformHarness } from "./platformContract";
 
 /**
@@ -82,7 +83,7 @@ describe("浏览器实现的取值与 DOM 卫生", () => {
   it("`files[0]` 不是 File 对象 ⇒ reject 契约消息，且节点照样被摘掉", async () => {
     // 这条用例不经过 harness 的 `finishPick`：它要造的是一个**契约违反**（列表里有东西但不是 File），
     // 而 harness 的签名只接受 `File | null`。
-    // **它同时是 `PICKER_NOT_A_FILE_MESSAGE`（`browserPlatform.ts:10`）在浏览器实现下的逐字证明**
+    // **它同时是 `PICKER_NOT_A_FILE_MESSAGE`（`hiddenFileInput.ts:18`）在浏览器实现下的逐字证明**
     // （修复轮 F2）：契约里那两条在 `canCapture === true` 的 harness 上验的是同一条消息，
     // 浏览器实现 `canCapture` 恒为 `false`、`capturePhoto` 只抛「本平台不支持拍照」，
     // 拿不到这条消息的第二条路径——所以这里**复用**它，不为凑数再写一份等价断言。
@@ -99,18 +100,72 @@ describe("浏览器实现的取值与 DOM 卫生", () => {
   });
 
   it("`change` 到达但 FileList 为空 ⇒ 按取消 resolve null，且节点照样被摘掉（第三条结算路径）", async () => {
-    // `browserPlatform.ts:53-59`：老浏览器上「没选文件就关掉」以 `change` + 空列表到达。
+    // `hiddenFileInput.ts:120-124`（共享选择器的 `change` 空列表分支）：老浏览器上「没选文件就关掉」
+    // 以 `change` + 空列表到达。
     // 修复轮 F3 之前这条路**一次都没被执行过**（既有两条走的是选中与 `cancel`），
     // JSDoc 里那句「三条结算路径都经 cleanup」于是只被验了两条。
     // 也不经 harness：`finishPick` 只能发 `cancel`，造不出「`change` + 空列表」。
     const pending = browserPlatform.imagePicking.pickFromAlbum();
     const input = document.body.querySelector<HTMLInputElement>("input[type=file]");
     expect(input).not.toBeNull();
-    // 顺手补上 `browserPlatform.ts:33` 的 `display = "none"` 断言（修复轮记的「允许补一行」）。
+    // 顺手补上 `hiddenFileInput.ts:72` 的 `display = "none"` 断言（修复轮记的「允许补一行」）。
     expect(input!.style.display).toBe("none");
     input!.files = new FileList() as unknown as FileList;
     input!.dispatchEvent(new Event("change"));
 
+    await expect(pending).resolves.toBeNull();
+    expect(input!.parentNode).toBeNull();
+  });
+
+  /**
+   * 把 `setTimeout` 换成**只记录、不等待**的桩，返回「取到当前被排上的定时器」的读法。
+   *
+   * 与 `tauriDriver.test.ts` 的同名桩同一手法（那边是这组语义的原始判别者）：不引入假时钟，
+   * 排上的宽限期定时器由用例**手工触发**，所以「信号永不到来」时用例是**失败**而不是挂死。
+   */
+  function spyOnSetTimeout(): () => { readonly delay: number; readonly fire: () => void } | null {
+    let pending: { delay: number; fire: () => void } | null = null;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      delay?: number,
+    ) => {
+      pending = { delay: delay ?? 0, fire: handler };
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    return () => pending;
+  }
+
+  it("兜底出口：blur → focus 排上宽限期定时器，触发后 resolve null 并摘掉节点", async () => {
+    // 没有 `cancel` 事件的老 WebView 上，浏览器实现侧的用户取消也必须能结算——这正是壳侧兜底的
+    // 同一条语义。用例手工触发定时器，不 `await` 被测 promise（它会一直 pending ⇒ 挂死）。
+    const scheduled = spyOnSetTimeout();
+    const pending = browserPlatform.imagePicking.pickFromAlbum();
+    const input = document.body.querySelector<HTMLInputElement>("input[type=file]");
+    expect(input).not.toBeNull();
+
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+
+    const timer = scheduled();
+    if (timer === null) throw new Error("兜底定时器没有被排上");
+    expect(timer.delay).toBe(PICKER_RETURN_GRACE_MS);
+
+    let status: "pending" | "fulfilled" | "rejected" = "pending";
+    void pending.then(
+      () => {
+        status = "fulfilled";
+      },
+      () => {
+        status = "rejected";
+      },
+    );
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    // 前半：只排上定时器 ⇒ 此刻不许结算（不能一有焦点信号就判取消）。
+    expect(status).toBe("pending");
+
+    timer.fire();
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    expect(status).toBe("fulfilled");
     await expect(pending).resolves.toBeNull();
     expect(input!.parentNode).toBeNull();
   });

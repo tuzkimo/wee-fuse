@@ -1,79 +1,28 @@
 import { downloadBlob } from "../exporter";
 import { requireSavableBlob } from "./guards";
+import { pickWithHiddenInput } from "./hiddenFileInput";
 import type { AlbumSaver, AppLifecycle, ImagePicking, Platform, ShareInbox } from "./types";
 
 /** 解绑函数：什么都没注册，所以解绑也什么都不做——但**必须真的可调用**（装配方无条件调用它）。 */
 const NOOP_UNBIND = (): void => undefined;
 
-/** 两条消息各只写一次，并注明它们是与壳实现共用的契约面（`types.ts` / 规格 §4.4）。 */
+/** `capturePhoto` 的失败消息只写一次（与壳实现共用同一份契约面，`types.ts` / 规格 §4.4）。 */
 const CAPTURE_UNSUPPORTED_MESSAGE = "本平台不支持拍照";
-const PICKER_NOT_A_FILE_MESSAGE = "图片选择器返回了非文件对象";
 
 const imagePicking: ImagePicking = {
   kind: "file-input",
   canCapture: false,
   /**
-   * 程序化选图：建一个隐藏 `<input type=file>` → 挂进 `document.body` → `click()` → 等 `change` 或 `cancel`。
+   * 程序化选图 = 共享的隐藏 `<input type=file>` 选择器（`./hiddenFileInput.ts`）。
    *
-   * **为什么挂进 DOM 又要摘掉**：未挂载的 file input 在部分 WebKit 版本上调 `click()` 不唤起选择器；
-   * 挂进去就必须在**三条结算路径**（选中 / 取消 / 非 File）上都摘掉节点，否则每点一次就往 `body`
-   * 里留一个隐藏 input。所以 `cleanup` 只有一处，三条路径都经它。
+   * **为什么不再写一份**：2026-10-11 审计发现浏览器侧与壳侧同名实现已经漂移（浏览器只认 `cancel`
+   * ⇒ 老浏览器上取消后 promise 永不结算、按钮永久禁用）。共用一份后，两个实现六个出口的语义完全一致；
+   * `capture = null` 就是「不带 capture 属性的那一种」。
    *
-   * **取消 `null` / 契约违反抛错**：`change` 到达但列表为空 ⇒ 按取消（用户清空选择本来就是取消）；
-   * 拿回来的**不是 `File` 对象** ⇒ 响亮失败（静默当取消等于把契约违反伪装成用户行为）。
-   *
-   * **只监听 `cancel`、不用 `focus` 兜底**：`focus` 会在「用户选了文件但耗时较长」时先触发，把成功
-   * 误判成取消。代价是老浏览器上取消后这颗 promise 不结算——而它唯一的消费者是壳里的按钮。
+   * **取消 `null` / 契约违反抛错**的逐条理由见 `hiddenFileInput.ts` 的 `pickWithHiddenInput`。
    */
   pickFromAlbum(): Promise<File | null> {
-    return new Promise<File | null>((resolve, reject) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      input.style.display = "none";
-
-      let settled = false;
-      const cleanup = (): void => {
-        input.removeEventListener("change", onChange);
-        input.removeEventListener("cancel", onCancel);
-        input.remove();
-      };
-      const finish = (file: File | null): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve(file);
-      };
-      const fail = (message: string): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error(message));
-      };
-      const onChange = (): void => {
-        const picked: unknown = input.files?.[0] ?? null;
-        if (picked === null) {
-          // 老浏览器上「没选任何文件就关掉」会以 `change` + 空 FileList 到达 ⇒ **按取消处理**：
-          // 用户清空选择本来就是取消，判成失败会给他弹一条看不懂的红条。
-          finish(null);
-          return;
-        }
-        if (!(picked instanceof File)) {
-          // 而「拿回来的不是 File」是**契约违反**，必须响亮失败（不许静默当取消）。
-          fail(PICKER_NOT_A_FILE_MESSAGE);
-          return;
-        }
-        finish(picked);
-      };
-      const onCancel = (): void => {
-        finish(null);
-      };
-
-      input.addEventListener("change", onChange);
-      input.addEventListener("cancel", onCancel);
-      document.body.append(input);
-      input.click();
-    });
+    return pickWithHiddenInput(null);
   },
   /**
    * 浏览器实现恒不支持拍照（规格 §5.2 第 3 级）。**响亮失败而不是返回 `null`**：静默返回 `null`
