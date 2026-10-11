@@ -2,6 +2,7 @@ import type { Decoder } from "@/core/image/decode";
 import { rotateGrid, rotatedSize } from "@/core/image/rotate";
 import { resampleToGrid } from "@/core/image/resample";
 import type { Rect, Rotation, SampledGrid } from "@/core/image/types";
+import { BACKGROUND_TOLERANCE, maskBackground } from "@/core/pattern/background";
 import { buildPattern, computeDecodeSize, computeGridSize } from "@/core/pattern/build";
 import type { MaxColors, Pattern } from "@/core/pattern/types";
 import type { Palette } from "@/core/palette/types";
@@ -85,6 +86,13 @@ export interface GenerateRequest {
    * 2026-10-10 口径简化：旧的 `"custom"` / `"all"` 与 `customMaxColors` 已删除。
    */
   readonly maxColors: MaxColors;
+  /**
+   * 是否在量化**之前**排除背景（从四角泛洪，只吃与角同色的连通格）。
+   *
+   * **刻意是可选**（缺省 = 老行为）：背景格不进直方图、不参与聚类，用色名额于是留给主体；
+   * 缺省时行为与旧版逐位相同，不可能静默产出错图纸，必填只会给调用方添噪音。
+   */
+  readonly removeBackground?: boolean;
 }
 
 /**
@@ -192,7 +200,15 @@ export async function generatePattern(
   // 实际尺寸重采样。
   const sampled: SampledGrid = resampleToGrid(image, rawGrid.width, rawGrid.height);
   // rotation === 0 时 rotateGrid 返回入参本身（同一引用）。buildPattern 只读网格的
-  // rgb / filled，不会就地改写，故这里安全；下游任何新增的写操作都要先复制。
+  // rgb / filled，不会就地改写；唯一的写操作是下面 removeBackground 分支里的 maskBackground，
+  // 它就地清 filled 而 `sampled` / `rotated` 都是本函数局部、改后无人再读，故同样安全。
+  // 下游若再新增写操作，仍要先复制。
   const rotated = rotateGrid(sampled, rotation);
+  // 事前排除背景：maskBackground 就地清 filled，buildPattern 只处理 filled !== 0 的格，
+  // 于是直方图、聚类与用色名额都自动跳过背景。rotation === 0 时 rotateGrid 返回入参本身，
+  // 就地改 filled 会同时改到 sampled——两者都是本函数局部的，改后无人再读，安全。
+  if (request.removeBackground === true) {
+    maskBackground(rotated, BACKGROUND_TOLERANCE);
+  }
   return buildPattern(rotated, deps.palette, { maxColors });
 }

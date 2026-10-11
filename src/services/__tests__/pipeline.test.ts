@@ -618,3 +618,88 @@ describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不�
     expect(exact.requests).toHaveLength(0);
   });
 });
+
+/** 外圈 `border` 像素为背景色，内部左半 a 色、右半 b 色。 */
+function framed(size: number, bg: [number, number, number], a: [number, number, number], b: [number, number, number]): RgbaImage {
+  const data = new Uint8ClampedArray(size * size * 4);
+  // 简报取的是 48，但那会让「用色名额让给主体」那条用例无法成立（实测）：48 < 一格 56px 时，
+  // 外圈 12 格是「背景 + 主体」的混合色（86% 背景），既通不过 ΔE76 ≤ 10 的泛洪、也留在直方图里，
+  // 于是 maxColors=2 的两个簇无论勾不勾开关都落在红/绿上。取满一格（224/4 = 56）后外圈是纯背景：
+  // 不勾开关时背景吃掉一个名额（绿丢失），勾了才红绿两色都在。
+  const border = 56;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const inner = x >= border && x < size - border && y >= border && y < size - border;
+      const color = inner ? (x < size / 2 ? a : b) : bg;
+      data[i] = color[0]; data[i + 1] = color[1]; data[i + 2] = color[2]; data[i + 3] = 255;
+    }
+  }
+  return { width: size, height: size, data };
+}
+
+const framedImage = framed(224, [128, 128, 128], [255, 0, 0], [0, 255, 0]);
+/** 纯灰整图：全部都是背景，用来验「整图被吃空」这一支。 */
+const solidGray: RgbaImage = (() => {
+  const data = new Uint8ClampedArray(224 * 224 * 4);
+  for (let i = 0; i < 224 * 224; i++) {
+    data[i * 4] = 128; data[i * 4 + 1] = 128; data[i * 4 + 2] = 128; data[i * 4 + 3] = 255;
+  }
+  return { width: 224, height: 224, data };
+})();
+const framedDeps: GenerateDeps = {
+  exactDecoder: { name: "fake-framed", async decode() { return framedImage; } },
+  fastDecoder: fastMustNotBeUsed,
+  palette,
+};
+
+describe("removeBackground（事前排除）", () => {
+  it("不传开关时行为不变：四边是背景色号，不是空格", async () => {
+    const pattern = await generatePattern(
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: 16 },
+      framedDeps,
+    );
+    expect(pattern.cells[0]).not.toBe(EMPTY);
+  });
+
+  it("开关为 true 时四边背景格变空格，中央主体保留色号", async () => {
+    const pattern = await generatePattern(
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: 16, removeBackground: true },
+      framedDeps,
+    );
+    expect(pattern.cells[0]).toBe(EMPTY); // 左上角（4×4 里第一格整格落在 56px 外圈里）
+    expect(pattern.cells[pattern.cells.length - 1]).toBe(EMPTY);
+    expect(pattern.cells[1 * 4 + 1]).not.toBe(EMPTY); // 中央 2×2 是主体
+  });
+
+  it("用色名额真的让给主体：maxColors=2 时红与绿都出现，不勾则不同时出现", async () => {
+    const without = await generatePattern(
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: 2 },
+      framedDeps,
+    );
+    const with_ = await generatePattern(
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: 2, removeBackground: true },
+      framedDeps,
+    );
+    const has = (p: typeof without, index: number) => [...p.cells].includes(index);
+    expect(has(with_, 2) && has(with_, 3)).toBe(true); // A3 红、A4 绿
+    expect(has(without, 2) && has(without, 3)).toBe(false);
+  });
+
+  it("用色数为「不限」（= 色卡色数）时同样排除背景", async () => {
+    const pattern = await generatePattern(
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: palette.colors.length, removeBackground: true },
+      framedDeps,
+    );
+    expect(pattern.cells[0]).toBe(EMPTY);
+  });
+
+  it("[整图被吃空] 全是背景的图产出一张全空图纸，不抛错", async () => {
+    const pattern = await generatePattern(
+      { source, sourceSize, crop, rotation: 0, longSide: 4, maxColors: 16, removeBackground: true },
+      { ...framedDeps, exactDecoder: { name: "fake-gray", async decode() { return solidGray; } } },
+    );
+    expect(pattern.width).toBe(4);
+    expect([...pattern.cells].every((value) => value === EMPTY)).toBe(true);
+  });
+});
