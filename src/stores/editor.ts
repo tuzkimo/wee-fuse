@@ -33,7 +33,7 @@ import { useProjectSession } from "@/stores/project";
  * `viewport`（只有 `onViewport` 那一刻需要它）、`selection`（框选高亮是拖动期间组件内的预览，
  * 控制者已裁决不落 store）。
  *
- * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 15 个动作
+ * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 16 个动作
  * 是任务 5（`PatternCanvas` / `PatternToolbar` / `PalettePanel` / `PalettePicker` 全部经 `EditorPage`
  * 以 props 拿值、以事件回调写值）与任务 6（`EditorPage` 的装配：载入成功 → `beginSession`、
  * 量到尺寸 → `onViewport`、保存 → `session.save()`）的接口面；`EditorTool` 同时是
@@ -41,8 +41,13 @@ import { useProjectSession } from "@/stores/project";
  * 事件出），页面是唯一装配点。
  */
 
-/** 编辑器工具：画笔 / 框选 / 吸管（单指分工，规格 §6.1）。 */
-export type EditorTool = "brush" | "select" | "pick";
+/**
+ * 编辑器工具：画笔 / 框选 / 吸管 / 去背景（单指分工，规格 §6.1）。
+ *
+ * **去背景是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
+ * 去背景则要按整片区域入账，先选工具再点画布。
+ */
+export type EditorTool = "brush" | "select" | "pick" | "background";
 
 const DEFAULT_TOOL: EditorTool = "brush";
 
@@ -268,8 +273,10 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "select" && next !== "pick") {
-      throw new Error(`编辑器工具非法：${String(next)}（只允许 "brush" / "select" / "pick"）`);
+    if (next !== "brush" && next !== "select" && next !== "pick" && next !== "background") {
+      throw new Error(
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "select" / "pick" / "background"）`,
+      );
     }
     tool.value = next;
   }
@@ -341,6 +348,25 @@ export const useEditor = defineStore("editor", () => {
     const current = requireLoadedPattern();
     const next = requireRect(rect);
     const command = buildRectPaintCommand(current, next, currentColor.value, "框选");
+    if (command === null) return;
+    publishChange(history.value.commit(current.cells, command));
+  }
+
+  /**
+   * 去背景：把一批格子置为空格，**一次点击一条命令**（可一步撤销）。
+   *
+   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账——已经是空格的
+   * 格由 `buildPaintCommand` 天然跳过，于是「点空格」既不留空的撤销记录、也不置脏。
+   *
+   * 下标形态自己守（与 `paint` 同一口径）：元素级的非整数 / 越界仍由 `buildPaintCommand` 忽略。
+   */
+  function eraseCells(indices: readonly number[]): void {
+    const current = requireLoadedPattern();
+    if (!Array.isArray(indices)) {
+      throw new Error(`去背景下标必须是数组（当前 ${typeof indices}）`);
+    }
+    const safeIndices: readonly number[] = indices;
+    const command = buildPaintCommand(current.cells, safeIndices, EMPTY, "去背景");
     if (command === null) return;
     publishChange(history.value.commit(current.cells, command));
   }
@@ -444,6 +470,7 @@ export const useEditor = defineStore("editor", () => {
     setView,
     paint,
     applyRect,
+    eraseCells,
     pickFromCell,
     undo,
     redo,

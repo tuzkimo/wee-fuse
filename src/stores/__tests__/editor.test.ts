@@ -20,8 +20,8 @@ import { useProjectSession } from "@/stores/project";
  *    所以刷新只能走 `revision` + `lastDirty`，两条都必须被断言读到（否则 store 可以「静默刷新失败」）。
  * 2. **`onViewport` 的两支有判别力**：第二次尺寸变化时缩放与偏移必须**逐字保持**，而夹取该生效时
  *    又必须真的生效（否则「什么都不做」也能过前一条）。
- * 3. **只有 `paint` / `applyRect` / `undo` / `redo` 会置脏**：切工具、改视图、开关网格线、吸管
- *    都不影响「内存与存储是否一致」。
+ * 3. **只有 `paint` / `applyRect` / `eraseCells` / `undo` / `redo` 会置脏**：切工具、改视图、
+ *    开关网格线、吸管都不影响「内存与存储是否一致」。
  *
  * 夹具口径沿用 `project.test.ts` / `EditorPage.test.ts`：色卡用生产口径的 `getBuiltinPalette()`，
  * 端到端那条用 `toProjectDocument` 造一份色卡自洽的真记录再走 `session.load()`。
@@ -203,7 +203,7 @@ describe("beginSession：会话播种", () => {
 
 describe("reset：把会话清回初始态", () => {
   it("13 个字段逐一回默认，且**不碰 session**（`dirty` 留给保存流程）", () => {
-    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 15 个动作之一、页面卸载 / 换工程时
+    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 16 个动作之一、页面卸载 / 换工程时
     // 会走到。少了这条，「reset 漏清 viewInitialized」这类错误在屏幕上是「换工程后视图还是旧的」，
     // 不报错、只有真机看得出来。
     const { editor, session } = seedEditor();
@@ -734,7 +734,7 @@ describe("undo / redo（规格 §6.6）", () => {
   });
 });
 
-describe("只有改 cells 的四个动作会置脏", () => {
+describe("只有改 cells 的五个动作会置脏", () => {
   it("beginSession / setTool / setView / setShowGrid / setShowLabels / setCurrentColor / pickFromCell / onViewport 都不置脏", () => {
     const { editor, session } = seedEditor();
 
@@ -824,5 +824,83 @@ describe("端到端：载入一份真记录 → 涂抹 → 撤销", () => {
     expect(editor.revision).toBe(2);
     expect(editor.lastDirty).toEqual([4, 5, 6]);
     expect(session.dirty).toBe(true); // 撤销也是「内存与存储不一致」
+  });
+});
+
+describe("去背景工具", () => {
+  it('setTool 接受 "background"', () => {
+    const { editor } = seedEditor();
+
+    editor.setTool("background");
+
+    expect(editor.tool).toBe("background");
+  });
+
+  it("setTool 的错误信息列出四个工具并拒绝拼错的值", () => {
+    const { editor } = seedEditor();
+
+    // 文案与判据必须同源：判据放行了 background、文案还写着三个工具，报错就会自相矛盾
+    expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(/background/);
+    expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(/background/);
+
+    expect(editor.tool).toBe("brush");
+  });
+
+  it("eraseCells 把一批格子置为空并按一次命令撤销", () => {
+    // 夹具前四格都是 7 号色：批里**三格真的变了**，否则「一次点击一条命令」是句空话
+    // （默认夹具只有 cells[0] 非空，`lastDirty` 只可能是 [0]）。
+    const { editor, pattern } = seedEditor([7, 7, 7, 7, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
+    const before = [...pattern.cells];
+
+    editor.eraseCells([0, 1, 2]);
+
+    expect([...pattern.cells].slice(0, 3)).toEqual([EMPTY, EMPTY, EMPTY]);
+    expect(pattern.cells[3]).toBe(7); // 批外的格子不动
+    expect(editor.lastDirty).toEqual([0, 1, 2]);
+    expect(editor.history.undoDepth).toBe(1); // 一次点击 = 一条命令
+    expect(editor.canUndo).toBe(true);
+
+    editor.undo();
+
+    expect([...pattern.cells]).toEqual(before);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it("对象全是空格时不产生撤销记录、不标脏", () => {
+    const { editor, session } = seedEditor();
+    editor.eraseCells([0]); // 第一次真的改了：cells[0] 是 7 号色
+    expect(session.dirty).toBe(true);
+    // 模拟「刚保存完」：绕过 setup store 的 setter 只能走 $patch（环境事实 3）
+    session.$patch({ dirty: false });
+    const revision = editor.revision;
+
+    editor.eraseCells([0]); // 已经是空格
+
+    expect(editor.revision).toBe(revision);
+    expect(editor.history.undoDepth).toBe(1); // 没有多出第二条空命令
+    expect(session.dirty).toBe(false);
+  });
+
+  it("空数组什么都不做", () => {
+    const { editor, session } = seedEditor();
+    const revision = editor.revision;
+
+    editor.eraseCells([]);
+
+    expect(editor.revision).toBe(revision);
+    expect(editor.history.undoDepth).toBe(0);
+    expect(session.dirty).toBe(false);
+  });
+
+  it("非数组的下标响亮拒绝（形态错误自己守），且在任何写操作之前", () => {
+    const { editor, session } = seedEditor();
+    const revision = editor.revision;
+
+    expect(() => editor.eraseCells("0,1" as unknown as number[])).toThrow(/去背景下标/);
+    expect(() => editor.eraseCells(null as unknown as number[])).toThrow(/去背景下标/);
+
+    expect(editor.revision).toBe(revision);
+    expect(editor.history.undoDepth).toBe(0);
+    expect(session.dirty).toBe(false);
   });
 });
