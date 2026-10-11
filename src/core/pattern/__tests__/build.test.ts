@@ -3,13 +3,12 @@ import { loadPalette } from "../../palette/registry";
 import { BOARD_COLS } from "../board";
 import {
   buildPattern,
-  buildPatternFromImage,
   computeDecodeSize,
   computeGridSize,
   PIXELS_PER_CELL,
 } from "../build";
 import { EMPTY, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors, type Pattern } from "../types";
-import type { RgbaImage, SampledGrid } from "../../image/types";
+import type { SampledGrid } from "../../image/types";
 
 const hex2 = (value: number): string => `0${value.toString(16)}`.slice(-2);
 const hexOf = (rgb: readonly [number, number, number]): string =>
@@ -466,28 +465,5 @@ describe("buildPattern（追加：用色数入口校验与「拉满即不限」�
     expect([...buildPattern(g, palette, { maxColors: 16 }).cells]).toEqual([2, 3, 4]);
     expect([...buildPattern(g, palette, { maxColors: 24 }).cells]).toEqual([2, 3, 4]);
     expect([...buildPattern(g, palette, { maxColors: 221 }).cells]).toEqual([2, 3, 4]);
-  });
-});
-
-describe("buildPatternFromImage", () => {
-  it("按原分辨率逐像素转成图纸（源宽 == 目标宽时是 1:1 精确复制）", () => {
-    // 2×1 位图：左红、右全透明。透明格按 FILL_COVERAGE_THRESHOLD 判为空格。
-    const data = new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 0, 0]);
-    const image: RgbaImage = { width: 2, height: 1, data };
-    const pattern = buildPatternFromImage(image, palette, { maxColors: 16 });
-    expect(pattern.width).toBe(2);
-    expect(pattern.height).toBe(1);
-    expect(pattern.paletteId).toBe("fake");
-    expect(codeAt(pattern, codes, 0)).toBe("A3");
-    expect(pattern.cells[1]).toBe(EMPTY);
-  });
-
-  it("alpha 覆盖率不足的格子判为空格，而不是当成黑色实心格", () => {
-    // 1×2 位图：上格不透明黑、下格 α=26/255≈0.102（低于 0.25 的覆盖率阈值）。
-    // 若实现忽略 alpha 的覆盖率语义，下格会变成黑色实心格 → A2，断言转红。
-    const data = new Uint8ClampedArray([0, 0, 0, 255, 0, 0, 0, 26]);
-    const image: RgbaImage = { width: 1, height: 2, data };
-    const pattern = buildPatternFromImage(image, palette, { maxColors: 16 });
-    expect([...pattern.cells]).toEqual([1, EMPTY]);
   });
 });

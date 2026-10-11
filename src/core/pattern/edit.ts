@@ -96,29 +96,6 @@ export function buildRectPaintCommand(
 }
 
 /**
- * 构造「把某种色号整体替换成另一种」的命令。
- *
- * **为何公开（如实写明：零生产消费者）**：B3 的**整色替换 UI 属明确不做项**（B3 规格 §9.3：
- * 「不做整色替换」，其「不做项」清单里逐条记着），所以本仓库内**没有任何生产消费者**，
- * 只有 `edit.test.ts` 在调用它。收窄成内部函数会动到那批既有测试，故不在 B3 顺手做；
- * 按 `AGENTS.md`「公开 API ≠ 被使用的 API」，这里如实写明现状——它保留是因为「导出即承诺」，
- * 而不是因为有人在用（B1 规格 §13 第 3 条与 B3 规格 §12 末段的同一笔账）。
- */
-export function buildReplaceCommand(
-  pattern: Pattern,
-  from: number,
-  to: number,
-  label: string,
-): EditCommand | null {
-  if (from === to) return null;
-  const indices: number[] = [];
-  for (let i = 0; i < pattern.cells.length; i++) {
-    if (pattern.cells[i] === from) indices.push(i);
-  }
-  return buildPaintCommand(pattern.cells, indices, to, label);
-}
-
-/**
  * 取某格的色号；坐标越界或非整数时返回 EMPTY。
  *
  * **为何公开**：`stores/editor.ts` 的 `pickFromCell()`（吸管）是生产消费者——它要读的正是

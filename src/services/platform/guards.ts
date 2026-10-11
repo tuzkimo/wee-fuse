@@ -1,19 +1,4 @@
 /**
- * 已通过守卫的可保存内容。
- *
- * **为什么公开**：它是 `requireSavableBlob` 的返回类型，而调用方是拿着 `safe.blob` / `safe.filename`
- * 往下走的（`services/exporter.ts` 与 `browserPlatform.album.save` 都是）——窄化结果必须有具名类型
- * 才写得出这个签名。**如实记录：今天没有任何文件 `import` 这个类型**（消费者读的是函数返回值，
- * 由 TS 推断），它属于「公开但无人直接引用」，留在这里是因为删掉它就要把返回类型写成内联字面量，
- * 而那会让同一个形状出现两份（`AGENTS.md`「公开 API ≠ 被使用的 API」：零引用要如实写明）。
- */
-export interface SavableBlob {
-  readonly blob: Blob;
-  /** **已 trim**：调用方拿它去建文件名，不要再自己 trim 一次。 */
-  readonly filename: string;
-}
-
-/**
  * 「能不能存」的唯一判据：blob 必须是有内容的 `Blob`，文件名 trim 后非空。返回窄化后的入参。
  *
  * **为什么收敛到一处**（规格 §4.4「守卫」）：浏览器实现（下载）与壳实现（相册）都要判这两件事；
@@ -28,7 +13,10 @@ export interface SavableBlob {
  *
  * 校验写在**任何写操作之前**（`AGENTS.md` 入口校验）。
  */
-export function requireSavableBlob(blob: unknown, filename: unknown): SavableBlob {
+export function requireSavableBlob(
+  blob: unknown,
+  filename: unknown,
+): { readonly blob: Blob; readonly filename: string } {
   if (!(blob instanceof Blob)) {
     throw new Error("导出内容必须是 Blob");
   }

@@ -31,7 +31,7 @@ export const BOARD_ROWS = 29;
  * 而非有限值（`NaN`）若不拦会一路传成界面上的 `NaN 厘米`。
  *
  * 不设上界：本函数是纯换算，`MAX_LONG_SIDE`（116）是**图纸**维度的约束，由
- * `buildPatternFromImage` / `project/types.ts` 的入口守；在这里再拦一次会把「豆数」
+ * `project/types.ts` 的入口守；在这里再拦一次会把「豆数」
  * 与「长边豆数」两个不同概念混为一谈，且多出一个与图纸无关的失败面。
  */
 export function beadsToCm(beads: number): number {

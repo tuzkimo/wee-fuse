@@ -1,4 +1,4 @@
-import { decodeImageElement, probeImageSize } from "./probe";
+import { decodeImageElement } from "./probe";
 
 /**
  * 图片来源。
@@ -22,20 +22,6 @@ export function fileFromInput(input: HTMLInputElement | null): FileInputResult {
     return { ok: false, reason: "这个文件是空的，请换一张图片" };
   }
   return { ok: true, file };
-}
-
-/**
- * 读出图片的原始像素尺寸。失败时抛出**带中文前缀**的原因（前缀之下原样附上底层
- * `cause.message`，后者通常是英文；不静默返回 0×0）。
- *
- * **为何公开**（规格 §13 第 10 条）：它是 `loadImageSource` 的「只读尺寸」姊妹 API——只要两个
- * 整数、不要预览位图的调用方用它。**如实记录：B2 交付之后它没有任何生产消费者**——`/lab/decode`
- * 走的是 `services/probe.ts` 的 `probeImageSize`（`DecodeLabPage.vue` 直接 import，不经这层
- * 包装），B1 的临时生成入口 `views/GeneratePage.vue` 曾是最后一个调用方，该页已随任务 14 删除。
- * 按规格保留不删（删它会连带改 `imageSource.test.ts` 的既有用例），因此它目前只被用例消费。
- */
-export function probeSourceSize(source: Blob): Promise<{ width: number; height: number }> {
-  return probeImageSize(source);
 }
 
 /** 预览位图的长边上限（像素）。主规格 §5① 规定的预览解码口径，`AGENTS.md` 的关键常量。 */

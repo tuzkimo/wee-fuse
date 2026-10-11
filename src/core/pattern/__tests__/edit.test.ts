@@ -3,7 +3,6 @@ import {
   applyChanges,
   buildPaintCommand,
   buildRectPaintCommand,
-  buildReplaceCommand,
   cellAt,
   pointToCell,
   revertChanges,
@@ -77,7 +76,6 @@ describe("applyChanges / revertChanges / buildPaintCommand（追加：判别力�
     expect(buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 1 }, 2, "框选")?.label).toBe(
       "框选",
     );
-    expect(buildReplaceCommand(p, 1, 2, "整体换色")?.label).toBe("整体换色");
   });
 
   it("越界下标一个都不写、也不入账；下标 0 与 length-1 是合法边界", () => {
@@ -156,44 +154,6 @@ describe("buildRectPaintCommand（追加：行优先换算与增量正确性）"
   it("已经是目标色的矩形返回 null（不产生空撤销记录）", () => {
     const p = pattern([5, 5, 5, 5], 2, 2);
     expect(buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 2 }, 5, "框选")).toBeNull();
-  });
-});
-
-describe("buildReplaceCommand", () => {
-  it("替换全图某个色号", () => {
-    const p = pattern([1, 2, 1, 3, 1], 5, 1);
-    const cmd = buildReplaceCommand(p, 1, 4, "整体换色");
-    expect(cmd?.changes.map((c) => c.index)).toEqual([0, 2, 4]);
-  });
-
-  it("换成相同色号时返回 null", () => {
-    const p = pattern([1, 1], 2, 1);
-    expect(buildReplaceCommand(p, 1, 1, "整体换色")).toBeNull();
-  });
-});
-
-describe("buildReplaceCommand（追加：无色可换与空格的两种方向）", () => {
-  it("图里没有该色号时返回 null", () => {
-    const p = pattern([1, 2, 1], 3, 1);
-    expect(buildReplaceCommand(p, 7, 4, "整体换色")).toBeNull();
-  });
-
-  it("能把某个色号整体替换成空格（清除该色），from 记录正确", () => {
-    const p = pattern([1, 2, 1], 3, 1);
-    const cmd = buildReplaceCommand(p, 1, EMPTY, "清除该色");
-    expect(cmd?.changes).toEqual([
-      { index: 0, from: 1, to: EMPTY },
-      { index: 2, from: 1, to: EMPTY },
-    ]);
-  });
-
-  it("也能把空格整体涂成某个色号（from === EMPTY）", () => {
-    const p = pattern([EMPTY, 1, EMPTY], 3, 1);
-    const cmd = buildReplaceCommand(p, EMPTY, 1, "填充空格");
-    expect(cmd?.changes).toEqual([
-      { index: 0, from: EMPTY, to: 1 },
-      { index: 2, from: EMPTY, to: 1 },
-    ]);
   });
 });
 
@@ -336,12 +296,11 @@ describe("buildPaintCommand（追加：目标色号越界必须响亮失败）",
     ]);
   });
 
-  it("框选与整体换色两条入口同样受 to 校验保护（它们都走 buildPaintCommand）", () => {
+  it("框选入口同样受 to 校验保护（它走 buildPaintCommand）", () => {
     const p = pattern([1, 1], 2, 1);
     expect(() =>
       buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 1 }, -1, "橡皮"),
     ).toThrow(/目标色号/);
-    expect(() => buildReplaceCommand(p, 1, 70_000, "整体换色")).toThrow(/目标色号/);
     expect([...p.cells]).toEqual([1, 1]);
   });
 });

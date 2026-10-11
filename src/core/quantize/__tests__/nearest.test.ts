@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadPalette } from "../../palette/registry";
-import { clustersToPaletteIndices, nearestCellColor, nearestIndexOf } from "../nearest";
+import { clustersToPaletteIndices, nearestIndexOf } from "../nearest";
 import { rgbToLab } from "../../color/space";
 
 const palette = loadPalette({
@@ -61,14 +61,6 @@ describe("clustersToPaletteIndices", () => {
   });
 });
 
-describe("nearestCellColor", () => {
-  it("在候选下标内选最近色", () => {
-    const candidates = [labs[2] as (typeof labs)[number], labs[4] as (typeof labs)[number]];
-    expect(nearestCellColor(240, 10, 10, candidates)).toBe(0);
-    expect(nearestCellColor(10, 10, 240, candidates)).toBe(1);
-  });
-});
-
 /**
  * —— 任务 7 补充断言 ——
  * 简报给的 nearest 用例全部落在「唯一最小距离」的情形上，所以：等距时取哪个下标、
@@ -107,7 +99,7 @@ describe("[补充] 度量的实际使用", () => {
   });
 
   it("逐格映射用 ΔE76（不是 CIEDE2000）", () => {
-    expect(nearestCellColor(0, 34, 34, metricLabs)).toBe(0);
+    expect(nearestIndexOf(rgbToLab(0, 34, 34), metricLabs, "de76")).toBe(0);
   });
 });
 
@@ -115,7 +107,7 @@ describe("[补充] 逐格映射读到 g 通道", () => {
   it("候选为红 / 绿时，(200,220,10) 归绿", () => {
     // ΔE76：到绿 58.79，到红 112.82。把 g 通道丢掉（当 0 处理）会翻成红。
     const candidates = [labs[2], labs[3]];
-    expect(nearestCellColor(200, 220, 10, candidates)).toBe(1);
+    expect(nearestIndexOf(rgbToLab(200, 220, 10), candidates, "de76")).toBe(1);
   });
 });
 
@@ -171,7 +163,7 @@ describe("[审计补充] 兜底色号的身份", () => {
  * 缺陷 D1 的成因形态是「Lab 被当成 sRGB 喂进姊妹入口」，而它的可观测后果是**静默**的：
  * `NaN` 分量下 `d < bestDistance` 恒假（`NaN` 与任何数比较都为假），于是
  * `nearestIndexOf([NaN, NaN, NaN], labs, "de76")` 修复前返回 **0**——一个看起来完全正常的色号。
- * 同一条链上的三个公开入口（`nearestIndexOf` / `nearestCellColor` / `clustersToPaletteIndices`）
+ * 同一条链上的两个公开入口（`nearestIndexOf` / `clustersToPaletteIndices`）
  * 现在都在入口响亮失败。以上断言一条未改。
  */
 describe("[F3 追加] 非法颜色分量不再静默选中色卡下标 0", () => {
@@ -186,13 +178,6 @@ describe("[F3 追加] 非法颜色分量不再静默选中色卡下标 0", () =>
     expect(nearestIndexOf([1, 2, 3], [[1, 2, 3]], "de76")).toBe(0);
   });
 
-  it("nearestCellColor 的 NaN 分量在 rgbToLab 处就被拦下", () => {
-    expect(() => nearestCellColor(Number.NaN, Number.NaN, Number.NaN, labs)).toThrow(
-      /颜色分量非法/,
-    );
-    expect(() => nearestCellColor(0, 0, Number.NaN, labs)).toThrow(/颜色分量非法/);
-  });
-
   it("clustersToPaletteIndices 不再把 NaN 簇映射成色卡下标 0", () => {
     expect(() => clustersToPaletteIndices([{ rgb: [Number.NaN, 0, 0], count: 5 }], palette)).toThrow(
       /颜色分量非法/,
@@ -202,6 +187,6 @@ describe("[F3 追加] 非法颜色分量不再静默选中色卡下标 0", () =>
   it("越界但有限的簇颜色按 rgbToLab 的口径夹取，不再外推到别的色号", () => {
     // [300, 0, 0] 夹成纯红 → 命中 A3（下标 2）；外推实现在色卡里会选到别处
     expect(clustersToPaletteIndices([{ rgb: [300, 0, 0], count: 5 }], palette)).toEqual([2]);
-    expect(nearestCellColor(300, 0, 0, labs)).toBe(2);
+    expect(nearestIndexOf(rgbToLab(300, 0, 0), labs, "de76")).toBe(2);
   });
 });
