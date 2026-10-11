@@ -228,6 +228,7 @@ async function generate(): Promise<void> {
         rotation: draft.rotation,
         longSide: draft.longSide,
         maxColors: draft.maxColors,
+        removeBackground: draft.removeBackground,
       },
       {
         exactDecoder: createExactDecoder(platform),
@@ -275,9 +276,8 @@ async function generate(): Promise<void> {
         maxColors: draft.maxColors,
         crop: { x: crop.x, y: crop.y, width: crop.width, height: crop.height },
         rotation: draft.rotation,
-        // 去背景开关还没接到界面上（任务 5 会在草稿里加这个字段），当前就是老行为：不排除背景。
-        // 届时这里改读 `draft.removeBackground`——它与下面 doc 里那一行必须同源。
-        removeBackground: false,
+        // 与下面 doc 里那一行同源：运行期参数与落盘参数必须说同一件事。
+        removeBackground: draft.removeBackground,
       },
       meta,
       { blob: source.blob, type: source.type },
@@ -285,7 +285,7 @@ async function generate(): Promise<void> {
         longSide: draft.longSide,
         maxColors: draft.maxColors,
         crop: { x: crop.x, y: crop.y, w: crop.width, h: crop.height, rotate: draft.rotation },
-        removeBackground: false,
+        removeBackground: draft.removeBackground,
       }),
     );
 
@@ -444,6 +444,7 @@ function resetCrop(): void {
           :long-side="draft.longSide"
           :max-colors="draft.maxColors"
           :palette-color-count="palette.colors.length"
+          :remove-background="draft.removeBackground"
           :crop="draft.crop"
           :rotation="draft.rotation"
           :palette-name="palette.name"
@@ -452,6 +453,7 @@ function resetCrop(): void {
           @update:name="draft.setName"
           @update:long-side="draft.setLongSide($event)"
           @update:max-colors="draft.setMaxColors($event)"
+          @update:remove-background="draft.setRemoveBackground"
           @generate="generate"
         />
       </section>

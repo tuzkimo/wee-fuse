@@ -20,6 +20,7 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       paletteName: "MARD 221 色",
       busy: false,
       generateBlockedReason: "",
+      removeBackground: false,
       ...overrides,
     },
   });
@@ -243,6 +244,26 @@ describe("用色数（滑条 + 数字输入框，C8 第 4 项；2026-10-10 口�
     const wrapper = mountPanel();
     const card = wrapper.get("[data-testid='palette-card']").text();
     expect(card).toContain("MARD 221 色");
+  });
+});
+
+describe("去除背景勾选框", () => {
+  it("渲染当前值，点击上报翻转后的值", async () => {
+    const wrapper = mountPanel({ removeBackground: false });
+    const box = wrapper.get('[data-testid="remove-background"]');
+    expect((box.element as HTMLInputElement).checked).toBe(false);
+    await box.setValue(true);
+    expect(wrapper.emitted("update:removeBackground")?.[0]).toEqual([true]);
+  });
+
+  it("没有白边时不做任何本地猜测：值只由 props 决定", async () => {
+    const wrapper = mountPanel({ removeBackground: true });
+    expect((wrapper.get('[data-testid="remove-background"]').element as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("busy 期间禁用（生成中不改参数）", () => {
+    const wrapper = mountPanel({ busy: true });
+    expect(wrapper.get('[data-testid="remove-background"]').attributes("disabled")).toBeDefined();
   });
 });
 

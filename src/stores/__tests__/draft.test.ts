@@ -70,10 +70,11 @@ describe("adoptImage：新图进来时的初始态", () => {
     const draft = seedImage();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 116, maxColors: 221, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 2 },
+      params: { longSide: 116, maxColors: 221, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 2, removeBackground: false },
       meta: { id: "p1", name: "旧图", createdAt: "2026-10-01T00:00:00.000Z" },
     });
     draft.setError("上一次的错误");
+    draft.setRemoveBackground(true);
     expect(draft.rerunOf?.id).toBe("p1");
 
     draft.adoptImage({ source: SOURCE, sourceSize: { width: 800, height: 600 }, preview: fakePreview() });
@@ -82,6 +83,7 @@ describe("adoptImage：新图进来时的初始态", () => {
     expect(draft.error).toBe("");
     expect(draft.longSide).toBe(58);
     expect(draft.maxColors).toBe(16);
+    expect(draft.removeBackground).toBe(false);
   });
 
   it("非法尺寸在写操作之前抛错（不把上一份草稿冲成半截）", () => {
@@ -279,7 +281,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 116, maxColors: 221, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3 },
+      params: { longSide: 116, maxColors: 221, crop: { x: 3, y: 5, width: 400, height: 200 }, rotation: 3, removeBackground: false },
       meta: { id: "p1", name: "小猫", createdAt: "2026-10-01T00:00:00.000Z" },
     });
 
@@ -307,7 +309,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     const draft = useDraft();
     draft.adoptProject({
       source: SOURCE,
-      params: { longSide: 58, maxColors: 24, crop: { x: -50, y: 900, width: 1200, height: 100 }, rotation: 0 },
+      params: { longSide: 58, maxColors: 24, crop: { x: -50, y: 900, width: 1200, height: 100 }, rotation: 0, removeBackground: false },
       meta: { id: "p2", name: "手改坏的文件", createdAt: "2026-10-01T00:00:00.000Z" },
     });
     draft.setSourceSize({ width: 800, height: 600 });
@@ -327,6 +329,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
           maxColors: 221,
           crop: { x: 3, y: 5, width: 400, height: 200 },
           rotation: 7 as unknown as 0,
+          removeBackground: false,
         },
         meta: { id: "p9", name: "坏参数", createdAt: "2026-10-01T00:00:00.000Z" },
       }),
@@ -344,7 +347,7 @@ describe("adoptProject：从已有工程改参数重跑", () => {
     expect(() =>
       draft.adoptProject({
         source: SOURCE,
-        params: { longSide: 58, maxColors: 24, crop: { x: Number.NaN, y: 0, width: 100, height: 100 }, rotation: 0 },
+        params: { longSide: 58, maxColors: 24, crop: { x: Number.NaN, y: 0, width: 100, height: 100 }, rotation: 0, removeBackground: false },
         meta: { id: "p3", name: "坏选区", createdAt: "2026-10-01T00:00:00.000Z" },
       }),
     ).toThrow(/选区/);
@@ -598,7 +601,7 @@ describe("工程名是草稿的一段，身份只管覆盖哪一条（C8 §3.7�
     expect(() =>
       draft.adoptProject({
         source: OTHER_SOURCE,
-        params: { longSide: 58, maxColors: 24, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 0 },
+        params: { longSide: 58, maxColors: 24, crop: { x: 0, y: 0, width: 10, height: 10 }, rotation: 0, removeBackground: false },
         meta: { id: "p4", name: "   ", createdAt: "2026-10-01T00:00:00.000Z" },
       }),
     ).toThrow(/不能为空/);
@@ -607,5 +610,71 @@ describe("工程名是草稿的一段，身份只管覆盖哪一条（C8 §3.7�
     expect(toRaw(draft.source)).toBe(SOURCE);
     expect(draft.rerunOf).toBeNull();
     expect(draft.name).toBe("小猫");
+  });
+});
+
+describe("removeBackground（与 longSide / maxColors 同级的影响产物参数）", () => {
+  it("缺省为 false", () => {
+    expect(useDraft().removeBackground).toBe(false);
+  });
+
+  it("setRemoveBackground(true) 写进状态并让「已生成」失效（它与 longSide 同级，影响产物）", () => {
+    const draft = useDraft();
+    draft.markGenerated();
+    draft.setRemoveBackground(true);
+    expect(draft.removeBackground).toBe(true);
+    expect(draft.generated).toBe(false);
+  });
+
+  it("setRemoveBackground 非布尔输入响亮失败，且不写坏已有值", () => {
+    const draft = useDraft();
+    draft.setRemoveBackground(true);
+    expect(() => draft.setRemoveBackground("yes" as unknown as boolean)).toThrow(/去除背景开关必须是布尔值/);
+    expect(draft.removeBackground).toBe(true);
+  });
+
+  it("adoptProject 按 DraftParams 播种", () => {
+    const draft = useDraft();
+    draft.adoptProject({
+      source: { blob: new Blob([new Uint8Array([1])]), type: "image/png", name: "a.png" },
+      params: {
+        longSide: 58,
+        maxColors: 16,
+        crop: { x: 0, y: 0, width: 8, height: 8 },
+        rotation: 0,
+        removeBackground: true,
+      },
+      meta: { id: "p1", name: "旧图", createdAt: "2026-01-01T00:00:00.000Z" },
+    });
+    expect(draft.removeBackground).toBe(true);
+  });
+
+  it("adoptProject 的非法开关在写操作之前抛错（不留半截草稿）", () => {
+    const draft = seedImage();
+    expect(() =>
+      draft.adoptProject({
+        source: OTHER_SOURCE,
+        params: {
+          longSide: 58,
+          maxColors: 24,
+          crop: { x: 0, y: 0, width: 10, height: 10 },
+          rotation: 0,
+          removeBackground: "yes" as unknown as boolean,
+        },
+        meta: { id: "p2", name: "坏开关", createdAt: "2026-01-01T00:00:00.000Z" },
+      }),
+    ).toThrow(/去除背景开关必须是布尔值/);
+
+    // 校验若落在写操作之后，这里会看到「新 source / 新身份 / 旧开关」的混合态。
+    expect(toRaw(draft.source)).toBe(SOURCE);
+    expect(draft.rerunOf).toBeNull();
+    expect(draft.name).toBe("小猫");
+  });
+
+  it("reset 回到 false", () => {
+    const draft = useDraft();
+    draft.setRemoveBackground(true);
+    draft.reset();
+    expect(draft.removeBackground).toBe(false);
   });
 });

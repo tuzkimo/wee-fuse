@@ -81,6 +81,11 @@ export interface DraftParams {
   readonly maxColors: MaxColors;
   readonly crop: Rect;
   readonly rotation: Rotation;
+  /**
+   * 生成时是否在量化前排除背景。与 `longSide` / `maxColors` **同级**：它是**影响产物**的
+   * 参数（开与关生成出两张不同的图纸），不是视图状态，所以进草稿、进 `generated` 的失效规则。
+   */
+  readonly removeBackground: boolean;
 }
 
 const DEFAULT_LONG_SIDE = 58;
@@ -116,6 +121,14 @@ function requireMaxColors(next: MaxColors): MaxColors {
 function requireRotation(next: Rotation): Rotation {
   if (next !== 0 && next !== 1 && next !== 2 && next !== 3) {
     throw new Error(`旋转角度非法：${String(next)}（必须是 0–3 的整数）`);
+  }
+  return next;
+}
+
+/** 布尔开关的运行期守卫：类型挡不住 `JSON.parse` + 强转，非布尔值必须响亮失败。 */
+function requireRemoveBackground(next: boolean): boolean {
+  if (typeof next !== "boolean") {
+    throw new Error(`去除背景开关必须是布尔值（当前 ${String(next)}）`);
   }
   return next;
 }
@@ -226,6 +239,13 @@ export const useDraft = defineStore("draft", () => {
    */
   const maxColors = ref<MaxColors>(DEFAULT_MAX_COLORS);
 
+  /**
+   * 去背景开关（2026-10-11）。与 `longSide` / `maxColors` 同属**影响产物**的参数：
+   * 开与关生成出两张不同的图纸，所以它有 `generated` 失效规则、`reset` 回默认、
+   * `adoptProject` 播种、入口校验——与视图类（`zoom` / `pan`）刻意不同。
+   */
+  const removeBackground = ref(false);
+
   const stage = ref<Stage>("edit");
   const generated = ref(false);
   const busy = ref(false);
@@ -294,6 +314,7 @@ export const useDraft = defineStore("draft", () => {
     resetView();
     longSide.value = DEFAULT_LONG_SIDE;
     maxColors.value = DEFAULT_MAX_COLORS;
+    removeBackground.value = false;
     stage.value = "edit";
     generated.value = false;
     busy.value = false;
@@ -323,6 +344,7 @@ export const useDraft = defineStore("draft", () => {
     const nextRotation = requireRotation(input.params.rotation);
     const nextLongSide = requireLongSide(input.params.longSide);
     const nextMaxColors = requireMaxColors(input.params.maxColors);
+    const nextRemoveBackground = requireRemoveBackground(input.params.removeBackground);
     const nextCrop = requireCropInput(input.params.crop);
     // 名字的校验（trim / 非空 / 长度）在**任何写操作之前**：非法的记录名不该留下半截草稿。
     const nextName = normalizeProjectName(input.meta.name);
@@ -338,6 +360,7 @@ export const useDraft = defineStore("draft", () => {
     resetView();
     longSide.value = nextLongSide;
     maxColors.value = nextMaxColors;
+    removeBackground.value = nextRemoveBackground;
     stage.value = "edit";
     generated.value = false;
     busy.value = false;
@@ -449,6 +472,12 @@ export const useDraft = defineStore("draft", () => {
     generated.value = false;
   }
 
+  /** 改去背景开关。它与 `longSide` / `maxColors` 同级，改了就作废「已生成」。 */
+  function setRemoveBackground(next: boolean): void {
+    removeBackground.value = requireRemoveBackground(next);
+    generated.value = false;
+  }
+
   /** 改缩放档位。**视图改动不影响产物，所以不让 `generated` 失效。** */
   function setZoom(next: ZoomLevel): void {
     zoom.value = requireZoom(next);
@@ -511,6 +540,7 @@ export const useDraft = defineStore("draft", () => {
     resetView();
     longSide.value = DEFAULT_LONG_SIDE;
     maxColors.value = DEFAULT_MAX_COLORS;
+    removeBackground.value = false;
     stage.value = "edit";
     generated.value = false;
     busy.value = false;
@@ -530,6 +560,7 @@ export const useDraft = defineStore("draft", () => {
     pan,
     longSide,
     maxColors,
+    removeBackground,
     stage,
     generated,
     busy,
@@ -545,6 +576,7 @@ export const useDraft = defineStore("draft", () => {
     setAspect,
     setLongSide,
     setMaxColors,
+    setRemoveBackground,
     setZoom,
     setPan,
     setStage,

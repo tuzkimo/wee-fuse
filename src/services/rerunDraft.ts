@@ -26,6 +26,7 @@ export function seedRerunDraft(
       maxColors: params.maxColors,
       crop: { x: params.crop.x, y: params.crop.y, width: params.crop.width, height: params.crop.height },
       rotation: params.rotation,
+      removeBackground: params.removeBackground,
     },
     meta: { id: record.meta.id, name: record.meta.name, createdAt: record.meta.createdAt },
   });
