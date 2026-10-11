@@ -1686,3 +1686,127 @@ describe("长工程名不撑宽页面（B6 任务 2）", () => {
     expect(wrapper.get("h1").classes()).toContain("project-name");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 去背景工具（事后）：点一下 → 连通背景整片置空，一步可撤销（规格 §2 / §10）。
+// **判定在 core、入账在 store**：本页只搬一次下标，所以这里断言的是「接线接通了」。
+// ---------------------------------------------------------------------------
+
+/**
+ * 去背景夹具用的两个色号。
+ *
+ * **刻意不取「内置色卡前两色」**：A1 `#faf5cd` 与 A2 `#fcfed6` 的 ΔE76 只有 3.70，远小于
+ * `BACKGROUND_TOLERANCE`（10）——拿它俩当夹具时「点边缘吃掉整片、中心主体保留」这条前提
+ * **不成立**（泛洪会顺着容差把中心一起吃掉）。色号 0（A1）与 2（A3 `#fcff92`）的 ΔE76 是
+ * 33.68，安全；中心用 2 也能把「四边 0 / 中心 2」这两个色号在断言里点名。
+ */
+const BACKGROUND_EDGE = 0;
+const BACKGROUND_CENTER = 2;
+
+/** 3×3 夹具：四边 8 格是 `BACKGROUND_EDGE`，中心是 `BACKGROUND_CENTER`。 */
+const BACKGROUND_FIXTURE: readonly number[] = [
+  BACKGROUND_EDGE, BACKGROUND_EDGE, BACKGROUND_EDGE,
+  BACKGROUND_EDGE, BACKGROUND_CENTER, BACKGROUND_EDGE,
+  BACKGROUND_EDGE, BACKGROUND_EDGE, BACKGROUND_EDGE,
+];
+
+/** 造一张任意尺寸的图纸并挂载页面（沿用端到端 ① 的「覆盖 beforeEach 注入的存储」手法）。 */
+async function mountGrid(cells: readonly number[], width: number, height: number) {
+  const doc = toProjectDocument(
+    { width, height, paletteId: palette.id, cells: Uint16Array.from(cells) },
+    palette,
+    { longSide: width, maxColors: 16, crop: { x: 0, y: 0, w: 8, h: 8, rotate: 0 } },
+  );
+  const store = await createMemoryProjectStore();
+  await store.put({
+    meta: {
+      id: "a",
+      name: "小猫",
+      createdAt: "2026-10-03T00:00:00.000Z",
+      updatedAt: "2026-10-03T01:00:00.000Z",
+      thumbnail: "",
+      width: 0,
+      height: 0,
+      colorCount: 0,
+    },
+    doc,
+    source: null,
+  });
+  setProjectStore(store);
+  return mountPage();
+}
+
+/** 点一下某格：与既有「吸管」用例同一手法（按下 → 抬起，走真指针事件）。 */
+async function tapCell(wrapper: ReturnType<typeof mount>, x: number, y: number): Promise<void> {
+  await pointerAtCell(wrapper, "pointerdown", x, y);
+  await pointerAtCell(wrapper, "pointerup", x, y);
+}
+
+/** 取图纸（载入成功是这些用例的前提；null 当成夹具坏了，响亮失败而不是静默跳过断言）。 */
+function loadedCells(editor: ReturnType<typeof useEditor>): Uint16Array {
+  const pattern = editor.pattern;
+  if (pattern === null) throw new Error("载入失败：编辑器还没有图纸");
+  return pattern.cells;
+}
+
+describe("去背景工具", () => {
+  it("点边缘把连通背景整片吃掉，中心主体保留", async () => {
+    // 3×3：四边 8 格是 A1（色号 0），中心是 A3（色号 2）
+    const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
+    const editor = useEditor();
+
+    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    expect(editor.tool).toBe("background");
+    await tapCell(wrapper, 0, 0);
+
+    const cells = loadedCells(editor);
+    expect(cells[0]).toBe(EMPTY); // 种子格
+    expect(cells[1]).toBe(EMPTY); // 连通背景（不是只删种子那一格）
+    expect(cells[4]).toBe(BACKGROUND_CENTER); // 色差 33.68 > 容差 10：主体不被吃
+  });
+
+  it("点中心只吃掉中心那一格所属的连通区域", async () => {
+    const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
+    const editor = useEditor();
+
+    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await tapCell(wrapper, 1, 1);
+
+    const cells = loadedCells(editor);
+    expect(cells[4]).toBe(EMPTY);
+    expect(cells[0]).toBe(BACKGROUND_EDGE); // 四边不是「中心那一片」，原样保留
+  });
+
+  it("[可一步撤销] 撤销一次回到点击之前，且不再有可撤销内容", async () => {
+    const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
+    const editor = useEditor();
+    const before = Array.from(loadedCells(editor));
+
+    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await tapCell(wrapper, 0, 0);
+    // 一次点击 = 一条命令：撤销按钮此刻可用，点一下就整片回退
+    expect(editor.canUndo).toBe(true);
+    await wrapper.get("[data-testid='undo']").trigger("click");
+
+    expect(Array.from(loadedCells(editor))).toEqual(before);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it("点空格不标脏、不留撤销记录", async () => {
+    const wrapper = await mountGrid(
+      [EMPTY, BACKGROUND_EDGE, BACKGROUND_EDGE,
+       BACKGROUND_EDGE, BACKGROUND_EDGE, BACKGROUND_EDGE,
+       BACKGROUND_EDGE, BACKGROUND_EDGE, BACKGROUND_EDGE],
+      3,
+      3,
+    );
+    const editor = useEditor();
+    const session = useProjectSession();
+
+    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await tapCell(wrapper, 0, 0);
+
+    expect(session.dirty).toBe(false);
+    expect(editor.canUndo).toBe(false);
+  });
+});
