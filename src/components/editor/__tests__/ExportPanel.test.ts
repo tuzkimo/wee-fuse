@@ -1043,7 +1043,7 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
 
   it("飞行中改板大小：末页（index 15）仍能落盘，不会拿新选项去算一个越界的页索引", async () => {
     // 这条接住旧用例的另一半（「末页仍能落盘」）：**页索引 15 在 58 板下不存在**（只有 4 页），
-    // 名字若在 `await` 之后用实时选项算，`boardPageTile` 会抛「页索引 15 越界」——那一笔既落不了盘，
+    // 名字若在 `await` 之后用实时选项算，`boardPageRange` / `planBoardPage` 会抛「页索引 15 越界」——那一笔既落不了盘，
     // 还会把 `saveAll` 整个抛出 try（未处理的 rejection）。名字只有出自快照，末页才存得下去。
     const wrapper = mountPanel(printOverrides());
     await flushPromises();

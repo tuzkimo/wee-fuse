@@ -6,11 +6,16 @@ import {
   type MockExporter,
   type TextCall,
 } from "@/components/editor/__tests__/exportTestKit";
-import { planSheet } from "@/core/render/layout";
+import { planBoardPage, planSheet } from "@/core/render/layout";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { renderBoardPageBlob, renderSheetBlob, usagesInRange } from "@/services/sheetExport";
+import {
+  renderBoardPageBlob,
+  renderBoardPageBlobFromPlan,
+  renderSheetBlob,
+  usagesInRange,
+} from "@/services/sheetExport";
 
 /**
  * `@/services/exporter` 的替身。**声明必须走 `vi.hoisted`**：`vi.mock` 的工厂被提升到所有 import
@@ -183,6 +188,23 @@ describe("renderBoardPageBlob", () => {
       pageIndex: 0,
     });
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
+  });
+
+  /**
+   * `renderBoardPageBlobFromPlan` 是「计划已算好、只渲染」的那一半（B6 任务 4 的审计整改）：
+   * 面板每页只建一次计划，渲染通道必须**用传进来的那一份**画布尺寸，而不是自己再计划一遍。
+   */
+  it("renderBoardPageBlobFromPlan 用的就是传进来的 plan 的画布尺寸", async () => {
+    const pattern = makePattern(58, 58, undefined);
+    const plan = planBoardPage(pattern, makePalette(), makeUsages(), {
+      boardSize: 29, paper: "a4", index: 0, projectName: "测试工程",
+    });
+    await renderBoardPageBlobFromPlan(
+      { pattern, palette: makePalette(), usages: makeUsages(), projectName: "测试工程", boardSize: 29, paper: "a4", pageIndex: 0 },
+      plan,
+      makeUsages(),
+    );
+    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(plan.canvasWidth, plan.canvasHeight);
   });
 
   /**

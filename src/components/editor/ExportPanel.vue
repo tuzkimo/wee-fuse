@@ -16,14 +16,14 @@
 //    运行时证明。
 // 2. **预览与保存状态都由面板自持**（R-4）：页面只做接线，一行导出逻辑都不许下沉到页面里。
 // 3. **落盘只经能力层**（`getPlatform().album.save`）：面板不知道具体落点，也不自己拼第二份命名
-//    逻辑（名字走 `exportFilename`，页身份走 `boardPageTile`）。
+//    逻辑（名字走 `exportFilename`，页身份取自页计划 `planBoardPage` 的 `boardRow` / `boardCol`）。
 //    浏览器端「一键保存会连发 N 次下载」是**明确推翻** B4 那条「不做连续多下载」纪律的结果
 //    （人类伙伴裁定 A，交付面是 Android 壳：壳里是 N 次相册写入，不是 N 次下载）。
 // 4. **只有当前页渲染成位图**：116×116 + 29 板是 16 页，全量驻留会把十几张全分辨率位图钉在内存里。
 //    预览条是一格一页的占位，当前格才放 `<img>`。
 //
-// 分页数学**只此一份**：页数取 `printBoardCount`、页身份（`boardRow` / `boardCol`）取
-// `boardPageTile`（内部走 `planBoardPage`）、本页用量取 `usagesInRange`——面板自己**不写除法**。
+// 分页数学**只此一份**：页数取 `printBoardCount`、页身份与格范围取 `boardPageRange`、本页用量取
+// `usagesInRange`——面板自己**不写除法**。每页只建一次 `planBoardPage` 计划，预览与落盘共用它。
 // 导出**不乘 DPR**、**不经过 `renderPatternThumbnail`**（R-6）。
 import { computed, onUnmounted, ref, watch } from "vue";
 import { pageFromScroll, scrollLeftForPage } from "@/components/editor/printPreviewScroll";
@@ -31,12 +31,11 @@ import { useOverlayBack } from "@/composables/useOverlayBack";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
-import { planBoardPage, printBoardCount } from "@/core/render/layout";
+import { boardPageRange, planBoardPage, printBoardCount } from "@/core/render/layout";
 import { exportFilename } from "@/services/exporter";
 import { getPlatform } from "@/services/platform/capabilities";
 import {
-  boardPageTile,
-  renderBoardPageBlob,
+  renderBoardPageBlobFromPlan,
   usagesInRange,
   type BoardPageRenderInput,
   type SheetRenderInput,
@@ -158,44 +157,8 @@ function takeSnapshot(): SaveSnapshot {
 }
 
 /**
- * 本页用量（打印模式）：按页格范围独立统计（**不是全图用量**），打印时拿着那一页备料。
- *
- * **只吃快照**（不读 `props` / `ref`）：调用方必须拿**同一份快照**去算本页用量、渲染与命名——
- * 否则飞行中改板大小 / 纸张时，「用料条列的那一页」可能不是「画布上那一页」，而这不会有任何报错。
+ * 渲染通道的入参。与每页即时算出的 `range` / `pageUsages` / `plan` 同源（都由**同一份快照**拼出）。
  */
-function pageUsages(snapshot: SaveSnapshot, index: number): readonly ColorUsage[] {
-  const plan = planBoardPage(snapshot.pattern, snapshot.palette, snapshot.usages, {
-    boardSize: snapshot.boardSize,
-    paper: snapshot.paper,
-    index,
-    projectName: snapshot.projectName,
-  });
-  return usagesInRange(snapshot.pattern, snapshot.palette, plan);
-}
-
-/**
- * 某页的落盘身份：**文件名在第一个 `await` 之前算好**（它不依赖 blob）。
- *
- * 页身份只经 `boardPageTile`（→ `planBoardPage`）取用，所以「名字里是哪一页」与「画布上是哪一页」
- * 同源；同时它也用掉**同一份快照**（飞行中改选项既不会写错页身份、也不会用越界的页索引去算名字）。
- */
-function pageFilename(snapshot: SaveSnapshot, index: number): string {
-  return exportFilename(
-    snapshot.projectName,
-    "打印",
-    boardPageTile(
-      snapshot.pattern,
-      snapshot.palette,
-      snapshot.usages,
-      snapshot.projectName,
-      snapshot.boardSize,
-      snapshot.paper,
-      index,
-    ),
-  );
-}
-
-/** 渲染通道的入参（与 `pageUsages` / `pageFilename` 同源的快照拼出来）。 */
 function boardRenderInput(snapshot: SaveSnapshot, index: number): BoardPageRenderInput {
   const sheetInput: SheetRenderInput = {
     pattern: snapshot.pattern,
@@ -265,7 +228,16 @@ async function showPreview(index: number): Promise<void> {
   previewError.value = "";
   let blob: Blob;
   try {
-    blob = await renderBoardPageBlob(boardRenderInput(snapshot, index), pageUsages(snapshot, index));
+    // 每页只建**一次**版面计划：格范围 → 本页用量 → 计划，三件都从同一份快照出，预览与落盘共用。
+    const range = boardPageRange(snapshot.pattern.width, snapshot.pattern.height, snapshot.boardSize, index);
+    const pageUsages = usagesInRange(snapshot.pattern, snapshot.palette, range);
+    const plan = planBoardPage(snapshot.pattern, snapshot.palette, pageUsages, {
+      boardSize: snapshot.boardSize,
+      paper: snapshot.paper,
+      index,
+      projectName: snapshot.projectName,
+    });
+    blob = await renderBoardPageBlobFromPlan(boardRenderInput(snapshot, index), plan, pageUsages);
   } catch (error) {
     if (stale(token)) return;
     previewError.value = `预览生成失败：${error instanceof Error ? error.message : String(error)}`;
@@ -442,13 +414,22 @@ async function saveAll(): Promise<void> {
     for (const index of batch) {
       const token = generation;
       const snapshot = takeSnapshot();
-      const filename = pageFilename(snapshot, index);
       savingDone.value += 1;
       try {
-        const blob = await renderBoardPageBlob(
-          boardRenderInput(snapshot, index),
-          pageUsages(snapshot, index),
-        );
+        // 计划与文件名都在**第一个 `await` 之前**算好（名字与字节必须同源）。
+        const range = boardPageRange(snapshot.pattern.width, snapshot.pattern.height, snapshot.boardSize, index);
+        const pageUsages = usagesInRange(snapshot.pattern, snapshot.palette, range);
+        const plan = planBoardPage(snapshot.pattern, snapshot.palette, pageUsages, {
+          boardSize: snapshot.boardSize,
+          paper: snapshot.paper,
+          index,
+          projectName: snapshot.projectName,
+        });
+        const filename = exportFilename(snapshot.projectName, "打印", {
+          rowIndex: plan.boardRow,
+          colIndex: plan.boardCol,
+        });
+        const blob = await renderBoardPageBlobFromPlan(boardRenderInput(snapshot, index), plan, pageUsages);
         await getPlatform().album.save(blob, filename);
       } catch (error) {
         // 代数判据：这一轮（以及它用的选项 / 页索引）已经被丢弃 ⇒ 不写状态、也不再往下存。

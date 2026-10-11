@@ -509,7 +509,8 @@ export function printBoardCols(width: number, boardSize: number): number {
  * 这里的板大小是入参——同一张 116×116 图纸在 29 板下是 16 页、在 58 板下是 4 页。
  *
  * 它只回答「几页」，不产生任何页的身份；页身份（`boardRow` / `boardCol` / 本页格范围）由
- * `planBoardPage` 给出，调用方**不许**自己重算除法（那正是「同一件事的第二份实现」）。
+ * `boardPageRange` 给出（`planBoardPage` 也取它），调用方**不许**自己重算除法（那正是「同一件事的
+ * 第二份实现」）。
  * 两个轴各自的那一份除法在 `printBoardCols` 里，本函数只是把它们乘起来。
  *
  * **宽高必须是 ≥1 的整数**（与 `boardCount` 同口径）：只查安全整数会让 `(0, 0, 29)` 静默返回 0 页
@@ -990,6 +991,58 @@ export interface BoardPagePlan extends TileGeometry, PageChromePlan {
 }
 
 /**
+ * 一块板在图纸里的**页身份与格范围**：`boardPageRange` 的返回形状。
+ *
+ * 八个字段是同一份分页数学的八个出口——面板（页码 / 文件名）与页计划（网格 / 标题）都必须取它，
+ * 不许各自重算除法（那正是「同一件事的第二份实现」，漂移时不会报错、只会把某一页画成另一页）。
+ */
+export interface BoardPageRange {
+  readonly originCol: number;
+  readonly originRow: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly boardRow: number;
+  readonly boardCol: number;
+  readonly boardIndex: number;
+  readonly boardTotal: number;
+}
+
+/**
+ * 由「图纸尺寸 + 板大小 + 页索引（0 起）」算出该页的格范围与页身份。
+ *
+ * **它只回答「这一页是图纸里的哪一块」**：版面（格像素 / 刻度 / 用料条）仍由 `planBoardPage` 算；
+ * 面板只需页身份与格范围时（每页的用料统计、文件名）不必再背着整份计划跑一遍几何。
+ *
+ * 守卫与旧版 `planBoardPage` 内联时**逐字相同**：宽高必须是 ≥1 的整数、板大小必须是枚举内的 29 / 58、
+ * 页索引必须是安全整数且**不取模**（越界响亮失败）。
+ */
+export function boardPageRange(
+  width: number,
+  height: number,
+  boardSize: number,
+  index: number,
+): BoardPageRange {
+  requirePositiveInteger(width, "图纸宽度");
+  requirePositiveInteger(height, "图纸高度");
+  const size = requireBoardSize(boardSize);
+  const boardCols = Math.ceil(width / size);
+  const boardRows = Math.ceil(height / size);
+  const total = boardCols * boardRows;
+  requireSafeInteger(index, "页索引");
+  if (index < 0 || index >= total) {
+    throw new Error(`页索引 ${index} 越界（本图纸共 ${total} 页）`);
+  }
+  const boardRow = Math.floor(index / boardCols);
+  const boardCol = index % boardCols;
+  const originCol = boardCol * size;
+  const originRow = boardRow * size;
+  // `Math.min` 是「最后一列 / 行收窄」的唯一实现，同时保证本页格范围恒落在图纸内（不写第二条守卫）
+  const cols = Math.min(size, width - originCol);
+  const rows = Math.min(size, height - originRow);
+  return { originCol, originRow, cols, rows, boardRow, boardCol, boardIndex: index, boardTotal: total };
+}
+
+/**
  * 一页打印页计划。版面规则（规格 §7.1）：`1 格 = min(实物豆径, 可打印宽/列, 可打印高/行)`，
  * **永不放大到超过实物**；装不下就按可打印区缩放，`scaleRatio` 如实给出。
  *
@@ -1022,20 +1075,16 @@ export function planBoardPage(
   const boardSize = requireBoardSize(page.boardSize);
   const paper = requirePaper(page.paper);
   const name = requireProjectName(page.projectName);
-  const boardCols = Math.ceil(pattern.width / boardSize);
-  const boardRows = Math.ceil(pattern.height / boardSize);
-  const total = boardCols * boardRows;
-  requireSafeInteger(page.index, "页索引");
-  if (page.index < 0 || page.index >= total) {
-    throw new Error(`页索引 ${page.index} 越界（本图纸共 ${total} 页）`);
-  }
-  const boardRow = Math.floor(page.index / boardCols);
-  const boardCol = page.index % boardCols;
-  const originCol = boardCol * boardSize;
-  const originRow = boardRow * boardSize;
-  // `Math.min` 是「最后一列 / 行收窄」的唯一实现，同时保证本页格范围恒落在图纸内（不写第二条守卫）
-  const cols = Math.min(boardSize, pattern.width - originCol);
-  const rows = Math.min(boardSize, pattern.height - originRow);
+  const {
+    originCol,
+    originRow,
+    cols,
+    rows,
+    boardRow,
+    boardCol,
+    boardIndex,
+    boardTotal: total,
+  } = boardPageRange(pattern.width, pattern.height, boardSize, page.index);
 
   const sheet = PAPER_MM[paper];
   const canvasWidth = mmToPx(sheet.width);
@@ -1158,7 +1207,7 @@ export function planBoardPage(
     paper,
     boardRow,
     boardCol,
-    boardIndex: page.index,
+    boardIndex,
     boardTotal: total,
     originCol,
     originRow,

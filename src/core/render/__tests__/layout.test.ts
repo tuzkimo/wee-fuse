@@ -35,6 +35,7 @@ import {
   TICK_EVERY,
   TILE_STEP,
   TITLE_FONT_HARD_MIN_PX,
+  boardPageRange,
   cellBox,
   countTileBeads,
   estimateTextWidthPx,
@@ -504,6 +505,35 @@ describe("planSheet（B6：单张施工图）", () => {
     const broken = makePattern(4, 4);
     const short = { ...broken, cells: new Uint16Array(15) };
     expect(() => planSheet(short, makePalette(), [], PROJECT_NAME)).toThrow("需要 16 格，实际 15 格");
+  });
+});
+
+describe("boardPageRange（页身份的唯一定义）", () => {
+  /**
+   * `boardPageRange` 是从 `planBoardPage` 里原样抽出来的那段页身份计算（B6 任务 4 的审计整改）。
+   * 这条用例逐字段钉住 116×116 / 29 板 / 第 15 页（0 起）的落位：它是面板与页计划**共用**的那一份
+   * 分页数学，抽错了不会报错，只会把某一页画成另一页。**0 起**的页索引映射到 `boardRow`/`boardCol`
+   * （第 15 页 = 第 4 行第 4 列，右下角）与 `boardIndex`/`boardTotal`（15 / 16）是它的两个出口。
+   */
+  it("boardPageRange：116×116 / 29 板 / 第 15 页（0 起）落在 r4c4 的右下", () => {
+    expect(boardPageRange(116, 116, 29, 15)).toEqual({
+      originCol: 87, originRow: 87, cols: 29, rows: 29,
+      boardRow: 3, boardCol: 3, boardIndex: 15, boardTotal: 16,
+    });
+  });
+
+  it("boardPageRange：页索引越界抛错（不取模）", () => {
+    expect(() => boardPageRange(116, 116, 29, 16)).toThrow(/页索引 16 越界/);
+  });
+
+  it("planBoardPage 的页身份逐字段等于 boardPageRange", () => {
+    const range = boardPageRange(116, 116, 29, 15);
+    const plan = planBoardPage(makePattern(116, 116), makePalette(), makeUsages(), {
+      boardSize: 29, paper: "a4", index: 15, projectName: PROJECT_NAME,
+    });
+    expect({ originCol: plan.originCol, originRow: plan.originRow, cols: plan.cols, rows: plan.rows,
+      boardRow: plan.boardRow, boardCol: plan.boardCol, boardIndex: plan.boardIndex, boardTotal: plan.boardTotal })
+      .toEqual(range);
   });
 });
 

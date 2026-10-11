@@ -10,7 +10,7 @@ import type { Palette } from "@/core/palette/types";
 import { cellAt } from "@/core/pattern/edit";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { planBoardPage, planSheet, type SheetPlan } from "@/core/render/layout";
+import { planBoardPage, planSheet, type BoardPagePlan, type SheetPlan } from "@/core/render/layout";
 import { drawBoardPage, drawSheet, type SheetMeta } from "@/core/render/sheet";
 import type { RenderTarget2D } from "@/core/render/types";
 import {
@@ -138,6 +138,24 @@ export async function renderBoardPageBlob(
     // C8 §7.3：标题字号由名字宽度与纸宽共同决定 ⇒ 页计划也必须拿到名字（与用料条那份同源）
     projectName: input.projectName,
   });
+  return renderBoardPageBlobFromPlan(input, plan, pageUsages);
+}
+
+/**
+ * 已计划好的一页：**只渲染，不再计划**。
+ *
+ * **为什么多这一个出口**（审计整改）：面板一次要回答三个问题（本页用量、文件名、这张图），
+ * 而三者都需要同一份页计划。旧写法里面板每页要把 `planBoardPage` 跑三遍（统计本页用量、取页身份、
+ * 渲染各一遍）——三遍几何计算不只是浪费，更是「两次之间图纸 / 选项变了」时
+ * 「名字是这一页、画布是那一页」的静默错产物温床。计划交给调用方算一次、传进来，这条缝就不存在了。
+ *
+ * `pageUsages` 必须与 `plan` 同源（`drawBoardPage` 的守卫会抛）：它 = 该页格范围的用量。
+ */
+export async function renderBoardPageBlobFromPlan(
+  input: BoardPageRenderInput,
+  plan: BoardPagePlan,
+  pageUsages: readonly ColorUsage[],
+): Promise<Blob> {
   return renderWithPlan(plan.canvasWidth, plan.canvasHeight, (target) => {
     // `totalBeads` / `colorCount` 全部由 `sheetMeta` 从 `input.usages`（全图）算，**这里不再覆写**：
     // 覆写是对同一个数组做同一次求和（逐位相同），只会多出一个「将来与 sheetMeta 口径漂移」的写处。
@@ -177,30 +195,3 @@ export function usagesInRange(
     });
 }
 
-/**
- * 某一页在文件名里的分片序号（0 起）。**行 / 列取自 `planBoardPage`**，不是在调用方重算除法。
- *
- * **为什么它必须在这里**（B6 任务 10）：页身份（`boardRow` / `boardCol`）与页数（`printBoardCount`）
- * 是同一份分页数学的两个出口；调用方各自写一遍 `Math.floor(index / cols)` 就是第二份实现——
- * 它不会报错，只会在某一天与 `planBoardPage` 的网格口径漂移，而文件名看起来完全正常。
- *
- * **`projectName` 插在 `usages` 之后**（C8 §7.3，与 `planSheet` 同序）：它只用于页计划的标题字号，
- * 与页身份无关；但签名必须一起变——否则「忘了传」会变成编译期无关、运行期静默的偏差。
- */
-export function boardPageTile(
-  pattern: Pattern,
-  palette: Palette,
-  usages: readonly ColorUsage[],
-  projectName: string,
-  boardSize: 29 | 58,
-  paper: "a4" | "a3",
-  pageIndex: number,
-): { readonly rowIndex: number; readonly colIndex: number } {
-  const plan = planBoardPage(pattern, palette, usages, {
-    boardSize,
-    paper,
-    index: pageIndex,
-    projectName,
-  });
-  return { rowIndex: plan.boardRow, colIndex: plan.boardCol };
-}
