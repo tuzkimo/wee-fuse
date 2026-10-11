@@ -3,7 +3,12 @@ import { markRaw, ref } from "vue";
 import { centerSquare, clampRectToSource, type AspectLock } from "@/core/crop/rect";
 import type { Size, ZoomLevel } from "@/core/crop/view";
 import type { Rect, Rotation } from "@/core/image/types";
-import { DEFAULT_MAX_COLORS, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "@/core/pattern/types";
+import {
+  DEFAULT_MAX_COLORS,
+  requireLongSide as requireLongSideCore,
+  requireMaxColors as requireMaxColorsCore,
+  type MaxColors,
+} from "@/core/pattern/types";
 import { getBuiltinPalette } from "@/services/palette";
 import { defaultProjectName, normalizeProjectName } from "@/services/projectStore";
 
@@ -83,53 +88,29 @@ const DEFAULT_LONG_SIDE = 58;
 // ---------------------------------------------------------------------------
 // 入口校验（规格 §12）
 //
-// 本文件是这份校验的**第三处副本**（第一处 `core/crop/view.ts`、第二处 `core/crop/rect.ts`），
-// 但**不是最后一处**：`core/project/types.ts` 里还有**第四处**内联的长边 / 档位 / 旋转守卫
-// （它守的是从磁盘 / 本地存储读回来的 JSON，是另一条外部输入路径），`core/pattern/build.ts`
-// 是**第五处**（`computeGridSize` 的长边守卫 + `buildPattern` 的档位守卫——先前只记到第四处，
-// 漏计了它，见 README 的 B2-27）。照规格 §13 第 8 条「共享校验模块不修，保持内联就地校验」
-// 执行，现在不抽模块。
+// **2026-10-11 裁定反转（原「四份内联副本」账目作废）**：`longSide` / `maxColors` 两个**参数**
+// 守卫不再各写一份——唯一实现搬到 `core/pattern/types.ts` 的 `requireLongSide` /
+// `requireMaxColors`（`buildPattern` 也改调同一个）。先前「第五处消费者到达也不抽模块、
+// 维持内联」的决定由本轮审计整改推翻，理由正是那份账目记下的代价：长边文案已经分叉
+// （`1–116 之间` vs `1–116 的整数`）。
 //
-// **如实记录**：这份决定要付的代价——「错误信息口径漂移」——**已经实际发生**：
-// `core/project/types.ts` 的旋转措辞（`旋转角度非法：…（必须是 0–3 的整数）`）与本文件**逐字
-// 相同**（`core/pattern/build.ts` 的档位也是同一句），而长边措辞已经分叉：
-// `core/project/types.ts` 与 `core/pattern/build.ts` 写「长边豆数必须在 1–116 之间」，
-// 本文件写「长边豆数必须是 1–116 的整数」。
+// 调用点**仍是四处**（`core/pattern/build.ts`、`core/project/types.ts`、`core/project/file.ts`、
+// 本文件），保留它们是为了让校验留在**任何写操作之前**（`AGENTS.md` 入口校验硬约束）；被收敛的
+// 是判据与文案，不是触发时机。上界依旧同源：三处 core 用 `palette.colors.length`，本文件用
+// `getBuiltinPalette().colors.length`（内置色卡的唯一生产入口，见 `services/palette.ts`）。
 //
-// 因此「统一口径留到第五处消费者出现时再评估」这个条件**已经到达**（第五处就是 `build.ts`）：
-// 按规格 §13 第 8 条与 `AGENTS.md` 的口径仍维持内联就地校验，本轮**不动代码**——改的是账目，
-// 不是行为。下次再有人想抽共享模块时，从这份账目出发，别再当成「还没到第五处」。
-//
-// **2026-10-10 口径简化的账目更新**：用色数从 5 值枚举改成「1..色卡色数 的整数」之后，
-// 这一口径仍是**四份内联副本**（`core/pattern/build.ts` 的 `requireMaxColors`、
-// `core/project/types.ts` 的落盘校验、`core/project/file.ts` 的落盘方向守卫、本文件的
-// `requireMaxColors`）。**上界现在四处同源**：三处 core 用 `palette.colors.length`，
-// 本文件用 `getBuiltinPalette().colors.length`（内置色卡的唯一生产入口，见 `services/palette.ts`）
-// ——原先那份写死的常量 `MAX_CUSTOM_MAX_COLORS = 221` 已删除。
-//
-// 与那两处 core 副本的**实质差异**：这里的守卫要挂在「任何写操作之前」（`AGENTS.md` 入口校验
-// 硬约束），而 core 的守卫是「夹取 / 映射之前的最后一道」。两者的触发时机不同，抽成一个模块会把
-// 「校验发生在状态被改之前」这层语义变成隐式的。
+// 几何 / 尺寸类守卫（`computeGridSize` 的长边守卫、finite / point / rect / size）按既有裁决
+// **保持内联**，本轮不动；旋转 / 选区 / 比例 / 缩放守卫同理。
 // ---------------------------------------------------------------------------
 
+/** 转发共享实现（`core/pattern/types.ts`）；调用点照旧，见上方裁决。 */
 function requireLongSide(next: number): number {
-  if (!Number.isInteger(next) || next < MIN_LONG_SIDE || next > MAX_LONG_SIDE) {
-    throw new Error(`长边豆数必须是 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 的整数（当前 ${String(next)}）`);
-  }
-  return next;
+  return requireLongSideCore(next);
 }
 
+/** 转发共享实现；上界仍用内置色卡色数（与三处 core 同一个数）。 */
 function requireMaxColors(next: MaxColors): MaxColors {
-  // **只认数字口径**（2026-10-10 口径简化）：1..色卡色数 的整数。
-  // 上界**只有一处来源**——内置色卡色数（`getBuiltinPalette()`，与 `core/pattern/build.ts` 的
-  // `palette.colors.length` 同一个数）。这里原先写的是常量 `MAX_CUSTOM_MAX_COLORS = 221`，
-  // 那正是「同一口径的第二份副本」；`stores/project.ts` 已经这么用色卡，照同一手法即可。
-  // 旧记录的 `"custom"` / `"all"` / `null` 一律响亮失败，**不做映射**（裁定 A1）。
-  const paletteSize = getBuiltinPalette().colors.length;
-  if (!Number.isInteger(next) || next < 1 || next > paletteSize) {
-    throw new Error(`用色档位非法：${String(next)}（只允许 1..${paletteSize} 的整数）`);
-  }
-  return next;
+  return requireMaxColorsCore(next, getBuiltinPalette().colors.length);
 }
 
 function requireRotation(next: Rotation): Rotation {

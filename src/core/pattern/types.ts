@@ -57,3 +57,47 @@ export interface Pattern {
   /** 行优先，长度 width*height。值为色卡颜色下标，EMPTY 表示空格。 */
   readonly cells: Uint16Array;
 }
+
+/**
+ * 长边豆数运行期守卫（**唯一实现**）。判据是「**`MIN_LONG_SIDE`..`MAX_LONG_SIDE` 的整数**」，
+ * 合法返回原值，否则抛出统一的中文消息。
+ *
+ * 参数收 `unknown` 而非 `number`：类型只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转——
+ * 它要守的正是从磁盘 / 本地存储读回来的 `params.longSide`，那条路径上值就是 `unknown`。
+ * 非 number（字符串 / `null` / 缺失）在 `typeof` 这一关响亮失败，与数字越界走同一条消息。
+ *
+ * 调用点仍分散（`core/project/types.ts`、`core/project/file.ts`、`stores/draft.ts`），是为了让
+ * 校验留在**任何写操作之前**；实现只有这一处，文案不会再漂移。
+ */
+export function requireLongSide(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < MIN_LONG_SIDE ||
+    value > MAX_LONG_SIDE
+  ) {
+    throw new Error(
+      `长边豆数必须是 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 的整数（当前 ${String(value)}）`,
+    );
+  }
+  return value;
+}
+
+/**
+ * 用色数运行期守卫（**唯一实现**）。判据是「**1..色卡色数 的整数**」：上界来自色卡
+ * （`paletteSize`，不是第二份常量），等于色卡色数即「不限」；合法返回原值，否则抛出统一消息。
+ *
+ * 参数收 `unknown`（理由同 `requireLongSide`）：`params.maxColors` 要落盘并回读，旧记录的
+ * 字符串 `"custom"` / `"all"` 与 `null` 在这里响亮失败，**不做映射**（裁定 A1）。
+ */
+export function requireMaxColors(value: unknown, paletteSize: number): MaxColors {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > paletteSize
+  ) {
+    throw new Error(`用色档位非法：${String(value)}（只允许 1..${paletteSize} 的整数）`);
+  }
+  return value;
+}

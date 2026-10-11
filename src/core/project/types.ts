@@ -1,4 +1,10 @@
-import { EMPTY, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors } from "../pattern/types";
+import {
+  EMPTY,
+  MAX_LONG_SIDE,
+  requireLongSide,
+  requireMaxColors,
+  type MaxColors,
+} from "../pattern/types";
 import type { Palette } from "../palette/types";
 
 /** 工程文件格式标识。 */
@@ -155,29 +161,12 @@ export function validateProjectDocument(doc: unknown, fullPalette: Palette): Pro
   }
 
   const params = requireObject(d.params, "生成参数");
-  const longSide = params.longSide;
-  if (
-    typeof longSide !== "number" ||
-    !Number.isInteger(longSide) ||
-    longSide < MIN_LONG_SIDE ||
-    longSide > MAX_LONG_SIDE
-  ) {
-    throw new Error(`长边豆数必须在 ${MIN_LONG_SIDE}–${MAX_LONG_SIDE} 之间（当前 ${String(longSide)}）`);
-  }
-  const maxColorsRaw = params.maxColors;
+  // 长边 / 用色数的判据与文案只有一处实现（`core/pattern/types.ts` 的 `requireLongSide` /
+  // `requireMaxColors`）；这里保留调用点，是为了让校验留在**任何写操作之前**。
+  const longSide = requireLongSide(params.longSide);
   // **只认数字口径**（2026-10-10 口径简化）：1..色卡色数 的整数，等于色卡色数即「不限」。
   // 旧记录的字符串 `"custom"` / `"all"` 与 `null` 一律响亮失败，**不做迁移**（裁定 A1）。
-  if (
-    typeof maxColorsRaw !== "number" ||
-    !Number.isInteger(maxColorsRaw) ||
-    maxColorsRaw < 1 ||
-    maxColorsRaw > fullPalette.colors.length
-  ) {
-    throw new Error(
-      `用色档位非法：${String(maxColorsRaw)}（只允许 1..${fullPalette.colors.length} 的整数）`,
-    );
-  }
-  const maxColors: MaxColors = maxColorsRaw;
+  const maxColors = requireMaxColors(params.maxColors, fullPalette.colors.length);
 
   const cropRaw = requireObject(params.crop, "裁剪区域");
   const x = requireFiniteNumber(cropRaw.x, "裁剪区域 x");

@@ -5,7 +5,14 @@ import type { Palette } from "../palette/types";
 import { addToHistogram, createHistogram } from "../quantize/histogram";
 import { medianCut } from "../quantize/medianCut";
 import { clustersToPaletteIndices, nearestIndexOf } from "../quantize/nearest";
-import { EMPTY, MAX_LONG_SIDE, MIN_LONG_SIDE, type MaxColors, type Pattern } from "./types";
+import {
+  EMPTY,
+  MAX_LONG_SIDE,
+  MIN_LONG_SIDE,
+  requireMaxColors,
+  type MaxColors,
+  type Pattern,
+} from "./types";
 
 /**
  * 生成解码时的每格像素数：保证每格至少 4×4 像素参与面积平均。
@@ -78,18 +85,6 @@ export interface BuildOptions {
    * 旧的 `"custom"` / `"all"` 与配套的 `customMaxColors` 已删除（2026-10-10 口径简化）。
    */
   readonly maxColors: MaxColors;
-}
-
-/**
- * 用色数守卫（运行期）。类型只挡得住 TS 调用方，挡不住 `JSON.parse` + 强转——它是要落盘并回读的
- * `params.maxColors`。判据就是「**1..色卡色数 的整数**」：上界来自色卡（不是第二份常量），
- * 旧枚举的字符串 `"custom"` / `"all"` 与 `null` 在这里响亮失败，**不做映射**。
- */
-function requireMaxColors(value: MaxColors, paletteSize: number): MaxColors {
-  if (!Number.isInteger(value) || value < 1 || value > paletteSize) {
-    throw new Error(`用色档位非法：${String(value)}（只允许 1..${paletteSize} 的整数）`);
-  }
-  return value;
 }
 
 /**

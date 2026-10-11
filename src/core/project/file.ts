@@ -1,6 +1,13 @@
 import type { Rect, Rotation } from "../image/types";
 import type { Palette } from "../palette/types";
-import { EMPTY, MAX_LONG_SIDE, type MaxColors, type Pattern } from "../pattern/types";
+import {
+  EMPTY,
+  MAX_LONG_SIDE,
+  requireLongSide,
+  requireMaxColors,
+  type MaxColors,
+  type Pattern,
+} from "../pattern/types";
 import { validateProjectDocument, type ProjectDocument, type ProjectParams } from "./types";
 
 /**
@@ -40,25 +47,13 @@ export function toProjectDocument(
       `图纸 cells 长度 ${pattern.cells.length} 与 ${pattern.width}×${pattern.height} 不自洽`,
     );
   }
-  if (
-    !Number.isInteger(params.longSide) ||
-    params.longSide < 1 ||
-    params.longSide > MAX_LONG_SIDE
-  ) {
-    throw new Error(`长边豆数非法：${params.longSide}`);
-  }
+  // 长边 / 用色数的判据与文案只有一处实现（`core/pattern/types.ts` 的 `requireLongSide` /
+  // `requireMaxColors`）；`长边豆数非法：X` 这条旧文案已随之统一。
+  const longSide = requireLongSide(params.longSide);
   // **只认数字口径**（2026-10-10 口径简化）：1..色卡色数 的整数，等于色卡色数即「不限」。
   // 落盘方向也要拦，否则库里会存进一个回读时必炸的值；旧记录的 `"custom"` / `"all"` / `null`
   // 一律响亮失败，**不做映射**（裁定 A1）。
-  if (
-    !Number.isInteger(params.maxColors) ||
-    params.maxColors < 1 ||
-    params.maxColors > fullPalette.colors.length
-  ) {
-    throw new Error(
-      `用色档位非法：${String(params.maxColors)}（只允许 1..${fullPalette.colors.length} 的整数）`,
-    );
-  }
+  const maxColors = requireMaxColors(params.maxColors, fullPalette.colors.length);
   const { x, y, w, h, rotate } = params.crop;
   for (const [name, value] of Object.entries({ x, y, w, h })) {
     if (!Number.isFinite(value)) throw new Error(`裁剪区域 ${name} 非法：${String(value)}`);
@@ -102,8 +97,8 @@ export function toProjectDocument(
     palette: { id: fullPalette.id, codes },
     grid,
     params: {
-      longSide: params.longSide,
-      maxColors: params.maxColors,
+      longSide,
+      maxColors,
       crop: { x, y, w, h, rotate },
     },
   };
