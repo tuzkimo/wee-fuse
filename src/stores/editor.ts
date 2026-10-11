@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { computed, markRaw, ref } from "vue";
 import { clampView, type Size, type ViewTransform } from "@/core/crop/view";
 import type { Rect } from "@/core/image/types";
-import { buildPaintCommand, buildRectPaintCommand, cellAt } from "@/core/pattern/edit";
+import { buildPaintCommand, buildRectPaintCommand, cellAt, indicesWithValues } from "@/core/pattern/edit";
 import { EditHistory } from "@/core/pattern/history";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { defaultCellView } from "@/core/pattern/view";
@@ -33,7 +33,7 @@ import { useProjectSession } from "@/stores/project";
  * `viewport`（只有 `onViewport` 那一刻需要它）、`selection`（框选高亮是拖动期间组件内的预览，
  * 控制者已裁决不落 store）。
  *
- * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 16 个动作
+ * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 17 个动作
  * 是任务 5（`PatternCanvas` / `PatternToolbar` / `PalettePanel` / `PalettePicker` 全部经 `EditorPage`
  * 以 props 拿值、以事件回调写值）与任务 6（`EditorPage` 的装配：载入成功 → `beginSession`、
  * 量到尺寸 → `onViewport`、保存 → `session.save()`）的接口面；`EditorTool` 同时是
@@ -372,6 +372,37 @@ export const useEditor = defineStore("editor", () => {
   }
 
   /**
+   * 按色号批量换色：把图纸里值落在 `sources` 里的**全部**格子改成 `to`，**一条命令 = 一步撤销**。
+   *
+   * 判定「哪些格子是这些色号」在 core（`indicesWithValues`），这里只负责入账——已经是 `to` 的格子由
+   * `buildPaintCommand` 天然跳过，于是「换成自己」既不留空的撤销记录、也不置脏。
+   *
+   * 入口校验比 core 严一档：core 只认 `0..EMPTY`，这里还要求源色落在**色卡内**
+   * （`0..colorCount-1`，与 `setCurrentColor` 同一值域口径）——色卡外的坏值被放行会被
+   * `Uint16Array` 静默截断成另一个色号。`to` 另允许 `EMPTY`（批量擦除）；`EMPTY` **不是**合法源色。
+   */
+  function recolor(sources: readonly number[], to: number): void {
+    const current = requireLoadedPattern();
+    if (!Array.isArray(sources)) {
+      throw new Error(`换色源色号必须是数组（当前 ${typeof sources}）`);
+    }
+    const safeSources: readonly number[] = sources;
+    const limit = colorCount.value;
+    for (const source of safeSources) {
+      if (!Number.isInteger(source) || source < 0 || source >= limit) {
+        throw new Error(`换色源色号非法：${String(source)}（必须是 0–${limit - 1} 的整数）`);
+      }
+    }
+    const inPalette = Number.isInteger(to) && to >= 0 && to < limit;
+    if (!inPalette && to !== EMPTY) {
+      throw new Error(`换色目标色号非法：${String(to)}（必须是 0–${limit - 1} 的整数，或 ${EMPTY} 表示橡皮）`);
+    }
+    const command = buildPaintCommand(current.cells, indicesWithValues(current.cells, safeSources), to, "换色");
+    if (command === null) return;
+    publishChange(history.value.commit(current.cells, command));
+  }
+
+  /**
    * 吸管：取该格色号（含 `EMPTY`）设为当前色，并**自动切回画笔**（吸完就能画）。
    *
    * 落在图纸外时**不改当前色、也不切工具**：`cellAt` 对越界返回 `EMPTY`，照搬就会把「点空处」
@@ -428,7 +459,7 @@ export const useEditor = defineStore("editor", () => {
    * 撤销按钮从此永远停在初始的 `false`（点了撤销、格子确实回退了，按钮却一直是灰的）。
    * 这是一个**不报错的界面错误**，只有真机点一下才看得出来。
    *
-   * `void revision.value` 就是这个依赖：五个变更 `cells` 的动作、以及 `beginSession` / `reset`
+   * `void revision.value` 就是这个依赖：六个变更 `cells` 的动作、以及 `beginSession` / `reset`
    * 都会动 `revision`，所以历史栈一变，这两个 computed 一定失效重算。
    *
    * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：任务 5 的 `PatternToolbar` 以
@@ -471,6 +502,7 @@ export const useEditor = defineStore("editor", () => {
     paint,
     applyRect,
     eraseCells,
+    recolor,
     pickFromCell,
     undo,
     redo,

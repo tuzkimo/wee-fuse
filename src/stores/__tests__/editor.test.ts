@@ -20,7 +20,7 @@ import { useProjectSession } from "@/stores/project";
  *    所以刷新只能走 `revision` + `lastDirty`，两条都必须被断言读到（否则 store 可以「静默刷新失败」）。
  * 2. **`onViewport` 的两支有判别力**：第二次尺寸变化时缩放与偏移必须**逐字保持**，而夹取该生效时
  *    又必须真的生效（否则「什么都不做」也能过前一条）。
- * 3. **只有 `paint` / `applyRect` / `eraseCells` / `undo` / `redo` 会置脏**：切工具、改视图、
+ * 3. **只有 `paint` / `applyRect` / `eraseCells` / `recolor` / `undo` / `redo` 会置脏**：切工具、改视图、
  *    开关网格线、吸管都不影响「内存与存储是否一致」。
  *
  * 夹具口径沿用 `project.test.ts` / `EditorPage.test.ts`：色卡用生产口径的 `getBuiltinPalette()`，
@@ -203,7 +203,7 @@ describe("beginSession：会话播种", () => {
 
 describe("reset：把会话清回初始态", () => {
   it("13 个字段逐一回默认，且**不碰 session**（`dirty` 留给保存流程）", () => {
-    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 16 个动作之一、页面卸载 / 换工程时
+    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 17 个动作之一、页面卸载 / 换工程时
     // 会走到。少了这条，「reset 漏清 viewInitialized」这类错误在屏幕上是「换工程后视图还是旧的」，
     // 不报错、只有真机看得出来。
     const { editor, session } = seedEditor();
@@ -734,7 +734,7 @@ describe("undo / redo（规格 §6.6）", () => {
   });
 });
 
-describe("只有改 cells 的五个动作会置脏", () => {
+describe("只有改 cells 的六个动作会置脏", () => {
   it("beginSession / setTool / setView / setShowGrid / setShowLabels / setCurrentColor / pickFromCell / onViewport 都不置脏", () => {
     const { editor, session } = seedEditor();
 
@@ -903,6 +903,94 @@ describe("去背景工具", () => {
 
     expect(editor.revision).toBe(revision);
     expect(editor.history.undoDepth).toBe(0);
+    expect(session.dirty).toBe(false);
+  });
+});
+
+describe("recolor：按色号批量换色", () => {
+  it("一次 recolor = 一条命令，撤销一次整批还原", () => {
+    // 图里用量最大的是 7（4 格），另有一格 9——批量换色必须**真的改到多格**，否则「一条命令」
+    // 与逐格涂改区分不开（默认夹具只有 1 格非空）。
+    const { editor, pattern, session } = seedEditor([
+      7, 7, 7, 7, 9, EMPTY,
+      EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+    ]);
+    const before = [...pattern.cells];
+
+    editor.recolor([7], 9);
+
+    expect([...pattern.cells].slice(0, 5)).toEqual([9, 9, 9, 9, 9]);
+    expect(editor.revision).toBe(1);
+    expect(editor.lastDirty).toEqual([0, 1, 2, 3]); // 已经是 9 的第 5 格不入账
+    expect(editor.history.undoDepth).toBe(1);
+    expect(editor.canUndo).toBe(true);
+    expect(session.dirty).toBe(true);
+
+    editor.undo();
+
+    expect([...pattern.cells]).toEqual(before);
+  });
+
+  it("目标可以是 EMPTY（批量擦除）", () => {
+    const { editor, pattern } = seedEditor([
+      7, 7, 7, 7, EMPTY, EMPTY,
+      EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+    ]);
+
+    editor.recolor([7], EMPTY);
+
+    expect([...pattern.cells]).toEqual([
+      EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+      EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+    ]);
+    expect(editor.lastDirty).toEqual([0, 1, 2, 3]);
+  });
+
+  it("空源集合 / 图纸里没有的色号 ⇒ 不置脏、不动 revision、不消耗撤销额度", () => {
+    // 默认夹具里只有 7 号色：9 是「色卡里存在、图纸里没有」的那个色号。
+    const { editor, session } = seedEditor();
+
+    editor.recolor([], 1);
+    editor.recolor([9], 1);
+
+    expect(session.dirty).toBe(false);
+    expect(editor.revision).toBe(0);
+    expect(editor.canUndo).toBe(false);
+    expect(editor.history.undoDepth).toBe(0);
+  });
+
+  it("源色越界 / 目标越界 ⇒ 抛错，且不动图纸与状态", () => {
+    const { editor, pattern, session } = seedEditor();
+    const before = [...pattern.cells];
+
+    // 消息里必须带实际值：判据放行了哪个坏值、文案却只写「非法」，接线错误就无从归因。
+    expect(() => editor.recolor([-1], 1)).toThrow("换色源色号非法：-1");
+    expect(() => editor.recolor([1.5], 1)).toThrow("换色源色号非法：1.5");
+    expect(() => editor.recolor([Number.NaN], 1)).toThrow("换色源色号非法：NaN");
+    // `COLOR_COUNT` 是色卡外的第一个值：core 的 `0..EMPTY` 会放行它，只有 store 的色卡上界拦得住。
+    expect(() => editor.recolor([COLOR_COUNT], 1)).toThrow("换色源色号非法：");
+    // 空格不是合法源色（`usages` 不含它）；批量擦除走「目标是 EMPTY」那条。
+    expect(() => editor.recolor([EMPTY], 1)).toThrow("换色源色号非法：");
+
+    expect(() => editor.recolor([7], COLOR_COUNT)).toThrow(`换色目标色号非法：${COLOR_COUNT}`);
+    expect(() => editor.recolor([7], -1)).toThrow("换色目标色号非法：-1");
+    expect(() => editor.recolor([7], 1.5)).toThrow("换色目标色号非法：1.5");
+    expect(() => editor.recolor([7], Number.NaN)).toThrow("换色目标色号非法：NaN");
+
+    // 全部校验都落在任何写操作之前：图纸与状态一格未动
+    expect([...pattern.cells]).toEqual(before);
+    expect(editor.revision).toBe(0);
+    expect(editor.history.undoDepth).toBe(0);
+    expect(session.dirty).toBe(false);
+  });
+
+  it("源集合本身不是数组 ⇒ 抛错", () => {
+    const { editor, session } = seedEditor();
+
+    expect(() => editor.recolor(null as unknown as number[], 1)).toThrow(/换色源色号必须是数组/);
+    expect(() => editor.recolor("7" as unknown as number[], 1)).toThrow(/换色源色号必须是数组/);
+
+    expect(editor.revision).toBe(0);
     expect(session.dirty).toBe(false);
   });
 });
