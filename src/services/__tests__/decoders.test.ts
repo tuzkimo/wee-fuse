@@ -131,7 +131,7 @@ describe("读像素必须在释放位图之前（简报外补充）", () => {
 });
 
 /**
- * 审查 I2：`Decoder.outputSize` 是 2026-09-30 审查第 1 轮补上的字段。
+ * 审查 I2：`Decoder` 的尺寸口径字段是 2026-09-30 审查第 1 轮补上的。
  *
  * 补之前的口径矛盾：`DecodeRequest.targetWidth/Height` 文档写「输出位图宽/高」，而保底路径
  * 完全忽略它们、返回裁剪原生尺寸（1500² 而不是 116²），下游照文档假设就会静默拿到尺寸不同的位图。
@@ -143,8 +143,9 @@ describe("读像素必须在释放位图之前（简报外补充）", () => {
  * 构造性恒真：把 `createFastDecoder` 里传给 `createRegionResized` 的缩放实参删掉，
  * 这两条也不会红。它们证明的只是「`decode()` 把平台返回对象的字段原样回传」。
  * 真正的判别器是同文件里**实参顺序**的断言（`createRegionResized` 收到
- * `(source, 10, 20, 100, 50, 232, 116)`、`createRegion` 收到 `(source, 10, 20, 100, 50)`）
- * 与 `outputSize` 字段值断言——尺寸口径靠那三条守，不是靠这两条。
+ * `(source, 10, 20, 100, 50, 232, 116)`、`createRegion` 收到 `(source, 10, 20, 100, 50)`）。
+ * 尺寸口径由这些实参顺序断言与尺寸断言守；`Decoder.outputSize` 字段已于 2026-10-11 删除
+ * （审计整改 #2，零生产读取者），两条路径改由 `name` 区分。
  */
 describe("解码输出的尺寸口径（审查第 1 轮补充）", () => {
   it("fast 声明 target：返回值是 116 级的目标尺寸，而不是裁剪尺寸", async () => {
@@ -156,7 +157,6 @@ describe("解码输出的尺寸口径（审查第 1 轮补充）", () => {
     const { platform } = makePlatform(targetPixels);
     const decoder = createFastDecoder(platform);
 
-    expect(decoder.outputSize).toBe("target");
     const image = await decoder.decode(source, request);
     expect(image.width).toBe(request.targetWidth);
     expect(image.height).toBe(request.targetHeight);
@@ -172,7 +172,6 @@ describe("解码输出的尺寸口径（审查第 1 轮补充）", () => {
     const { platform } = makePlatform(nativePixels);
     const decoder = createExactDecoder(platform);
 
-    expect(decoder.outputSize).toBe("native");
     const image = await decoder.decode(source, request);
     expect(image.width).toBe(request.crop.width);
     expect(image.height).toBe(request.crop.height);

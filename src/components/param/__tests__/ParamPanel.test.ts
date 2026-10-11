@@ -351,7 +351,6 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
   /** 纯白不透明 8×8：保底路径（native）只要求「有一张位图」，下游按实际尺寸面积平均重采样。 */
   const solid: Decoder = {
     name: "solid",
-    outputSize: "native",
     async decode(): Promise<RgbaImage> {
       const data = new Uint8ClampedArray(8 * 8 * 4).fill(255);
       return { width: 8, height: 8, data };
@@ -361,7 +360,6 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
   /** 裁剪 400×300 < 2048，按择路规则必须走保底路径；被选中即用例失败。 */
   const fastForbidden: Decoder = {
     name: "fast-should-not-be-used",
-    outputSize: "target",
     async decode(): Promise<RgbaImage> {
       throw new Error("裁剪长边在预算内，不应走快路径");
     },

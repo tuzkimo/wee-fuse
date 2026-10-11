@@ -65,8 +65,7 @@ const image = quadrants(224);
 
 const fakeDecoder: Decoder = {
   name: "fake",
-  // 返回值是裁剪原生尺寸（这里固定为 224×224 的象限图），符合 native 口径
-  outputSize: "native",
+  // 返回值是裁剪原生尺寸（这里固定为 224×224 的象限图），符合保底路径口径
   async decode(_source: Blob, request: DecodeRequest): Promise<RgbaImage> {
     // 假解码器忽略请求尺寸，直接返回固定象限图，便于断言朝向与尺寸
     void request;
@@ -81,7 +80,6 @@ const fakeDecoder: Decoder = {
  */
 const fastMustNotBeUsed: Decoder = {
   name: "fast-should-not-be-used",
-  outputSize: "target",
   async decode(): Promise<RgbaImage> {
     throw new Error("裁剪长边在预算内，不应走快路径");
   },
@@ -151,7 +149,6 @@ describe("generatePattern", () => {
     };
     const transparentDecoder: Decoder = {
       name: "transparent",
-      outputSize: "native",
       async decode(): Promise<RgbaImage> {
         return transparent;
       },
@@ -204,7 +201,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
         longSide: 10,
         maxColors: 16,
       },
-      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
     );
     // 若朝向分支漏掉 rotation 3（只判 rotation === 1），成品会变成 10×5
     expect(pattern.width).toBe(5);
@@ -226,7 +223,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
           longSide: 4,
           maxColors: 16,
         },
-        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
       ),
     ).rejects.toThrow(/裁剪区域尺寸非法/);
     expect(exact.requests).toHaveLength(0);
@@ -250,7 +247,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
           longSide: 4,
           maxColors: 16,
         },
-        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
       ),
     ).rejects.toThrow(/裁剪区域尺寸非法/);
     await expect(
@@ -263,7 +260,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
           longSide: 4,
           maxColors: 16,
         },
-        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+        { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
       ),
     ).rejects.toThrow(/裁剪区域尺寸非法/);
     expect(exact.requests).toHaveLength(0);
@@ -284,7 +281,7 @@ describe("generatePattern（追加：rotation 2 / 3 的象限映射与朝向分�
             longSide: 4,
             maxColors: 16,
           },
-          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
         ),
       ).rejects.toThrow(/旋转角度非法/);
     }
@@ -305,16 +302,15 @@ function solid(width: number, height: number, rgb: readonly [number, number, num
 }
 
 /** 记录实参的解码器桩：保底路径返回裁剪原生尺寸，快路径返回 target 尺寸。 */
-function makeStub(label: string, outputSize: "target" | "native") {
+function makeStub(label: string, kind: "target" | "native") {
   const requests: DecodeRequest[] = [];
   const sources: Blob[] = [];
   const decoder: Decoder = {
     name: label,
-    outputSize,
     async decode(source: Blob, request: DecodeRequest): Promise<RgbaImage> {
       sources.push(source);
       requests.push(request);
-      return outputSize === "native"
+      return kind === "native"
         ? solid(request.crop.width, request.crop.height, [0, 0, 255])
         : solid(request.targetWidth, request.targetHeight, [0, 0, 255]);
     },
@@ -323,10 +319,9 @@ function makeStub(label: string, outputSize: "target" | "native") {
 }
 
 /** 断言「不该被调用」的解码器桩。 */
-function forbidden(label: string, outputSize: "target" | "native"): Decoder {
+function forbidden(label: string): Decoder {
   return {
     name: label,
-    outputSize,
     async decode(): Promise<RgbaImage> {
       throw new Error(`${label} 不应被调用`);
     },
@@ -345,7 +340,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
         longSide: 4,
         maxColors: 16,
       },
-      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
     );
     expect(exact.requests).toHaveLength(1);
     expect(exact.sources[0]).toBe(source);
@@ -367,7 +362,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
         longSide: 4,
         maxColors: 16,
       },
-      { exactDecoder: forbidden("exact", "native"), fastDecoder: fast.decoder, palette },
+      { exactDecoder: forbidden("exact"), fastDecoder: fast.decoder, palette },
     );
     expect(fast.requests).toHaveLength(1);
     expect(fast.requests[0]?.targetWidth).toBe(16);
@@ -388,7 +383,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
         longSide: 4,
         maxColors: 16,
       },
-      { exactDecoder: forbidden("exact", "native"), fastDecoder: fast.decoder, palette },
+      { exactDecoder: forbidden("exact"), fastDecoder: fast.decoder, palette },
     );
     // 长边 4096 > 2048 → 快路径；若按面积判定就会误走保底路径（面积 4096×1024 = 2048²）
     expect(fast.requests).toHaveLength(1);
@@ -407,7 +402,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
         longSide: 10,
         maxColors: 16,
       },
-      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
     );
     // 成品朝向 200×400 → 网格 5×10；未旋转朝向 400×200 → 网格 10×5 → target 40×20。
     // 若误用最终朝向的网格算 target 就会得到 20×40。
@@ -419,7 +414,6 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
   it("不假设解码器返回 target 尺寸：按返回值实际尺寸重采样", async () => {
     const oddball: Decoder = {
       name: "oddball",
-      outputSize: "native",
       async decode(): Promise<RgbaImage> {
         // 契约上应返回裁剪原生 64×32，这里刻意回一个 8×4
         return solid(8, 4, [0, 255, 0]);
@@ -427,7 +421,7 @@ describe("generatePattern：解码路径择优（规格 §12.1 的降级方案�
     };
     const pattern = await generatePattern(
       { source, sourceSize, crop: { x: 0, y: 0, width: 64, height: 32 }, rotation: 0, longSide: 2, maxColors: 16 },
-      { exactDecoder: oddball, fastDecoder: forbidden("fast", "target"), palette },
+      { exactDecoder: oddball, fastDecoder: forbidden("fast"), palette },
     );
     // 网格尺寸由裁剪比例与长边决定，与解码返回的像素尺寸无关
     expect(pattern.width).toBe(2);
@@ -511,7 +505,7 @@ describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不�
             longSide: 4,
             maxColors: 16,
           },
-          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
         ),
       ).rejects.toThrow(message);
       expect(exact.requests).toHaveLength(0);
@@ -540,7 +534,7 @@ describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不�
             longSide: 4,
             maxColors: 16,
           },
-          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
         ),
       ).rejects.toThrow(message);
       expect(exact.requests).toHaveLength(0);
@@ -559,7 +553,7 @@ describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不�
         longSide: 4,
         maxColors: 16,
       },
-      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+      { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
     );
     // 200×100 的裁剪、长边 4 → 网格 4×2
     expect(pattern.width).toBe(4);
@@ -587,7 +581,7 @@ describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不�
             longSide: 4,
             maxColors: 16,
           },
-          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
         ),
       ).rejects.toThrow(message);
       expect(exact.requests).toHaveLength(0);
@@ -617,7 +611,7 @@ describe("generatePattern 的原图范围校验（B1-12 / B1-13：拒绝，不�
             longSide: 4,
             maxColors: 16,
           },
-          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast", "target"), palette },
+          { exactDecoder: exact.decoder, fastDecoder: forbidden("fast"), palette },
         ),
       ).rejects.toThrow(message);
     }

@@ -101,12 +101,12 @@ export interface GenerateRequest {
  */
 export interface GenerateDeps {
   /**
-   * 保底路径（`outputSize === "native"`）：只裁剪出原生像素，缩放由 core 的面积平均完成。
+   * 保底路径（`exactDecoder`）：只裁剪出原生像素，缩放由 core 的面积平均完成。
    * 保真度正确，代价是原生位图要进 JS 堆。
    */
   readonly exactDecoder: Decoder;
   /**
-   * 快路径（`outputSize === "target"`）：一次裁剪 + 平台缩放。省内存，但保真度随内容
+   * 快路径（`fastDecoder`）：一次裁剪 + 平台缩放。省内存，但保真度随内容
    * 边缘锐度退化（规格 §12.1）。
    */
   readonly fastDecoder: Decoder;
@@ -188,8 +188,8 @@ export async function generatePattern(
   const image = await decoder.decode(request.source, { crop, targetWidth, targetHeight });
 
   // 不假设解码器返回的就是 target 尺寸：快路径承诺 target、保底路径返回裁剪原生尺寸，
-  // 两者都与 target 可能不同（两种口径见 decode.ts 的 `outputSize`；那里也写明它是
-  // 自我描述的文档字段、没有生产读取者），所以按返回值实际尺寸重采样。
+  // 两者都与 target 可能不同（解码器 `name` 里写明口径：`fast:` / `exact:`），所以按返回值
+  // 实际尺寸重采样。
   const sampled: SampledGrid = resampleToGrid(image, rawGrid.width, rawGrid.height);
   // rotation === 0 时 rotateGrid 返回入参本身（同一引用）。buildPattern 只读网格的
   // rgb / filled，不会就地改写，故这里安全；下游任何新增的写操作都要先复制。

@@ -47,7 +47,6 @@ interface ResizeOptions extends ImageBitmapOptions {
 export function createFastDecoder(platform: BitmapPlatform): Decoder {
   return {
     name: "fast:createImageBitmap+crop+resize",
-    outputSize: "target",
     async decode(source: Blob, request: DecodeRequest): Promise<RgbaImage> {
       const { crop, targetWidth, targetHeight } = request;
       const bitmap = await platform.createRegionResized(
@@ -77,7 +76,6 @@ export function createFastDecoder(platform: BitmapPlatform): Decoder {
 export function createExactDecoder(platform: BitmapPlatform): Decoder {
   return {
     name: "exact:createImageBitmap+crop → area-average",
-    outputSize: "native",
     async decode(source: Blob, request: DecodeRequest): Promise<RgbaImage> {
       const { crop } = request;
       const bitmap = await platform.createRegion(
