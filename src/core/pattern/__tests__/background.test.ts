@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { rgbToLab, type Lab } from "@/core/color/space";
-import { BACKGROUND_TOLERANCE, floodBackground } from "../background";
+import type { SampledGrid } from "@/core/image/types";
+import { BACKGROUND_TOLERANCE, floodBackground, maskBackground } from "../background";
 
 const RED: Lab = rgbToLab(255, 0, 0);
 const NEAR_RED: Lab = rgbToLab(240, 10, 10); // 与 RED 的 ΔE76 远小于 10
@@ -89,5 +90,63 @@ describe("floodBackground", () => {
     expect(() => floodBackground(2.5, 2, labs, eatable, [0], 10)).toThrow(/尺寸/);
     expect(() => floodBackground(2, 2, labs, eatable, [4], 10)).toThrow(/种子/);
     expect(() => floodBackground(2, 2, labs, eatable, [1.5], 10)).toThrow(/种子/);
+  });
+});
+
+describe("maskBackground", () => {
+  /** 造一个 grid：rgb 由 colorAt 决定，filled 由 filledAt 决定。 */
+  function makeGrid(
+    width: number,
+    height: number,
+    colorAt: (x: number, y: number) => [number, number, number],
+    filledAt: (x: number, y: number) => boolean = () => true,
+  ): SampledGrid {
+    const rgb = new Float32Array(width * height * 3);
+    const filled = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const c = colorAt(x, y);
+        rgb[i * 3] = c[0]; rgb[i * 3 + 1] = c[1]; rgb[i * 3 + 2] = c[2];
+        filled[i] = filledAt(x, y) ? 1 : 0;
+      }
+    }
+    return { width, height, rgb, filled };
+  }
+
+  it("从四个角泛洪，把纯色背景置为空格", () => {
+    const grid = makeGrid(6, 6, (x, y) => (x >= 1 && x <= 4 && y >= 1 && y <= 4 ? [0, 0, 255] : [255, 0, 0]));
+    maskBackground(grid, BACKGROUND_TOLERANCE);
+    const solid = [...grid.filled].filter((v) => v === 1).length;
+    expect(solid).toBe(16); // 中央 4×4 蓝色主体保留
+  });
+
+  it("四块各自与自己的角同色 → 全被吃", () => {
+    // 6×6：左上红、右上绿、左下蓝、右下黑，四块各 3×3；每块纯色
+    const grid = makeGrid(6, 6, (x, y) => {
+      if (y < 3) return x < 3 ? [255, 0, 0] : [0, 255, 0];
+      return x < 3 ? [0, 0, 255] : [0, 0, 0];
+    });
+    maskBackground(grid, BACKGROUND_TOLERANCE);
+    expect([...grid.filled]).toEqual(new Array(36).fill(0)); // 四块各自与自己的角同色 → 全被吃
+  });
+
+  it("角上的空格不当种子，其余角照常工作", () => {
+    const grid = makeGrid(
+      6, 6,
+      (x, y) => (x >= 1 && x <= 4 && y >= 1 && y <= 4 ? [0, 0, 255] : [255, 0, 0]),
+      (x, y) => !(x === 0 && y === 0),
+    );
+    maskBackground(grid, BACKGROUND_TOLERANCE);
+    expect(grid.filled[0]).toBe(0);
+    expect(grid.filled[grid.width - 1]).toBe(0); // 右上角作为种子也被吃
+  });
+
+  it("不改 rgb 与尺寸", () => {
+    const grid = makeGrid(3, 3, () => [255, 0, 0]);
+    const before = Float32Array.from(grid.rgb);
+    maskBackground(grid, BACKGROUND_TOLERANCE);
+    expect(grid.rgb).toEqual(before);
+    expect(grid.width).toBe(3);
   });
 });

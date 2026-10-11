@@ -1,5 +1,6 @@
 import { colorDistance } from "../color/distance";
-import type { Lab } from "../color/space";
+import { rgbToLab, type Lab } from "../color/space";
+import type { SampledGrid } from "../image/types";
 
 /**
  * 去背景泛洪的色差容差（ΔE76）。
@@ -107,4 +108,38 @@ export function floodBackground(
     if (owner[i] !== -1) eaten.push(i);
   }
   return eaten;
+}
+
+/**
+ * 事前去背景：从四个角泛洪，把与角同色的连通背景格就地把 `filled` 置 0（`rgb` 与尺寸不动）。
+ *
+ * 约定：
+ * - 种子是四个**角格**（不是像素角）中 `filled === 1` 的那些；`width` / `height` 为 1 时
+ *   同一格会作为多个角出现，重复无害（泛洪按 `owner` 去重）；
+ * - 空格角不当种子（它没有颜色可作基准），但其他角照常工作；
+ * - `width` 或 `height` 为 0 时直接返回（空图没有背景可去）；
+ * - 吃哪些格由 `floodBackground` 决定，**先收集下标再统一写 `filled`**，不在泛洪过程中
+ *   边吃边改——`eatable` 同时充当「可吃位」与遍历边界，中途改它会让判定自相矛盾。
+ *
+ * 容差由调用方传入（默认取 `BACKGROUND_TOLERANCE`），非法入参由 `floodBackground`
+ * 在**任何写入之前**响亮失败。
+ */
+export function maskBackground(grid: SampledGrid, tolerance: number): void {
+  const { width, height, rgb, filled } = grid;
+  if (width === 0 || height === 0) return;
+
+  const cellCount = width * height;
+  const labs = new Float32Array(cellCount * 3);
+  for (let i = 0; i < cellCount; i++) {
+    const lab = rgbToLab(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+    labs[i * 3] = lab[0];
+    labs[i * 3 + 1] = lab[1];
+    labs[i * 3 + 2] = lab[2];
+  }
+
+  const corners = [0, width - 1, (height - 1) * width, cellCount - 1];
+  const seeds = corners.filter((i) => filled[i] === 1);
+  for (const i of floodBackground(width, height, labs, filled, seeds, tolerance)) {
+    filled[i] = 0;
+  }
 }
