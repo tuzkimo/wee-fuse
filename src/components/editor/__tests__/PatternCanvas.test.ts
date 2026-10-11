@@ -135,6 +135,17 @@ let draws: RecordedDraw[] = [];
 let puts: RecordedPut[] = [];
 let ops: string[] = [];
 
+interface RecordedFill {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** 调用那一刻的 `fillStyle`（高亮判据；底色填的是 pattern 对象、色号是 `fillText`）。 */
+  readonly fillStyle: string;
+}
+
+let fills: RecordedFill[] = [];
+
 /**
  * 桩掉 `HTMLCanvasElement.prototype.getContext`（happy-dom 未注册 canvas adapter，不桩时恒返回 null，
  * 绘制分支永远走不到）。
@@ -149,6 +160,7 @@ function stubContext(): void {
   draws = [];
   puts = [];
   ops = [];
+  fills = [];
   const record = (op: string) => (): void => {
     ops.push(op);
   };
@@ -159,9 +171,16 @@ function stubContext(): void {
     if (args[0] !== "2d") return null;
     // 在 `getContext` 的当刻读尺寸：层的「1px/格」与主画布的 DPR 尺寸都靠这个 target 断言。
     const target = { w: this.width, h: this.height };
+    let fillStyle = "";
     const ctx = {
       imageSmoothingEnabled: true,
-      fillStyle: "",
+      // 真实属性（不是普通字段）：`fillRect` 要记下**调用那一刻**的样式，高亮用例的判据靠它。
+      get fillStyle(): string {
+        return fillStyle;
+      },
+      set fillStyle(value: string) {
+        fillStyle = value;
+      },
       strokeStyle: "",
       lineWidth: 1,
       font: "",
@@ -177,7 +196,10 @@ function stubContext(): void {
       lineTo: record("lineTo"),
       stroke: record("stroke"),
       strokeRect: record("strokeRect"),
-      fillRect: record("fillRect"),
+      fillRect: (x: number, y: number, w: number, h: number): void => {
+        ops.push("fillRect"); // 既有按 `ops` 计数的用例照旧
+        fills.push({ x, y, w, h, fillStyle });
+      },
       fillText: record("fillText"),
       createPattern: () => ({ kind: "repeat" }) as unknown as CanvasPattern,
       createImageData: (width: number, height: number) =>
@@ -212,6 +234,7 @@ type CanvasProps = {
   currentColor: number;
   showGrid: boolean;
   showLabels: boolean;
+  selected: readonly number[];
 };
 
 function mountCanvas(overrides: Partial<CanvasProps> = {}) {
@@ -225,6 +248,7 @@ function mountCanvas(overrides: Partial<CanvasProps> = {}) {
     currentColor: 1,
     showGrid: true,
     showLabels: false,
+    selected: [],
     ...overrides,
   };
   return mount(PatternCanvas, { props });
@@ -938,5 +962,49 @@ describe("桌面 wheel：平移与 ctrl+wheel 以指针为锚缩放（F3，桌�
     expect(() => canvas.element.dispatchEvent(overflow)).toThrow(/缩放比例必须是有限数字/);
     expect(overflow.defaultPrevented).toBe(true); // 抛错也不影响「页面不会跟着滚」
     expect(wrapper.emitted("update:view")).toBeUndefined(); // 抛在 emit 之前：坏视图一个字节都没写出去
+  });
+});
+
+describe("选中色号高亮：画布自己扫 cells，页面只给色号集合", () => {
+  // 3×1 图纸 + VIEW_8（24px/格、偏移 0）：格坐标 = 屏幕坐标 / 24，手算填充矩形最省事。
+  const CELL_PX = 24;
+  const HIGHLIGHT = "rgba(37, 99, 235, 0.45)";
+  const STRIP: Pattern = {
+    width: 3,
+    height: 1,
+    paletteId: PALETTE.id,
+    cells: Uint16Array.from([1, 2, 1]),
+  };
+  /** 只取高亮色的填充矩形（底色用的是 pattern 对象、色号文字走 `fillText`，都落不进这个过滤）。 */
+  const highlightRects = (): number[][] =>
+    fills.filter((f) => f.fillStyle === HIGHLIGHT).map((f) => [f.x, f.y, f.w, f.h]);
+
+  it("选中的色号在可见范围内被高亮填充，未选中的不被填充", async () => {
+    const wrapper = mountCanvas({ pattern: STRIP, view: VIEW_8, selected: [1], showGrid: false });
+    await wrapper.vm.$nextTick();
+
+    // 第 0 格与第 2 格是 1 号色 → 高亮；中间那格是 2 号色 → 不高亮。
+    expect(highlightRects()).toEqual([
+      [0, 0, CELL_PX, CELL_PX],
+      [2 * CELL_PX, 0, CELL_PX, CELL_PX],
+    ]);
+  });
+
+  it("[Review Focus 4] 换一个选中集合会重绘", async () => {
+    const wrapper = mountCanvas({ pattern: STRIP, view: VIEW_8, selected: [1], showGrid: false });
+    await wrapper.vm.$nextTick();
+    expect(highlightRects()).toHaveLength(2);
+
+    fills = []; // 只留换集合之后的那一次绘制
+    await wrapper.setProps({ selected: [2] });
+    // 漏掉 watch 源里的 `() => props.selected`：这里一个填充都没有（且不报错）。
+    expect(highlightRects()).toEqual([[CELL_PX, 0, CELL_PX, CELL_PX]]);
+  });
+
+  it("selected 为空时不产生任何高亮填充", async () => {
+    const wrapper = mountCanvas({ pattern: STRIP, view: VIEW_8, selected: [], showGrid: false });
+    await wrapper.vm.$nextTick();
+
+    expect(highlightRects()).toEqual([]);
   });
 });

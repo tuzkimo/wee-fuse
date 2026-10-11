@@ -35,6 +35,8 @@ const TILE_LIGHT = "#f8fafc";
 const TILE_DARK = "#eef2f7";
 /** `createPattern` 不可用时的纯浅灰底（规格 §5.5 的退化分支）。 */
 const EMPTY_BACKDROP = "#f1f5f9";
+/** 选中色号的高亮填充（与框选高亮同族）。 */
+const SELECT_HIGHLIGHT = "rgba(37, 99, 235, 0.45)";
 
 /** `visibleCellRange` 的非空返回值：闭区间，两端都含。 */
 type CellRange = { readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number };
@@ -49,6 +51,8 @@ const props = defineProps<{
   currentColor: number;
   showGrid: boolean;
   showLabels: boolean;
+  /** 选中的**色号**（palette 下标，不是格子下标）；画布自己扫 `cells` 判定。 */
+  selected: readonly number[];
 }>();
 
 const emit = defineEmits<{
@@ -564,6 +568,27 @@ function drawPending(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: nu
   }
 }
 
+/**
+ * 选中色号的高亮填充：扫可见区间、按格子里的色号命中。
+ *
+ * **浅比较的前提：调用方每次都换新数组**——`watch` 按引用比较 `props.selected`，
+ * 原地 push / splice 不会触发重绘。
+ */
+function drawSelected(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: number): void {
+  // 不提前判空：`selected` 尚未接线时（EditorPage 在任务 6 接）`new Set(undefined)` 就是空集，
+  // 结果是「不高亮」而不是渲染路径上抛错。
+  const selected = new Set(props.selected);
+  ctx.fillStyle = SELECT_HIGHLIGHT;
+  const width = props.pattern.width;
+  for (let y = range.y0; y <= range.y1; y += 1) {
+    for (let x = range.x0; x <= range.x1; x += 1) {
+      const value = props.pattern.cells[y * width + x] as number;
+      if (!selected.has(value)) continue;
+      ctx.fillRect(props.view.offsetX + x * cellPx, props.view.offsetY + y * cellPx, cellPx, cellPx);
+    }
+  }
+}
+
 /** 框选高亮：一个矩形，不逐格遍历（越出视口的部分由画布自己裁掉）。 */
 function drawSelection(ctx: CanvasRenderingContext2D, cellPx: number): void {
   const gesture = toolGesture;
@@ -632,17 +657,22 @@ function draw(): void {
   if (props.showGrid && cellPx >= GRID_LINE_MIN_CELL_PX) drawGrid(ctx, range, cellPx, pixelRatio);
   if (props.showLabels && cellPx >= CELL_LABEL_MIN_CELL_PX) drawLabels(ctx, range, cellPx);
   drawPending(ctx, range, cellPx);
+  drawSelected(ctx, range, cellPx);
   drawSelection(ctx, cellPx);
   drawPick(ctx, cellPx);
 }
 
 // 两个 watch 的源都是**浅引用 / 标量**：`pattern` 在 store 里是 `markRaw` 的同一个对象（身份变 = 换图纸）、
-// `lastDirty` 每次提交都是新数组、`view` 每次 `setView` 都是新对象——浅比较足够。
+// `lastDirty` 每次提交都是新数组、`view` 每次 `setView` 都是新对象、`selected` 每次选中变化都是新数组
+// ——浅比较足够。
 // 不加 `deep: true`：`pattern.cells` 是最大 1.3 万格（116×116）的 TypedArray，深遍历既昂贵又不会多
 // 发现任何变化（格子变了必然伴随 `revision` 变，那条已经在源里）。
 // `tool` 不是重绘源：叠加层画什么由**手势自己的 kind** 决定，工具只在按下那一刻决定起哪种手势。
 watch([() => props.pattern, () => props.revision, () => props.lastDirty], () => draw());
-watch([() => props.view, () => props.currentColor, () => props.showGrid, () => props.showLabels], () => draw());
+watch(
+  [() => props.view, () => props.currentColor, () => props.showGrid, () => props.showLabels, () => props.selected],
+  () => draw(),
+);
 </script>
 
 <template>
