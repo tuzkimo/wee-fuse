@@ -100,6 +100,10 @@ export function toProjectDocument(
       longSide,
       maxColors,
       crop: { x, y, w, h, rotate },
+      // 缺字段的老参数**不写这个键**：落盘字节与键集与加字段之前逐位一致。
+      ...(params.removeBackground === undefined
+        ? {}
+        : { removeBackground: params.removeBackground }),
     },
   };
 }
@@ -132,6 +136,8 @@ export function fromProjectDocument(
     maxColors: MaxColors;
     crop: Rect;
     rotation: Rotation;
+    /** 去背景开关；旧工程没有这个字段，读出来是 `false`（= 老行为）。 */
+    removeBackground: boolean;
   };
 } {
   const checked = validateProjectDocument(doc, fullPalette);
@@ -168,6 +174,7 @@ export function fromProjectDocument(
       maxColors: checked.params.maxColors,
       crop: { x, y, width: w, height: h },
       rotation: rotate as Rotation,
+      removeBackground: checked.params.removeBackground ?? false,
     },
   };
 }

@@ -37,6 +37,7 @@ const PARAMS: RuntimeParams = {
   maxColors: 16,
   crop: { x: 1, y: 2, width: 30, height: 20 },
   rotation: 3,
+  removeBackground: false,
 };
 
 /** 同一组参数的**落盘**形状：`crop.w/h/rotate`。两者由 store 负责搬运。 */
@@ -193,6 +194,7 @@ describe("工程会话 store", () => {
       longSide: 40,
       maxColors: 16,
       crop: { x: 1, y: 2, w: 30, h: 20, rotate: 3 },
+      removeBackground: false,
     });
     expect(saved?.doc.grid).toEqual([1, 0, EMPTY]);
     // 冗余三件套由 put 从 doc 覆盖，不采信 adopt 传进去的 0
@@ -208,6 +210,21 @@ describe("工程会话 store", () => {
     expect(session.params).toEqual(PARAMS);
     expect([...(session.pattern?.cells ?? [])]).toEqual([7, 5, EMPTY]);
     expect(session.dirty).toBe(false);
+  });
+
+  it("save / load 把 removeBackground = true 一路带过去（恒 false 的实现会被这条抓住）", async () => {
+    // 上面的夹具用的是 `false`（与默认值相同），把 `save()` 写成恒写 false、或
+    // `fromProjectDocument` 写成恒返 false，那些断言照样绿——而这两处正是本项目点名的
+    // 「两端各自都对、错在接线」。所以这里只用 `true` 值跑一遍。
+    const store = await seedStore();
+    const session = useProjectSession();
+    session.adopt(makePattern(), { ...PARAMS, removeBackground: true }, META, null, makeDoc());
+
+    await expect(session.save()).resolves.toBe(true);
+    expect((await store.get("p1"))?.doc.params.removeBackground).toBe(true);
+
+    await expect(session.load("p1")).resolves.toBe(true);
+    expect(session.params?.removeBackground).toBe(true);
   });
 
   it("save 把原图副本原样带回存储（编辑器「改参数重跑」依赖它）", async () => {

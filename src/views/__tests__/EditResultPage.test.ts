@@ -80,6 +80,7 @@ const RUNTIME_PARAMS: RuntimeParams = {
   maxColors: 20,
   crop: { x: 0, y: 0, width: 8, height: 8 },
   rotation: 0,
+  removeBackground: false,
 };
 
 const META: ProjectMeta = {

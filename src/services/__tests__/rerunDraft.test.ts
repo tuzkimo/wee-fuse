@@ -35,6 +35,8 @@ const RUNTIME_PARAMS: RuntimeParams = {
   maxColors: 20,
   crop: { x: 0, y: 0, width: 8, height: 8 },
   rotation: 0,
+  // 简报未列这个夹具，但 `RuntimeParams.removeBackground` 是必填字段：不补上 `vue-tsc` 会红。
+  removeBackground: false,
 };
 
 const META: ProjectMeta = {

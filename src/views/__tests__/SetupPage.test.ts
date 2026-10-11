@@ -599,10 +599,12 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     expect(metas).toHaveLength(1);
     const record = await store.get(metas[0]!.id);
     // 2026-10-10 口径简化：用色数只有一个数字字段（`customMaxColors` 已删除）。
+    // 2026-10-11：去背景开关也开始落盘（界面还没接，当前恒为 false）。
     expect(record?.doc.params).toEqual({
       longSide: 58,
       maxColors: 16,
       crop: { x: 200, y: 100, w: 400, h: 300, rotate: 1 },
+      removeBackground: false,
     });
 
     // ③（续）产物尺寸与刚才摘要说的是同一份：44 × 58
