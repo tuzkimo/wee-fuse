@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { rgbToLab, type Lab } from "@/core/color/space";
 import type { SampledGrid } from "@/core/image/types";
-import { BACKGROUND_TOLERANCE, floodBackground, maskBackground } from "../background";
+import { EMPTY, type Pattern } from "@/core/pattern/types";
+import {
+  BACKGROUND_TOLERANCE,
+  floodBackground,
+  maskBackground,
+  patternBackgroundIndices,
+} from "../background";
 
 const RED: Lab = rgbToLab(255, 0, 0);
 const NEAR_RED: Lab = rgbToLab(240, 10, 10); // 与 RED 的 ΔE76 远小于 10
@@ -148,5 +154,42 @@ describe("maskBackground", () => {
     maskBackground(grid, BACKGROUND_TOLERANCE);
     expect(grid.rgb).toEqual(before);
     expect(grid.width).toBe(3);
+  });
+});
+
+describe("patternBackgroundIndices", () => {
+  /** 3×3 图纸：`indexAt(x,y)` 给色号（默认全 0、中心 1），labs 是与色号一一对应的 Lab 表。 */
+  function makePattern(indexAt: (x: number, y: number) => number = () => 0): Pattern {
+    const cells = new Uint16Array(9);
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) cells[y * 3 + x] = indexAt(x, y);
+    return { width: 3, height: 3, paletteId: "fake", cells };
+  }
+  const LABS: readonly Lab[] = [RED, BLUE];
+
+  it("同色连通区域整片返回，含种子自己", () => {
+    const indices = patternBackgroundIndices(makePattern(), LABS, { x: 1, y: 1 }, BACKGROUND_TOLERANCE);
+    expect([...indices].sort((a, b) => a - b)).toEqual([...Array(9).keys()]);
+  });
+
+  it("色差大于容差的区域不被吃", () => {
+    const pattern = makePattern((x, y) => (x === 1 && y === 1 ? 1 : 0));
+    const indices = patternBackgroundIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
+    expect(indices).not.toContain(4); // 与种子色差超容差的中心块不被吃
+    expect([...indices].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 5, 6, 7, 8]);
+  });
+
+  it("[主体不会被穿越] 空格既不被吃、也挡住泛洪", () => {
+    // 中间一列是空格，左列与右列同为色号 0
+    const pattern = makePattern((x) => (x === 1 ? EMPTY : 0));
+    const indices = patternBackgroundIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
+    expect([...indices].sort((a, b) => a - b)).toEqual([0, 3, 6]);
+  });
+
+  it("种子落在空格 / 图纸外 / 非整数时返回空数组", () => {
+    const pattern = makePattern((x) => (x === 1 ? EMPTY : 0));
+    expect(patternBackgroundIndices(pattern, LABS, { x: 1, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+    expect(patternBackgroundIndices(pattern, LABS, { x: 3, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+    expect(patternBackgroundIndices(pattern, LABS, { x: -1, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+    expect(patternBackgroundIndices(pattern, LABS, { x: 0.5, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
   });
 });

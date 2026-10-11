@@ -1,6 +1,7 @@
 import { colorDistance } from "../color/distance";
 import { rgbToLab, type Lab } from "../color/space";
 import type { SampledGrid } from "../image/types";
+import { EMPTY, type Pattern } from "./types";
 
 /**
  * 去背景泛洪的色差容差（ΔE76）。
@@ -142,4 +143,51 @@ export function maskBackground(grid: SampledGrid, tolerance: number): void {
   for (const i of floodBackground(width, height, labs, filled, seeds, tolerance)) {
     filled[i] = 0;
   }
+}
+
+/**
+ * 事后去背景：点选图纸上某格，返回与它连通的背景格下标（行优先），供编辑页的
+ * `EditorPage.onBackground`（去背景工具）把这些格置为空格。
+ *
+ * 与 `cellAt` 的「越界返回 `EMPTY`」**刻意不同**：种子落在图纸外、非整数、或该格已是
+ * `EMPTY` 时返回 `[]`——调用方拿空数组表示「什么都不做」。
+ *
+ * 色号越界（`EMPTY` 或超出 `labs` 长度）一律按不可吃处理，不报错：图纸来自落盘校验，
+ * 越界色号已被 `validateProjectDocument` 挡在门外。不修改 `pattern`。
+ */
+export function patternBackgroundIndices(
+  pattern: Pattern,
+  labs: readonly Lab[],
+  seed: { x: number; y: number },
+  tolerance: number,
+): number[] {
+  const { width, height, cells } = pattern;
+  if (
+    !Number.isInteger(seed.x) ||
+    !Number.isInteger(seed.y) ||
+    seed.x < 0 ||
+    seed.x >= width ||
+    seed.y < 0 ||
+    seed.y >= height
+  ) {
+    return [];
+  }
+
+  const seedIndex = seed.y * width + seed.x;
+  if (cells[seedIndex] === EMPTY) return [];
+
+  const cellCount = width * height;
+  const cellLabs = new Float32Array(cellCount * 3);
+  const eatable = new Uint8Array(cellCount);
+  for (let i = 0; i < cellCount; i++) {
+    const colorIndex = cells[i];
+    if (colorIndex === EMPTY || colorIndex >= labs.length) continue; // 留 0,0,0 且不可吃
+    const lab = labs[colorIndex];
+    cellLabs[i * 3] = lab[0];
+    cellLabs[i * 3 + 1] = lab[1];
+    cellLabs[i * 3 + 2] = lab[2];
+    eatable[i] = 1;
+  }
+
+  return floodBackground(width, height, cellLabs, eatable, [seedIndex], tolerance);
 }
