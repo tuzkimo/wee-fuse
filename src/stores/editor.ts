@@ -171,7 +171,7 @@ export const useEditor = defineStore("editor", () => {
   const saving = ref(false);
   const error = ref("");
 
-  /** 当前图纸；没载入时抛错。四个需要图纸的动作共用这一句前置条件。 */
+  /** 当前图纸；没载入时抛错。五个需要图纸的动作共用这一句前置条件。 */
   function requireLoadedPattern(): Pattern {
     if (pattern.value === null) throw new Error("还没有载入图纸");
     return pattern.value;
@@ -428,7 +428,7 @@ export const useEditor = defineStore("editor", () => {
    * 撤销按钮从此永远停在初始的 `false`（点了撤销、格子确实回退了，按钮却一直是灰的）。
    * 这是一个**不报错的界面错误**，只有真机点一下才看得出来。
    *
-   * `void revision.value` 就是这个依赖：四个变更 `cells` 的动作、以及 `beginSession` / `reset`
+   * `void revision.value` 就是这个依赖：五个变更 `cells` 的动作、以及 `beginSession` / `reset`
    * 都会动 `revision`，所以历史栈一变，这两个 computed 一定失效重算。
    *
    * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：任务 5 的 `PatternToolbar` 以
