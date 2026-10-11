@@ -69,7 +69,7 @@ describe("applyChanges / revertChanges / buildPaintCommand（追加：判别力�
     expect([...reverted]).toEqual([10, 30]);
   });
 
-  it("label 被原样带进命令（撤销记录要展示「涂色 / 框选 / 整体换色」）", () => {
+  it("label 被原样带进命令（撤销记录要展示「涂色 / 框选」）", () => {
     const cells = Uint16Array.from([1]);
     expect(buildPaintCommand(cells, [0], 2, "涂色")?.label).toBe("涂色");
     const p = pattern([1, 1], 2, 1);

@@ -22,9 +22,10 @@ export interface DecodeRequest {
  */
 export interface Decoder {
   /**
-   * 实现名，用于实验台展示与日志。
+   * 实现名，用于实验台展示与日志。**不是运行期判据**：生产路径由 `services/pipeline.ts` 的
+   * `chooseDecoderPath` 决定走哪条路，没有任何调用方读这个字段来分支。
    *
-   * 两条路径靠 `name` 区分（快路径与保底路径各自硬编码一个实现名），调用方据此解释返回值：
+   * 两条路径的返回值口径不同（名字只让日志 / 实验台能指认是哪一条）：
    *
    * - 快路径：返回值恒为 `request.targetWidth × targetHeight`（平台负责缩放）；
    * - 保底路径：返回值是 `request.crop` 的原生尺寸 `crop.width × crop.height`（平台只裁剪；

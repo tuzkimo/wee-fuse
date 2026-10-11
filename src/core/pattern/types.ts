@@ -66,7 +66,8 @@ export interface Pattern {
  * 它要守的正是从磁盘 / 本地存储读回来的 `params.longSide`，那条路径上值就是 `unknown`。
  * 非 number（字符串 / `null` / 缺失）在 `typeof` 这一关响亮失败，与数字越界走同一条消息。
  *
- * 调用点仍分散（`core/project/types.ts`、`core/project/file.ts`、`stores/draft.ts`），是为了让
+ * 调用点仍分散（`core/project/types.ts`、`core/project/file.ts`、`stores/draft.ts`、
+ * `core/pattern/build.ts` 的 `computeGridSize`），是为了让
  * 校验留在**任何写操作之前**；实现只有这一处，文案不会再漂移。
  */
 export function requireLongSide(value: unknown): number {

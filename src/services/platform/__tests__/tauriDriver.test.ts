@@ -8,7 +8,7 @@ import {
 
 /**
  * `tauriDriver.ts` 里**能在 CI 里执行**的两样东西（都与 Tauri 无关）：纯函数 `encodeBase64`
- * （规格 B5-R4 的退路）与隐藏 input 取图那四个出口（判据 A 的主链路）。
+ * （规格 B5-R4 的退路）与隐藏 input 取图那六个出口（判据 A 的主链路）。
  *
  * **为什么单独一个文件、而不是塞进 `tauriPlatform.test.ts`**：那个文件测的是「驱动 → 能力」的适配；
  * 而 `encodeBase64` 与 Tauri 毫无关系（它不 import 任何包），它是**整条保存链的地基**——
@@ -119,7 +119,7 @@ async function flushMicrotasks(): Promise<void> {
  * 3. 把遗留的 input **先用 `cancel` 结算掉**再摘节点。顺序重要：直接 `node.remove()` 不摘窗口监听，
  *    上一条 throw 时漏下的闭包会在下一条的 `blur`/`focus` 里跑、写进下一条 `setTimeout` 桩的槽位
  *    （把 1 红放大成多红）。派发 `cancel` 会走驱动的 `finish` ⇒ `detach()` 摘掉窗口监听 + 摘节点。
- *    （驱动自己的四个出口全都 `detach()`；漏监听只可能来自「用例抛错、promise 被丢下」这一种情形，
+ *    （驱动自己的六个出口全都 `detach()`；漏监听只可能来自「用例抛错、promise 被丢下」这一种情形，
  *    所以清理必须在这一层做，而不是改驱动的行为。）
  */
 afterEach(() => {
@@ -176,7 +176,8 @@ describe("encodeBase64（已知答案向量）", () => {
 });
 
 /**
- * 隐藏 input 取图的**属性装配 + 四个出口**（`change` / `cancel` / 焦点结算兜底 / `click()` 抛错）。
+ * 隐藏 input 取图的**属性装配 + 六个出口**（`change` 选中 / `change` 空列表 / `cancel` / 焦点结算兜底 /
+ * 非 `File` / `click()` 抛错）。
  *
  * **为什么这些能在 CI 里跑、而驱动其余部分不能**：这里只用到 DOM（`input` / 窗口事件 / 定时器），
  * 不碰任何 `@tauri-apps/*`。判别力覆盖的是**属性装配**（`type` / `accept` / `capture` / 隐藏）
@@ -193,7 +194,7 @@ describe("encodeBase64（已知答案向量）", () => {
  * 兜底定时器由 `spyOnSetTimeout()` 捕获后**手工触发**——没有任何真实 / 假时间参与。
  * 不确定的用例比没有用例更坏（红绿随机翻转），所以这里不接受「偶发靠时间窗口」的写法。
  */
-describe("pickWithHiddenInput（属性装配 + 四个出口）", () => {
+describe("pickWithHiddenInput（属性装配 + 六个出口）", () => {
   /**
    * 把 `setTimeout` 换成**只记录、不等待**的桩，返回「取到当前被排上的定时器」的读法。
    *

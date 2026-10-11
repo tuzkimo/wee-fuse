@@ -959,7 +959,7 @@ describe("保存经能力层落盘（规格 §5.4.3 / §9.2-2 —— G4 闸门�
     const wrapper = mountPanel(printOverrides());
     // 挂载那一轮还没出图（`<img>` 还没到）——否则下面的 `release()` 之后什么都不会发生，判据是假的
     expect(wrapper.find("[data-testid='print-preview-img-0']").exists()).toBe(false);
-    // 挂载期的预览没有诞生 URL（挂载时的 `showPreview` 停在 `await renderBoardPageBlob` 上）
+    // 挂载期的预览没有诞生 URL（挂载时的 `showPreview` 停在 `await renderBoardPageBlobFromPlan` 上）
     expect(createdUrls).toEqual([]);
 
     // 飞行中切到 58 板（页数 16 → 4）：被丢弃的是**29 板下第 1 页**那一轮

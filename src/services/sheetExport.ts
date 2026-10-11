@@ -10,7 +10,7 @@ import type { Palette } from "@/core/palette/types";
 import { cellAt } from "@/core/pattern/edit";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { planBoardPage, planSheet, type BoardPagePlan, type SheetPlan } from "@/core/render/layout";
+import { planSheet, type BoardPagePlan, type SheetPlan } from "@/core/render/layout";
 import { drawBoardPage, drawSheet, type SheetMeta } from "@/core/render/sheet";
 import type { RenderTarget2D } from "@/core/render/types";
 import {
@@ -45,7 +45,7 @@ export function sheetMeta(input: SheetRenderInput): SheetMeta {
 
 /**
  * 三件事的**唯一顺序**（建画布 → 渲染 → 自检 → toBlob → 释放画布），`renderSheetBlob` 与
- * `renderBoardPageBlob` 共用——顺序在两个入口各写一遍迟早会漂。
+ * `renderBoardPageBlobFromPlan` 共用——顺序在两个入口各写一遍迟早会漂。
  *
  * **`draw` 必须是同步的**（类型上写明不了，故写在这里）：参数类型是 `(target) => void`，而
  * TypeScript **会静态接受**一个 `async` 回调，紧接着的 `draw(...)` 也不 `await` ⇒ 若后人传了
@@ -98,7 +98,7 @@ export async function renderSheetBlob(input: SheetRenderInput): Promise<SheetRen
  *
  * **`usages` 的语义是「全图」**（继承 `SheetRenderInput`，与单张施工图同一个入口语义）：
  * `sheetMeta` 的 `totalBeads` / `colorCount`、以及页脚那句「… 全图 M 颗（K 种色）」都取自它。
- * **本页用量不走这里**，走 `renderBoardPageBlob` 的第二个实参（见它的 JSDoc）。
+ * **本页用量不走这里**，走 `renderBoardPageBlobFromPlan` 的第二个实参（见它的 JSDoc）。
  * 把本页用量填进 `usages` 会**静默**把页脚的全图数标成本页数——`sheetExport.test.ts` 有一条用例钉着这个分工。
  *
  * **`boardSize` / `paper` 是与 core 的 `PrintBoardSize` / `PrintPaper` 同值的字面量联合**：这里有意的
@@ -113,43 +113,24 @@ export interface BoardPageRenderInput extends SheetRenderInput {
 }
 
 /**
- * 一页 A4/A3 打印页（每页一块板 + 本页用料）。
- *
- * **两个用量入参的语义必须分清**（2026-10-08 控制者裁决，接线前先读这段）：
- * - `input.usages` = **全图**用量：`meta.totalBeads` / `meta.colorCount` 由 `sheetMeta` 从它算，
- *   页脚写的是「本页 N 颗 · 全图 M 颗（K 种色）」；
- * - 第二个实参 `pageUsages` = **本页**用量：用料条取自它（「本页 N 颗」那个 N 由渲染器
- *   `countTileBeads` 数格子得出，**不**来自这个数组）。缺省值就是 `input.usages`，即「不分页 / 整图」那一支。
- *
- * `pageUsages` 的行数必须与 `planBoardPage` 收到的那份一致（同一份用量同时喂给计划与渲染器），
- * 否则 `drawBoardPage` 的同源守卫会抛；视图层按页算好用量时显式传第二个实参，只有一张图时不必重复写。
- *
- * `draw` 回调必须是**同步**的（`renderWithPlan` 只 `await` 它之后的 `canvasToBlob`）：渲染器一页要写
- * 上万次目标，没有一处需要异步。
- */
-export async function renderBoardPageBlob(
-  input: BoardPageRenderInput,
-  pageUsages: readonly ColorUsage[] = input.usages,
-): Promise<Blob> {
-  const plan = planBoardPage(input.pattern, input.palette, pageUsages, {
-    boardSize: input.boardSize,
-    paper: input.paper,
-    index: input.pageIndex,
-    // C8 §7.3：标题字号由名字宽度与纸宽共同决定 ⇒ 页计划也必须拿到名字（与用料条那份同源）
-    projectName: input.projectName,
-  });
-  return renderBoardPageBlobFromPlan(input, plan, pageUsages);
-}
-
-/**
- * 已计划好的一页：**只渲染，不再计划**。
+ * 已计划好的一页：**只渲染，不再计划**（每页一块板 + 本页用料）。
  *
  * **为什么多这一个出口**（审计整改）：面板一次要回答三个问题（本页用量、文件名、这张图），
  * 而三者都需要同一份页计划。旧写法里面板每页要把 `planBoardPage` 跑三遍（统计本页用量、取页身份、
  * 渲染各一遍）——三遍几何计算不只是浪费，更是「两次之间图纸 / 选项变了」时
  * 「名字是这一页、画布是那一页」的静默错产物温床。计划交给调用方算一次、传进来，这条缝就不存在了。
  *
- * `pageUsages` 必须与 `plan` 同源（`drawBoardPage` 的守卫会抛）：它 = 该页格范围的用量。
+ * **两个用量入参的语义必须分清**（2026-10-08 控制者裁决，接线前先读这段）：
+ * - `input.usages` = **全图**用量：`meta.totalBeads` / `meta.colorCount` 由 `sheetMeta` 从它算，
+ *   页脚写的是「本页 N 颗 · 全图 M 颗（K 种色）」；
+ * - 第二个实参 `pageUsages` = **本页**用量：用料条取自它（「本页 N 颗」那个 N 由渲染器
+ *   `countTileBeads` 数格子得出，**不**来自这个数组）。
+ *
+ * `pageUsages` 的行数必须与 `plan` 同源（同一份用量同时喂给计划与渲染器），否则 `drawBoardPage`
+ * 的同源守卫会抛：它是该页格范围的用量，即 `planBoardPage` 收到的那一份。
+ *
+ * `draw` 回调必须是**同步**的（`renderWithPlan` 只 `await` 它之后的 `canvasToBlob`）：渲染器一页要写
+ * 上万次目标，没有一处需要异步。
  */
 export async function renderBoardPageBlobFromPlan(
   input: BoardPageRenderInput,

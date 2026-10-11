@@ -16,7 +16,11 @@
 export function requireSavableBlob(
   blob: unknown,
   filename: unknown,
-): { readonly blob: Blob; readonly filename: string } {
+): {
+  readonly blob: Blob;
+  /** **已 trim**（校验的是 trim 后非空，返回的就是那一份 trim 后的值）。 */
+  readonly filename: string;
+} {
   if (!(blob instanceof Blob)) {
     throw new Error("导出内容必须是 Blob");
   }

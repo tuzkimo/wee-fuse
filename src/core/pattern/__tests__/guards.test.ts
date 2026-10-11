@@ -20,7 +20,7 @@ describe("requireMaxColors", () => {
     expect(requireMaxColors(16, 221)).toBe(16);
     expect(requireMaxColors(221, 221)).toBe(221);
   });
-  it("0 / 222 / 小数 / 非 number 抛同一条中文消息", () => {
+  it("0 / 222 / 小数 / NaN 抛同一条中文消息", () => {
     for (const bad of [0, 222, 2.5, Number.NaN]) {
       expect(() => requireMaxColors(bad, 221)).toThrow(
         `用色档位非法：${String(bad)}（只允许 1..221 的整数）`,

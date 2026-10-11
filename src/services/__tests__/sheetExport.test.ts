@@ -11,7 +11,6 @@ import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import {
-  renderBoardPageBlob,
   renderBoardPageBlobFromPlan,
   renderSheetBlob,
   usagesInRange,
@@ -163,7 +162,7 @@ describe("renderSheetBlob", () => {
  * `resetExporterMock` 装（`createCanvasStrict` 造记录型假画布、`requireContext2D` 给记录型 target），
  * 依赖上面那个 describe 的 `beforeEach` 会在「用例顺序变了 / 单跑一条」时静默失去替身实现。
  */
-describe("renderBoardPageBlob", () => {
+describe("renderBoardPageBlobFromPlan", () => {
   /**
    * 本 describe 的画布文字记录口：`beforeEach` 装替身时一并留下。
    * 页脚的「本页 / 全图」口径只能经 `fillText` 观察到（`SheetMeta` 没有别的出口）。
@@ -176,25 +175,7 @@ describe("renderBoardPageBlob", () => {
     resetExporterMock(exporter, recording.target);
   });
 
-  it("renderBoardPageBlob 的画布就是纸型像素（A4 = 2480×3508）", async () => {
-    const pattern = makePattern(58, 58, undefined);
-    await renderBoardPageBlob({
-      pattern,
-      palette: makePalette(),
-      usages: makeUsages(),
-      projectName: "测试工程",
-      boardSize: 29,
-      paper: "a4",
-      pageIndex: 0,
-    });
-    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
-  });
-
-  /**
-   * `renderBoardPageBlobFromPlan` 是「计划已算好、只渲染」的那一半（B6 任务 4 的审计整改）：
-   * 面板每页只建一次计划，渲染通道必须**用传进来的那一份**画布尺寸，而不是自己再计划一遍。
-   */
-  it("renderBoardPageBlobFromPlan 用的就是传进来的 plan 的画布尺寸", async () => {
+  it("画布就是纸型像素（A4 = 2480×3508）", async () => {
     const pattern = makePattern(58, 58, undefined);
     const plan = planBoardPage(pattern, makePalette(), makeUsages(), {
       boardSize: 29, paper: "a4", index: 0, projectName: "测试工程",
@@ -204,7 +185,29 @@ describe("renderBoardPageBlob", () => {
       plan,
       makeUsages(),
     );
+    expect(exporter.createCanvasStrict).toHaveBeenCalledWith(2480, 3508);
+  });
+
+  /**
+   * `renderBoardPageBlobFromPlan` 是「计划已算好、只渲染」的那一半（B6 任务 4 的审计整改）：
+   * 面板每页只建一次计划，渲染通道必须**用传进来的那一份**画布尺寸，而不是自己再计划一遍。
+   *
+   * **刻意让 `input` 与 `plan` 的选项不同**（input 说 a4、plan 按 a3 建）：若实现忽略传入的 plan、
+   * 自己按 `input` 重算，画布就会是 A4（2480×3508），而期望是 plan 的 A3（3508×4961）——这条用例会红。
+   */
+  it("画布用传进来的 plan（与 input 的 a4 无关，plan 说 a3 就是 A3 像素）", async () => {
+    const pattern = makePattern(58, 58, undefined);
+    const plan = planBoardPage(pattern, makePalette(), makeUsages(), {
+      boardSize: 29, paper: "a3", index: 0, projectName: "测试工程",
+    });
+    await renderBoardPageBlobFromPlan(
+      { pattern, palette: makePalette(), usages: makeUsages(), projectName: "测试工程", boardSize: 29, paper: "a4", pageIndex: 0 },
+      plan,
+      makeUsages(),
+    );
     expect(exporter.createCanvasStrict).toHaveBeenCalledWith(plan.canvasWidth, plan.canvasHeight);
+    // 把「与 input 无关」钉成字面量：A3 = 3508×4961，A4 是 2480×3508。两边不同值才是真判别。
+    expect([plan.canvasWidth, plan.canvasHeight]).toEqual([3508, 4961]);
   });
 
   /**
@@ -224,7 +227,11 @@ describe("renderBoardPageBlob", () => {
       { code: "A3", name: "红", count: 1 },
       { code: "A4", name: "浅灰", count: 1 },
     ];
-    await renderBoardPageBlob(
+    const pageUsages: ColorUsage[] = [{ code: "A2", name: "黑", count: 7 }]; // 本页：只有一种色
+    const plan = planBoardPage(pattern, makePalette(), pageUsages, {
+      boardSize: 29, paper: "a4", index: 0, projectName: "测试工程",
+    });
+    await renderBoardPageBlobFromPlan(
       {
         pattern,
         palette: makePalette(),
@@ -234,7 +241,8 @@ describe("renderBoardPageBlob", () => {
         paper: "a4",
         pageIndex: 0,
       },
-      [{ code: "A2", name: "黑", count: 7 }], // 本页：只有一种色
+      plan,
+      pageUsages,
     );
     const band = texts.filter((text) => /^A\d+ \(\d+\)$/.test(text.text)).map((text) => text.text);
     expect(band).toEqual(["A2 (7)"]);

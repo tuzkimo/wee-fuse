@@ -15,7 +15,7 @@ import { runPlatformContract, type PlatformHarness } from "./platformContract";
  * **测不到的**：`take_opened_uris` 的「取走即清」（那是 Rust 侧 `std::mem::take`，CI 无 Rust 单测）；
  * `pickImageFile` 的**真机行为**——它现在是隐藏 `<input type=file>`（判据 A 通过后 dialog + fs 分支已删），
  * `createDriver()` 在 happy-dom 下不可执行，判别力在真机判据 A；该隐藏 input 的**结算语义**另有 CI 用例
- * （`__tests__/tauriDriver.test.ts` 的「四个出口」那一组）。
+ * （`__tests__/tauriDriver.test.ts` 的「六个出口」那一组）。
  */
 const PNG_HEAD = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
