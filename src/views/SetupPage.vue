@@ -463,11 +463,13 @@ function resetCrop(): void {
         中栏（§7.3）：未生成 = 放大的裁剪预览（复用 `draft.preview`，不新算）+ 一行提示；
         已生成 = 共用组件 `ResultPanel` + 尺寸 chip。背景是四处允许的深色看图底的其中一处。
         `preview-pane` 是本任务新加的容器 testid；`result-pane` 仍挂在宿主这个 `<section>` 上。
-        手机吸顶且固定高 40vh，`md` 下两者都取消（平板上它是并排的中间一栏，不跟着页面滚）。
+        手机吸顶且固定高 48vh（§7.3 的「高约 40vh」给了这个余地；R42：40vh 下固定的 chip +
+        保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外），`md` 下两者都取消
+        （平板上它是并排的中间一栏，不跟着页面滚）。
       -->
       <section
         data-testid="preview-pane"
-        class="sticky top-0 flex h-[40vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="sticky top-0 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
         :style="boardDots"
       >
         <template v-if="showResult">

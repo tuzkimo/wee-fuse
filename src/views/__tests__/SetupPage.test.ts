@@ -498,6 +498,10 @@ describe("手机竖屏排法（§7.3）", () => {
     // 固定高的盒子里内容比盒子高（生成态的结果卡片就是）：手机上要能自己滚，
     // 否则溢出会盖到下面的选范围块上，吸顶也就名存实亡。
     expect(preview.classes()).toContain("overflow-y-auto");
+    // 手机上的固定高（R42）：约 40vh 装不下 chip + 保存文案 + 三颗动作，提到 48vh；
+    // 旧的 40vh 不再允许出现在这个节点上（回退到旧值这一条会红）。
+    expect(preview.classes()).toContain("h-[48vh]");
+    expect(preview.classes()).not.toContain("h-[40vh]");
     // 平板上高度是 auto，溢出处理该还回去（不把中栏变成一个内部滚动容器）。
     expect(preview.classes()).toContain("md:overflow-visible");
     // `md` 下取消吸顶与固定高（平板上中栏是并排的中间一栏，不跟着页面滚）。
@@ -506,12 +510,12 @@ describe("手机竖屏排法（§7.3）", () => {
   });
 
   /**
-   * 生成态的手机排法（R41 修复 2）：预览盒的高度不能写死成视口比例，否则 55vh 的盒子装进这个
-   * 40vh 的吸顶盒里，下面三颗动作按钮就被推进内滚区（要滚一下才看得到）。
+   * 生成态的手机排法（R41 修复 2 / R42）：预览盒的高度不能写死成视口比例，否则 55vh 的盒子装进
+   * 吸顶盒里，下面三颗动作按钮就被推进内滚区（要滚一下才看得到）。
    *
-   * 机制：吸顶盒是定高的 flex 列 ⇒ 结果卡片 `max-md:flex-1` 吃掉 chip 之外的高度 ⇒
+   * 机制：吸顶盒是定高的 flex 列（R42 起 48vh）⇒ 结果卡片 `max-md:flex-1` 吃掉 chip 之外的高度 ⇒
    * `ResultPanel` 根 `h-full` 在这个定高里成立 ⇒ 预览盒 `grow basis-[55vh] min-h-0` 被压缩到
-   * 剩余空间。断言只钉类名（happy-dom 没有布局）；真实数值在报告 §F 的 Chromium 实测里。
+   * 剩余空间。断言只钉类名（happy-dom 没有布局）；真实数值在报告 §F/§G 的 Chromium 实测里。
    */
   it("生成态：预览盒在吸顶盒里让位，三颗动作按钮不用内滚就露出来（§7.5 / R41）", async () => {
     window.innerWidth = 500;

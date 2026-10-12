@@ -67,7 +67,7 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
     expect(board.classList.contains("items-center")).toBe(true);
     expect(board.classList.contains("justify-center")).toBe(true);
     // 预览盒的高度**跟随宿主**（R41 修复 2）：基准仍是 55vh（全屏宿主不变），但宿主有定高时
-    // 会被压进剩余空间——手机 40vh 吸顶盒里就不再有内滚。
+    // 会被压进剩余空间——手机吸顶盒（R42 起 48vh）里就不再有内滚。
     // 用 `grow` 而不是 `flex-1`：`flex-1` 是 `flex: 1 1 0%` 简写，会按 CSS 生成顺序盖掉
     // `basis-[55vh]`（基准变 0 ⇒ 全屏宿主的预览直接塌），同 R28 那类工具类先后顺序的坑。
     expect(board.classList.contains("grow")).toBe(true);
@@ -80,8 +80,8 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
     expect(root.classList.contains("flex-col")).toBe(true);
     expect(root.classList.contains("h-full")).toBe(true);
     expect(root.classList.contains("min-h-0")).toBe(true);
-    // 手机 40vh 盒子的预算里这两条是承重的：板上内边距 32px → 16px、行间距 16px → 8px。
-    // 少了任一条，390×740 的窗口下三颗动作按钮就会盖到 chip 上（真窗口实测见任务 15 报告 §F）。
+    // 手机吸顶盒（R42 起 48vh）的预算里这两条是承重的：板上内边距 32px → 16px、行间距 16px → 8px。
+    // 少了任一条，短机窗口下三颗动作按钮就会盖到 chip 上（真窗口实测见任务 15 报告 §F/§G）。
     expect(board.classList.contains("max-md:p-2!")).toBe(true);
     expect(root.classList.contains("gap-2")).toBe(true);
   });

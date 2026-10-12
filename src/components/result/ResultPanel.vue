@@ -73,10 +73,11 @@ const boardDots = {
 
       高度**跟随宿主**（R41 修复 2）：`basis-[55vh]` 是基准（宿主高度 auto 时它就是 55vh，
       全屏 `EditResultPage` 因此不变），`grow` + `min-h-0` 让它在**有定高**的宿主里被压进剩余
-      空间——手机中栏那个 40vh 吸顶盒里就不会再把三颗动作按钮顶进内滚区。
+      空间——手机中栏那个吸顶盒（R42 起 48vh）里就不会再把三颗动作按钮顶进内滚区。
       **不用 `flex-1`**：它是 `flex 1 1 0%` 简写，会按工具类生成顺序盖掉 `basis-[55vh]`。
-      `max-md:p-2!` 与 `gap-2` 是同一笔账：40vh 的盒子里“板框 + 保存文案 + 三颗动作 + chip”
-      的总高很紧，板上那 32px 内边距缩到 16px 才装得下（真窗口逐尺寸实测见任务 15 报告 §F）。
+      `max-md:p-2!` 与 `gap-2` 是同一笔账：手机那个吸顶盒（R42 起 48vh）里“板框 + 保存文案 +
+      三颗动作 + chip”的总高很紧，板上那 32px 内边距缩到 16px 才装得下（真窗口逐尺寸实测见
+      任务 15 报告 §F/§G）。
     -->
     <div
       class="flex min-h-0 grow basis-[55vh] max-md:p-2! items-center justify-center rounded-bead-md border-4 border-bead-ink bg-bead-board p-4"
