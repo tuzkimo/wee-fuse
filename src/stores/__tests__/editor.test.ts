@@ -910,7 +910,7 @@ describe("去背景工具", () => {
 describe("paintCells：裸涂色动作", () => {
   it("paintCells：一片格子涂成一个色号，一条命令 = 一步撤销", () => {
     // 夹具前三格是 7 号色，后九格是空格：批里三格真的变了，否则「一次点击一条命令」是空话。
-    const { editor, pattern } = seedEditor([7, 7, 7, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
+    const { editor, pattern, session } = seedEditor([7, 7, 7, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
     const before = [...pattern.cells];
 
     editor.paintCells([0, 1, 2], 5);
@@ -918,6 +918,7 @@ describe("paintCells：裸涂色动作", () => {
     expect([...pattern.cells].slice(0, 3)).toEqual([5, 5, 5]);
     expect(editor.lastDirty).toEqual([0, 1, 2]);
     expect(editor.history.undoDepth).toBe(1);
+    expect(session.dirty).toBe(true);
     editor.undo();
     expect([...pattern.cells]).toEqual(before);
   });
@@ -929,12 +930,21 @@ describe("paintCells：裸涂色动作", () => {
     expect(session.dirty).toBe(false);
   });
 
-  it("paintCells：color 非法（负数 / 非整数）响亮失败，且在任何写操作之前", () => {
+  it("paintCells：color 非法（色卡外 / 负数 / 非整数）响亮失败，且在任何写操作之前", () => {
     const { editor, session } = seedEditor();
     const revision = editor.revision;
-    expect(() => editor.paintCells([0], -1)).toThrow();
-    expect(() => editor.paintCells([0], 1.5)).toThrow();
+
+    // 判别力只可能来自「core 放行、色卡不放行」的那个值：`buildPaintCommand` 自己只守
+    // `0..EMPTY`（`core/pattern/edit.ts:44`），`COLOR_COUNT` 会被它**静默接收**、再被
+    // `Uint16Array` 存成一个不存在的色号。删掉 store 的值域守卫时，只有这一条会红。
+    expect(() => editor.paintCells([0], COLOR_COUNT)).toThrow(/涂色色号/);
+    // 这两条 core 也会拦（负数 / 非整数），所以它们检验的是**报错口径来自 store**：
+    // 守卫被挪到 `buildPaintCommand` 之后，文案就会变成 core 的「目标色号非法」。
+    expect(() => editor.paintCells([0], -1)).toThrow(/涂色色号/);
+    expect(() => editor.paintCells([0], 1.5)).toThrow(/涂色色号/);
+
     expect(editor.revision).toBe(revision);
+    expect(editor.history.undoDepth).toBe(0);
     expect(session.dirty).toBe(false);
   });
 });
