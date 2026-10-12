@@ -1749,14 +1749,23 @@ function loadedCells(editor: ReturnType<typeof useEditor>): Uint16Array {
   return pattern.cells;
 }
 
-describe("去背景工具", () => {
-  it("点边缘把连通背景整片吃掉，中心主体保留", async () => {
+/**
+ * 3×1 填充夹具：三格是 F4 `#fb2a40`（色号 140）/ F5 `#e10328`（色号 141）/ 140。
+ * 140 与 141 的 ΔE76 是 8.60：容差 0 分得开、容差 10 分不开；第 2 格与第 0 格同色号
+ * 但被第 1 格挡住（四连通不可达），正好验「精确同色不会跨过墙」。
+ */
+const FILL_NEARBY_FIXTURE: readonly number[] = [140, 141, 140];
+
+describe("填充工具（原「去背景」，容差随所持颜色变化）", () => {
+  it("手里拿橡皮、点边缘：连通背景整片吃掉，中心主体保留", async () => {
     // 3×3：四边 8 格是 A1（色号 0），中心是 A3（色号 2）
     const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
-    expect(editor.tool).toBe("background");
+    // 现在的「去背景」= 拿橡皮 + 填充：容差 10 才吃得掉整片背景
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    expect(editor.tool).toBe("fill");
     await tapCell(wrapper, 0, 0);
 
     const cells = loadedCells(editor);
@@ -1769,7 +1778,8 @@ describe("去背景工具", () => {
     const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 1, 1);
 
     const cells = loadedCells(editor);
@@ -1782,7 +1792,8 @@ describe("去背景工具", () => {
     const editor = useEditor();
     const before = Array.from(loadedCells(editor));
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
     // 一次点击 = 一条命令：撤销按钮此刻可用，点一下就整片回退
     expect(editor.canUndo).toBe(true);
@@ -1803,11 +1814,40 @@ describe("去背景工具", () => {
     const editor = useEditor();
     const session = useProjectSession();
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
 
     expect(session.dirty).toBe(false);
     expect(editor.canUndo).toBe(false);
+  });
+
+  it("填充：手里拿颜色时用精确同色，相邻的相近色格不动", async () => {
+    const wrapper = await mountGrid(FILL_NEARBY_FIXTURE, 3, 1);
+    const editor = useEditor();
+    editor.setCurrentColor(5); // 手里拿颜色 5（不是橡皮）
+
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    await tapCell(wrapper, 0, 0);
+
+    const cells = loadedCells(editor);
+    // 只有与第 0 格同色号且连通的那一片（就是它自己）变成 5；
+    // 第 1 格是相近色（ΔE76 8.60）、第 2 格同色号但不连通，两格都原样保留。
+    expect(cells[0]).toBe(5);
+    expect(cells[1]).toBe(141);
+    expect(cells[2]).toBe(140);
+  });
+
+  it("填充：手里拿橡皮时用容差，整片相近色的背景一次收干净", async () => {
+    const wrapper = await mountGrid(FILL_NEARBY_FIXTURE, 3, 1);
+    const editor = useEditor();
+
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    await tapCell(wrapper, 0, 0);
+
+    // 容差 10 把 141 也吃掉——这正是原来的「去背景」行为
+    expect(Array.from(loadedCells(editor))).toEqual([EMPTY, EMPTY, EMPTY]);
   });
 });
 

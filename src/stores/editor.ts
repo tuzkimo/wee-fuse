@@ -33,7 +33,7 @@ import { useProjectSession } from "@/stores/project";
  * `viewport`（只有 `onViewport` 那一刻需要它）、`selection`（框选高亮是拖动期间组件内的预览，
  * 控制者已裁决不落 store）。
  *
- * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 17 个动作
+ * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 18 个动作
  * 是任务 5（`PatternCanvas` / `PatternToolbar` / `PalettePanel` / `PalettePicker` 全部经 `EditorPage`
  * 以 props 拿值、以事件回调写值）与任务 6（`EditorPage` 的装配：载入成功 → `beginSession`、
  * 量到尺寸 → `onViewport`、保存 → `session.save()`）的接口面；`EditorTool` 同时是
@@ -42,12 +42,12 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 编辑器工具：画笔 / 框选 / 吸管 / 去背景（单指分工，规格 §6.1）。
+ * 编辑器工具：画笔 / 框选 / 吸管 / 填充（单指分工，规格 §6.1）。
  *
- * **去背景是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
- * 去背景则要按整片区域入账，先选工具再点画布。
+ * **填充是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
+ * 填充则按整片区域入账，先选工具再点画布（容差随手里拿的东西变，见 `EditorPage.onFill`）。
  */
-export type EditorTool = "brush" | "select" | "pick" | "background";
+export type EditorTool = "brush" | "select" | "pick" | "fill";
 
 const DEFAULT_TOOL: EditorTool = "brush";
 
@@ -273,9 +273,9 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "select" && next !== "pick" && next !== "background") {
+    if (next !== "brush" && next !== "select" && next !== "pick" && next !== "fill") {
       throw new Error(
-        `编辑器工具非法：${String(next)}（只允许 "brush" / "select" / "pick" / "background"）`,
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "select" / "pick" / "fill"）`,
       );
     }
     tool.value = next;
@@ -354,7 +354,7 @@ export const useEditor = defineStore("editor", () => {
 
   /**
    * 裸涂色：把 `indices` 里**值不等于 `color`** 的格子写成 `color`，**一条命令 = 一步撤销**。
-   * 填充工具（按下把连通区域涂成当前色）与去背景工具都走它入账。
+   * 填充工具（按下把连通区域涂成当前色）与原来的去背景都走它入账。
    *
    * 值域比 core 严一档（与 `setCurrentColor` 同一口径）：core 只认 `0..EMPTY`，这里还要求色号落在
    * 色卡内（`0..colorCount-1`），另允许 `EMPTY`；色卡外的坏值被放行会被 `Uint16Array` 静默截断成
@@ -481,7 +481,7 @@ export const useEditor = defineStore("editor", () => {
    * 撤销按钮从此永远停在初始的 `false`（点了撤销、格子确实回退了，按钮却一直是灰的）。
    * 这是一个**不报错的界面错误**，只有真机点一下才看得出来。
    *
-   * `void revision.value` 就是这个依赖：六个变更 `cells` 的动作、以及 `beginSession` / `reset`
+   * `void revision.value` 就是这个依赖：七个变更 `cells` 的动作、以及 `beginSession` / `reset`
    * 都会动 `revision`，所以历史栈一变，这两个 computed 一定失效重算。
    *
    * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：任务 5 的 `PatternToolbar` 以

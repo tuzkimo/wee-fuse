@@ -203,7 +203,7 @@ describe("beginSession：会话播种", () => {
 
 describe("reset：把会话清回初始态", () => {
   it("13 个字段逐一回默认，且**不碰 session**（`dirty` 留给保存流程）", () => {
-    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 17 个动作之一、页面卸载 / 换工程时
+    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 18 个动作之一、页面卸载 / 换工程时
     // 会走到。少了这条，「reset 漏清 viewInitialized」这类错误在屏幕上是「换工程后视图还是旧的」，
     // 不报错、只有真机看得出来。
     const { editor, session } = seedEditor();
@@ -734,7 +734,7 @@ describe("undo / redo（规格 §6.6）", () => {
   });
 });
 
-describe("只有改 cells 的六个动作会置脏", () => {
+describe("只有改 cells 的七个动作会置脏", () => {
   it("beginSession / setTool / setView / setShowGrid / setShowLabels / setCurrentColor / pickFromCell / onViewport 都不置脏", () => {
     const { editor, session } = seedEditor();
 
@@ -828,22 +828,24 @@ describe("端到端：载入一份真记录 → 涂抹 → 撤销", () => {
 });
 
 describe("去背景工具", () => {
-  it('setTool 接受 "background"', () => {
+  it('setTool 接受 "fill"', () => {
     const { editor } = seedEditor();
 
-    editor.setTool("background");
+    editor.setTool("fill");
 
-    expect(editor.tool).toBe("background");
+    expect(editor.tool).toBe("fill");
   });
 
   it("setTool 的错误信息列出四个工具并拒绝拼错的值", () => {
     const { editor } = seedEditor();
 
-    // 文案与判据必须同源：判据放行了 background、文案还写着三个工具，报错就会自相矛盾。
-    // 断言整份允许清单（不是只查 background），漏掉任何一个工具名都要红。
-    const allowed = /只允许 "brush" \/ "select" \/ "pick" \/ "background"/;
+    // 文案与判据必须同源：判据放行了 fill、文案还写着 background，报错就会自相矛盾。
+    // 断言整份允许清单（不是只查 fill），漏掉任何一个工具名都要红。旧名也必须响亮拒绝。
+    // 任务 3 / 4 会把清单收窄到三个 / 两个名字，这条到那时再改。
+    const allowed = /只允许 "brush" \/ "select" \/ "pick" \/ "fill"/;
     expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(allowed);
+    expect(() => editor.setTool("background" as unknown as EditorTool)).toThrow(allowed);
 
     expect(editor.tool).toBe("brush");
   });

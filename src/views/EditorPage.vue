@@ -4,8 +4,8 @@
 // 编辑器宿主页：只做「接线」——载入、播种 store、把四个展示组件的 props/emits 接起来、
 // 保存、未保存离开拦截、B1-8 重载、键盘撤销。**画与手势在 PatternCanvas，状态在 stores/editor.ts，
 // 视图数学在 core/pattern/view.ts**；本文件里不许出现第二份坐标数学或第二个 dirty 标志。
-// **去背景同样只接线**：出口多了一条「点一下去背景」，连通判定在 `core/pattern/background.ts`、
-// 入账在 `editor.eraseCells`，本页只把下标搬过去。
+// **填充同样只接线**：出口多了一条「点一下填充」，连通判定在 `core/pattern/background.ts`、
+// 入账在 `editor.paintCells`，本页只把下标与容差搬过去。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
@@ -195,21 +195,26 @@ function onPick(point: CellPoint): void {
 }
 
 /**
- * 去背景：点一下 → 求连通背景下标 → 交给 store 入账。
+ * 填充：点一下 → 求与它连通的目标区域 → 交给 store 入账。
  *
- * **判定在 core、入账在 store**，本页只做两件事之间的搬运：色卡的 Lab 表用页面已经持有的
- * `palette` 生成（store 按设计不持有色卡），单次点击一条命令、一步可撤销。
+ * **容差随手里拿的东西变**（规格 §8）：拿橡皮时用 `BACKGROUND_TOLERANCE`（照片背景有渐变残留，
+ * 容差能一次收干净，这正是原来的「去背景」）；拿颜色时用 `0`（精确同色）——孩子点一块色块期望的是
+ * 「这一整块同色的都变」，容差会误伤旁边看起来相近但色号不同的区域。
+ * 对擦除宽容、对涂色严格，因为吃过头是更坏的失败。
  */
-function onBackground(point: CellPoint): void {
+function onFill(point: CellPoint): void {
   const pattern = editor.pattern;
   if (pattern === null) return;
+  const color = editor.currentColor;
+  // 判定在 core、入账在 store，本页只做两件事之间的搬运：色卡的 Lab 表用页面已经持有的
+  // `palette` 生成（store 按设计不持有色卡），单次点击一条命令、一步可撤销。
   const indices = patternBackgroundIndices(
     pattern,
     createPaletteRuntime(palette).labs,
     point,
-    BACKGROUND_TOLERANCE,
+    color === EMPTY ? BACKGROUND_TOLERANCE : 0,
   );
-  editor.eraseCells(indices);
+  editor.paintCells(indices, color);
 }
 
 /**
@@ -585,7 +590,7 @@ function rerun(): void {
             @paint="onPaint"
             @select="onSelect"
             @pick="onPick"
-            @background="onBackground"
+            @fill="onFill"
           />
         </div>
 

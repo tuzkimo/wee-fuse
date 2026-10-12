@@ -59,7 +59,7 @@ const TOOLS: readonly { readonly tool: EditorTool; readonly label: string }[] = 
   { tool: "brush", label: "画笔" },
   { tool: "select", label: "框选" },
   { tool: "pick", label: "吸管" },
-  { tool: "background", label: "去背景" },
+  { tool: "fill", label: "填充" },
 ];
 
 /**

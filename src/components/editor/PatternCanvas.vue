@@ -61,7 +61,7 @@ const emit = defineEmits<{
   paint: [number[]];
   select: [Rect];
   pick: [CellPoint];
-  background: [CellPoint];
+  fill: [CellPoint];
 }>();
 
 const container = ref<HTMLDivElement | null>(null);
@@ -188,7 +188,7 @@ type ToolGesture =
   | { kind: "brush"; pointerId: number; last: CellPoint; preview: Set<number> }
   | { kind: "select"; pointerId: number; start: Point; rect: Rect | null }
   | { kind: "pick"; pointerId: number; cell: CellPoint }
-  | { kind: "background"; pointerId: number; cell: CellPoint };
+  | { kind: "fill"; pointerId: number; cell: CellPoint };
 
 interface ViewGesture {
   readonly ids: [number, number];
@@ -277,9 +277,9 @@ function startToolGesture(pointerId: number, point: Point): void {
     };
     return;
   }
-  if (props.tool === "background") {
+  if (props.tool === "fill") {
     // 与 `pick` 同形态：只在按下那一刻记格，拖动不改（见 finishToolGesture）。
-    toolGesture = { kind: "background", pointerId, cell };
+    toolGesture = { kind: "fill", pointerId, cell };
     return;
   }
   toolGesture = { kind: "pick", pointerId, cell };
@@ -359,7 +359,7 @@ function onPointerMove(event: PointerEvent): void {
     gesture.rect = cellRectFromScreen(gesture.start, point, props.view, gridSize());
     draw();
   }
-  // 吸管 / 去背景：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
+  // 吸管 / 填充：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
 }
 
 /** 工具手势的唯一出口：抬手（或捕获被无声丢失）才提交，一次手势 = 一条命令（§6.2）。 */
@@ -377,8 +377,8 @@ function finishToolGesture(gesture: ToolGesture, point: Point): void {
     if (rect !== null) emit("select", rect);
     return;
   }
-  if (gesture.kind === "background") {
-    emit("background", gesture.cell);
+  if (gesture.kind === "fill") {
+    emit("fill", gesture.cell);
     return;
   }
   emit("pick", gesture.cell);

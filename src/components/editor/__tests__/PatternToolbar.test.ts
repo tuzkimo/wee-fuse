@@ -30,7 +30,7 @@ const TOOL_BUTTONS: readonly (readonly [string, EditorTool])[] = [
   ["tool-brush", "brush"],
   ["tool-select", "select"],
   ["tool-pick", "pick"],
-  ["tool-background", "background"],
+  ["tool-fill", "fill"],
 ];
 
 describe("工具切换", () => {
@@ -47,7 +47,7 @@ describe("工具切换", () => {
   // 当前工具在界面上必须看得出来（用户不知道自己拿的是画笔还是吸管时，点一下就会涂错）。
   // aria-pressed 是这里唯一的外部可观察量：四个工具一起遍历，写死某一颗必红。
   it("当前工具那颗按钮 aria-pressed 为 true，其余三颗为 false", () => {
-    for (const current of ["brush", "select", "pick", "background"] as const) {
+    for (const current of ["brush", "select", "pick", "fill"] as const) {
       const wrapper = mountToolbar({ tool: current });
       for (const [testid, tool] of TOOL_BUTTONS) {
         expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-pressed")).toBe(
@@ -292,8 +292,8 @@ describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
 /** 五行分组：行 id → 该行应出现的 testid（顺序即 DOM 顺序）。产品口径见规格 §5.1。 */
 const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
   // C8 第 3 项：橡皮从调色板搬进工具行**尾部**（位置口径：工具挨着工具）。
-  // 去背景是第 4 个工具，排在吸管之后、橡皮（色槽按钮）之前。
-  ["tools", ["tool-brush", "tool-select", "tool-pick", "tool-background", "eraser"]],
+  // 填充是第 4 个工具，排在吸管之后、橡皮（色槽按钮）之前。
+  ["tools", ["tool-brush", "tool-select", "tool-pick", "tool-fill", "eraser"]],
   ["history", ["undo", "redo"]],
   ["display", ["toggle-grid", "toggle-labels"]],
   ["view", ["zoom-fit", "zoom-in", "zoom-out"]],
