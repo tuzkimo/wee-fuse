@@ -553,13 +553,14 @@ function rerun(): void {
           - `backOrHome` 内部走 `router.push` / `router.back`，所以离场守卫**照常生效**：有未保存
             改动时会被同一条页面内确认条拦下（`onBeforeRouteLeave` 那段就是那条守卫）——
             「改回首页」这一支与 `back()` 一样**不绕过**它（`EditorPageRouterLink.test.ts` 钉这一跳）。
-          - 触控目标 ≥44px（`min-h-11 min-w-11`）、`aria-label` 必给（箭头没有文字，读屏用户否则
+          - 触控目标 ≥56px（`min-h-14 min-w-14`，规格 §6.5 的硬下界；44px 是 Material 口径，
+            规格逐字否掉了它）、`aria-label` 必给（箭头没有文字，读屏用户否则
             听到一个没有名字的按钮；主规格 §6.4）。
         -->
         <button
           data-testid="editor-back"
           aria-label="返回"
-          class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-bead-sm border-4 border-bead-ink bg-bead-card text-[24px] text-bead-ink shadow-pop-sm active:translate-y-1 active:shadow-none"
+          class="inline-flex min-h-14 min-w-14 items-center justify-center rounded-bead-sm border-4 border-bead-ink bg-bead-card text-[24px] text-bead-ink shadow-pop-sm active:translate-y-1 active:shadow-none"
           @click="backOrHome(router)"
         >
           ←
@@ -613,7 +614,7 @@ function rerun(): void {
       -->
 
       <div v-if="editor.pattern" class="mx-4 mt-6 flex flex-col gap-4 md:mx-8 md:flex-row">
-        <div class="h-[60vh] min-h-64 flex-1 rounded bg-white p-3 shadow">
+        <div class="h-[60vh] min-h-64 flex-1 rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 shadow-pop-sm">
           <PatternCanvas
             :pattern="editor.pattern"
             :palette="palette"

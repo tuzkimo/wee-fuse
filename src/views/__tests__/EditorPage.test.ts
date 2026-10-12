@@ -1505,11 +1505,12 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
   it("返回箭头接的是 backOrHome：历史为空回图纸库、有上一页就退回去", async () => {
     const wrapper = await mountPage();
     const back = wrapper.get("[data-testid='editor-back']");
-    // 触控目标 ≥44px（主规格 §6.4，与工具栏同一口径的类名断言）。箭头本身没有文字标签，
+    // 触控目标 ≥56px（主规格 §6.5 的硬下界，与工具栏同一口径的类名断言）。箭头本身没有文字标签，
     // 所以必须有 `aria-label`，否则读屏用户听到的是一个没有名字的按钮。
+    // 44px（`min-h-11`）是 Material 的口径，规格逐字否掉了它：8 岁的手指精细动作更差。
     expect(back.attributes("aria-label")).toBe("返回");
-    expect(back.classes()).toContain("min-h-11"); // 2.75rem = 44px
-    expect(back.classes()).toContain("min-w-11");
+    expect(back.classes()).toContain("min-h-14"); // 3.5rem = 56px
+    expect(back.classes()).toContain("min-w-14");
 
     await back.trigger("click");
     expect(backMock).not.toHaveBeenCalled();
@@ -1662,6 +1663,30 @@ describe("顶栏：保存与未保存圆点（§7.4）", () => {
     expect(host?.classList.contains("md:block")).toBe(true);
     // 反证：隐藏类不在 h1 自己身上（否则上面那条理由是空话）
     expect(titles[0]?.classes()).not.toContain("hidden");
+  });
+});
+
+/**
+ * 画布宿主（画框那一层）必须是 token 表面：默认调色板（`bg-white` 等）、Tailwind 默认模糊投影
+ * （`shadow` / `shadow-sm|md|lg`）与裸圆角（`rounded` / `rounded-lg`）在本项目一律禁用——像素风要的
+ * 是硬投影（`shadow-pop-*`，零模糊）与 4px / 3px 两档描边。宿主没有 testid，锚点取 `editor-surface`
+ * （画布）的**直接父节点**：那一层是唯一由页面自己画的边框/底色。
+ */
+describe("画布宿主：token 表面", () => {
+  it("宿主用 bead token，且没有默认调色板 / 模糊投影 / 裸圆角", async () => {
+    const wrapper = await mountPage();
+    const host = wrapper.get("[data-testid='editor-surface']").element.parentElement;
+    const classes = host?.className ?? "";
+    expect(classes).toContain("bg-bead-card");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    expect(classes).toContain("rounded-bead-md");
+    expect(classes).toContain("shadow-pop-sm");
+    // 反证：违禁类一个都不许在。两条正则都带边界断言，`shadow-pop-sm` / `rounded-bead-md` 不会误伤
+    // （`shadow` 后面若不是 `-` 或词边界才算默认投影；`rounded` 后接 `-bead-` 同理）。
+    expect(classes).not.toMatch(/(?<![\w-])shadow(?:-(?:sm|md|lg))?(?![\w-])/);
+    expect(classes).not.toMatch(/(?<![\w-])rounded(?:-(?:lg|md|sm|full))?(?![\w-])/);
+    expect(classes).not.toContain("bg-white");
   });
 });
 
