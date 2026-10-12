@@ -460,6 +460,48 @@ describe("断点布局", () => {
 });
 
 /**
+ * 手机竖屏的单列排法（§7.3）：中栏块吸顶 → 选范围 → 参数，主按钮固定在底部安全区之上。
+ *
+ * 顺序**不能倒**：先裁剪后参数会让他调完参数还要往回滚才能看到结果。这里断言的是**DOM 顺序**
+ * （`setup-body` 的第一个子元素），不是 CSS `order`——CSS 顺序在 jsdom 里看不见，而 DOM 顺序既是
+ * 手机排法的实际依据（`space-y-6` 单列下没有 `order`），也被 `md:` 的 `order` 类接管。
+ */
+describe("手机竖屏排法（§7.3）", () => {
+  it("主按钮固定在底部，且内边距含安全区（Review Focus 1）", async () => {
+    window.innerWidth = 500;
+    const wrapper = await mountSetupBeforeGenerate();
+
+    const bar = wrapper.get("[data-testid='setup-action-bar']");
+    expect(bar.classes()).toContain("fixed");
+    expect(bar.classes()).toContain("inset-x-0");
+    expect(bar.classes()).toContain("bottom-0");
+    // `md` 以上必须让位给页头那颗（同屏两颗主按钮用户分不清哪颗是收尾）。
+    expect(bar.classes()).toContain("md:hidden");
+    // 安全区必须真的出现在 style 里（`viewport-fit=cover` 下才非零），写在注释或类名里不算。
+    expect(bar.attributes("style") ?? "").toContain("env(safe-area-inset-bottom)");
+    // 56px 的固定高（§6.5 的最小触控目标）。
+    expect(wrapper.get("[data-testid='setup-action-primary']").classes()).toContain("h-14");
+    // 页头那颗在手机上是隐形的——`fixed` 那颗才是手机上唯一可见的主按钮。
+    expect(wrapper.get("[data-testid='setup-primary']").classes()).toContain("max-md:hidden");
+  });
+
+  it("中栏块吸顶并排在选范围之前（顺序倒了 = 调完参数要往回滚）", async () => {
+    window.innerWidth = 500;
+    const wrapper = await mountSetupBeforeGenerate();
+
+    const children = wrapper.get("[data-testid='setup-body']").element.children;
+    expect(children[0].getAttribute("data-testid")).toBe("preview-pane");
+
+    const preview = wrapper.get("[data-testid='preview-pane']");
+    expect(preview.classes()).toContain("sticky");
+    expect(preview.classes()).toContain("top-0");
+    // `md` 下取消吸顶与固定高（平板上中栏是并排的中间一栏，不跟着页面滚）。
+    expect(preview.classes()).toContain("md:static");
+    expect(preview.classes()).toContain("md:h-auto");
+  });
+});
+
+/**
  * 中栏三态与顶栏主按钮（§7.3）。三态：还没生成过 = 裁剪预览；刚生成 = 结果卡片；
  * 生成后又改参数 = 一成不变（不变暗、不重算）。中栏的数据源是**上一次的结果**，不是实时预览。
  *

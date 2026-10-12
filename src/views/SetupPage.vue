@@ -408,7 +408,8 @@ function resetCrop(): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-bead-sand">
+  <!-- 手机上底部那颗 `fixed` 动作条会盖住内容：主体留出它的高度把最后一张卡片顶出来。 -->
+  <main class="min-h-screen bg-bead-sand pb-20 md:pb-0">
     <!--
       顶栏（§6.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
       主按钮两态（§7.3）：未生成「开始拼 ▶」（走现有生成）、已生成「完成 ✓」（走现有回家那条路）。
@@ -422,9 +423,14 @@ function resetCrop(): void {
         <PixelIcon name="back" :size="24" />
       </BeadButton>
       <h1 class="project-name flex-1 text-[24px] text-bead-ink md:text-[36px]">{{ draft.name }}</h1>
+      <!--
+        页头这颗只在平板上出现：手机上主按钮固定在底部安全区之上（下面那条动作条），
+        同屏两颗同名主按钮会让用户分不清哪颗是收尾。
+      -->
       <BeadButton
         data-testid="setup-primary"
         variant="primary"
+        class="max-md:hidden"
         :disabled="!showResult && (draft.busy || blockedReason !== '')"
         @click="onPrimary"
       >
@@ -443,13 +449,64 @@ function resetCrop(): void {
     <!--
       三栏（§7.3）：左 = 选区（`crop-pane`）、中 = 上一次的结果（`preview-pane`）、右 = 参数
       （`param-pane`）。**阶段不再互斥**：生成之后左右两栏仍在，这是「一屏做完」。
-      手机（<768px）还是单列纵向（任务 11 再排顺序 / 吸顶 / 底部固定动作条）。
       侧栏在 `md` 区间收窄、`lg` 才加宽：768~900px 三栏同屏时中栏不会被左右挤死（R30）。
+
+      手机（<768px）单列，顺序 **中栏 → 选范围 → 参数**：`preview-pane` 因而排在 DOM 首位
+      （单列下没有 `order`，DOM 顺序就是看到的顺序）；平板用 `md:order-*` 把它挪回中间。
+      顺序不能倒——先裁剪后参数会让他调完参数还要往回滚才能看到结果。
     -->
-    <div :class="isWide ? 'mt-6 flex gap-4 p-4' : 'mt-6 space-y-6 p-4'">
+    <div
+      data-testid="setup-body"
+      :class="isWide ? 'mt-6 flex gap-4 p-4' : 'mt-6 space-y-6 p-4'"
+    >
+      <!--
+        中栏（§7.3）：未生成 = 放大的裁剪预览（复用 `draft.preview`，不新算）+ 一行提示；
+        已生成 = 共用组件 `ResultPanel` + 尺寸 chip。背景是四处允许的深色看图底的其中一处。
+        `preview-pane` 是本任务新加的容器 testid；`result-pane` 仍挂在宿主这个 `<section>` 上。
+        手机吸顶且固定高 40vh，`md` 下两者都取消（平板上它是并排的中间一栏，不跟着页面滚）。
+      -->
+      <section
+        data-testid="preview-pane"
+        class="sticky top-0 h-[40vh] rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:min-h-[60vh] md:flex-1 md:min-w-0"
+        :style="boardDots"
+      >
+        <template v-if="showResult">
+          <section data-testid="result-pane" class="rounded-bead-md bg-bead-card p-4 md:p-6">
+            <ResultPanel
+              v-if="session.pattern !== null"
+              :pattern="session.pattern"
+              :palette="palette"
+              :is-new="resultIsNew"
+              :can-rerun="true"
+              :name="session.record?.meta.name ?? '图纸'"
+              :show-done="false"
+              @rerun="draft.setStage('edit')"
+              @edit="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
+              @ok="router.push({ name: 'home' })"
+            />
+          </section>
+          <p
+            v-if="sizeChip !== ''"
+            data-testid="size-chip"
+            class="mt-3 rounded-bead-sm border-3 border-bead-line-2 bg-bead-sand-3 px-4 py-2 text-[24px] text-bead-ink"
+          >
+            {{ sizeChip }}
+          </p>
+        </template>
+
+        <div v-else class="flex h-full flex-col items-center justify-center gap-4">
+          <canvas
+            ref="previewCanvas"
+            data-testid="preview-canvas"
+            class="max-h-full max-w-full rounded-bead-sm md:max-h-[45vh]"
+          ></canvas>
+          <p v-if="draft.preview !== null" class="text-[24px] text-bead-sand-2">点开始拼看看</p>
+        </div>
+      </section>
+
       <section
         data-testid="crop-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:w-[200px] md:shrink-0 lg:w-[236px]"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:w-[200px] md:shrink-0 lg:w-[236px]"
       >
         <div class="h-[40vh] min-h-[240px] md:h-[46vh]">
           <CropCanvas
@@ -504,53 +561,9 @@ function resetCrop(): void {
         </div>
       </section>
 
-      <!--
-        中栏（§7.3）：未生成 = 放大的裁剪预览（复用 `draft.preview`，不新算）+ 一行提示；
-        已生成 = 共用组件 `ResultPanel` + 尺寸 chip。背景是四处允许的深色看图底的其中一处。
-        `preview-pane` 是本任务新加的容器 testid；`result-pane` 仍挂在宿主这个 `<section>` 上。
-      -->
-      <section
-        data-testid="preview-pane"
-        class="min-h-[40vh] rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:min-h-[60vh] md:flex-1 md:min-w-0"
-        :style="boardDots"
-      >
-        <template v-if="showResult">
-          <section data-testid="result-pane" class="rounded-bead-md bg-bead-card p-4 md:p-6">
-            <ResultPanel
-              v-if="session.pattern !== null"
-              :pattern="session.pattern"
-              :palette="palette"
-              :is-new="resultIsNew"
-              :can-rerun="true"
-              :name="session.record?.meta.name ?? '图纸'"
-              :show-done="false"
-              @rerun="draft.setStage('edit')"
-              @edit="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
-              @ok="router.push({ name: 'home' })"
-            />
-          </section>
-          <p
-            v-if="sizeChip !== ''"
-            data-testid="size-chip"
-            class="mt-3 rounded-bead-sm border-3 border-bead-line-2 bg-bead-sand-3 px-4 py-2 text-[24px] text-bead-ink"
-          >
-            {{ sizeChip }}
-          </p>
-        </template>
-
-        <div v-else class="flex h-full flex-col items-center justify-center gap-4">
-          <canvas
-            ref="previewCanvas"
-            data-testid="preview-canvas"
-            class="max-h-[45vh] max-w-full rounded-bead-sm"
-          ></canvas>
-          <p v-if="draft.preview !== null" class="text-[24px] text-bead-sand-2">点开始拼看看</p>
-        </div>
-      </section>
-
       <section
         data-testid="param-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:w-[220px] md:shrink-0 lg:w-[262px]"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:w-[220px] md:shrink-0 lg:w-[262px]"
       >
         <ParamPanel
           v-if="draft.crop !== null"
@@ -571,6 +584,27 @@ function resetCrop(): void {
           @generate="generate"
         />
       </section>
+    </div>
+
+    <!--
+      手机底部动作条（§7.3）：`fixed` 之上是安全区。
+      `env(safe-area-inset-bottom)` **只在 `viewport-fit=cover` 下才非零**（`index.html` 的 meta），
+      所以它必须真的写成行内 `style`——写成类名不会被任何工具验证，写错了也看不出来（Review Focus 1）。
+    -->
+    <div
+      data-testid="setup-action-bar"
+      class="fixed inset-x-0 bottom-0 z-10 border-t-4 border-bead-ink bg-bead-sand-2 px-4 pt-3 md:hidden"
+      :style="{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }"
+    >
+      <BeadButton
+        data-testid="setup-action-primary"
+        variant="primary"
+        class="h-14 w-full"
+        :disabled="!showResult && (draft.busy || blockedReason !== '')"
+        @click="onPrimary"
+      >
+        {{ primaryLabel }}
+      </BeadButton>
     </div>
 
     <p
