@@ -1150,3 +1150,50 @@ describe("B5-25：那句「长按预览图存进相册」的提示只对浏览�
     inShell.unmount();
   });
 });
+
+/* ---------------- 任务 18：像素风换皮（§7.7 —— 只换皮，结构 / 文案 / testid 一律不动） ---------------- */
+
+/**
+ * 这一组**只钉「换皮」这一件事**：新外观真的落地、旧调色板真的清掉、触控目标到 56px。
+ * 分页数学、时序、账本、落盘路径的判别力在文件前面的各组里，这里一条都不重复。
+ * 上面那 36 处 `.text()` 断言（含 `export-close` 的 `←`、四支状态文案、空图纸说明）**一个字都没改**。
+ */
+describe("任务 18：打印面板只换皮（§7.7）", () => {
+  it("打印面板的按钮换成了像素样式，但结构与文案一字未动（§7.7）", async () => {
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='print-save-all']").classes().join(" ")).toContain("border-bead-ink");
+    expect(wrapper.find(".bg-slate-900").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("Tailwind 默认调色板与 1px 边框一个不留（§6.1 / §6.3）", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    // 渲染出来的 DOM 里任何节点都不许带默认调色板类（`slate-*` / `amber-*` / `white` / `black`）
+    const html = wrapper.html();
+    expect(/-(slate|gray|zinc|amber|red|blue|green)-[0-9]/.test(html)).toBe(false);
+    expect(/\bbg-(white|black)\b/.test(html)).toBe(false);
+    expect(/\btext-(white|black)\b/.test(html)).toBe(false);
+    // 1px 边框（`border` 无宽度前缀）与 2px 不出现：像素风只有 4px（标准）与 3px（小元素）
+    expect(wrapper.find("[data-testid='export-panel'] .border").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("R35：全部按钮的触控目标都到 56px（旧的 44px 已作废）", async () => {
+    const wrapper = mountPanel(printOverrides());
+    await flushPromises();
+    // 圆 / 方图标按钮（返回 + 翻页）走 `BeadButton` 的 icon 变体：56×56
+    for (const id of ["export-close", "print-page-prev", "print-page-next"]) {
+      const classes = wrapper.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(classes, id).toContain("min-h-14");
+      expect(classes, id).toContain("min-w-14");
+    }
+    // 文字按钮（四个选项 + 一键保存）也要 56px 高下界
+    for (const id of ["print-board-29", "print-board-58", "print-paper-a4", "print-paper-a3", "print-save-all"]) {
+      const classes = wrapper.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(classes, id).toContain("min-h-14");
+    }
+    wrapper.unmount();
+  });
+});

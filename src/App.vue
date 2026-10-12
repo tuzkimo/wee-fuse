@@ -5,6 +5,7 @@
 // 任务 7 的生命周期装配（`useShellLifecycle()`）加在这两行旁边。
 import { useShellLifecycle } from "@/composables/useShellLifecycle";
 import { useShareIntake } from "@/composables/useShareIntake";
+import BeadButton from "@/components/ui/BeadButton.vue";
 
 const share = useShareIntake();
 // 壳里的生命周期（规格 §5.5.1 / §5.5.2：返回键三分支 + 退出请求）。**同样必须在 setup 顶层调用**：
@@ -23,23 +24,19 @@ useShellLifecycle();
     v-if="share.message.value !== ''"
     data-testid="share-banner"
     role="status"
-    class="fixed inset-x-0 bottom-0 z-50 bg-amber-50 p-4 text-base text-amber-900"
+    class="fixed inset-x-0 bottom-0 z-50 flex flex-wrap items-center gap-3 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
   >
     {{ share.message.value }}
-    <button
+    <BeadButton
       v-if="share.pending.value !== null"
       data-testid="share-retry"
-      class="ml-3 rounded border border-amber-400 px-3 py-1"
+      variant="secondary"
       @click="share.retry()"
     >
       继续
-    </button>
-    <button
-      data-testid="share-dismiss"
-      class="ml-2 rounded border border-amber-400 px-3 py-1"
-      @click="share.dismiss()"
-    >
+    </BeadButton>
+    <BeadButton data-testid="share-dismiss" variant="secondary" @click="share.dismiss()">
       知道了
-    </button>
+    </BeadButton>
   </p>
 </template>

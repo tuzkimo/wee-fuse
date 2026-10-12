@@ -1120,4 +1120,34 @@ describe("App.vue 的分享装配", () => {
 
     expect(spies.unbind).toHaveBeenCalledTimes(1);
   });
+
+  it("分享提示条是底部卡片：warn 底 + warn 字 + 4px ink 描边，role=status 与两个按钮都在", async () => {
+    // 任务 18（§7.8）：提示条换成 bead 提示卡片，**role 与三个 testid 一个不动**。
+    const spies = inboxSpies({ supported: true, file: FILE });
+    setPlatform(spies.platform);
+    stubDecode();
+    routeState.name = "editor";
+    useProjectSession().markDirty();
+
+    const wrapper = mountApp();
+    await flushPromises();
+
+    const banner = wrapper.get("[data-testid='share-banner']");
+    expect(banner.attributes("role")).toBe("status");
+    const classes = banner.classes().join(" ");
+    expect(classes).toContain("bg-bead-warn-bg");
+    expect(classes).toContain("text-bead-warn-ink");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    // 默认调色板（`amber-*`）清掉了
+    expect(classes).not.toContain("amber");
+    // 两个按钮都在，且各自是可点的 56px 触控目标（R35）
+    expect(banner.find("[data-testid='share-retry']").exists()).toBe(true);
+    expect(banner.find("[data-testid='share-dismiss']").exists()).toBe(true);
+    for (const id of ["share-retry", "share-dismiss"]) {
+      const buttonClasses = banner.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(buttonClasses, id).toContain("min-h-14");
+    }
+    wrapper.unmount();
+  });
 });
