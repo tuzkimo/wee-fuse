@@ -1690,6 +1690,27 @@ describe("画布宿主：token 表面", () => {
   });
 });
 
+/**
+ * 调色板右栏宽（§7.4）：面板自己已经设了 `md:w-[250px]`（`PalettePanel.test.ts` 钉住），
+ * 但**列宽由页面这层包裹 div 决定**——两处不一致时右栏会多出 ~70px 死白，
+ * 而面板与页面各自看都正确、谁都不报错（只能靠两张表对读）。
+ *
+ * 宿主同样没有 testid，锚点取法与「画布宿主」那条一致：从 `palette-current` 最近的 `section`
+ * （面板根）取**直接父节点**。反证 `md:w-80` 不在：否则这条只挡「新的宽度类被删」，
+ * 挡不住旧的 320px 回来。
+ */
+describe("调色板右栏宽度与面板同步（§7.4）", () => {
+  it("包裹层是 md:w-[250px]，不是旧的 md:w-80", async () => {
+    const wrapper = await mountPage();
+    const column = wrapper
+      .get("[data-testid='palette-current']")
+      .element.closest("section")?.parentElement;
+    const classes = (column?.className ?? "").split(/\s+/);
+    expect(classes).toContain("md:w-[250px]");
+    expect(classes).not.toContain("md:w-80");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 长工程名不撑宽页面（B6 任务 2）。标题在顶栏的 `flex` 容器里：`h1` 既没有截断也没有断行
 // 约束，而文件名派生出的名字是无空格长串 ⇒ 页面被横向撑开、手机上要左右滑。

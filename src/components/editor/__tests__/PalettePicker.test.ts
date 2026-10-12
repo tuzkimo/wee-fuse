@@ -191,6 +191,19 @@ describe("色值与关闭", () => {
     expect(classes).toContain("text-[24px]"); // 1.5rem = 24px
   });
 
+  // 【修复轮 1】§7.4：选择器是 3 列。平板右栏只有 250px（减卡片 4px 描边与 p-3 后 ≈ 218px 可用），
+  // 6×56px + 5×4px gap ≈ 356px 会**重叠**；3 列（3×56 + 2×4 = 176px）才放得下。
+  // 手机视口更窄、6 列同样放不下，但 250px 的 3 列在 360px 上又太浪费，故窄屏取 5 列。
+  it("平板 3 列、手机 5 列，两个网格都是（§7.4）", () => {
+    const wrapper = mountPicker({ palette: SCRAMBLED, usedIndices: [0, 2] });
+    const grids = wrapper.findAll(".grid");
+    expect(grids.length).toBeGreaterThan(0);
+    for (const grid of grids) {
+      expect(grid.classes()).toContain("grid-cols-5");
+      expect(grid.classes()).toContain("md:grid-cols-3");
+    }
+  });
+
   // 【任务 14 新增】§7.4：选择器是像素覆盖层卡片（`bead-card` 底 + 4px `bead-ink` 描边 +
   // 零模糊大投影）。四条缺一不可：只断言背景时，「卡片没有描边/投影」照样绿。
   it("选择器是像素覆盖层卡片（bg-bead-card + border-4 border-bead-ink + shadow-pop-lg）", () => {

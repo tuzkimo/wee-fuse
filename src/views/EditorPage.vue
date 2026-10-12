@@ -633,7 +633,7 @@ function rerun(): void {
           />
         </div>
 
-        <div class="space-y-4 md:w-80">
+        <div class="space-y-4 md:w-[250px]">
           <PalettePanel
             :palette="palette"
             :usages="usages"

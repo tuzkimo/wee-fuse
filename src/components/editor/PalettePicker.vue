@@ -87,8 +87,10 @@ const usedItems = computed(() =>
 
     <div v-if="usedItems.length > 0" class="mt-3">
       <h3 class="text-[24px] text-bead-ink">已用色</h3>
-      <!-- 手机上 6×56px 会溢出 360px 视口（含卡片的 4px 描边与 p-3）：窄屏 5 列、平板 6 列。 -->
-      <div class="mt-1 grid grid-cols-5 gap-1 md:grid-cols-6">
+      <!-- 平板右栏只有 250px（减卡片 4px 描边与 p-3 后 ≈ 218px 可用）：6×56px + 5×4px gap
+           ≈ 356px 会重叠，§7.4 定的是 3 列（3×56 + 2×4 = 176px）；手机视口更窄、6 列同样放不下，
+           但 3 列在 360px 上太浪费，故窄屏取 5 列（5×56 + 4×4 = 296px）。 -->
+      <div class="mt-1 grid grid-cols-5 gap-1 md:grid-cols-3">
         <button
           v-for="item in usedItems"
           :key="item.index"
@@ -111,7 +113,7 @@ const usedItems = computed(() =>
       class="mt-3"
     >
       <h3 class="text-[24px] text-bead-ink">{{ group.letter }} 色系</h3>
-      <div class="mt-1 grid grid-cols-5 gap-1 md:grid-cols-6">
+      <div class="mt-1 grid grid-cols-5 gap-1 md:grid-cols-3">
         <button
           v-for="color in group.colors"
           :key="color.code"
