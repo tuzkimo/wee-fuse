@@ -778,10 +778,11 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
       removeBackground: false,
     });
 
-    // ③（续）产物尺寸与刚才摘要说的是同一份：44 × 58
+    // ③（续）产物尺寸与刚才摘要说的是同一份：44 × 58。**D1/§11.1**：`result-size` 已删除，
+    // 尺寸改由宿主中栏的 `size-chip` 承载（任务 10 放的，读的仍是**产物自身**）。
     expect(record?.doc.width).toBe(44);
     expect(record?.doc.height).toBe(58);
-    expect(wrapper.get("[data-testid='result-size']").text()).toContain("成品 44 × 58 颗");
+    expect(wrapper.get("[data-testid='size-chip']").text()).toContain("44 × 58");
   });
 
   it("首次生成的工程名按**所选文件名**派生（常量或写死字符串在这里是红的）", async () => {
@@ -1315,7 +1316,10 @@ describe("保存失败与重试", () => {
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("保存失败");
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("磁盘已满");
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
-    expect(wrapper.get("[data-testid='result-stats']").text()).toContain("实际用了");
+    // **D1/§11.1**：`result-stats` 节点已删除（文字统计不给孩子看），这一行改成钉结果卡片自己
+    // 那两个存活节点——结构断言比读一行文字更强：卡片没渲染就没有它们。
+    expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-save-state']").exists()).toBe(true);
     expect(await real.list()).toHaveLength(0);
 
     // ② 重试是唯一的出路（库里此刻没有这条记录，改名/进编辑器都还不存在）
@@ -1446,7 +1450,7 @@ describe("保存失败与重试", () => {
 });
 
 describe("结果阶段", () => {
-  it("首次生成显示豆图预览、用色数与「已保存到图纸库」（新建，不是覆盖）", async () => {
+  it("首次生成显示豆图预览与「已保存到图纸库」（新建，不是覆盖）", async () => {
     stubPlatform();
     seedDraft();
 
@@ -1459,7 +1463,8 @@ describe("结果阶段", () => {
     // 说「已更新」是假陈述（规格 §6.2 的意图正是让用户分清新建还是覆盖）。覆盖那一支见下一条。
     expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已保存到图纸库");
     expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
-    expect(wrapper.get("[data-testid='result-stats']").text()).toContain("实际用了");
+    // 用色数 / 豆数不再显示：`result-stats` 已按 §11.1 删除（§7.5 的裁定：文字统计是给家长的，
+    // 不由结果页承载）；本仓不再有别的节点能读出它，所以这里只钉"卡片渲染了"。
   });
 
   it("第二次生成（就地重跑）显示「已更新这张图纸」——文案按本次是新建还是覆盖分支", async () => {
@@ -1497,8 +1502,12 @@ describe("结果阶段", () => {
    *
    * 因此后半段改到**数据层**观察同一件事：回编辑阶段把长边改成 116，摘要（预测）当场变成
    * 116 × 87，而库里那份产物的 `doc` 仍是 58 × 44——「改参数不动已生成的那一份」照旧被判死。
+   *
+   * **D1/§11.1**：`ResultPanel` 的 `result-size` 三行已删除，屏幕上的尺寸改由宿主中栏的
+   * `size-chip` 承载（任务 10 放的，`session.pattern` = 产物自身，与参数面板同一组 core 换算）。
+   * 本用例的屏幕侧读数因此改读 chip，判据（产物 vs 预测）一字未改。
    */
-  it("结果面板的尺寸三行走**产物自身**，且改参数不动已生成的那一份（§6.3）", async () => {
+  it("中栏尺寸读**产物自身**，且改参数不动已生成的那一份（§6.3）", async () => {
     stubPlatform();
     seedDraft(); // 选区 400×300、rotation 0、长边 58
 
@@ -1508,17 +1517,16 @@ describe("结果阶段", () => {
     await flushPromises();
 
     // 产物：400×300 的选区 + 长边 58 → 58 × 44 颗（`computeGridSize(400,300,58)`，真流水线算的）
-    // 厘米 / 板数走 core 的同一组换算：58 颗 = 29.0 厘米、44 颗 = 22.0 厘米，
-    // 板数 ceil(58/29)=2 × ceil(44/29)=2 = 4 块。
-    const text = wrapper.get("[data-testid='result-size']").text();
-    expect(text).toContain("成品 58 × 44 颗");
-    expect(text).toContain("约 29.0 × 22.0 厘米");
-    expect(text).toContain("需要 2 × 2 = 4 块板");
+    // 厘米 / 板数走 core 的同一组换算：58 颗 = 29.0 厘米；板数 ceil(58/29)=2 × ceil(44/29)=2 = 4 块。
+    const text = wrapper.get("[data-testid='size-chip']").text();
+    expect(text).toContain("58 × 44");
+    expect(text).toContain("约 29.0 厘米");
+    expect(text).toContain("4 块板");
 
     const store = (await import("@/services/projectStore")).getProjectStore();
     const id = (await store.list())[0]!.id;
 
-    // 回编辑阶段改长边：预测值当场变，已落盘的那一份不动（结果面板读的就是它）。
+    // 回编辑阶段改长边：预测值当场变，已落盘的那一份不动（中栏 chip 读的就是它）。
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='long-side']").setValue("116");

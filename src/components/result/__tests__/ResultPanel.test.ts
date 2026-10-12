@@ -50,19 +50,66 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
   });
 }
 
-describe("ResultPanel（C8：四颗按钮、没有打印）", () => {
-  it("四颗按钮的顺序与文案：重做 / 查看 / 编辑 / OK", () => {
-    const texts = mountPanel().findAll("button").map((button) => button.text());
-    expect(texts).toEqual(["重做", "查看", "编辑", "OK"]);
+describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成，没有打印）", () => {
+  it("四颗动作按钮的 DOM 顺序：继续涂 / 看施工图 / 重做 / 完成", () => {
+    // 图形按钮没有可见文字，「顺序」由 testid 判死（旧版比的是文字，D1 里文字没了）。
+    const ids = mountPanel()
+      .findAll("button")
+      .map((button) => button.attributes("data-testid"));
+    expect(ids).toEqual(["open-editor", "result-view-sheet", "result-rerun", "result-ok"]);
   });
 
-  it("编辑是白底、OK 是黑底（主操作是「结束回家」）", () => {
+  it("成品预览在上半屏的深色板底 + 板孔点阵上居中（§7.5）", () => {
     const wrapper = mountPanel();
-    const edit = wrapper.get("[data-testid='open-editor']");
+    const board = wrapper.get("[data-testid='result-preview']").element.parentElement as HTMLElement;
+    expect(board.classList.contains("bg-bead-board")).toBe(true);
+    expect(board.getAttribute("style") ?? "").toContain("radial-gradient");
+    expect(board.classList.contains("items-center")).toBe(true);
+    expect(board.classList.contains("justify-center")).toBe(true);
+    expect(board.classList.contains("h-[55vh]")).toBe(true);
+  });
+
+  it("三颗动作按钮是 bead-card 底 64px 图形按钮，完成是通栏 accent 大按钮（36px 字 + shadow-pop-lg）", () => {
+    const wrapper = mountPanel();
+    for (const id of ["open-editor", "result-view-sheet", "result-rerun"] as const) {
+      const button = wrapper.get(`[data-testid='${id}']`);
+      expect(button.classes()).toContain("bg-bead-card");
+      expect(button.classes()).not.toContain("bg-bead-accent");
+      // 64px 高（§7.5）：比 BeadButton 自己的 56px 下界更高。
+      expect(button.classes()).toContain("h-16");
+      expect(button.find("svg").exists()).toBe(true);
+      // 图形按钮：可见文字为空，名字只在 aria-label 上。
+      expect(button.text()).toBe("");
+    }
     const ok = wrapper.get("[data-testid='result-ok']");
-    expect(edit.classes()).not.toContain("bg-slate-900");
-    expect(edit.classes()).toContain("border-slate-300");
-    expect(ok.classes()).toContain("bg-slate-900");
+    expect(ok.classes()).toContain("bg-bead-accent");
+    expect(ok.classes().join(" ")).toContain("shadow-pop-lg");
+    expect(ok.classes()).toContain("w-full");
+    expect(ok.get("span").classes()).toContain("text-[36px]");
+  });
+
+  it("文字统计已删除，成品预览与保存状态还在", () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find("[data-testid='result-stats']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-size']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-save-state']").exists()).toBe(true);
+  });
+
+  it("四个动作按钮都在，且都带 aria-label", () => {
+    const wrapper = mountPanel();
+    for (const [testid, label] of [
+      ["open-editor", "继续涂"],
+      ["result-view-sheet", "看施工图"],
+      ["result-rerun", "重做"],
+      ["result-ok", "完成"],
+    ] as const) {
+      expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-label")).toBe(label);
+    }
+  });
+
+  it("没有「存到相册」这个动作（§7.5 的裁定）", () => {
+    expect(mountPanel().text()).not.toContain("相册");
   });
 
   it("没有「打印」按钮（打印从查看层里进）", () => {

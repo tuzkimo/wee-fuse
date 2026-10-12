@@ -13,6 +13,8 @@
 import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ResultPanel from "@/components/result/ResultPanel.vue";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import { seedRerunDraft } from "@/services/rerunDraft";
 import { getBuiltinPalette } from "@/services/palette";
 import { useDraft } from "@/stores/draft";
@@ -45,17 +47,17 @@ function rerun(): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 p-4 md:p-8">
+  <main class="min-h-screen bg-bead-sand p-4 md:p-8">
     <header class="flex flex-wrap items-center gap-3">
-      <button
+      <BeadButton
         data-testid="result-back"
+        variant="icon"
         aria-label="返回"
-        class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
         @click="router.push({ name: 'home' })"
       >
-        ←
-      </button>
-      <h1 class="text-2xl font-bold text-slate-900">修改成功</h1>
+        <PixelIcon name="back" :size="24" />
+      </BeadButton>
+      <h1 class="text-[24px] text-bead-ink md:text-[36px]">修改成功</h1>
     </header>
 
     <!--
