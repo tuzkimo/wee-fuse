@@ -10,7 +10,7 @@ import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 
 /**
- * 手势用例断言的是**最终发出的事件**（paint / select / pick / update:view / measure）与**平台状态**
+ * 手势用例断言的是**最终发出的事件**（paint / pick / fill / update:view / measure）与**平台状态**
  * （画布尺寸、层的尺寸、`putImageData` 的实参），不是画面：happy-dom 的 canvas 是桩，
  * 像素断言在这里一律恒真，绝不写（B1-2 的教训）。
  *
@@ -28,7 +28,7 @@ import PatternCanvas from "@/components/editor/PatternCanvas.vue";
  *   · 32×32 + 视图 `{24, -200, -200}`：图纸（768px）比 400×400 的视口大，平移 / 缩放都可观察；
  *     格坐标 = `floor((屏幕坐标 + 200) / 24)`。
  *   · 8×8 + 视图 `{24, 0, 0}`：图纸只占屏幕左上角 192×192，格坐标 = `floor(屏幕坐标 / 24)`，
- *     手算框选矩形、吸管格、图纸外的一点都用它。
+ *     手算吸管格、图纸外的一点都用它。
  * 容器与画布拿到**不同的盒子**（400×300 / 111×222），所以「量的是容器」这件事有判别力。
  */
 
@@ -215,7 +215,7 @@ function stubContext(): void {
   });
 }
 
-/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（框选与吸管用 `strokeRect`，色号用 `fillText`）。 */
+/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（吸管用 `strokeRect`，色号用 `fillText`）。 */
 function moveToCount(): number {
   return ops.filter((op) => op === "moveTo").length;
 }

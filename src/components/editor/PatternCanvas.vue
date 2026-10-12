@@ -10,7 +10,6 @@
 import { ref, watch } from "vue";
 import { screenToOriented, type Point, type Size, type ViewTransform } from "@/core/crop/view";
 import type { RGB } from "@/core/color/space";
-import type { Rect } from "@/core/image/types";
 import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
@@ -18,7 +17,6 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import {
   CELL_LABEL_MIN_CELL_PX,
   GRID_LINE_MIN_CELL_PX,
-  cellRectFromScreen,
   cellsAlongLine,
   panCellView,
   visibleCellRange,
@@ -35,7 +33,7 @@ const TILE_LIGHT = "#f8fafc";
 const TILE_DARK = "#eef2f7";
 /** `createPattern` 不可用时的纯浅灰底（规格 §5.5 的退化分支）。 */
 const EMPTY_BACKDROP = "#f1f5f9";
-/** 选中色号的高亮填充（与框选高亮同族）。 */
+/** 选中色号的高亮填充。 */
 const SELECT_HIGHLIGHT = "rgba(37, 99, 235, 0.45)";
 
 /** `visibleCellRange` 的非空返回值：闭区间，两端都含。 */
@@ -59,7 +57,6 @@ const emit = defineEmits<{
   measure: [Size];
   "update:view": [ViewTransform];
   paint: [number[]];
-  select: [Rect];
   pick: [CellPoint];
   fill: [CellPoint];
 }>();
@@ -186,7 +183,6 @@ function syncLayer(): void {
 
 type ToolGesture =
   | { kind: "brush"; pointerId: number; last: CellPoint; preview: Set<number> }
-  | { kind: "select"; pointerId: number; start: Point; rect: Rect | null }
   | { kind: "pick"; pointerId: number; cell: CellPoint }
   | { kind: "fill"; pointerId: number; cell: CellPoint };
 
@@ -268,15 +264,6 @@ function startToolGesture(pointerId: number, point: Point): void {
     };
     return;
   }
-  if (props.tool === "select") {
-    toolGesture = {
-      kind: "select",
-      pointerId,
-      start: point,
-      rect: cellRectFromScreen(point, point, props.view, gridSize()),
-    };
-    return;
-  }
   if (props.tool === "fill") {
     // 与 `pick` 同形态：只在按下那一刻记格，拖动不改（见 finishToolGesture）。
     toolGesture = { kind: "fill", pointerId, cell };
@@ -355,26 +342,17 @@ function onPointerMove(event: PointerEvent): void {
     draw();
     return;
   }
-  if (gesture.kind === "select") {
-    gesture.rect = cellRectFromScreen(gesture.start, point, props.view, gridSize());
-    draw();
-  }
   // 吸管 / 填充：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
 }
 
 /** 工具手势的唯一出口：抬手（或捕获被无声丢失）才提交，一次手势 = 一条命令（§6.2）。 */
-function finishToolGesture(gesture: ToolGesture, point: Point): void {
+function finishToolGesture(gesture: ToolGesture): void {
   if (gesture.kind === "brush") {
     const indices = [...gesture.preview];
     // 不可达，**无判别力用例**（有意不写）：`startToolGesture` 建的画笔手势 `preview` 必然 ≥1 格，
     // 而手势被丢弃时是**整体置 `null`**、不是清空集合——所以生产路径上 `indices` 不可能为空。
     // 删掉它（探针 P2）没有任何用例会红，补一条只会得到恒真断言。
     if (indices.length > 0) emit("paint", indices);
-    return;
-  }
-  if (gesture.kind === "select") {
-    const rect = cellRectFromScreen(gesture.start, point, props.view, gridSize());
-    if (rect !== null) emit("select", rect);
     return;
   }
   if (gesture.kind === "fill") {
@@ -400,7 +378,7 @@ function onPointerUp(event: PointerEvent): void {
   const gesture = toolGesture;
   if (gesture === null || gesture.pointerId !== event.pointerId) return;
   toolGesture = null;
-  finishToolGesture(gesture, localPoint(event));
+  finishToolGesture(gesture);
   draw();
 }
 
@@ -589,22 +567,8 @@ function drawSelected(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: n
   }
 }
 
-/** 框选高亮：一个矩形，不逐格遍历（越出视口的部分由画布自己裁掉）。 */
-function drawSelection(ctx: CanvasRenderingContext2D, cellPx: number): void {
-  const gesture = toolGesture;
-  if (gesture === null || gesture.kind !== "select" || gesture.rect === null) return;
-  ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(
-    props.view.offsetX + gesture.rect.x * cellPx,
-    props.view.offsetY + gesture.rect.y * cellPx,
-    gesture.rect.width * cellPx,
-    gesture.rect.height * cellPx,
-  );
-}
-
 /** 吸管命中格的描边（§5.4）。**有意不写用例**（探针 P8）：`strokeRect` 在本文件里没有被任何断言
- * 读过（框选高亮与它是同一族的纯观感绘制），删掉它拿不出能证明它承重的变异。 */
+ * 读过（它是纯观感绘制），删掉它拿不出能证明它承重的变异。 */
 function drawPick(ctx: CanvasRenderingContext2D, cellPx: number): void {
   const gesture = toolGesture;
   if (gesture === null || gesture.kind !== "pick") return;
@@ -658,7 +622,6 @@ function draw(): void {
   if (props.showLabels && cellPx >= CELL_LABEL_MIN_CELL_PX) drawLabels(ctx, range, cellPx);
   drawPending(ctx, range, cellPx);
   drawSelected(ctx, range, cellPx);
-  drawSelection(ctx, cellPx);
   drawPick(ctx, cellPx);
 }
 

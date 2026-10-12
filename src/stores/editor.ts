@@ -1,8 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, markRaw, ref } from "vue";
 import { clampView, type Size, type ViewTransform } from "@/core/crop/view";
-import type { Rect } from "@/core/image/types";
-import { buildPaintCommand, buildRectPaintCommand, cellAt, indicesWithValues } from "@/core/pattern/edit";
+import { buildPaintCommand, cellAt, indicesWithValues } from "@/core/pattern/edit";
 import { EditHistory } from "@/core/pattern/history";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { defaultCellView } from "@/core/pattern/view";
@@ -30,10 +29,9 @@ import { useProjectSession } from "@/stores/project";
  *
  * 不持有的东西：`Palette` 本体（面板的 props 由页面从 `getBuiltinPalette()` 取；本 store 只要一个
  * 色数上界来守 `currentColor`，否则 `EMPTY` 与越界下标共用 `Uint16` 值域、会静默涂出另一个色号）、
- * `viewport`（只有 `onViewport` 那一刻需要它）、`selection`（框选高亮是拖动期间组件内的预览，
- * 控制者已裁决不落 store）。
+ * `viewport`（只有 `onViewport` 那一刻需要它）。
  *
- * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 18 个动作
+ * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 17 个动作
  * 是任务 5（`PatternCanvas` / `PatternToolbar` / `PalettePanel` / `PalettePicker` 全部经 `EditorPage`
  * 以 props 拿值、以事件回调写值）与任务 6（`EditorPage` 的装配：载入成功 → `beginSession`、
  * 量到尺寸 → `onViewport`、保存 → `session.save()`）的接口面；`EditorTool` 同时是
@@ -42,12 +40,12 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 编辑器工具：画笔 / 框选 / 吸管 / 填充（单指分工，规格 §6.1）。
+ * 编辑器工具：画笔 / 吸管 / 填充（单指分工，规格 §6.1）。
  *
  * **填充是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
  * 填充则按整片区域入账，先选工具再点画布（容差随手里拿的东西变，见 `EditorPage.onFill`）。
  */
-export type EditorTool = "brush" | "select" | "pick" | "fill";
+export type EditorTool = "brush" | "pick" | "fill";
 
 const DEFAULT_TOOL: EditorTool = "brush";
 
@@ -86,25 +84,6 @@ function requireColorCount(next: number): number {
     throw new Error(`色卡色数必须是 1–${EMPTY} 的整数（当前 ${String(next)}）`);
   }
   return next;
-}
-
-/**
- * 框选矩形：分量必须**有限**、宽高必须 **≥1**。
- *
- * **越界不是错误**——`buildRectPaintCommand` 自己把超界部分裁掉，而框选拖动**经常**拖出图纸边界
- * （想框到最后一列就会拖过头）。这里只拒绝退化与非有限的矩形：`NaN` 会被 `Math.max` / `Math.min`
- * 一路透传成一个空矩形，点击看起来「没反应」，属于不报错、只产出错误结果的路径。
- */
-function requireRect(rect: Rect): Rect {
-  if (!Number.isFinite(rect.x)) throw new Error(`框选矩形 x 必须是有限数字（当前 ${String(rect.x)}）`);
-  if (!Number.isFinite(rect.y)) throw new Error(`框选矩形 y 必须是有限数字（当前 ${String(rect.y)}）`);
-  if (!Number.isFinite(rect.width) || rect.width < 1) {
-    throw new Error(`框选矩形宽度必须是 ≥1 的有限数字（当前 ${String(rect.width)}）`);
-  }
-  if (!Number.isFinite(rect.height) || rect.height < 1) {
-    throw new Error(`框选矩形高度必须是 ≥1 的有限数字（当前 ${String(rect.height)}）`);
-  }
-  return rect;
 }
 
 /**
@@ -273,9 +252,9 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "select" && next !== "pick" && next !== "fill") {
+    if (next !== "brush" && next !== "pick" && next !== "fill") {
       throw new Error(
-        `编辑器工具非法：${String(next)}（只允许 "brush" / "select" / "pick" / "fill"）`,
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "pick" / "fill"）`,
       );
     }
     tool.value = next;
@@ -334,20 +313,6 @@ export const useEditor = defineStore("editor", () => {
     // 局部量把元素类型收回来：运行期的形态守卫一个不少，类型面的检查也一件不少。
     const safeIndices: readonly number[] = indices;
     const command = buildPaintCommand(current.cells, safeIndices, currentColor.value, "画笔");
-    if (command === null) return;
-    publishChange(history.value.commit(current.cells, command));
-  }
-
-  /**
-   * 框选：把矩形区域设成当前色，同样一条命令、一次撤销（规格 §6.4）。
-   *
-   * 当前色为 `EMPTY` 时等价于「整块抠掉」。**工具与当前色都不变**（用户常要连框几块）。
-   * 起止点落在同一格（1×1）是合法操作，等同于点一格。
-   */
-  function applyRect(rect: Rect): void {
-    const current = requireLoadedPattern();
-    const next = requireRect(rect);
-    const command = buildRectPaintCommand(current, next, currentColor.value, "框选");
     if (command === null) return;
     publishChange(history.value.commit(current.cells, command));
   }
@@ -522,7 +487,6 @@ export const useEditor = defineStore("editor", () => {
     setCurrentColor,
     setView,
     paint,
-    applyRect,
     paintCells,
     eraseCells,
     recolor,

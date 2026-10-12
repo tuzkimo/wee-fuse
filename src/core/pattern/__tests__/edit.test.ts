@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   applyChanges,
   buildPaintCommand,
-  buildRectPaintCommand,
   cellAt,
   indicesWithValues,
   pointToCell,
@@ -70,13 +69,9 @@ describe("applyChanges / revertChanges / buildPaintCommand（追加：判别力�
     expect([...reverted]).toEqual([10, 30]);
   });
 
-  it("label 被原样带进命令（撤销记录要展示「涂色 / 框选」）", () => {
+  it("label 被原样带进命令（撤销记录要展示「涂色」）", () => {
     const cells = Uint16Array.from([1]);
     expect(buildPaintCommand(cells, [0], 2, "涂色")?.label).toBe("涂色");
-    const p = pattern([1, 1], 2, 1);
-    expect(buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 1 }, 2, "框选")?.label).toBe(
-      "框选",
-    );
   });
 
   it("越界下标一个都不写、也不入账；下标 0 与 length-1 是合法边界", () => {
@@ -105,56 +100,6 @@ describe("applyChanges / revertChanges / buildPaintCommand（追加：判别力�
     expect([...cells]).toEqual([7, 2, 7]);
     revertChanges(cells, changes);
     expect([...cells]).toEqual([1, 2, 3]);
-  });
-});
-
-describe("buildRectPaintCommand", () => {
-  it("覆盖矩形内的所有格子", () => {
-    const p = pattern([0, 0, 0, 0, 0, 0, 0, 0, 0], 3, 3);
-    const cmd = buildRectPaintCommand(p, { x: 1, y: 0, width: 2, height: 2 }, 5, "框选");
-    expect(cmd?.changes.map((c) => c.index).sort((a, b) => a - b)).toEqual([1, 2, 4, 5]);
-  });
-
-  it("超出图纸的部分自动裁剪", () => {
-    const p = pattern([0, 0, 0, 0], 2, 2);
-    const cmd = buildRectPaintCommand(p, { x: -5, y: -5, width: 100, height: 100 }, 1, "框选");
-    expect(cmd?.changes).toHaveLength(4);
-  });
-
-  it("选区外无事发生", () => {
-    const p = pattern([0, 0, 0, 0], 2, 2);
-    expect(buildRectPaintCommand(p, { x: 10, y: 10, width: 2, height: 2 }, 1, "框选")).toBeNull();
-  });
-});
-
-describe("buildRectPaintCommand（追加：行优先换算与增量正确性）", () => {
-  it("矩形内下标按行优先展开（y*width + x），增量带对 from", () => {
-    // 4×2 图纸，取第 1 行的两格：下标 4、5 —— 若误写成 x*height + y 会得到 1、2、3
-    const p = pattern([1, 2, 3, 4, 5, 6, 7, 8], 4, 2);
-    const cmd = buildRectPaintCommand(p, { x: 0, y: 1, width: 2, height: 1 }, 9, "框选");
-    expect(cmd?.changes).toEqual([
-      { index: 4, from: 5, to: 9 },
-      { index: 5, from: 6, to: 9 },
-    ]);
-  });
-
-  it("矩形被图纸边缘裁剪后不会漏格也不会多格", () => {
-    // 3×3 图，rect 从 (2,2) 起 5×5 → 只剩右下角一格（下标 8）
-    const p = pattern([0, 0, 0, 0, 0, 0, 0, 0, 0], 3, 3);
-    const cmd = buildRectPaintCommand(p, { x: 2, y: 2, width: 5, height: 5 }, 1, "框选");
-    expect(cmd?.changes.map((c) => c.index)).toEqual([8]);
-  });
-
-  it("小数矩形按 floor(左/上) 与 ceil(右/下) 取整（当前语义，不是四舍五入）", () => {
-    const p = pattern([0, 0, 0], 3, 1);
-    // x: floor(0.5)=0 → ceil(0.5+1)=2 → 覆盖下标 0、1
-    const cmd = buildRectPaintCommand(p, { x: 0.5, y: 0, width: 1, height: 1 }, 1, "框选");
-    expect(cmd?.changes.map((c) => c.index)).toEqual([0, 1]);
-  });
-
-  it("已经是目标色的矩形返回 null（不产生空撤销记录）", () => {
-    const p = pattern([5, 5, 5, 5], 2, 2);
-    expect(buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 2 }, 5, "框选")).toBeNull();
   });
 });
 
@@ -325,12 +270,11 @@ describe("buildPaintCommand（追加：目标色号越界必须响亮失败）",
       { index: 0, from: 1, to: EMPTY },
     ]);
   });
+});
 
-  it("框选入口同样受 to 校验保护（它走 buildPaintCommand）", () => {
-    const p = pattern([1, 1], 2, 1);
-    expect(() =>
-      buildRectPaintCommand(p, { x: 0, y: 0, width: 2, height: 1 }, -1, "橡皮"),
-    ).toThrow(/目标色号/);
-    expect([...p.cells]).toEqual([1, 1]);
+describe("已删除的框选入口", () => {
+  it("buildRectPaintCommand 已删除（框选专用）", async () => {
+    const mod = await import("@/core/pattern/edit");
+    expect("buildRectPaintCommand" in mod).toBe(false);
   });
 });

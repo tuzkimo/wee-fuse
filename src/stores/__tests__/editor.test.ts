@@ -20,7 +20,7 @@ import { useProjectSession } from "@/stores/project";
  *    所以刷新只能走 `revision` + `lastDirty`，两条都必须被断言读到（否则 store 可以「静默刷新失败」）。
  * 2. **`onViewport` 的两支有判别力**：第二次尺寸变化时缩放与偏移必须**逐字保持**，而夹取该生效时
  *    又必须真的生效（否则「什么都不做」也能过前一条）。
- * 3. **只有 `paint` / `applyRect` / `eraseCells` / `recolor` / `undo` / `redo` 会置脏**：切工具、改视图、
+ * 3. **只有 `paint` / `paintCells` / `eraseCells` / `recolor` / `undo` / `redo` 会置脏**：切工具、改视图、
  *    开关网格线、吸管都不影响「内存与存储是否一致」。
  *
  * 夹具口径沿用 `project.test.ts` / `EditorPage.test.ts`：色卡用生产口径的 `getBuiltinPalette()`，
@@ -203,7 +203,7 @@ describe("beginSession：会话播种", () => {
 
 describe("reset：把会话清回初始态", () => {
   it("13 个字段逐一回默认，且**不碰 session**（`dirty` 留给保存流程）", () => {
-    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 18 个动作之一、页面卸载 / 换工程时
+    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 17 个动作之一、页面卸载 / 换工程时
     // 会走到。少了这条，「reset 漏清 viewInitialized」这类错误在屏幕上是「换工程后视图还是旧的」，
     // 不报错、只有真机看得出来。
     const { editor, session } = seedEditor();
@@ -361,13 +361,12 @@ describe("工具 / 当前色 / 视图 / 显示开关", () => {
     expect(editor.currentColor).toBe(3);
   });
 
-  it("还没载入图纸时 setCurrentColor / paint / applyRect / pickFromCell 响亮拒绝，undo / redo 不抛", () => {
+  it("还没载入图纸时 setCurrentColor / paint / pickFromCell 响亮拒绝，undo / redo 不抛", () => {
     // 静默返回会把「页面忘了 beginSession」变成「点了没反应」——本项目点名要消灭的静默失败形态。
     const editor = useEditor();
 
     expect(() => editor.setCurrentColor(0)).toThrow(/还没有载入图纸/);
     expect(() => editor.paint([0])).toThrow(/还没有载入图纸/);
-    expect(() => editor.applyRect({ x: 0, y: 0, width: 1, height: 1 })).toThrow(/还没有载入图纸/);
     expect(() => editor.pickFromCell(0, 0)).toThrow(/还没有载入图纸/);
 
     // 撤销 / 重做走的是**另一条**路径：工具栏按钮由 `canUndo` / `canRedo` 驱动（未载入时必然是
@@ -520,83 +519,6 @@ describe("paint：一次手势一条命令（规格 §6.2）", () => {
   });
 });
 
-describe("applyRect：框选一条命令（规格 §6.4）", () => {
-  it("框选一条命令：区域内格子一次到位，lastDirty 是格子下标（行优先）", () => {
-    const { editor, pattern, session } = seedEditor();
-
-    editor.applyRect({ x: 1, y: 0, width: 2, height: 2 });
-
-    // 下标 = y * 4 + x：第 0 行 1..2 → 1、2；第 1 行 1..2 → 5、6
-    expect(editor.lastDirty).toEqual([1, 2, 5, 6]);
-    expect([...pattern.cells]).toEqual([
-      7, 7, 7, EMPTY,
-      EMPTY, 7, 7, EMPTY,
-      EMPTY, EMPTY, EMPTY, EMPTY,
-    ]);
-    expect(editor.history.undoDepth).toBe(1);
-    expect(editor.revision).toBe(1);
-    expect(session.dirty).toBe(true);
-  });
-
-  it("越界矩形被裁剪（core 的既有口径：框选经常拖出图纸边界，越界不是错误）", () => {
-    const { editor, pattern } = seedEditor();
-
-    editor.applyRect({ x: 3, y: 2, width: 10, height: 10 });
-
-    expect(editor.lastDirty).toEqual([11]);
-    expect(pattern.cells[11]).toBe(7);
-  });
-
-  it("当前色是 EMPTY 时等价于整块抠掉", () => {
-    const { editor, pattern } = seedEditor([7, 7, 7, 7, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
-    editor.setCurrentColor(EMPTY);
-
-    editor.applyRect({ x: 0, y: 0, width: 2, height: 1 });
-
-    expect([...pattern.cells].slice(0, 2)).toEqual([EMPTY, EMPTY]);
-    expect(editor.lastDirty).toEqual([0, 1]);
-  });
-
-  it("整块已是当前色时不产生命令（什么也不做）", () => {
-    const { editor, pattern, session } = seedEditor();
-
-    editor.applyRect({ x: 0, y: 0, width: 1, height: 1 }); // 只盖住 cells[0] = 7 = 当前色
-
-    expect(editor.revision).toBe(0);
-    expect(editor.lastDirty).toBeNull();
-    expect(editor.history.undoDepth).toBe(0);
-    expect(session.dirty).toBe(false);
-    expect([...pattern.cells]).toEqual([...BASE]);
-  });
-
-  it("工具保持框选、当前色不变（用户常要连框几块）", () => {
-    const { editor } = seedEditor();
-    editor.setTool("select");
-    editor.setCurrentColor(3);
-
-    editor.applyRect({ x: 0, y: 0, width: 2, height: 2 });
-
-    expect(editor.tool).toBe("select");
-    expect(editor.currentColor).toBe(3);
-  });
-
-  it("非法矩形在写操作之前抛错（分量非有限 / 宽高 < 1）", () => {
-    const { editor, pattern } = seedEditor();
-
-    expect(() => editor.applyRect({ x: Number.NaN, y: 0, width: 1, height: 1 })).toThrow(/框选矩形 x/);
-    expect(() =>
-      editor.applyRect({ x: 0, y: Number.POSITIVE_INFINITY, width: 1, height: 1 }),
-    ).toThrow(/框选矩形 y/);
-    expect(() => editor.applyRect({ x: 0, y: 0, width: 0, height: 1 })).toThrow(/框选矩形宽度/);
-    expect(() => editor.applyRect({ x: 0, y: 0, width: 1, height: Number.NaN })).toThrow(/框选矩形高度/);
-    expect(() => editor.applyRect({ x: 0, y: 0, width: 1, height: -3 })).toThrow(/框选矩形高度/);
-
-    expect(editor.revision).toBe(0);
-    expect(editor.lastDirty).toBeNull();
-    expect([...pattern.cells]).toEqual([...BASE]);
-  });
-});
-
 describe("pickFromCell：吸管（规格 §6.5）", () => {
   it("吸到某格的色号并把工具切回画笔（吸完就能画）", () => {
     const { editor } = seedEditor([7, EMPTY, EMPTY, EMPTY, EMPTY, 3, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
@@ -734,7 +656,7 @@ describe("undo / redo（规格 §6.6）", () => {
   });
 });
 
-describe("只有改 cells 的七个动作会置脏", () => {
+describe("只有改 cells 的六个动作会置脏", () => {
   it("beginSession / setTool / setView / setShowGrid / setShowLabels / setCurrentColor / pickFromCell / onViewport 都不置脏", () => {
     const { editor, session } = seedEditor();
 
@@ -827,7 +749,7 @@ describe("端到端：载入一份真记录 → 涂抹 → 撤销", () => {
   });
 });
 
-describe("去背景工具", () => {
+describe("涂色与去背景", () => {
   it('setTool 接受 "fill"', () => {
     const { editor } = seedEditor();
 
@@ -836,13 +758,19 @@ describe("去背景工具", () => {
     expect(editor.tool).toBe("fill");
   });
 
-  it("setTool 的错误信息列出四个工具并拒绝拼错的值", () => {
+  it("框选已删除：setTool 拒绝 select，store 上也没有 applyRect", () => {
+    const { editor } = seedEditor();
+    expect(() => editor.setTool("select" as unknown as EditorTool)).toThrow();
+    expect("applyRect" in editor).toBe(false);
+  });
+
+  it("setTool 的错误信息列出三个工具并拒绝拼错的值", () => {
     const { editor } = seedEditor();
 
     // 文案与判据必须同源：判据放行了 fill、文案还写着 background，报错就会自相矛盾。
     // 断言整份允许清单（不是只查 fill），漏掉任何一个工具名都要红。旧名也必须响亮拒绝。
-    // 任务 3 / 4 会把清单收窄到三个 / 两个名字，这条到那时再改。
-    const allowed = /只允许 "brush" \/ "select" \/ "pick" \/ "fill"/;
+    // 任务 4 会把清单收窄到两个名字，这条到那时再改。
+    const allowed = /只允许 "brush" \/ "pick" \/ "fill"/;
     expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("background" as unknown as EditorTool)).toThrow(allowed);

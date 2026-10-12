@@ -1008,7 +1008,7 @@ describe("键盘与 beforeunload", () => {
 /**
  * 页面这一层的**接线**：组件 emit → store 动作 / core 函数。
  *
- * 为什么单独一组：这五条接线（工具、吸管、框选、视图回写、缩放与适配）在本文件里原本
+ * 为什么单独一组：这四条接线（工具、吸管、视图回写、缩放与适配）在本文件里原本
  * **零判别力**——把它们改成空实现或改成错的 store 动作，先前那 26 条用例**全绿**
  * （报告 §6 的 R12 / R19 / R20 / R21，以及补充的 `@update:tool`）。而「两端各自正确、
  * 错在接线」正是本项目最贵的缺陷形态（任务 5 / 6 只覆盖了「组件 emit 了什么」，
@@ -1016,7 +1016,7 @@ describe("键盘与 beforeunload", () => {
  *
  * **断言对象一律是接线接通后的可观察结果**（store 里的值 / 图纸的格），不是「事件被 emit 过」。
  */
-describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适配", () => {
+describe("页面接线：工具与吸管 / 视图回写 / 缩放与适配", () => {
   it("工具与吸管：点「吸管」再点一格 → 当前色变成那格的色号、切回画笔，图纸没被涂改", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
@@ -1041,25 +1041,6 @@ describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适�
     expect(editor.tool).toBe("brush");
     // 吸管**不是画笔**：图纸一个字节都没变（把 onPick 接成 paint 的写法在这里红）。
     expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
-  });
-
-  it("框选：拖框 → 目标格真的被涂成当前色，而且是一条可撤销的命令", async () => {
-    const wrapper = await mountPage();
-    const editor = useEditor();
-
-    editor.setCurrentColor(2);
-    await wrapper.get("[data-testid='tool-select']").trigger("click");
-    expect(editor.tool).toBe("select");
-
-    await dragPaint(wrapper, [0, 0], [1, 0]);
-
-    // `applyRect` 的结果：整块 2×1 都被涂成 2 号色。
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([2, 2]);
-    // **一次框选 = 一条命令**：一次撤销就整块回退
-    // （把 onSelect 接成逐格 `paint` 的写法在这里红——格子值一样，但撤销只退一格）。
-    expect(editor.canUndo).toBe(true);
-    editor.undo();
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
   });
 
   it("视图回写：双指捏合后 editor.view 等于画布发上来的那个视图", async () => {
@@ -1609,8 +1590,8 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
    * 「橡皮」剥掉了它在本页的最后一层皮：按钮在工具栏（`PatternToolbar` 的 `eraser`），
    * 真正要做的两件事在**页面**这一层——设当前色为 `EMPTY`、**并切回画笔**。
    *
-   * 后半句是这条用例的核心：在框选 / 吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
-   * （与「吸管取色后切回画笔」同口径）。所以起点**刻意先切到框选**——否则「切回画笔」与
+   * 后半句是这条用例的核心：在非画笔工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+   * （与「吸管取色后切回画笔」同口径）。所以起点**刻意先切到填充**——否则「切回画笔」与
    * 「本来就是画笔」不可区分。
    */
   it("工具栏「橡皮」：设当前色为 EMPTY 并切回画笔，按下态跟着当前色", async () => {
@@ -1618,8 +1599,8 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
     const editor = useEditor();
 
     expect(editor.currentColor).toBe(0); // 播种色
-    await wrapper.get("[data-testid='tool-select']").trigger("click");
-    expect(editor.tool).toBe("select");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    expect(editor.tool).toBe("fill");
     // `:eraser-active` 接的是「当前色是不是 EMPTY」：此刻不是，所以没有按下态
     expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("false");
 

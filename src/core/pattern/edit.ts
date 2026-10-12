@@ -33,8 +33,7 @@ export function revertChanges(cells: Uint16Array, changes: readonly CellChange[]
  * 的整数，否则抛错（越界值会被 `Uint16Array` 静默截断，见函数体内的说明）。
  *
  * **为何公开**：B3 起有了**生产消费者**——`stores/editor.ts` 的 `paint()`（画笔一次手势一条命令）
- * 直接以它为唯一实现，`buildRectPaintCommand`（框选）也以它为实现的一部分。在此之前本仓库内只有
- * 测试在调用它；导出即承诺，故在这里写明消费者是谁，而不是收窄成内部函数
+ * 直接以它为唯一实现。在此之前本仓库内只有测试在调用它；导出即承诺，故在这里写明消费者是谁
  * （`AGENTS.md`「公开 API ≠ 被使用的 API」）。
  */
 export function buildPaintCommand(
@@ -91,31 +90,6 @@ export function indicesWithValues(cells: Uint16Array, values: readonly number[])
     if (wanted.has(cells[i] as number)) indices.push(i);
   }
   return indices;
-}
-
-/** 构造「把某个矩形区域设成某个色号」的命令，坐标超界部分自动裁剪。
- *
- * **为何公开**：`stores/editor.ts` 的 `applyRect()`（框选批量换色）是生产消费者；调用链是
- * `PatternCanvas`（框选抬手 emit `select`）→ `EditorPage.onSelect` → `editor.applyRect`。
- * 自己算一份「矩形 → 下标集合」会把越界裁剪的规则拆成两份（那正是本项目最贵的缺陷形态）。
- */
-export function buildRectPaintCommand(
-  pattern: Pattern,
-  rect: { x: number; y: number; width: number; height: number },
-  to: number,
-  label: string,
-): EditCommand | null {
-  const indices: number[] = [];
-  const x0 = Math.max(0, Math.floor(rect.x));
-  const y0 = Math.max(0, Math.floor(rect.y));
-  const x1 = Math.min(pattern.width, Math.ceil(rect.x + rect.width));
-  const y1 = Math.min(pattern.height, Math.ceil(rect.y + rect.height));
-
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) indices.push(y * pattern.width + x);
-  }
-
-  return buildPaintCommand(pattern.cells, indices, to, label);
 }
 
 /**

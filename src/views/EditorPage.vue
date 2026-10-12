@@ -9,7 +9,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
-import type { Rect } from "@/core/image/types";
 import { createPaletteRuntime } from "@/core/palette/registry";
 import { BACKGROUND_TOLERANCE, patternBackgroundIndices } from "@/core/pattern/background";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
@@ -100,7 +99,7 @@ const selectedColors = ref<readonly number[]>([]);
 
 /**
  * 图纸统计。**`void editor.revision` 是承重的，删不得**：`cells` 是 `Uint16Array`，
- * `paint` / `applyRect` / `undo` / `redo` 都是**原地写入**，Vue 的响应式追踪看不到——
+ * `paint` / `paintCells` / `undo` / `redo` 都是**原地写入**，Vue 的响应式追踪看不到——
  * `pattern` 又是 `markRaw`。刷新只有一条显式通道：`revision` 自增。
  *
  * `usages` **由它派生**，所以这一行是尺寸线与色板清单**共用**的失效通道：少了它，涂色之后
@@ -182,11 +181,6 @@ function onView(next: ViewTransform): void {
 /** 单指涂抹：下标集合由画布算好（含补格），本页只转发。 */
 function onPaint(indices: number[]): void {
   editor.paint(indices);
-}
-
-/** 框选：抬手才 emit，一条命令。 */
-function onSelect(rect: Rect): void {
-  editor.applyRect(rect);
 }
 
 /** 吸管：设当前色并切回画笔（切换在 store 里做，页面不重复一遍）。 */
@@ -483,7 +477,7 @@ onBeforeUnmount(() => {
 
 /**
  * 橡皮（C8 第 3 项：按钮从调色板搬进工具栏）。
- * **顺带切回画笔**：在框选 / 吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+ * **顺带切回画笔**：在吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
  * （与「吸管取色后切回画笔」同口径）。
  */
 function onEraser(): void {
@@ -588,7 +582,6 @@ function rerun(): void {
             @measure="onMeasure"
             @update:view="onView"
             @paint="onPaint"
-            @select="onSelect"
             @pick="onPick"
             @fill="onFill"
           />
