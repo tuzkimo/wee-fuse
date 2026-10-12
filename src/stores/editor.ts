@@ -353,22 +353,44 @@ export const useEditor = defineStore("editor", () => {
   }
 
   /**
-   * 去背景：把一批格子置为空格，**一次点击一条命令**（可一步撤销）。
+   * 裸涂色：把 `indices` 里**值不等于 `color`** 的格子写成 `color`，**一条命令 = 一步撤销**。
+   * 填充工具（按下把连通区域涂成当前色）与去背景工具都走它入账。
    *
-   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账——已经是空格的
-   * 格由 `buildPaintCommand` 天然跳过，于是「点空格」既不留空的撤销记录、也不置脏。
+   * 值域比 core 严一档（与 `setCurrentColor` 同一口径）：core 只认 `0..EMPTY`，这里还要求色号落在
+   * 色卡内（`0..colorCount-1`），另允许 `EMPTY`；色卡外的坏值被放行会被 `Uint16Array` 静默截断成
+   * 另一个色号。已经是目标色的格子由 `buildPaintCommand` 天然跳过，于是空命令不提交、不置脏。
    *
-   * 下标形态自己守（与 `paint` 同一口径）：元素级的非整数 / 越界仍由 `buildPaintCommand` 忽略。
+   * `label` 按目标色区分：`EMPTY` 就是去背景。
    */
-  function eraseCells(indices: readonly number[]): void {
+  function paintCells(indices: readonly number[], color: number): void {
     const current = requireLoadedPattern();
     if (!Array.isArray(indices)) {
-      throw new Error(`去背景下标必须是数组（当前 ${typeof indices}）`);
+      throw new Error(`涂色下标必须是数组（当前 ${typeof indices}）`);
     }
     const safeIndices: readonly number[] = indices;
-    const command = buildPaintCommand(current.cells, safeIndices, EMPTY, "去背景");
+    const limit = colorCount.value;
+    const inPalette = Number.isInteger(color) && color >= 0 && color < limit;
+    if (!inPalette && color !== EMPTY) {
+      throw new Error(`涂色色号非法：${String(color)}（必须是 0–${limit - 1} 的整数，或 ${EMPTY} 表示橡皮）`);
+    }
+    const command = buildPaintCommand(
+      current.cells,
+      safeIndices,
+      color,
+      color === EMPTY ? "去背景" : "涂色",
+    );
     if (command === null) return;
     publishChange(history.value.commit(current.cells, command));
+  }
+
+  /**
+   * 去背景：把一批格子置为空格，**一次点击一条命令**（可一步撤销）。
+   *
+   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账；写入委托
+   * `paintCells`，所以「点空格」既不留空的撤销记录、也不置脏。
+   */
+  function eraseCells(indices: readonly number[]): void {
+    paintCells(indices, EMPTY);
   }
 
   /**
@@ -501,6 +523,7 @@ export const useEditor = defineStore("editor", () => {
     setView,
     paint,
     applyRect,
+    paintCells,
     eraseCells,
     recolor,
     pickFromCell,

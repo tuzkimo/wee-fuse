@@ -898,11 +898,43 @@ describe("去背景工具", () => {
     const { editor, session } = seedEditor();
     const revision = editor.revision;
 
-    expect(() => editor.eraseCells("0,1" as unknown as number[])).toThrow(/去背景下标/);
-    expect(() => editor.eraseCells(null as unknown as number[])).toThrow(/去背景下标/);
+    expect(() => editor.eraseCells("0,1" as unknown as number[])).toThrow(/涂色下标/);
+    expect(() => editor.eraseCells(null as unknown as number[])).toThrow(/涂色下标/);
 
     expect(editor.revision).toBe(revision);
     expect(editor.history.undoDepth).toBe(0);
+    expect(session.dirty).toBe(false);
+  });
+});
+
+describe("paintCells：裸涂色动作", () => {
+  it("paintCells：一片格子涂成一个色号，一条命令 = 一步撤销", () => {
+    // 夹具前三格是 7 号色，后九格是空格：批里三格真的变了，否则「一次点击一条命令」是空话。
+    const { editor, pattern } = seedEditor([7, 7, 7, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
+    const before = [...pattern.cells];
+
+    editor.paintCells([0, 1, 2], 5);
+
+    expect([...pattern.cells].slice(0, 3)).toEqual([5, 5, 5]);
+    expect(editor.lastDirty).toEqual([0, 1, 2]);
+    expect(editor.history.undoDepth).toBe(1);
+    editor.undo();
+    expect([...pattern.cells]).toEqual(before);
+  });
+
+  it("paintCells：目标色就是现状 ⇒ 不产生撤销记录、不标脏", () => {
+    const { editor, session } = seedEditor();
+    editor.paintCells([0], 7); // cells[0] 本来就是 7
+    expect(editor.history.undoDepth).toBe(0);
+    expect(session.dirty).toBe(false);
+  });
+
+  it("paintCells：color 非法（负数 / 非整数）响亮失败，且在任何写操作之前", () => {
+    const { editor, session } = seedEditor();
+    const revision = editor.revision;
+    expect(() => editor.paintCells([0], -1)).toThrow();
+    expect(() => editor.paintCells([0], 1.5)).toThrow();
+    expect(editor.revision).toBe(revision);
     expect(session.dirty).toBe(false);
   });
 });
