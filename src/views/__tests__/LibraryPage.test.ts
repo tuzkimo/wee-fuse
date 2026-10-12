@@ -73,7 +73,8 @@ describe("LibraryPage", () => {
     expect(first?.text()).toContain("1");
     // 上面那句 `toContain("1")` 弱到被 "2 × 1" 自己就满足了——把用色数改坏它也绿。
     // 这里补上真正钉住「用色数」半句的断言（用色数 1 是 put 从 doc 派生的）。
-    expect(first?.text()).toContain("· 1 种颜色");
+    // 格式按 §7.1 从「· 1 种颜色」改成「· 1 色」。
+    expect(first?.text()).toContain("· 1 色");
   });
 
   it("空列表给出提示而不是一片空白", async () => {
@@ -81,6 +82,18 @@ describe("LibraryPage", () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
     expect(wrapper.find("[data-testid='empty-hint']").exists()).toBe(true);
+  });
+
+  it("空态是虚线卡片而不是纯文字（empty-hint 挂在卡片上）", async () => {
+    setProjectStore(await createMemoryProjectStore());
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    const empty = wrapper.get("[data-testid='empty-hint']");
+    expect(empty.classes()).toContain("border-dashed");
+    expect(empty.find("svg").exists()).toBe(true);
+    // 虚线卡片自己就是入口：点它去选图页（否则「新图纸」三个字是没有出路的诱导）
+    await empty.trigger("click");
+    expect(push).toHaveBeenCalledWith({ name: "pick" });
   });
 
   it("点「新建」跳到选图页", async () => {
@@ -91,16 +104,36 @@ describe("LibraryPage", () => {
     expect(push).toHaveBeenCalledWith({ name: "pick" });
   });
 
-  it("点卡片上的「编辑」进编辑器", async () => {
+  it("点卡片主体进编辑器：open-project 挂在卡片主体的按钮上，不是外层 li", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
+    // §11.1 点名：卡片改成「整张可点」后锚点必须落在卡片主体那个 button 上
+    const card = wrapper.get("[data-testid='project-card']");
+    expect(card.find("[data-testid='open-project']").exists()).toBe(true);
+    expect(card.get("[data-testid='open-project']").element.tagName).toBe("BUTTON");
     await wrapper.findAll("[data-testid='open-project']")[0]?.trigger("click");
     expect(push).toHaveBeenCalledWith({ name: "editor", params: { id: "b" } });
+  });
+
+  it("看施工图 / 改名 / 删除都收进 gear：先点 card-menu 才出现，testid 不变", async () => {
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+    // 三个次级动作在展开前不许出现在卡片表面（§7.1）
+    expect(wrapper.find("[data-testid='view-sheet']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='rename-project']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='delete-project']").exists()).toBe(false);
+
+    await wrapper.get("[data-testid='card-menu']").trigger("click");
+    const panel = wrapper.get("[data-testid='card-menu-panel']");
+    expect(panel.find("[data-testid='view-sheet']").exists()).toBe(true);
+    expect(panel.find("[data-testid='rename-project']").exists()).toBe(true);
+    expect(panel.find("[data-testid='delete-project']").exists()).toBe(true);
   });
 
   it("重命名后列表显示新名字", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
+    await wrapper.findAll("[data-testid='card-menu']")[0]?.trigger("click");
     await wrapper.findAll("[data-testid='rename-project']")[0]?.trigger("click");
     const input = wrapper.find("[data-testid='rename-input']");
     // 名称上限由输入框自己挡住（PROJECT_NAME_MAX = 100），不是等点「好」之后由 store 抛错。
@@ -121,6 +154,7 @@ describe("LibraryPage", () => {
   it("删除必须二次确认，确认后该条消失", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
+    await wrapper.findAll("[data-testid='card-menu']")[0]?.trigger("click");
     await wrapper.findAll("[data-testid='delete-project']")[0]?.trigger("click");
     // 未确认前不能删
     expect(wrapper.findAll("[data-testid='project-card']")).toHaveLength(2);
@@ -135,6 +169,7 @@ describe("LibraryPage", () => {
   it("取消删除后该条还在", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
+    await wrapper.findAll("[data-testid='card-menu']")[0]?.trigger("click");
     await wrapper.findAll("[data-testid='delete-project']")[0]?.trigger("click");
     await wrapper.find("[data-testid='delete-cancel']").trigger("click");
     await flushPromises();
@@ -143,19 +178,17 @@ describe("LibraryPage", () => {
     expect(wrapper.find("[data-testid='confirm-dialog']").exists()).toBe(false);
   });
 
-  it("卡片的两颗主按钮：查看在前（黑底）、编辑在后（白底描边）（C8 第 1 项）", async () => {
+  it("卡片表面只有一个大动作（主体按钮 open-project），gear 是次级动作的唯一入口", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
     const card = wrapper.findAll("[data-testid='project-card']")[0]!;
-    const texts = card.findAll("button").map((button) => button.text());
-    expect(texts.slice(0, 2)).toEqual(["查看", "编辑"]);
-
-    const view = card.get("[data-testid='view-sheet']");
-    const edit = card.get("[data-testid='open-project']");
-    // 主操作是「看图纸」：黑底在它身上，编辑是白底描边（与改名 / 删除同形）。
-    expect(view.classes()).toContain("bg-slate-900");
-    expect(edit.classes()).not.toContain("bg-slate-900");
-    expect(edit.classes()).toContain("border-slate-300");
+    // 主体按钮真的包住缩略图 / 名字 / 元信息：整张卡就是「打开工程」的点击面
+    const body = card.get("[data-testid='open-project']");
+    expect(body.element.tagName).toBe("BUTTON");
+    expect(body.find("[data-testid='project-name']").exists()).toBe(true);
+    expect(body.find("[data-testid='project-updated-at']").exists()).toBe(true);
+    // gear 是图标按钮（无可见文字），锚点必须在中文 aria-label 上
+    expect(card.get("[data-testid='card-menu']").attributes("aria-label")).toBe("图纸操作");
   });
 
   it("不再显示存储占用那一行（C8 第 1 项：开发者读数不是用户信息）", async () => {
@@ -188,12 +221,15 @@ describe("LibraryPage", () => {
     expect(wrapper.text()).not.toContain("可用约");
   });
 
-  it("右上角按钮是「新建」，空列表提示同口径", async () => {
+  it("右上角是 plus 新建按钮：图标按钮靠中文 aria-label 定锚点，空态虚线卡片同口径", async () => {
     setProjectStore(await createMemoryProjectStore());
     const wrapper = mount(LibraryPage);
     await flushPromises();
-    expect(wrapper.get("[data-testid='new-project']").text()).toBe("新建");
-    expect(wrapper.get("[data-testid='empty-hint']").text()).toContain("「新建」");
+    const plus = wrapper.get("[data-testid='new-project']");
+    // 图标按钮没有可见文字（§6.5 可达性的落点）：文字断言改成等价的 aria-label 断言
+    expect(plus.attributes("aria-label")).toBe("新建图纸");
+    expect(plus.find("svg").exists()).toBe(true);
+    expect(wrapper.get("[data-testid='empty-hint']").text()).toContain("新图纸");
   });
 
   // 这条不是简报原文（简报第 3 步第 7 项要求把删除框接入覆盖层，却没给对应的断言）。
@@ -204,6 +240,7 @@ describe("LibraryPage", () => {
     // 没开对话框 ⇒ 页面上没有注册点，返回键该走导航栈（`closeTopOverlay()` 返回 false 就是那个信号）
     expect(closeTopOverlay()).toBe(false);
 
+    await wrapper.findAll("[data-testid='card-menu']")[0]?.trigger("click");
     await wrapper.findAll("[data-testid='delete-project']")[0]?.trigger("click");
     expect(wrapper.find("[data-testid='confirm-dialog']").exists()).toBe(true);
     // 覆盖层活着：返回键由它吃掉，不交给导航栈
@@ -258,12 +295,13 @@ describe("LibraryPage", () => {
     expect(line.exists()).toBe(true);
     // 期望值用**本地 getter** 现算（不硬编码某个时区的日期，也不调被测函数自比）：去掉模板里
     // 那一行、或把相对时间写死成「刚刚」，都会红。
+    // §11.1：相对时间与尺寸行合成一行 12px 元信息，节点保留、内容格式可变 → `toBe` 放宽成 `toContain`。
     const expected = [
       old.getFullYear(),
       String(old.getMonth() + 1).padStart(2, "0"),
       String(old.getDate()).padStart(2, "0"),
     ].join("-");
-    expect(line.text()).toBe(expected);
+    expect(line.text()).toContain(expected);
   });
 
   it("未来的 updatedAt 显示「刚刚」，不渲染负的时长（本机时钟早于夹具时最容易出的一支）", async () => {
@@ -275,7 +313,38 @@ describe("LibraryPage", () => {
     await flushPromises();
 
     const line = wrapper.find("[data-testid='project-updated-at']");
-    expect(line.text()).toBe("刚刚");
+    // §11.1：同一行现在还有尺寸与用色数，`toBe` 放宽成 `toContain`（节点仍在，格式可变）。
+    expect(line.text()).toContain("刚刚");
+  });
+
+  it("尺寸行与更新时间合成一行 12px 元信息，两个节点都还在", async () => {
+    const store = await createMemoryProjectStore();
+    const palette = getBuiltinPalette();
+    // 58 × 44 得从真的 doc 里派生（`put` 一律用 doc 覆盖 meta 的冗余字段），所以这里真造一张大图。
+    await store.put({
+      meta: {
+        id: "s1", name: "大图纸",
+        createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z",
+        thumbnail: "", width: 58, height: 44, colorCount: 12,
+      },
+      doc: toProjectDocument(
+        { width: 58, height: 44, paletteId: palette.id, cells: new Uint16Array(58 * 44) },
+        palette,
+        { longSide: 58, maxColors: 221, crop: { x: 0, y: 0, w: 58, h: 44, rotate: 0 } },
+      ),
+      source: null,
+    });
+    setProjectStore(store);
+    const wrapper = mount(LibraryPage);
+    await flushPromises();
+
+    const card = wrapper.get("[data-testid='project-card']");
+    const line = card.get("[data-testid='project-updated-at']");
+    expect(line.text()).toContain("58 × 44");
+    expect(line.text()).toContain("色 ·");
+    // 尺寸行属于「辅助信息」档：12px + bead-line-2（§7.1）
+    expect(line.classes()).toContain("text-xs");
+    expect(line.classes()).toContain("text-bead-line-2");
   });
 
   it("存储存在但读取失败时把原因显示出来，而不是留一片空白", async () => {
@@ -353,7 +422,10 @@ describe("LibraryPage", () => {
     await flushPromises();
 
     const list = wrapper.get("[data-testid='project-list']");
-    expect(list.classes()).toContain("grid-cols-1");
+    // §7.1：手机 2 列 / 平板 4 列（旧的 grid-cols-1 与规格直接冲突）。显式列模板也是
+    // 「长名字撑不开轨道」的根因之一。
+    expect(list.classes()).toContain("grid-cols-2");
+    expect(list.classes()).toContain("md:grid-cols-4");
     const card = wrapper.get("[data-testid='project-card']");
     expect(card.classes()).toContain("min-w-0");
     const name = wrapper.get("[data-testid='project-name']");
@@ -389,6 +461,7 @@ describe("LibraryPage", () => {
     await flushPromises();
 
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
+    await wrapper.get("[data-testid='card-menu']").trigger("click");
     await wrapper.get("[data-testid='view-sheet']").trigger("click");
     // 简报原文这里是 `wrapper.get(...).exists()).toBe(true)`——**编译不过**：`get()` 的返回类型是
     // `Omit<DOMWrapper, "exists">`（它保证找得到，故刻意不给 `exists`），`vue-tsc` 报 TS2339。
@@ -428,8 +501,8 @@ describe("LibraryPage", () => {
     await flushPromises();
 
     // 列表按 updatedAt 倒序 ⇒ [0] 是「小猫」（05:00），[1] 是「小狗」（01:00）
-    const buttons = wrapper.findAll("[data-testid='view-sheet']");
-    await buttons[0]?.trigger("click");
+    await wrapper.get("[data-testid='card-menu']").trigger("click");
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
     await flushPromises();
     expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小猫 · 施工图");
     expect(wrapper.get("[data-testid='sheet-preview']").attributes("src")).toBe("blob:sheet-1");
@@ -437,7 +510,8 @@ describe("LibraryPage", () => {
     // 查看层是 `fixed inset-0`，视觉上盖住了列表，但事件仍可派发——这正是「今天不可达、明天多一个
     // 入口就漏」的那条缝：没有 `:key` 时 Vue 复用同一实例、`onMounted` 不再跑，屏幕上会**留着上一条
     // 工程的施工图**（预览还是 `blob:sheet-1`）。
-    await buttons[1]?.trigger("click");
+    await wrapper.findAll("[data-testid='card-menu']")[1]?.trigger("click");
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
     await flushPromises();
     expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
     expect(wrapper.get("[data-testid='sheet-preview']").attributes("src")).toBe("blob:sheet-2");
@@ -499,6 +573,7 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
     // 库坏掉：下一次 refresh（点「删除」→ 确认）才会看到。列表是**上一次成功**的那份，
     // 所以卡片还在（refresh 失败时不清空列表），用户仍有活口。
     broken = true;
+    await wrapper.find("[data-testid='card-menu']").trigger("click");
     await wrapper.find("[data-testid='delete-project']").trigger("click");
     await wrapper.find("[data-testid='delete-confirm']").trigger("click");
     await flushPromises();
@@ -507,6 +582,7 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
 
     // 库恢复：再走一次 refresh，失败态必须撤销，页面回到正常（列表空 → 空提示）。
     broken = false;
+    await wrapper.find("[data-testid='card-menu']").trigger("click");
     await wrapper.find("[data-testid='delete-project']").trigger("click");
     await wrapper.find("[data-testid='delete-confirm']").trigger("click");
     await flushPromises();
