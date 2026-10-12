@@ -467,7 +467,7 @@ function resetCrop(): void {
       -->
       <section
         data-testid="preview-pane"
-        class="sticky top-0 h-[40vh] rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="sticky top-0 h-[40vh] overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
         :style="boardDots"
       >
         <template v-if="showResult">

@@ -495,6 +495,11 @@ describe("手机竖屏排法（§7.3）", () => {
     const preview = wrapper.get("[data-testid='preview-pane']");
     expect(preview.classes()).toContain("sticky");
     expect(preview.classes()).toContain("top-0");
+    // 固定高的盒子里内容比盒子高（生成态的结果卡片就是）：手机上要能自己滚，
+    // 否则溢出会盖到下面的选范围块上，吸顶也就名存实亡。
+    expect(preview.classes()).toContain("overflow-y-auto");
+    // 平板上高度是 auto，溢出处理该还回去（不把中栏变成一个内部滚动容器）。
+    expect(preview.classes()).toContain("md:overflow-visible");
     // `md` 下取消吸顶与固定高（平板上中栏是并排的中间一栏，不跟着页面滚）。
     expect(preview.classes()).toContain("md:static");
     expect(preview.classes()).toContain("md:h-auto");
