@@ -16,7 +16,7 @@ import css from "../style.css?raw";
  * 阶段就响亮失败。任务 18 若要沿用计划里的 `readFileSync`，会撞同一堵墙。
  */
 describe("设计 token（§6.1 / §6.3）", () => {
-  it("20 个 bead 调色 token 逐字在位（§6.1）", () => {
+  it("§6.1 的 20 个 bead 调色 token + 任务 13 补的 label-on-dark 逐字在位", () => {
     for (const name of [
       "bead-sand",
       "bead-sand-2",
@@ -35,6 +35,7 @@ describe("设计 token（§6.1 / §6.3）", () => {
       "bead-board",
       "bead-hole",
       "bead-grid",
+      "bead-label-on-dark",
       "bead-danger",
       "bead-warn-bg",
       "bead-warn-ink",

@@ -8,6 +8,7 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { maxCellScale, minCellScale } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
+import { GRID_ON_DARK, LABEL_ON_DARK } from "@/components/ui/beadColors";
 
 /**
  * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
@@ -15,14 +16,16 @@ import PatternCanvas from "@/components/editor/PatternCanvas.vue";
  * 像素断言在这里一律恒真，绝不写（B1-2 的教训）。
  *
  * **画法断言的判据是「CI 无法用像素验证 **且** 被变异证明承重」，不是条数**（规格 §11.1 列出的三条是
- * 当时的枚举）。当前四条，每条都附一条能杀死它的变异：
+ * 当时的枚举）。当前五条，每条都附一条能杀死它的变异：
  *   ① 色块层 `drawImage` 的**目标矩形**（= 视图映射的外部可观察量）；
  *   ② 单格刷新时 `putImageData` 的**脏矩形实参**（1×1）——「单格改动只重绘该格」唯一的可观察形式；
  *   ③ `cellPx < GRID_LINE_MIN_CELL_PX` 时**不画网格线**（及其闭区间边界线的条数）；
  *   ④ `visibleCellRange === null`（图纸整块移出视口）时**不画**网格线与色号——删掉那条判空守卫，
  *      `drawGrid` 会在 `range.x0` 上抛 TypeError，该用例恰好 1 红（见用例所在的 describe）。
+ *   ⑤ 深色底上的两个绘制色（网格线 `GRID_ON_DARK` / 格内色号 `LABEL_ON_DARK`）——改回旧的浅色
+ *      / 亮度取反就红（Review Focus 3）。
  * 其余一律走事件与状态断言；**拿不出能证明承重的变异**的画法（`imageSmoothingEnabled`、
- * 色号 `fillText` 的字号 / 亮度取反、棋盘底纹的 `createPattern` 退化分支）仍然**有意不写**。
+ * 色号 `fillText` 的字号）仍然**有意不写**。
  *
  * 场景（全文件共用）：色卡 3 色；两份图纸——
  *   · 32×32 + 视图 `{24, -200, -200}`：图纸（768px）比 400×400 的视口大，平移 / 缩放都可观察；
@@ -140,11 +143,22 @@ interface RecordedFill {
   readonly y: number;
   readonly w: number;
   readonly h: number;
-  /** 调用那一刻的 `fillStyle`（高亮判据；底色填的是 pattern 对象、色号是 `fillText`）。 */
+  /** 调用那一刻的 `fillStyle`（高亮 / 待涂矩形的判据；色号走 `fillText`，见 `labelTexts`）。 */
   readonly fillStyle: string;
 }
 
 let fills: RecordedFill[] = [];
+
+interface RecordedText {
+  readonly text: string;
+  /** 调用那一刻的 `fillStyle`（格内色号的颜色判据）。 */
+  readonly fillStyle: string;
+}
+
+let labelTexts: RecordedText[] = [];
+
+/** 每次 `stroke()` 调用那一刻的 `strokeStyle`（网格线颜色的唯一判据）。 */
+let strokeColors: string[] = [];
 
 /**
  * 桩掉 `HTMLCanvasElement.prototype.getContext`（happy-dom 未注册 canvas adapter，不桩时恒返回 null，
@@ -161,6 +175,8 @@ function stubContext(): void {
   puts = [];
   ops = [];
   fills = [];
+  labelTexts = [];
+  strokeColors = [];
   const record = (op: string) => (): void => {
     ops.push(op);
   };
@@ -172,16 +188,22 @@ function stubContext(): void {
     // 在 `getContext` 的当刻读尺寸：层的「1px/格」与主画布的 DPR 尺寸都靠这个 target 断言。
     const target = { w: this.width, h: this.height };
     let fillStyle = "";
+    let strokeStyle = "";
     const ctx = {
       imageSmoothingEnabled: true,
-      // 真实属性（不是普通字段）：`fillRect` 要记下**调用那一刻**的样式，高亮用例的判据靠它。
+      // 真实属性（不是普通字段）：`fillRect` / `fillText` 要记下**调用那一刻**的样式，判据靠它。
       get fillStyle(): string {
         return fillStyle;
       },
       set fillStyle(value: string) {
         fillStyle = value;
       },
-      strokeStyle: "",
+      get strokeStyle(): string {
+        return strokeStyle;
+      },
+      set strokeStyle(value: string) {
+        strokeStyle = value;
+      },
       lineWidth: 1,
       font: "",
       textAlign: "center",
@@ -194,13 +216,19 @@ function stubContext(): void {
       beginPath: record("beginPath"),
       moveTo: record("moveTo"),
       lineTo: record("lineTo"),
-      stroke: record("stroke"),
+      stroke: (): void => {
+        ops.push("stroke");
+        strokeColors.push(strokeStyle);
+      },
       strokeRect: record("strokeRect"),
       fillRect: (x: number, y: number, w: number, h: number): void => {
         ops.push("fillRect"); // 既有按 `ops` 计数的用例照旧
         fills.push({ x, y, w, h, fillStyle });
       },
-      fillText: record("fillText"),
+      fillText: (text: string): void => {
+        ops.push("fillText"); // 既有按 `ops` 计数的用例照旧
+        labelTexts.push({ text, fillStyle });
+      },
       createPattern: () => ({ kind: "repeat" }) as unknown as CanvasPattern,
       createImageData: (width: number, height: number) =>
         ({ width, height, data: new Uint8ClampedArray(width * height * 4) }) as unknown as ImageData,
@@ -218,6 +246,20 @@ function stubContext(): void {
 /** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（色号用 `fillText`）。 */
 function moveToCount(): number {
   return ops.filter((op) => op === "moveTo").length;
+}
+
+/** 最后一次格内色号 `fillText` 用的 `fillStyle`；一次都没画时抛错，避免写成恒真断言。 */
+function labelFillColor(): string {
+  const last = labelTexts.at(-1);
+  if (last === undefined) throw new Error("没有画任何格内色号");
+  return last.fillStyle;
+}
+
+/** 最后一次 `stroke()` 用的 `strokeStyle`（网格线颜色判据）；一次都没描时抛错。 */
+function lastStrokeColor(): string {
+  const last = strokeColors.at(-1);
+  if (last === undefined) throw new Error("没有描任何线");
+  return last;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +425,7 @@ describe("色块层：图纸尺寸 × 1px/格，单格只重绘该格", () => {
     expect(puts[3]?.args.slice(1)).toEqual([0, 0, 4, 1, 1, 1]);
 
     // 橡皮（当前色 = EMPTY）：那一格必须回到**完全透明**（RGB 也清零）。只写 alpha 的实现在屏幕上
-    // 看不出差别，但空格就再也透不出棋盘底纹（§5.5），而 `patternToRgbaImage` 的既有契约是「RGB 全零」。
+    // 看不出差别，但空格就再也透不出容器那层深色拼豆板，而 `patternToRgbaImage` 的既有契约是「RGB 全零」。
     pattern.cells[35] = EMPTY;
     await wrapper.setProps({ revision: 3, lastDirty: [35] });
     expect(puts).toHaveLength(5);
@@ -968,5 +1010,22 @@ describe("选中色号高亮：画布自己扫 cells，页面只给色号集合"
     await wrapper.vm.$nextTick();
 
     expect(highlightRects()).toEqual([]);
+  });
+});
+
+describe("深色拼豆板底（Review Focus 3）", () => {
+  it("画布容器是 bead-board 深底，不是默认白", () => {
+    const wrapper = mountCanvas();
+    expect(wrapper.get("[data-testid='editor-surface']").classes().join(" ")).toContain("bg-bead-board");
+  });
+
+  it("网格线用 GRID_ON_DARK、格内色号用 LABEL_ON_DARK（都不是 ink）", async () => {
+    // 默认图纸是全 A1（#ffffff）白格：旧实现会在白底上写深字（亮度取反），这条用例因此有判别力。
+    // 32px/格 ≥ CELL_LABEL_MIN_CELL_PX（28），色号才真的会画。
+    const wrapper = mountCanvas({ showLabels: true, view: { scale: 32, offsetX: 0, offsetY: 0 } });
+    await wrapper.vm.$nextTick();
+
+    expect(lastStrokeColor()).toBe(GRID_ON_DARK);
+    expect(labelFillColor()).toBe(LABEL_ON_DARK);
   });
 });
