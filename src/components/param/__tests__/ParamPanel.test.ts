@@ -446,6 +446,13 @@ describe("参数全部图形化（§7.3）", () => {
     expect(wrapper.get("[data-testid='max-colors-value']").text()).toBe("8 种");
   });
 
+  it("名字输入框的触控目标也是 56px（R46：min-h-12 = 48px 不够）", () => {
+    const wrapper = mountPanel();
+    const input = wrapper.get("[data-testid='project-name-input']");
+    expect(input.classes()).toContain("min-h-14");
+    expect(input.classes()).not.toContain("min-h-12");
+  });
+
   it("像素开关：74×38、rounded-full、border-4 border-bead-ink、选中态 bg-bead-go，且仍是真 checkbox", () => {
     const wrapper = mountPanel({ removeBackground: true });
     const box = wrapper.get("[data-testid='remove-background']");
@@ -460,20 +467,31 @@ describe("参数全部图形化（§7.3）", () => {
     expect(classes).toContain("bg-bead-go");
     expect((box.element as HTMLInputElement).checked).toBe(true);
 
+    // 开关本体只有 38px 高，56px 的行是它的触控目标（§6.5）；`busy` 时输入框与滑块一起淡。
+    const label = box.element.closest("label");
+    expect(label?.classList.contains("min-h-14")).toBe(true);
+
     // 滑块：`<input>` 是替换元素，画不了 `::after`，所以它是兄弟元素，靠 `peer-checked:` 滑到右端。
     const knob = wrapper.get("[data-knob]");
     expect(knob.classes()).toContain("pointer-events-none"); // 不吃滑条 / 勾选框的命中
     expect(knob.classes()).toContain("rounded-full");
     expect(knob.classes().join(" ")).toContain("peer-checked:translate-x-[36px]");
+    // 禁用态只淡输入框会留下一个亮着的滑块（视觉上像“还能点”）。
+    expect(knob.classes()).toContain("peer-disabled:opacity-50");
   });
 
   /**
    * §7.3 逐字保留的那一处解释性文字（规格写「去掉背景」，仓里 shipped 的文案是「去除背景」，
    * 四个字都没动）。testid 挂在 `<input>` 上，所以名字只能从它的 `label` 上读。
+   *
+   * R45：括号里那句长解释（纯色 / 渐变背景…）已删——§7.3「全 App 唯一一处允许的解释性文字」
+   * 指的就是这四个字，§2 目标 3 要求「解释性长句全部删除」。下面第二条断言钉住它没回来。
    */
-  it("「去除背景」的四个字仍在（§7.3 唯一允许保留的解释性文字）", () => {
+  it("「去除背景」的四个字仍在，旁旁的解释性长句已删（§7.3 / R45）", () => {
     const wrapper = mountPanel();
     const label = wrapper.get("[data-testid='remove-background']").element.closest("label");
-    expect(label?.textContent ?? "").toContain("去除背景");
+    const text = label?.textContent ?? "";
+    expect(text).toContain("去除背景");
+    expect(text).not.toContain("纯色");
   });
 });

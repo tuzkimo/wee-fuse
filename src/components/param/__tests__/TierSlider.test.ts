@@ -139,11 +139,13 @@ describe("TierSlider（C8 第 4 项）", () => {
    * 「≥56px」**唯一可观察的形式就是类名**（`h-14` = 3.5rem = 56px），所以这里钉类名。
    * 旋钮的视觉尺寸（一个 34px 的圆）由伪元素定，手感仍由浏览器给的原生滑条承担。
    */
-  it("触控目标：轨道 h-14（56px）、数字输入框 min-h-12", () => {
+  it("触控目标：轨道 h-14（56px）、数字输入框 min-h-14（56px）", () => {
     const wrapper = mountSlider();
     // R35：`h-11`（44px）→ `h-14`（56px）。同一节点、同一个 `toContain` 匹配器，值更严。
     expect(wrapper.get("[data-testid='long-side-slider']").classes()).toContain("h-14");
-    expect(wrapper.get("[data-testid='long-side']").classes()).toContain("min-h-12");
+    // R46：数字输入框原为 `min-h-12`（48px）——48 是 Material 口径，§6.5 的硬下界也是 56。
+    expect(wrapper.get("[data-testid='long-side']").classes()).toContain("min-h-14");
+    expect(wrapper.get("[data-testid='long-side']").classes()).not.toContain("min-h-12");
   });
 });
 

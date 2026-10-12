@@ -8,7 +8,7 @@
 // （与既有 `longSide` 输入框同一套手法：不用 `v-model`，否则指令与处理函数同时写 `draft`，
 // 谁先更新只由挂载顺序保证）。
 //
-// **触控目标**（规格 §6.5）：滑条用 `h-14`（56px，§6.5 的硬下界），数字输入框 `min-h-12`。
+// **触控目标**（规格 §6.5）：滑条用 `h-14`（56px，§6.5 的硬下界），数字输入框 `min-h-14`（同 56px）。
 // 外观是像素风：12px 高的沙色轨道 + 34px 的 go 圆旋钮（见 `TRACK_SKIN`），二者都画在 56px 的
 // 触控区里；这里不自绘旋钮——原生滑条在 Android WebView 上的触控与无障碍（方向键 / 读屏）行为
 // 都比自绘的好，而自绘正是「引第三方库」之外的另一种复杂度来源。
@@ -205,7 +205,7 @@ const belowLine = computed(
         :min="min"
         :max="max"
         :disabled="disabled"
-        class="min-h-12 w-24 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink disabled:opacity-50"
+        class="min-h-14 w-24 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink disabled:opacity-50"
         @input="report(($event.target as HTMLInputElement).value)"
       />
     </div>

@@ -32,8 +32,8 @@ import {
 import type { Rect, Rotation } from "@/core/image/types";
 import { useCanvasSurface } from "@/composables/useCanvasSurface";
 
-/** 手柄命中区的 CSS 尺寸（触控目标 ≥44px，主规格 §6.4）。 */
-const HANDLE_HIT_SIZE = 48;
+/** 手柄命中区的 CSS 尺寸（§6.5 的硬下界：56×56；44 / 48 是 Material 口径，已被规格逐字否掉）。 */
+const HANDLE_HIT_SIZE = 56;
 /** 手柄命中半径：命中区是边长 `HANDLE_HIT_SIZE` 的**方块**，半径即其一半。 */
 const HANDLE_HIT_RADIUS = HANDLE_HIT_SIZE / 2;
 /** 手柄视觉方块的 CSS 尺寸（§7.3：14px 方块）。命中区仍是 `HANDLE_HIT_SIZE`，两者互不相干。 */
@@ -128,9 +128,9 @@ function coversViewport(screenCrop: Rect, size: Size): boolean {
 /**
  * 命中半径内**离指针最近**的手柄；一个都没命中时返回 `null`。
  *
- * 不能用「命中即返回」的 `find`：选框在屏幕上的边长小于命中区（48px）时，四个命中区互相重叠，
+ * 不能用「命中即返回」的 `find`：选框在屏幕上的边长小于命中区（56px）时，四个命中区互相重叠，
  * `find` 永远返回顺序里最靠前的 `nw`，用户再也抓不到 `se`——而小选区在平板上是常态
- * （源图选区 < 96px 就会出现）。命中区仍是各手柄中心 ±`HANDLE_HIT_RADIUS` 的方块。
+ * （源图选区 < 112px 就会出现）。命中区仍是各手柄中心 ±`HANDLE_HIT_RADIUS` 的方块。
  *
  * 距离用欧氏距离；**严格小于**比较，于是平局保留顺序里更靠前的那个 →
  * 决胜顺序固定为 `nw → ne → sw → se`（与 `handleCenters` 的顺序一致），结果确定。

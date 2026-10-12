@@ -226,7 +226,7 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
         data-testid="project-name-input"
         type="text"
         :maxlength="PROJECT_NAME_MAX"
-        class="mt-2 block min-h-12 w-full rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink"
+        class="mt-2 block min-h-14 w-full rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink"
         @input="onNameInput"
       />
       <p data-testid="project-name-counter" class="mt-1 text-[12px] text-bead-ink">
@@ -313,9 +313,10 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
     </div>
 
     <!--
-      §7.3：全 App **唯一**一处允许保留的解释性文字（「背景」画不出一个 8 岁能认的图标）。
+      §7.3：这四个字是全 App **唯一**一处允许保留的解释性文字（「背景」画不出一个 8 岁能认的图标），
+      括号里的长解释已按 R45 删掉（§2 目标 3「解释性长句全部删除」）。
       开关是像素开关：input 本体 = 74×38 的圆角槽（appearance-none），滑块是它的兄弟元素
-      （`<input>` 是替换元素，画不了 `::after`），`pointer-events-none` 不吃命中。
+      （`<input>` 是替换元素，画不了 `::after`），`pointer-events-none` 不吃命中；禁用时两者一起淡。
     -->
     <label class="relative flex min-h-14 items-center gap-3 text-[24px] text-bead-ink">
       <input
@@ -329,9 +330,9 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
       <span
         data-knob
         aria-hidden="true"
-        class="pointer-events-none absolute left-[4px] top-1/2 h-[30px] w-[30px] -translate-y-1/2 rounded-full border-4 border-bead-ink bg-bead-card peer-checked:translate-x-[36px]"
+        class="pointer-events-none absolute left-[4px] top-1/2 h-[30px] w-[30px] -translate-y-1/2 rounded-full border-4 border-bead-ink bg-bead-card peer-checked:translate-x-[36px] peer-disabled:opacity-50"
       ></span>
-      去除背景（纯色 / 渐变背景会被当作不拼豆，用色名额留给主体）
+      去除背景
     </label>
 
     <div data-testid="palette-card" class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4">
