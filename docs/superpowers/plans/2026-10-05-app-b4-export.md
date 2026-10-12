@@ -6882,6 +6882,8 @@ B4 的导出也不消费它；保留还是收窄留给下一次动到它的人�
 > （2026-10-05），共 6 个任务（5 是探针页、6 是收尾）+ 按需的修复轮与整分支最终审查。
 > 逐任务的原始证据（任务简报、实现报告、修复报告、变异日志、审查包）在构建期存放于
 > `.superpowers/sdd/2026-10-05-app-b4-export/`，该目录被 gitignore（`.superpowers/sdd/.gitignore` 是 `*`）。
+> 〔**2026-10-12 更正**〕那份嵌套的 `.gitignore` 已删除；忽略改由仓库根 `.gitignore` 的 `.superpowers/`
+> 一条统一覆盖。**结论不变**：该目录仍不进版本库。
 > **控制者的进度账本**是同目录的 `progress.md`（含全部裁决与延后项的原始记录）。
 
 ---
@@ -7136,6 +7138,8 @@ git commit -m "docs(app): B4 收尾（README / AGENTS+CLAUDE 镜像 / 主规格�
 > **若步骤 1 判定 `N < 4096`**：**本任务不动任何代码**（**控制者裁定 2026-10-05（B）**：这是一次独立的小修复轮，不并进任务 6，见步骤 1 第 4 条）。要做的是两件事：① 把读数与「该修复轮优先级最高」写进构建记录 §12；② **报告控制者立轮**——**人类伙伴报回读数后的当天**由控制者立新一版小轮简报（工作区 `.superpowers/sdd/<日期>-app-b4-canvas-limit/`，照 B3 人工验证小轮先例：简报 + 分派实现者 + 控制者复核 + 全新子代理审查 + 定向复审），并写进**账本的「阶段交接」段**；那一轮才去改 `src/core/render/layout.ts` 的常量、`src/core/render/__tests__/layout.test.ts` 的断言、`AGENTS.md` 的常量行与 `CLAUDE.md` 的常量行（共四处文件）。**这一条不进 README 的延后项表**。
 > **`.superpowers/**` 是 gitignore 的**（`.superpowers/sdd/.gitignore` 只有一行 `*`）：本片段文件、账本与工具链
 > **不进 commit**，`git status --short` 里不应出现它们（若出现，说明有人动了 ignore 规则——**先查清**）。
+> 〔**2026-10-12 更正**〕改用仓库根 `.gitignore` 的 `.superpowers/` 一条覆盖（`sdd/.gitignore` 已删）。
+> **上面那句判据不变**：`git status --short` 里不应出现它们。
 
 **报告必须包含**（控制者复核的输入）：
 

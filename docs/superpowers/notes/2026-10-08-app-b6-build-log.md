@@ -144,6 +144,8 @@ BUILD_EXIT=0
 - 批二的原始输出留在 `.superpowers/sdd/2026-10-08-app-b6-cap-and-export/logs-t12-test.txt` /
   `logs-t12-build.txt`，本次的在同目录 `logs-t15a-test.txt` / `logs-t15a-build.txt`
   ——**该目录被 `.superpowers/sdd/.gitignore` 的 `*` 忽略、不进版本库**，所以上面的原文才是入库证据。
+  〔**2026-10-12 更正**〕忽略改由仓库根 `.gitignore` 的 `.superpowers/` 一条统一覆盖（嵌套那份已删）。
+  **本条结论不变**：该目录仍不进版本库，原文仍是入库证据。
 - stderr 噪声（`[Vue warn]: Unhandled error during execution of native event handler`）来自
   `PatternCanvas.test.ts` 里**故意**触发「退化输入响亮失败」的用例，属预期噪声，exit code 仍是 0。
 

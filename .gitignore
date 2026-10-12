@@ -41,3 +41,9 @@ coverage/
 # 位置与 wee-count 一致：src-tauri/gen/android/weefuse.jks；口令在同目录 app/key.properties（也已忽略 ✓）。
 *.jks
 *.p12
+
+# `.superpowers/` 是本地 agent 会话的草稿区，不进版本库。里面有两类东西都不属于仓库：
+# brainstorm 屏稿与会话密钥（`.last-token` / `state/server-info`）、SDD 的控制者账本与任务原始证据。
+# **2026-10-12 起由这一条统一覆盖**：`sdd/` 过去自带一份只写 `*` 的 `.gitignore`，已删除。
+# 屏稿需要长期留存的，按实例另行入库到 `docs/superpowers/notes/`（如 `2026-10-12-pixel-ui-mockups/`）。
+.superpowers/
