@@ -57,7 +57,6 @@ const emit = defineEmits<{
   measure: [Size];
   "update:view": [ViewTransform];
   paint: [number[]];
-  pick: [CellPoint];
   fill: [CellPoint];
 }>();
 
@@ -183,7 +182,6 @@ function syncLayer(): void {
 
 type ToolGesture =
   | { kind: "brush"; pointerId: number; last: CellPoint; preview: Set<number> }
-  | { kind: "pick"; pointerId: number; cell: CellPoint }
   | { kind: "fill"; pointerId: number; cell: CellPoint };
 
 interface ViewGesture {
@@ -265,11 +263,9 @@ function startToolGesture(pointerId: number, point: Point): void {
     return;
   }
   if (props.tool === "fill") {
-    // 与 `pick` 同形态：只在按下那一刻记格，拖动不改（见 finishToolGesture）。
+    // 只在按下那一刻记格，拖动不改（见 finishToolGesture）。
     toolGesture = { kind: "fill", pointerId, cell };
-    return;
   }
-  toolGesture = { kind: "pick", pointerId, cell };
 }
 
 function onPointerDown(event: PointerEvent): void {
@@ -342,7 +338,7 @@ function onPointerMove(event: PointerEvent): void {
     draw();
     return;
   }
-  // 吸管 / 填充：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
+  // 填充：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
 }
 
 /** 工具手势的唯一出口：抬手（或捕获被无声丢失）才提交，一次手势 = 一条命令（§6.2）。 */
@@ -357,9 +353,7 @@ function finishToolGesture(gesture: ToolGesture): void {
   }
   if (gesture.kind === "fill") {
     emit("fill", gesture.cell);
-    return;
   }
-  emit("pick", gesture.cell);
 }
 
 function onPointerUp(event: PointerEvent): void {
@@ -567,21 +561,6 @@ function drawSelected(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: n
   }
 }
 
-/** 吸管命中格的描边（§5.4）。**有意不写用例**（探针 P8）：`strokeRect` 在本文件里没有被任何断言
- * 读过（它是纯观感绘制），删掉它拿不出能证明它承重的变异。 */
-function drawPick(ctx: CanvasRenderingContext2D, cellPx: number): void {
-  const gesture = toolGesture;
-  if (gesture === null || gesture.kind !== "pick") return;
-  ctx.strokeStyle = "#0ea5e9";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(
-    props.view.offsetX + gesture.cell.x * cellPx + 1,
-    props.view.offsetY + gesture.cell.y * cellPx + 1,
-    cellPx - 2,
-    cellPx - 2,
-  );
-}
-
 function draw(): void {
   const element = canvas.value;
   if (element === null) return;
@@ -622,7 +601,6 @@ function draw(): void {
   if (props.showLabels && cellPx >= CELL_LABEL_MIN_CELL_PX) drawLabels(ctx, range, cellPx);
   drawPending(ctx, range, cellPx);
   drawSelected(ctx, range, cellPx);
-  drawPick(ctx, cellPx);
 }
 
 // 两个 watch 的源都是**浅引用 / 标量**：`pattern` 在 store 里是 `markRaw` 的同一个对象（身份变 = 换图纸）、

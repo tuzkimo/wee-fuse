@@ -21,7 +21,7 @@ import { useProjectSession } from "@/stores/project";
  * 2. **`onViewport` 的两支有判别力**：第二次尺寸变化时缩放与偏移必须**逐字保持**，而夹取该生效时
  *    又必须真的生效（否则「什么都不做」也能过前一条）。
  * 3. **只有 `paint` / `paintCells` / `eraseCells` / `recolor` / `undo` / `redo` 会置脏**：切工具、改视图、
- *    开关网格线、吸管都不影响「内存与存储是否一致」。
+ *    开关网格线都不影响「内存与存储是否一致」。
  *
  * 夹具口径沿用 `project.test.ts` / `EditorPage.test.ts`：色卡用生产口径的 `getBuiltinPalette()`，
  * 端到端那条用 `toProjectDocument` 造一份色卡自洽的真记录再走 `session.load()`。
@@ -145,7 +145,7 @@ describe("beginSession：会话播种", () => {
 
   it("上一份会话的编辑态与提示不留给新会话（工具 / 显示开关 / saving / error 回默认）", () => {
     const { editor } = seedEditor();
-    editor.setTool("pick");
+    editor.setTool("fill");
     editor.setShowGrid(false);
     editor.setShowLabels(false);
     editor.setSaving(true);
@@ -209,7 +209,7 @@ describe("reset：把会话清回初始态", () => {
     const { editor, session } = seedEditor();
     editor.onViewport({ width: 800, height: 600 });
     editor.paint([1]);
-    editor.setTool("pick");
+    editor.setTool("fill");
     editor.setView({ scale: 2, offsetX: 10, offsetY: 20 });
     editor.setShowGrid(false);
     editor.setShowLabels(false);
@@ -330,11 +330,11 @@ describe("工具 / 当前色 / 视图 / 显示开关", () => {
     const { editor } = seedEditor();
     expect(editor.tool).toBe("brush");
 
-    editor.setTool("pick");
-    expect(editor.tool).toBe("pick");
+    editor.setTool("fill");
+    expect(editor.tool).toBe("fill");
 
     expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(/工具/);
-    expect(editor.tool).toBe("pick");
+    expect(editor.tool).toBe("fill");
   });
 
   it("setCurrentColor 接受 0..colorCount-1 与 EMPTY，拒绝越界 / 非整数 / NaN", () => {
@@ -361,13 +361,12 @@ describe("工具 / 当前色 / 视图 / 显示开关", () => {
     expect(editor.currentColor).toBe(3);
   });
 
-  it("还没载入图纸时 setCurrentColor / paint / pickFromCell 响亮拒绝，undo / redo 不抛", () => {
+  it("还没载入图纸时 setCurrentColor / paint 响亮拒绝，undo / redo 不抛", () => {
     // 静默返回会把「页面忘了 beginSession」变成「点了没反应」——本项目点名要消灭的静默失败形态。
     const editor = useEditor();
 
     expect(() => editor.setCurrentColor(0)).toThrow(/还没有载入图纸/);
     expect(() => editor.paint([0])).toThrow(/还没有载入图纸/);
-    expect(() => editor.pickFromCell(0, 0)).toThrow(/还没有载入图纸/);
 
     // 撤销 / 重做走的是**另一条**路径：工具栏按钮由 `canUndo` / `canRedo` 驱动（未载入时必然是
     // false ⇒ 禁用），但键盘快捷键（Ctrl+Z / Ctrl+Shift+Z）不经过按钮的 disabled。它们在这里
@@ -519,67 +518,6 @@ describe("paint：一次手势一条命令（规格 §6.2）", () => {
   });
 });
 
-describe("pickFromCell：吸管（规格 §6.5）", () => {
-  it("吸到某格的色号并把工具切回画笔（吸完就能画）", () => {
-    const { editor } = seedEditor([7, EMPTY, EMPTY, EMPTY, EMPTY, 3, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]);
-    editor.setTool("pick");
-
-    editor.pickFromCell(1, 1); // 下标 = 1 * 4 + 1 = 5
-
-    expect(editor.currentColor).toBe(3);
-    expect(editor.tool).toBe("brush");
-  });
-
-  it("吸到空格时当前色是 EMPTY（橡皮）", () => {
-    const { editor } = seedEditor();
-    editor.setTool("pick");
-
-    editor.pickFromCell(2, 0); // 下标 2 = EMPTY
-
-    expect(editor.currentColor).toBe(EMPTY);
-    expect(editor.tool).toBe("brush");
-  });
-
-  it("落在图纸外时不改当前色、也不切工具（`cellAt` 对越界返回 EMPTY，那不是「吸到了橡皮」）", () => {
-    const { editor } = seedEditor();
-    editor.setTool("pick");
-    editor.setCurrentColor(5);
-
-    editor.pickFromCell(-1, 0);
-    editor.pickFromCell(0, 3);
-    editor.pickFromCell(4, 0);
-
-    expect(editor.currentColor).toBe(5);
-    expect(editor.tool).toBe("pick");
-  });
-
-  it("非整数的格子坐标抛错（不许静默取整到相邻格）", () => {
-    const { editor } = seedEditor();
-    editor.setTool("pick");
-    const before = editor.currentColor;
-
-    expect(() => editor.pickFromCell(0.5, 0)).toThrow(/格子坐标/);
-    expect(() => editor.pickFromCell(0, Number.NaN)).toThrow(/格子坐标/);
-
-    expect(editor.currentColor).toBe(before);
-    expect(editor.tool).toBe("pick");
-  });
-
-  it("格子里的色号越出色卡时响亮失败（不静默把非法色号设成当前色、再涂出另一个色号）", () => {
-    const { editor, pattern } = seedEditor();
-    // 先开一份**合法**会话，再让某一格变成越界色号：模拟坏数据（旧版本文件、被改坏的备份、
-    // 将来的导入路径）。`beginSession` 的守卫不扫每个格子的值域——越界值在这里被挡住。
-    pattern.cells[5] = EMPTY - 1;
-    editor.setTool("pick");
-    const before = editor.currentColor;
-
-    expect(() => editor.pickFromCell(1, 1)).toThrow(/当前色号/);
-
-    expect(editor.currentColor).toBe(before);
-    expect(editor.tool).toBe("pick");
-  });
-});
-
 describe("undo / redo（规格 §6.6）", () => {
   it("撤销返回脏下标：cells 逐格还原、lastDirty 刷新、revision 自增、仍是未保存", () => {
     const { editor, pattern, session } = seedEditor();
@@ -657,16 +595,15 @@ describe("undo / redo（规格 §6.6）", () => {
 });
 
 describe("只有改 cells 的六个动作会置脏", () => {
-  it("beginSession / setTool / setView / setShowGrid / setShowLabels / setCurrentColor / pickFromCell / onViewport 都不置脏", () => {
+  it("beginSession / setTool / setView / setShowGrid / setShowLabels / setCurrentColor / onViewport 都不置脏", () => {
     const { editor, session } = seedEditor();
 
     editor.beginSession(makePattern(), COLOR_COUNT);
-    editor.setTool("pick");
+    editor.setTool("fill");
     editor.setView({ scale: 2, offsetX: 0, offsetY: 0 });
     editor.setShowGrid(false);
     editor.setShowLabels(false);
     editor.setCurrentColor(3);
-    editor.pickFromCell(1, 0); // 空格 → EMPTY
     editor.onViewport({ width: 800, height: 600 });
     editor.setSaving(true);
     editor.setError("保存失败");
@@ -764,18 +701,20 @@ describe("涂色与去背景", () => {
     expect("applyRect" in editor).toBe(false);
   });
 
-  it("setTool 的错误信息列出三个工具并拒绝拼错的值", () => {
+  it("吸管已删除：只允许 \"brush\" / \"fill\"，旧名一律响亮拒绝，store 上也没有 pickFromCell", () => {
     const { editor } = seedEditor();
 
-    // 文案与判据必须同源：判据放行了 fill、文案还写着 background，报错就会自相矛盾。
-    // 断言整份允许清单（不是只查 fill），漏掉任何一个工具名都要红。旧名也必须响亮拒绝。
-    // 任务 4 会把清单收窄到两个名字，这条到那时再改。
-    const allowed = /只允许 "brush" \/ "pick" \/ "fill"/;
+    // 文案与判据必须同源：清单里多一个名字、或旧名被静默放行，这里都要红。
+    // 断言整份允许清单（不是只查 fill），并逐个点名被删掉的旧工具名。
+    const allowed = /只允许 "brush" \/ "fill"/;
+    expect(() => editor.setTool("select" as unknown as EditorTool)).toThrow(allowed);
+    expect(() => editor.setTool("pick" as unknown as EditorTool)).toThrow(allowed);
+    expect(() => editor.setTool("background" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(allowed);
-    expect(() => editor.setTool("background" as unknown as EditorTool)).toThrow(allowed);
 
     expect(editor.tool).toBe("brush");
+    expect("pickFromCell" in editor).toBe(false);
   });
 
   it("eraseCells 把一批格子置为空并按一次命令撤销", () => {

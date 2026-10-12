@@ -54,10 +54,9 @@ const emit = defineEmits<{
   eraser: [];
 }>();
 
-/** 三个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
+/** 两个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
 const TOOLS: readonly { readonly tool: EditorTool; readonly label: string }[] = [
   { tool: "brush", label: "画笔" },
-  { tool: "pick", label: "吸管" },
   { tool: "fill", label: "填充" },
 ];
 
@@ -83,7 +82,7 @@ const saveLabel = computed(() => (props.saving ? "正在保存…" : "保存"));
       >
         {{ item.label }}
       </button>
-      <!-- 橡皮（C8 第 3 项：从调色板搬进工具行、跟在三个工具之后）。按下态读 `eraserActive`
+      <!-- 橡皮（C8 第 3 项：从调色板搬进工具行、跟在两个工具之后）。按下态读 `eraserActive`
            （= 当前色是 `EMPTY`）：用户切到橡皮之后必须看得出来自己握着的不是某个色。
            点它 emit `eraser`——**「顺带切回画笔」在页面那一层做**（`EditorPage.onEraser`），
            本组件不替父级决定工具状态。 -->

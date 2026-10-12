@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, markRaw, ref } from "vue";
 import { clampView, type Size, type ViewTransform } from "@/core/crop/view";
-import { buildPaintCommand, cellAt, indicesWithValues } from "@/core/pattern/edit";
+import { buildPaintCommand, indicesWithValues } from "@/core/pattern/edit";
 import { EditHistory } from "@/core/pattern/history";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { defaultCellView } from "@/core/pattern/view";
@@ -31,7 +31,7 @@ import { useProjectSession } from "@/stores/project";
  * 色数上界来守 `currentColor`，否则 `EMPTY` 与越界下标共用 `Uint16` 值域、会静默涂出另一个色号）、
  * `viewport`（只有 `onViewport` 那一刻需要它）。
  *
- * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 17 个动作
+ * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 16 个动作
  * 是任务 5（`PatternCanvas` / `PatternToolbar` / `PalettePanel` / `PalettePicker` 全部经 `EditorPage`
  * 以 props 拿值、以事件回调写值）与任务 6（`EditorPage` 的装配：载入成功 → `beginSession`、
  * 量到尺寸 → `onViewport`、保存 → `session.save()`）的接口面；`EditorTool` 同时是
@@ -40,12 +40,12 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 编辑器工具：画笔 / 吸管 / 填充（单指分工，规格 §6.1）。
+ * 编辑器工具：画笔 / 填充（单指分工，规格 §6.1）。
  *
  * **填充是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
  * 填充则按整片区域入账，先选工具再点画布（容差随手里拿的东西变，见 `EditorPage.onFill`）。
  */
-export type EditorTool = "brush" | "pick" | "fill";
+export type EditorTool = "brush" | "fill";
 
 const DEFAULT_TOOL: EditorTool = "brush";
 
@@ -112,11 +112,11 @@ export const useEditor = defineStore("editor", () => {
    *
    * **逐字口径**：它是**色卡色数**，不是 `patternStats().colorCount`（图纸实际用到的色数），
    * 也不是 `record.meta.colorCount`（上次保存时的冗余值）。三个同名量传错**不会报错**，只会在
-   * 「图纸用色比色卡少」时让 `setCurrentColor` / `pickFromCell` 抛出难归因的错误。
+   * 「图纸用色比色卡少」时让 `setCurrentColor` 抛出难归因的错误。
    *
    * 这里**不做**「每格值必须 < colorCount 或 = EMPTY」的 O(n) 扫描：`Pattern` 只有 `buildPattern`
    * 与 `fromProjectDocument` 两个来源，两者都已保证值域；在 store 里再扫一遍整张图纸（116×116
-   * 上限下是 1.3 万格）是每次载入的固定开销，而它挡不住任何已知路径（坏数据由 `pickFromCell`
+   * 上限下是 1.3 万格）是每次载入的固定开销，而它挡不住任何已知路径（坏数据由 `setCurrentColor`
    * 那一处的值域守卫响亮拦下）。
    */
   const colorCount = ref(0);
@@ -252,9 +252,9 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "pick" && next !== "fill") {
+    if (next !== "brush" && next !== "fill") {
       throw new Error(
-        `编辑器工具非法：${String(next)}（只允许 "brush" / "pick" / "fill"）`,
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "fill"）`,
       );
     }
     tool.value = next;
@@ -389,25 +389,6 @@ export const useEditor = defineStore("editor", () => {
     publishChange(history.value.commit(current.cells, command));
   }
 
-  /**
-   * 吸管：取该格色号（含 `EMPTY`）设为当前色，并**自动切回画笔**（吸完就能画）。
-   *
-   * 落在图纸外时**不改当前色、也不切工具**：`cellAt` 对越界返回 `EMPTY`，照搬就会把「点空处」
-   * 变成「选了橡皮」——用户以为自己选中了橡皮，下一次拖动的结果完全不同。所以边界自己先判。
-   *
-   * 写入走 `setCurrentColor` 的同一份值域守卫：格子里躺着越界色号（图纸与色卡不匹配的坏数据）时
-   * 响亮失败，而不是静默把它设成当前色、再涂出另一个色号。
-   */
-  function pickFromCell(x: number, y: number): void {
-    const current = requireLoadedPattern();
-    if (!Number.isInteger(x) || !Number.isInteger(y)) {
-      throw new Error(`吸管的格子坐标必须是整数（当前 ${String(x)}, ${String(y)}）`);
-    }
-    if (x < 0 || y < 0 || x >= current.width || y >= current.height) return;
-    setCurrentColor(cellAt(current, x, y));
-    tool.value = "brush";
-  }
-
   /** 撤销一步：返回的脏下标照常刷 `lastDirty` / `revision` / `dirty`；无可撤销时什么都不做。 */
   function undo(): void {
     if (pattern.value === null) return;
@@ -446,7 +427,7 @@ export const useEditor = defineStore("editor", () => {
    * 撤销按钮从此永远停在初始的 `false`（点了撤销、格子确实回退了，按钮却一直是灰的）。
    * 这是一个**不报错的界面错误**，只有真机点一下才看得出来。
    *
-   * `void revision.value` 就是这个依赖：七个变更 `cells` 的动作、以及 `beginSession` / `reset`
+   * `void revision.value` 就是这个依赖：六个变更 `cells` 的动作、以及 `beginSession` / `reset`
    * 都会动 `revision`，所以历史栈一变，这两个 computed 一定失效重算。
    *
    * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：任务 5 的 `PatternToolbar` 以
@@ -490,7 +471,6 @@ export const useEditor = defineStore("editor", () => {
     paintCells,
     eraseCells,
     recolor,
-    pickFromCell,
     undo,
     redo,
     setShowGrid,

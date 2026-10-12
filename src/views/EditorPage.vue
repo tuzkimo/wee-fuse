@@ -183,11 +183,6 @@ function onPaint(indices: number[]): void {
   editor.paint(indices);
 }
 
-/** 吸管：设当前色并切回画笔（切换在 store 里做，页面不重复一遍）。 */
-function onPick(point: CellPoint): void {
-  editor.pickFromCell(point.x, point.y);
-}
-
 /**
  * 填充：点一下 → 求与它连通的目标区域 → 交给 store 入账。
  *
@@ -477,8 +472,8 @@ onBeforeUnmount(() => {
 
 /**
  * 橡皮（C8 第 3 项：按钮从调色板搬进工具栏）。
- * **顺带切回画笔**：在吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
- * （与「吸管取色后切回画笔」同口径）。
+ * **顺带切回画笔**：在填充工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+ * （工具还停在填充）。
  */
 function onEraser(): void {
   editor.setCurrentColor(EMPTY);
@@ -582,7 +577,6 @@ function rerun(): void {
             @measure="onMeasure"
             @update:view="onView"
             @paint="onPaint"
-            @pick="onPick"
             @fill="onFill"
           />
         </div>

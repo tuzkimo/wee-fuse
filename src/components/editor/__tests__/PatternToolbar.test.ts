@@ -28,14 +28,13 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
 /** 工具按钮的 testid 与它必须 emit 的工具名（CONTRACT §5 / §8）。 */
 const TOOL_BUTTONS: readonly (readonly [string, EditorTool])[] = [
   ["tool-brush", "brush"],
-  ["tool-pick", "pick"],
   ["tool-fill", "fill"],
 ];
 
 describe("工具切换", () => {
   // 断言的是**载荷**：`toEqual([[tool]])` 同时钉住「emit 的是自己那个工具名」与「只 emit 一次」。
-  // 写成 `toHaveBeenCalled` / `toHaveLength(1)` 时，三个按钮都 emit "brush" 也照样绿。
-  it("三个工具按钮各自 emit 自己的工具名（载荷逐字）", async () => {
+  // 写成 `toHaveBeenCalled` / `toHaveLength(1)` 时，两个按钮都 emit "brush" 也照样绿。
+  it("两个工具按钮各自 emit 自己的工具名（载荷逐字）", async () => {
     for (const [testid, tool] of TOOL_BUTTONS) {
       const wrapper = mountToolbar({ tool: "brush" });
       await wrapper.get(`[data-testid='${testid}']`).trigger("click");
@@ -43,10 +42,10 @@ describe("工具切换", () => {
     }
   });
 
-  // 当前工具在界面上必须看得出来（用户不知道自己拿的是画笔还是吸管时，点一下就会涂错）。
-  // aria-pressed 是这里唯一的外部可观察量：三个工具一起遍历，写死某一颗必红。
-  it("当前工具那颗按钮 aria-pressed 为 true，其余两颗为 false", () => {
-    for (const current of ["brush", "pick", "fill"] as const) {
+  // 当前工具在界面上必须看得出来（用户不知道自己拿的是画笔还是填充时，点一下就会涂错）。
+  // aria-pressed 是这里唯一的外部可观察量：两个工具一起遍历，写死某一颗必红。
+  it("当前工具那颗按钮 aria-pressed 为 true，另一颗为 false", () => {
+    for (const current of ["brush", "fill"] as const) {
       const wrapper = mountToolbar({ tool: current });
       for (const [testid, tool] of TOOL_BUTTONS) {
         expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-pressed")).toBe(
@@ -216,7 +215,6 @@ describe("触控目标与字号", () => {
     const wrapper = mountToolbar();
     for (const testid of [
       "tool-brush",
-      "tool-pick",
       "undo",
       "redo",
       "toggle-grid",
@@ -290,8 +288,8 @@ describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
 /** 五行分组：行 id → 该行应出现的 testid（顺序即 DOM 顺序）。产品口径见规格 §5.1。 */
 const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
   // C8 第 3 项：橡皮从调色板搬进工具行**尾部**（位置口径：工具挨着工具）。
-  // 填充是第 3 个工具，排在吸管之后、橡皮（色槽按钮）之前。
-  ["tools", ["tool-brush", "tool-pick", "tool-fill", "eraser"]],
+  // 填充是第 2 个工具，排在画笔之后、橡皮（色槽按钮）之前。
+  ["tools", ["tool-brush", "tool-fill", "eraser"]],
   ["history", ["undo", "redo"]],
   ["display", ["toggle-grid", "toggle-labels"]],
   ["view", ["zoom-fit", "zoom-in", "zoom-out"]],

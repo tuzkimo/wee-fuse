@@ -1008,41 +1008,15 @@ describe("键盘与 beforeunload", () => {
 /**
  * 页面这一层的**接线**：组件 emit → store 动作 / core 函数。
  *
- * 为什么单独一组：这四条接线（工具、吸管、视图回写、缩放与适配）在本文件里原本
+ * 为什么单独一组：这两条接线（视图回写、缩放与适配）在本文件里原本
  * **零判别力**——把它们改成空实现或改成错的 store 动作，先前那 26 条用例**全绿**
- * （报告 §6 的 R12 / R19 / R20 / R21，以及补充的 `@update:tool`）。而「两端各自正确、
+ * （报告 §6 的 R12 / R19 / R20 / R21）。而「两端各自正确、
  * 错在接线」正是本项目最贵的缺陷形态（任务 5 / 6 只覆盖了「组件 emit 了什么」，
  * 任务 8 的三条端到端也不覆盖这几条），所以页面这一层必须自己钉住。
  *
  * **断言对象一律是接线接通后的可观察结果**（store 里的值 / 图纸的格），不是「事件被 emit 过」。
  */
-describe("页面接线：工具与吸管 / 视图回写 / 缩放与适配", () => {
-  it("工具与吸管：点「吸管」再点一格 → 当前色变成那格的色号、切回画笔，图纸没被涂改", async () => {
-    const wrapper = await mountPage();
-    const editor = useEditor();
-
-    // 先造出「格子里躺着一个既不是 0、也不等于当前色」的局面：把 (1,0) 涂成 2 号色。
-    editor.setCurrentColor(2);
-    await dragPaint(wrapper, [1, 0], [1, 0]);
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
-
-    // 当前色换成一个**与待吸色号不同**的值：否则「吸到了 2」与「什么都没做」不可区分。
-    editor.setCurrentColor(5);
-    await wrapper.get("[data-testid='tool-pick']").trigger("click");
-    // `@update:tool` 这条接线也在这里被真的走到（工具真的切成了 pick）。
-    expect(editor.tool).toBe("pick");
-
-    await pointerAtCell(wrapper, "pointerdown", 1, 0);
-    await pointerAtCell(wrapper, "pointerup", 1, 0);
-
-    // 接线接通后的结果：色号来自**那一格**（2），不是 0、不是 5、也不是橡皮。
-    expect(editor.currentColor).toBe(2);
-    // 吸完自动切回画笔（切换在 store 里做，页面不重复一遍）。
-    expect(editor.tool).toBe("brush");
-    // 吸管**不是画笔**：图纸一个字节都没变（把 onPick 接成 paint 的写法在这里红）。
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
-  });
-
+describe("页面接线：视图回写 / 缩放与适配", () => {
   it("视图回写：双指捏合后 editor.view 等于画布发上来的那个视图", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
@@ -1253,11 +1227,11 @@ describe("页面接线（终）：类型兼容的 props 错接（画布 / 工具
     const wrapper = await mountPage();
     expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("brush"); // 播种值
 
-    useEditor().setTool("pick");
+    useEditor().setTool("fill");
     await nextTick();
 
     // 绑成常量 `'brush'` 的写法在这里红：页面从不读这个 prop，用户只看到按钮高亮永不跟随
-    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("pick");
+    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("fill");
   });
 
   it("面板收到 `currentColor`：`palette-current` 显示的就是笔刷那个色号（绑成 revision 必红）", async () => {
@@ -1591,7 +1565,7 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
    * 真正要做的两件事在**页面**这一层——设当前色为 `EMPTY`、**并切回画笔**。
    *
    * 后半句是这条用例的核心：在非画笔工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
-   * （与「吸管取色后切回画笔」同口径）。所以起点**刻意先切到填充**——否则「切回画笔」与
+   * （用户点完必须看得出自己已经手握橡皮）。所以起点**刻意先切到填充**——否则「切回画笔」与
    * 「本来就是画笔」不可区分。
    */
   it("工具栏「橡皮」：设当前色为 EMPTY 并切回画笔，按下态跟着当前色", async () => {
@@ -1717,7 +1691,7 @@ async function mountGrid(cells: readonly number[], width: number, height: number
   return mountPage();
 }
 
-/** 点一下某格：与既有「吸管」用例同一手法（按下 → 抬起，走真指针事件）。 */
+/** 点一下某格：与既有手势用例同一手法（按下 → 抬起，走真指针事件）。 */
 async function tapCell(wrapper: ReturnType<typeof mount>, x: number, y: number): Promise<void> {
   await pointerAtCell(wrapper, "pointerdown", x, y);
   await pointerAtCell(wrapper, "pointerup", x, y);

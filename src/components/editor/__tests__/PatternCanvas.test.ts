@@ -10,7 +10,7 @@ import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 
 /**
- * 手势用例断言的是**最终发出的事件**（paint / pick / fill / update:view / measure）与**平台状态**
+ * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
  * （画布尺寸、层的尺寸、`putImageData` 的实参），不是画面：happy-dom 的 canvas 是桩，
  * 像素断言在这里一律恒真，绝不写（B1-2 的教训）。
  *
@@ -28,7 +28,7 @@ import PatternCanvas from "@/components/editor/PatternCanvas.vue";
  *   · 32×32 + 视图 `{24, -200, -200}`：图纸（768px）比 400×400 的视口大，平移 / 缩放都可观察；
  *     格坐标 = `floor((屏幕坐标 + 200) / 24)`。
  *   · 8×8 + 视图 `{24, 0, 0}`：图纸只占屏幕左上角 192×192，格坐标 = `floor(屏幕坐标 / 24)`，
- *     手算吸管格、图纸外的一点都用它。
+ *     手算填充格、图纸外的一点都用它。
  * 容器与画布拿到**不同的盒子**（400×300 / 111×222），所以「量的是容器」这件事有判别力。
  */
 
@@ -215,7 +215,7 @@ function stubContext(): void {
   });
 }
 
-/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（吸管用 `strokeRect`，色号用 `fillText`）。 */
+/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（色号用 `fillText`）。 */
 function moveToCount(): number {
   return ops.filter((op) => op === "moveTo").length;
 }
@@ -465,28 +465,9 @@ describe("画笔：单指涂抹的能力与边界", () => {
   });
 });
 
-describe("吸管：抬手才 emit", () => {
-  it("吸管取的是按下时命中的格子，抬手才 emit；图纸外按下不 emit", async () => {
-    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "pick" });
-    await wrapper.vm.$nextTick();
-
-    await pointer(wrapper, "pointerdown", 55, 55); // 格 (2,2)
-    await pointer(wrapper, "pointermove", 150, 150); // 格 (6,6)：拖动**不**改变取色目标
-    await pointer(wrapper, "pointerup", 150, 150);
-    expect(wrapper.emitted("pick")?.at(-1)).toEqual([{ x: 2, y: 2 }]);
-
-    // 图纸外按下：什么也不发（§6.5「落在图纸外时不改当前色」）。
-    await pointer(wrapper, "pointerdown", 300, 300);
-    await pointer(wrapper, "pointermove", 150, 150);
-    await pointer(wrapper, "pointerup", 150, 150);
-    expect(wrapper.emitted("pick")).toHaveLength(1);
-  });
-});
-
-// 填充：与吸管同形态（只在按下那一刻记格），但走**自己的事件**。emit 落点是最容易写错的地方：
-// `finishToolGesture` 的 `pick` 那一支原本是无条件兜底，填充如果掉进它就会 emit `pick`。
+// 填充：只在按下那一刻记格，走**自己的事件**。emit 落点是最容易写错的地方。
 describe('填充 tool = "fill"：按下定格、抬手才 emit', () => {
-  it("单指按下并抬起 emit 一次 fill（取按下那一格），不带 paint / pick", async () => {
+  it("单指按下并抬起 emit 一次 fill（取按下那一格），不带 paint", async () => {
     // 8×8 + VIEW_8 `{24, 0, 0}`：格坐标 = floor(屏幕坐标 / 24)。
     const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "fill" });
     await wrapper.vm.$nextTick();
@@ -494,10 +475,8 @@ describe('填充 tool = "fill"：按下定格、抬手才 emit', () => {
     await pointer(wrapper, "pointerdown", 24, 48); // 格 (1,2)
     await pointer(wrapper, "pointerup", 24, 48);
     expect(wrapper.emitted("fill")).toEqual([[{ x: 1, y: 2 }]]);
-    // 串台守卫：填充不该冒充画笔 / 吸管。`finishToolGesture` 的 pick 兜底一旦兜住它，
-    // 下面第二条立刻红。
+    // 串台守卫：填充不该顺带 emit paint。
     expect(wrapper.emitted("paint")).toBeUndefined();
-    expect(wrapper.emitted("pick")).toBeUndefined();
   });
 
   it("拖动不改结果：取的是按下那一格", async () => {
