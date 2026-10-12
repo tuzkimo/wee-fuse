@@ -66,20 +66,45 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
     expect(board.getAttribute("style") ?? "").toContain("radial-gradient");
     expect(board.classList.contains("items-center")).toBe(true);
     expect(board.classList.contains("justify-center")).toBe(true);
-    expect(board.classList.contains("h-[55vh]")).toBe(true);
+    // 预览盒的高度**跟随宿主**（R41 修复 2）：基准仍是 55vh（全屏宿主不变），但宿主有定高时
+    // 会被压进剩余空间——手机 40vh 吸顶盒里就不再有内滚。
+    // 用 `grow` 而不是 `flex-1`：`flex-1` 是 `flex: 1 1 0%` 简写，会按 CSS 生成顺序盖掉
+    // `basis-[55vh]`（基准变 0 ⇒ 全屏宿主的预览直接塌），同 R28 那类工具类先后顺序的坑。
+    expect(board.classList.contains("grow")).toBe(true);
+    expect(board.classList.contains("basis-[55vh]")).toBe(true);
+    expect(board.classList.contains("min-h-0")).toBe(true);
+    // 回退到写死的 `h-[55vh]` 时这一条红（它就是本机制要防的变异）。
+    expect(board.classList.contains("h-[55vh]")).toBe(false);
+    // 根是能撑满宿主高度的 flex 列：宿主高度 auto 时 `h-full` 退化为 auto（全屏宿主不变）。
+    const root = board.parentElement as HTMLElement;
+    expect(root.classList.contains("flex-col")).toBe(true);
+    expect(root.classList.contains("h-full")).toBe(true);
+    expect(root.classList.contains("min-h-0")).toBe(true);
+    // 手机 40vh 盒子的预算里这两条是承重的：板上内边距 32px → 16px、行间距 16px → 8px。
+    // 少了任一条，390×740 的窗口下三颗动作按钮就会盖到 chip 上（真窗口实测见任务 15 报告 §F）。
+    expect(board.classList.contains("max-md:p-2!")).toBe(true);
+    expect(root.classList.contains("gap-2")).toBe(true);
   });
 
-  it("三颗动作按钮是 bead-card 底 64px 图形按钮，完成是通栏 accent 大按钮（36px 字 + shadow-pop-lg）", () => {
+  it("三颗动作按钮是 bead-card 底 64px 图形按钮 + 12px 短中文兜底，完成是通栏 accent 大按钮", () => {
     const wrapper = mountPanel();
-    for (const id of ["open-editor", "result-view-sheet", "result-rerun"] as const) {
+    for (const [id, label] of [
+      ["open-editor", "继续涂"],
+      ["result-view-sheet", "看施工图"],
+      ["result-rerun", "重做"],
+    ] as const) {
       const button = wrapper.get(`[data-testid='${id}']`);
       expect(button.classes()).toContain("bg-bead-card");
       expect(button.classes()).not.toContain("bg-bead-accent");
       // 64px 高（§7.5）：比 BeadButton 自己的 56px 下界更高。
       expect(button.classes()).toContain("h-16");
       expect(button.find("svg").exists()).toBe(true);
-      // 图形按钮：可见文字为空，名字只在 aria-label 上。
-      expect(button.text()).toBe("");
+      // §1 事实 1：图形按钮旁边必须留 2~4 字短中文兜底（纯图标对抽象动作无法消歧）。
+      expect(button.text()).toBe(label);
+      expect(label.length).toBeGreaterThanOrEqual(2);
+      expect(label.length).toBeLessThanOrEqual(4);
+      // 12px 写在文字节点上：`secondary` 变体自带 `text-[24px]`，靠工具类生成顺序盖不住。
+      expect(button.get("span").classes()).toContain("text-[12px]");
     }
     const ok = wrapper.get("[data-testid='result-ok']");
     expect(ok.classes()).toContain("bg-bead-accent");

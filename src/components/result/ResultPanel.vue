@@ -65,14 +65,21 @@ const boardDots = {
 </script>
 
 <template>
-  <section class="flex flex-col gap-4">
+  <section class="flex h-full min-h-0 flex-col gap-2 md:gap-4">
     <!--
       上半屏（约 55%）：成品预览在深色板底 + 板孔点阵上居中（§7.5）。深色底是本组件被允许的
       四处看图底之一（§10.6 白名单）。`max-h-full` + `object-contain`：缩略图按原比例缩到盒内，
       不裁切、不拉伸（像素风不重采样）。
+
+      高度**跟随宿主**（R41 修复 2）：`basis-[55vh]` 是基准（宿主高度 auto 时它就是 55vh，
+      全屏 `EditResultPage` 因此不变），`grow` + `min-h-0` 让它在**有定高**的宿主里被压进剩余
+      空间——手机中栏那个 40vh 吸顶盒里就不会再把三颗动作按钮顶进内滚区。
+      **不用 `flex-1`**：它是 `flex 1 1 0%` 简写，会按工具类生成顺序盖掉 `basis-[55vh]`。
+      `max-md:p-2!` 与 `gap-2` 是同一笔账：40vh 的盒子里“板框 + 保存文案 + 三颗动作 + chip”
+      的总高很紧，板上那 32px 内边距缩到 16px 才装得下（真窗口逐尺寸实测见任务 15 报告 §F）。
     -->
     <div
-      class="flex h-[55vh] items-center justify-center rounded-bead-md border-4 border-bead-ink bg-bead-board p-4"
+      class="flex min-h-0 grow basis-[55vh] max-md:p-2! items-center justify-center rounded-bead-md border-4 border-bead-ink bg-bead-board p-4"
       :style="boardDots"
     >
       <img
@@ -88,38 +95,42 @@ const boardDots = {
 
     <!--
       三颗并列动作按钮（§7.5：`bead-card` 底、64px 高）：全部映射到现有动作（继续涂 / 看施工图 /
-      重做），不新增功能。**图形按钮**：可见内容只有像素图标，动作名走 `aria-label`（读屏用户的
-      唯一名字；8 岁识别率测试见规格 §13 的延后项）。
+      重做），不新增功能。图形按钮**必须配 2~4 字短中文兜底**（§1 事实 1：纯图标对抽象动作无法
+      消歧；`undo` 在编辑器里是「撤销」，同一图标指两件事时靠文字分开），文字 12px、图标降为 24px。
+      `aria-label` 同时保留：可见文字与无障碍名字同字〔WCAG 2.5.3〕。
     -->
     <div class="flex gap-3">
       <BeadButton
         data-testid="open-editor"
         variant="secondary"
         aria-label="继续涂"
-        class="h-16 flex-1 p-0!"
+        class="h-16 flex-1 flex-col p-0!"
         @click="emit('edit')"
       >
-        <PixelIcon name="edit" :size="36" />
+        <PixelIcon name="edit" :size="24" />
+        <span class="text-[12px]">继续涂</span>
       </BeadButton>
       <BeadButton
         data-testid="result-view-sheet"
         variant="secondary"
         aria-label="看施工图"
-        class="h-16 flex-1 p-0!"
+        class="h-16 flex-1 flex-col p-0!"
         @click="sheetOpen = true"
       >
-        <PixelIcon name="sheet" :size="36" />
+        <PixelIcon name="sheet" :size="24" />
+        <span class="text-[12px]">看施工图</span>
       </BeadButton>
       <BeadButton
         v-if="canRerun"
         data-testid="result-rerun"
         variant="secondary"
         aria-label="重做"
-        class="h-16 flex-1 p-0!"
+        class="h-16 flex-1 flex-col p-0!"
         @click="emit('rerun')"
       >
         <!-- R10：`ICON_NAMES` 里没有 `rerun`，复用 `undo`。 -->
-        <PixelIcon name="undo" :size="36" />
+        <PixelIcon name="undo" :size="24" />
+        <span class="text-[12px]">重做</span>
       </BeadButton>
     </div>
 

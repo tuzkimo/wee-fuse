@@ -504,6 +504,33 @@ describe("手机竖屏排法（§7.3）", () => {
     expect(preview.classes()).toContain("md:static");
     expect(preview.classes()).toContain("md:h-auto");
   });
+
+  /**
+   * 生成态的手机排法（R41 修复 2）：预览盒的高度不能写死成视口比例，否则 55vh 的盒子装进这个
+   * 40vh 的吸顶盒里，下面三颗动作按钮就被推进内滚区（要滚一下才看得到）。
+   *
+   * 机制：吸顶盒是定高的 flex 列 ⇒ 结果卡片 `max-md:flex-1` 吃掉 chip 之外的高度 ⇒
+   * `ResultPanel` 根 `h-full` 在这个定高里成立 ⇒ 预览盒 `grow basis-[55vh] min-h-0` 被压缩到
+   * 剩余空间。断言只钉类名（happy-dom 没有布局）；真实数值在报告 §F 的 Chromium 实测里。
+   */
+  it("生成态：预览盒在吸顶盒里让位，三颗动作按钮不用内滚就露出来（§7.5 / R41）", async () => {
+    window.innerWidth = 500;
+    const wrapper = await mountSetupGenerated();
+
+    const pane = wrapper.get("[data-testid='preview-pane']");
+    expect(pane.classes()).toContain("flex");
+    expect(pane.classes()).toContain("flex-col");
+
+    const resultPane = wrapper.get("[data-testid='result-pane']");
+    expect(resultPane.classes()).toContain("max-md:flex-1");
+    // `min-h-0`（而不是 `min-h-min`）：卡片的 min-content 会被预览盒的 `basis-[55vh]` 污染成
+    // 55vh，用 `min-h-min` 等于取消变矮（真窗口实测卡片撑到 555px，预览又变成 55vh）。
+    expect(resultPane.classes()).toContain("max-md:min-h-0");
+    expect(resultPane.classes()).not.toContain("max-md:min-h-min");
+
+    // chip 不参与压缩（否则它会被压成看不见的一条），它是吸顶盒里除结果卡片之外的第二项。
+    expect(wrapper.get("[data-testid='size-chip']").classes()).toContain("shrink-0");
+  });
 });
 
 /**

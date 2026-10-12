@@ -467,11 +467,20 @@ function resetCrop(): void {
       -->
       <section
         data-testid="preview-pane"
-        class="sticky top-0 h-[40vh] overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="sticky top-0 flex h-[40vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
         :style="boardDots"
       >
         <template v-if="showResult">
-          <section data-testid="result-pane" class="rounded-bead-md bg-bead-card p-4 md:p-6">
+          <!-- `max-md:flex-1` + `max-md:min-h-0`（R41 修复 2）：手机上这个吸顶盒是定高的 flex
+               列，结果卡片因此吃掉 chip 之外的全部高度；`ResultPanel` 里的预览盒有着明确的百分比
+               高度可依，才能被压进剩余空间（否则 55vh 的预览会把三颗动作按钮顶进内滚区）。
+               平板上盒高 auto，这几个类不生效（`max-md:`），仍由 `md:min-h-[60vh]` 主导。
+               `min-h-0`（而不是 `min-h-min`）：卡片的 min-content 会被预览盒的 `basis-[55vh]`
+               污染成 55vh，用 `min-h-min` 就等于取消变矮，真窗口实测卡片会撑到 555px。 -->
+          <section
+            data-testid="result-pane"
+            class="max-md:flex-1 max-md:min-h-0 rounded-bead-md bg-bead-card p-4 md:p-6"
+          >
             <ResultPanel
               v-if="session.pattern !== null"
               :pattern="session.pattern"
@@ -488,7 +497,7 @@ function resetCrop(): void {
           <p
             v-if="sizeChip !== ''"
             data-testid="size-chip"
-            class="mt-3 rounded-bead-sm border-3 border-bead-line-2 bg-bead-sand-3 px-4 py-2 text-[24px] text-bead-ink"
+            class="mt-3 shrink-0 rounded-bead-sm border-3 border-bead-line-2 bg-bead-sand-3 px-4 py-2 text-[24px] text-bead-ink"
           >
             {{ sizeChip }}
           </p>

@@ -252,7 +252,13 @@ describe("EditResultPage（/edit/:id/result）", () => {
     // 前提：这一页**确实**处在「有上一页」的历史里（否则本条的负向断言是白送的）。
     expect(historyState.back).toBe("/edit/a");
 
-    await wrapper.get("[data-testid='result-back']").trigger("click");
+    const back = wrapper.get("[data-testid='result-back']");
+    // R35：图标按钮的触控目标 56×56（§6.5），C8 的 44px 已被推翻——把 `min-h-14` / `min-w-14`
+    // 去掉（或退回 `min-h-11`）这一条红。
+    expect(back.classes()).toContain("min-h-14");
+    expect(back.classes()).toContain("min-w-14");
+
+    await back.trigger("click");
 
     expect(pushMock).toHaveBeenCalledWith({ name: "home" });
     expect(backMock).not.toHaveBeenCalled();
