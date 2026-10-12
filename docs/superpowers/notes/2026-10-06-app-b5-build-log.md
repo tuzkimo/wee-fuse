@@ -533,6 +533,7 @@ E	关闭请求	（尚未触发）
 |---|---|---|---|---|
 | 1 | **六判据（F/A/B/C/D/E）全未取得真机读数** | 探针页与通路在任务 2 交付；**A–E 需要人类伙伴在手机上点** | 操作卡：`.superpowers/sdd/2026-10-06-app-b5-tauri-shell/phone-probe-instructions.md` | **最高**（它决定 pass 2 各任务的实现分支） |
 | 2 | **平板未验** | 本轮验收设备是**手机**（裁决 4） | 将来有平板时重跑 `/lab/shell` 与人工清单 | 中 |
+| | | 〔**2026-10-12 部分闭环** ✓〕本次改造的目标设备是平板，已先补了与它不冲突的一件：**`/lab/canvas` 已在平板上复测，读数与手机逐项一致**（连失败起点 `16416²` 与收敛值 `16384` 都相同）⇒ 该上限是 Chromium 的固定面积常量而非设备能力，**canvas 这半不必再重测**（详见 B4 构建记录 §7.2）。**`/lab/shell` 与人工清单那半仍然开放**，推到实现阶段平板已插 USB 跑 `tauri android dev` 时顺手做（它要真壳，浏览器里跑不了）。 | |
 | 3 | **上架 / 应用商店分发未做**（**2026-10-07 部分更正** ✓：release 签名**已落地并验过** —— `build.gradle.kts` 的 `signingConfigs.release` + 4 个 secret + 本地 `npx tauri android build --apk` 出已签名包、指纹与 CI 产物一致 ✓，见 README；**「只交付 debug APK」这句已过时** ✗ —— 发布通道当天晚些从 `android-package` 收窄成 `release-android`、不再出 debug 包，见 §8 第 4 条） | 签名材料已就位 ✓，只缺**分发账号** | 拿到账号后走 Play Console 或自建分发 | 低（本阶段不要求） |
 | 4 | **Rust 侧零单测**（CI 只 `cargo check`） | `take_opened_uris` 的「取走即清」、信封解析、三层核对都只有真机判别力 | §2 的判据 C/D 读数 | 中 |
 | 4b | **mobile-only 的 `cfg` 分支从不被 CI 编译** | CI 的 `cargo check` 编的是桌面 target，`#[cfg(target_os = "android")]` 整块（含 `save_with_platform` 的 Android 实现、`RunEvent::Opened` 的入队与 `emit`）与插件的移动端路径**不参与类型检查**。**实测代价（R9）**：任务 2 用真机构建才抓到 `E0716` 临时值与被遗漏的 `Manager` 引入 | 每次 `tauri android build` 顺带验证；若要把这条纳入 CI，需要加一个 Android target 的 `cargo check`（本轮不做，记为首选项） | 中 |
