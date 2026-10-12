@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>一起拼豆 · 像素风屏稿</title>
+<style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Header branding and connection status
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #frame-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .brand { display: flex; align-items: center; min-width: 0; overflow: hidden; color: var(--text-secondary); line-height: 1; }
+    .brand a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; line-height: 1; }
+    .brand-copy { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; transform: translateY(-1px); }
+    .brand-logo { display: block; height: 1em; width: auto; max-width: 180px; flex-shrink: 0; filter: invert(1); }
+    @media (prefers-color-scheme: dark) {
+      .brand-logo { filter: none; }
+    }
+    .status { font-size: 0.7rem; color: var(--status-color, var(--success)); display: flex; align-items: center; gap: 0.4rem; justify-self: end; white-space: nowrap; line-height: 1; }
+    .status::before { content: ''; width: 6px; height: 6px; background: var(--status-color, var(--success)); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #frame-content { padding: 2rem; min-height: 100%; }
+
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1rem;
+      min-height: 42px;
+    }
+    .header .brand { justify-self: start; width: 100%; font-size: 0.75rem; line-height: 1; }
+    .header .status { grid-column: 2; line-height: 1; }
+    .header span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .header .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  
+
+/* 屏稿原件里 onclick="toggleSelect(this)" 用的是 brainstorm 服务端的 helper.js。
+   这里补一个等价的最小实现，只为让「点一下选中」在离线打开时仍然有效。 */
+function toggleSelect(el) { if (el) el.classList.toggle('selected'); }
+</style>
+</head>
+<body>
+<style>
+@font-face{font-family:'PixelCN';src:url('../../../src/assets/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');font-display:block;}
+.px{font-family:'PixelCN',monospace;-webkit-font-smoothing:none;font-smooth:never}
+.px *{box-sizing:border-box}
+.pix{display:block;shape-rendering:crispEdges}
+.pix rect{fill:currentColor}
+.tab,.ph{background:#F5EDDF;color:#3D3226;border:5px solid #C9B79A;box-shadow:10px 10px 0 rgba(61,50,38,.18);
+  display:flex;flex-direction:column;overflow:hidden}
+.tab{width:1040px;height:648px}
+.ph{width:360px;height:720px;border-radius:20px}
+.bar{display:flex;align-items:center;gap:14px;padding:12px 18px;background:#EFE4D0;border-bottom:4px solid #C9B79A}
+.circ{width:54px;height:54px;border:4px solid #3D3226;border-radius:50%;display:grid;place-items:center;background:#FFB56B;flex:none}
+.sq54{width:54px;height:54px;border:4px solid #3D3226;border-radius:14px;display:grid;place-items:center;background:#FFF9EE;box-shadow:0 4px 0 #D8C9AC;flex:none}
+.sq54.dim{opacity:.4}
+.title{font-size:24px;line-height:1;color:#6B5A44}
+.grow{flex:1}
+.save{height:54px;padding:0 22px;display:flex;align-items:center;gap:10px;background:#17A398;border:4px solid #3D3226;
+  border-radius:14px;box-shadow:0 5px 0 #0E6E66;color:#EFFCFA;font-size:24px;line-height:1;position:relative}
+.dot{position:absolute;right:-8px;top:-8px;width:22px;height:22px;background:#E4572E;border:4px solid #3D3226;border-radius:50%}
+.mid{flex:1;display:flex;gap:14px;padding:14px 18px;min-height:0}
+.canvas{flex:1;background:#2A2320;border:4px solid #3D3226;border-radius:16px;display:grid;place-items:center;overflow:hidden}
+.palette{width:250px;background:#E9DFC9;border:4px solid #B9A585;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.ptitle{font-size:24px;line-height:1;color:#8A7455}
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.swatch{aspect-ratio:1;border:3px solid #3D3226;border-radius:8px;display:flex;align-items:flex-end;justify-content:center;
+  font-size:12px;line-height:1;padding-bottom:3px;color:#241E1A}
+.swatch.on{outline:4px solid #E4572E;outline-offset:2px}
+.tools{display:flex;align-items:center;gap:12px;padding:12px 18px;background:#EFE4D0;border-top:4px solid #C9B79A}
+.tool{width:64px;height:64px;border:4px solid #3D3226;border-radius:14px;background:#FFF9EE;display:grid;place-items:center;
+  box-shadow:0 5px 0 #D8C9AC;color:#3D3226;flex:none}
+.tool.on{background:#FFB56B;box-shadow:0 5px 0 #C98A4A}
+.small{width:52px;height:52px;border:4px solid #3D3226;border-radius:12px;background:#E9DFC9;display:grid;place-items:center;color:#6B5A44;flex:none}
+.stripes{display:flex;gap:10px;padding:10px 18px;background:#E9DFC9;border-top:4px solid #C9B79A;overflow:hidden}
+.bead{width:52px;height:52px;border:3px solid #3D3226;border-radius:50%;flex:none}
+.tag{display:inline-block;font-size:13px;background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;
+  border-radius:6px;padding:4px 8px;margin:0 6px 6px 0}
+</style>
+
+<h2>编辑器：同一套语言，两种屏幕</h2>
+<p class="subtitle">这是全 App 最挤的一屏——现有工具栏是 13 个文字按钮排 5 行。我按「工具在手上、颜色在手边、显示选项收起来」重排：底部一条工具（拇指够得到），右侧调色板（平板）/ 底部色条（手机）。</p>
+
+<div class="mockup">
+  <div class="mockup-header">EditorPage · 平板横屏 · 1280×800</div>
+  <div class="mockup-body" style="display:flex;justify-content:center;padding:18px">
+    <div class="tab px">
+      <div class="bar">
+        <div class="circ"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="10" y="4" width="2" height="8"/><rect x="8" y="6" width="2" height="4"/><rect x="6" y="7" width="2" height="2"/><rect x="12" y="2" width="2" height="12"/></svg></div>
+        <div class="title">小兔子</div>
+        <div class="grow"></div>
+        <div class="sq54"><svg class="pix" width="28" height="28" viewBox="0 0 16 16"><rect x="2" y="6" width="4" height="4"/><rect x="4" y="4" width="2" height="2"/><rect x="4" y="10" width="2" height="2"/><rect x="6" y="7" width="6" height="2"/><rect x="11" y="9" width="2" height="3"/></svg></div>
+        <div class="sq54 dim"><svg class="pix" width="28" height="28" viewBox="0 0 16 16"><rect x="10" y="6" width="4" height="4"/><rect x="10" y="4" width="2" height="2"/><rect x="10" y="10" width="2" height="2"/><rect x="4" y="7" width="6" height="2"/><rect x="3" y="9" width="2" height="3"/></svg></div>
+        <div class="grow"></div>
+        <div class="save"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="1" y="8" width="3" height="3"/><rect x="3" y="10" width="3" height="3"/><rect x="6" y="8" width="3" height="3"/><rect x="9" y="6" width="3" height="3"/><rect x="12" y="3" width="3" height="3"/></svg>保存<div class="dot"></div></div>
+      </div>
+
+      <div class="mid">
+        <div class="canvas">
+          <svg width="600" height="400" viewBox="0 0 6 4" style="shape-rendering:geometricPrecision">
+            <rect x="0" y="0" width="6" height="4" fill="#1E1916"/>
+            <rect x="2" y="0" width="2" height="1" fill="#D8384F"/><rect x="1" y="1" width="4" height="1" fill="#D8384F"/>
+            <rect x="0" y="2" width="6" height="1" fill="#D8384F"/><rect x="1" y="3" width="4" height="1" fill="#D8384F"/>
+            <g stroke="#3A322C" stroke-width=".02">
+              <path d="M0 .5h6M0 1.5h6M0 2.5h6M0 3.5h6M.5 0v4M1.5 0v4M2.5 0v4M3.5 0v4M4.5 0v4M5.5 0v4"/>
+            </g>
+            <g font-family="PixelCN" font-size=".34" text-anchor="middle" fill="#101010" opacity=".85">
+              <text x=".5" y=".63">A1</text><text x="1.5" y=".63">A1</text><text x="4.5" y=".63">A1</text><text x="5.5" y=".63">A1</text>
+              <text x="2.5" y=".63">R4</text><text x="3.5" y=".63">R4</text>
+              <text x=".5" y="1.63">A1</text><text x="5.5" y="1.63">A1</text>
+              <text x="3.5" y="1.63">R4</text>
+              <text x=".5" y="2.63">R4</text><text x="1.5" y="2.63">R4</text><text x="2.5" y="2.63">R4</text>
+              <text x="3.5" y="2.63">R4</text><text x="4.5" y="2.63">R4</text><text x="5.5" y="2.63">R4</text>
+              <text x=".5" y="3.63">A1</text><text x="5.5" y="3.63">A1</text>
+              <text x="2.5" y="3.63">R4</text><text x="3.5" y="3.63">R4</text>
+            </g>
+            <g font-family="PixelCN" font-size=".34" text-anchor="middle" fill="#FFF4E4" opacity=".9">
+              <text x="1.5" y="2.63">R4</text>
+            </g>
+          </svg>
+        </div>
+
+        <div class="palette">
+          <div class="ptitle">用的颜色</div>
+          <div class="pgrid">
+            <div class="swatch on" style="background:#D8384F">R4</div>
+            <div class="swatch" style="background:#FBF3E4">A1</div>
+            <div class="swatch" style="background:#F2B33D">Y3</div>
+            <div class="swatch" style="background:#4E8F7C">G6</div>
+            <div class="swatch" style="background:#3E6FB0">B5</div>
+            <div class="swatch" style="background:#8A6FBF">P2</div>
+            <div class="swatch" style="background:#E4785F">O7</div>
+            <div class="swatch" style="background:#8A6A4A">N3</div>
+            <div class="swatch" style="background:#2A2320;color:#FFF4E4">K1</div>
+          </div>
+          <div class="ptitle" style="margin-top:4px">换一个</div>
+          <div class="pgrid">
+            <div class="swatch" style="background:#FF7A6B"></div>
+            <div class="swatch" style="background:#FFD166"></div>
+            <div class="swatch" style="background:#7FD1AE"></div>
+            <div class="swatch" style="background:#7FB3E8"></div>
+            <div class="swatch" style="background:#C79BE0"></div>
+            <div class="swatch" style="background:#F2A0C0"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tools">
+        <div class="tool on"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="10" y="1" width="4" height="4"/><rect x="8" y="3" width="4" height="4"/><rect x="6" y="5" width="4" height="4"/><rect x="4" y="7" width="4" height="4"/><rect x="2" y="9" width="4" height="4"/><rect x="1" y="12" width="3" height="3"/></svg></div>
+        <div class="tool"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="3" y="5" width="10" height="8"/><rect x="3" y="5" width="10" height="2" opacity=".45"/><rect x="1" y="13" width="14" height="2"/></svg></div>
+        <div class="tool"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="9" y="2" width="5" height="5"/><rect x="8" y="7" width="3" height="3"/><rect x="6" y="9" width="3" height="3"/><rect x="4" y="11" width="3" height="3"/></svg></div>
+        <div class="tool"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="2"/><rect x="2" y="2" width="2" height="5"/><rect x="9" y="2" width="5" height="2"/><rect x="12" y="2" width="2" height="5"/><rect x="2" y="12" width="5" height="2"/><rect x="2" y="9" width="2" height="5"/><rect x="9" y="12" width="5" height="2"/><rect x="12" y="9" width="2" height="5"/></svg></div>
+        <div class="grow"></div>
+        <div class="small"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="3" y="2" width="2" height="12"/><rect x="11" y="2" width="2" height="12"/><rect x="2" y="3" width="12" height="2"/><rect x="2" y="11" width="12" height="2"/></svg></div>
+        <div class="small"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="7" width="12" height="2"/><rect x="7" y="2" width="2" height="12"/></svg></div>
+        <div class="small"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="7" width="12" height="2"/></svg></div>
+        <div class="small"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="2"/><rect x="2" y="2" width="2" height="5"/><rect x="9" y="2" width="5" height="2"/><rect x="12" y="2" width="2" height="5"/><rect x="2" y="12" width="5" height="2"/><rect x="2" y="9" width="2" height="5"/><rect x="9" y="12" width="5" height="2"/><rect x="12" y="9" width="2" height="5"/><rect x="6" y="6" width="4" height="4"/></svg></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:22px">
+  <div class="mockup-header">EditorPage · 手机竖屏 · 360×720</div>
+  <div class="mockup-body" style="display:flex;justify-content:center;padding:18px">
+    <div class="ph px">
+      <div class="bar" style="padding:8px 10px;gap:10px">
+        <div class="circ" style="width:46px;height:46px"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="10" y="4" width="2" height="8"/><rect x="8" y="6" width="2" height="4"/><rect x="6" y="7" width="2" height="2"/><rect x="12" y="2" width="2" height="12"/></svg></div>
+        <div class="title" style="font-size:24px">小兔子</div>
+        <div class="grow"></div>
+        <div class="sq54" style="width:46px;height:46px"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="6" width="4" height="4"/><rect x="4" y="4" width="2" height="2"/><rect x="4" y="10" width="2" height="2"/><rect x="6" y="7" width="6" height="2"/><rect x="11" y="9" width="2" height="3"/></svg></div>
+        <div class="sq54" style="width:46px;height:46px"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="1" y="8" width="3" height="3"/><rect x="3" y="10" width="3" height="3"/><rect x="6" y="8" width="3" height="3"/><rect x="9" y="6" width="3" height="3"/><rect x="12" y="3" width="3" height="3"/></svg><div class="dot" style="width:18px;height:18px;right:-6px;top:-6px"></div></div>
+      </div>
+      <div class="mid" style="padding:10px">
+        <div class="canvas">
+          <svg width="340" height="380" viewBox="0 0 6 4" style="shape-rendering:geometricPrecision">
+            <rect x="0" y="0" width="6" height="4" fill="#1E1916"/>
+            <rect x="2" y="0" width="2" height="1" fill="#D8384F"/><rect x="1" y="1" width="4" height="1" fill="#D8384F"/>
+            <rect x="0" y="2" width="6" height="1" fill="#D8384F"/><rect x="1" y="3" width="4" height="1" fill="#D8384F"/>
+            <g stroke="#3A322C" stroke-width=".02"><path d="M0 .5h6M0 1.5h6M0 2.5h6M0 3.5h6M.5 0v4M1.5 0v4M2.5 0v4M3.5 0v4M4.5 0v4M5.5 0v4"/></g>
+            <g font-family="PixelCN" font-size=".34" text-anchor="middle" fill="#101010" opacity=".85">
+              <text x=".5" y=".63">A1</text><text x="1.5" y=".63">A1</text><text x="4.5" y=".63">A1</text><text x="5.5" y=".63">A1</text>
+              <text x="2.5" y=".63">R4</text><text x="3.5" y=".63">R4</text>
+              <text x=".5" y="1.63">A1</text><text x="5.5" y="1.63">A1</text><text x="3.5" y="1.63">R4</text>
+              <text x=".5" y="2.63">R4</text><text x="1.5" y="2.63">R4</text><text x="2.5" y="2.63">R4</text><text x="3.5" y="2.63">R4</text><text x="4.5" y="2.63">R4</text><text x="5.5" y="2.63">R4</text>
+              <text x=".5" y="3.63">A1</text><text x="5.5" y="3.63">A1</text><text x="2.5" y="3.63">R4</text><text x="3.5" y="3.63">R4</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="stripes">
+        <div class="bead" style="background:#D8384F"></div>
+        <div class="bead" style="background:#FBF3E4"></div>
+        <div class="bead" style="background:#F2B33D"></div>
+        <div class="bead" style="background:#4E8F7C"></div>
+        <div class="bead" style="background:#3E6FB0"></div>
+        <div class="bead" style="background:#8A6FBF"></div>
+      </div>
+      <div class="tools" style="padding:10px;gap:8px">
+        <div class="tool on" style="width:54px;height:54px"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="10" y="1" width="4" height="4"/><rect x="8" y="3" width="4" height="4"/><rect x="6" y="5" width="4" height="4"/><rect x="4" y="7" width="4" height="4"/><rect x="2" y="9" width="4" height="4"/><rect x="1" y="12" width="3" height="3"/></svg></div>
+        <div class="tool" style="width:54px;height:54px"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="3" y="5" width="10" height="8"/><rect x="1" y="13" width="14" height="2"/></svg></div>
+        <div class="tool" style="width:54px;height:54px"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="9" y="2" width="5" height="5"/><rect x="8" y="7" width="3" height="3"/><rect x="6" y="9" width="3" height="3"/><rect x="4" y="11" width="3" height="3"/></svg></div>
+        <div class="tool" style="width:54px;height:54px"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="2"/><rect x="2" y="2" width="2" height="5"/><rect x="9" y="2" width="5" height="2"/><rect x="12" y="2" width="2" height="5"/><rect x="2" y="12" width="5" height="2"/><rect x="2" y="9" width="2" height="5"/><rect x="9" y="12" width="5" height="2"/><rect x="12" y="9" width="2" height="5"/></svg></div>
+        <div class="small" style="width:46px;height:46px"><svg class="pix" width="22" height="22" viewBox="0 0 16 16"><rect x="2" y="7" width="12" height="2"/><rect x="7" y="2" width="2" height="12"/></svg></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p style="font-size:13px;color:#6b7280;line-height:1.8;margin-top:18px">
+  <b>为什么这样摆：</b>13 个按钮里真正高频的只有 4 个（画笔 / 橡皮 / 吸管 / 框选），它们排成长条放在拇指够得到的边；撤销·重做紧挨标题（画错了第一时间够得到）；保存靠右（绿色 ✓，右上角红点 = 有未保存的改动，代替「未保存」三个字）；剩下的 4 个是"看的方式"（网格线 / 色号 / 放大 / 缩小），收成小一号的一组放在工具条另一头。
+</p>
+
+<p style="font-size:13px;color:#6b7280;line-height:1.8">
+  <b>我没把握的地方，标出来：</b>
+  <span class="tag">橡皮画成了方块+横线，像"垫子"</span>
+  <span class="tag">框选和"全屏"是同一个图标语言，可能混</span>
+  <span class="tag">吸管容易被当成画笔</span>
+  <span class="tag">✓ 在没有文字的顶栏里够不够明显</span>
+</p>
+
+<p style="font-size:13px;color:#6b7280;line-height:1.8">
+  <b>手机和平板的差别只有一处：</b>调色板从右栏变成底部一条可横滑的色豆。因为手机上横滑一排颜色，比缩成 3 列小方块好点得多。其余全部相同。
+</p>
+
+</body>
+</html>

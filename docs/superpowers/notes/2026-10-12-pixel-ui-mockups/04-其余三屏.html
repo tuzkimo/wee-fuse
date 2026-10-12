@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>一起拼豆 · 像素风屏稿</title>
+<style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Header branding and connection status
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #frame-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .brand { display: flex; align-items: center; min-width: 0; overflow: hidden; color: var(--text-secondary); line-height: 1; }
+    .brand a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; line-height: 1; }
+    .brand-copy { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; transform: translateY(-1px); }
+    .brand-logo { display: block; height: 1em; width: auto; max-width: 180px; flex-shrink: 0; filter: invert(1); }
+    @media (prefers-color-scheme: dark) {
+      .brand-logo { filter: none; }
+    }
+    .status { font-size: 0.7rem; color: var(--status-color, var(--success)); display: flex; align-items: center; gap: 0.4rem; justify-self: end; white-space: nowrap; line-height: 1; }
+    .status::before { content: ''; width: 6px; height: 6px; background: var(--status-color, var(--success)); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #frame-content { padding: 2rem; min-height: 100%; }
+
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1rem;
+      min-height: 42px;
+    }
+    .header .brand { justify-self: start; width: 100%; font-size: 0.75rem; line-height: 1; }
+    .header .status { grid-column: 2; line-height: 1; }
+    .header span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .header .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  
+
+/* 屏稿原件里 onclick="toggleSelect(this)" 用的是 brainstorm 服务端的 helper.js。
+   这里补一个等价的最小实现，只为让「点一下选中」在离线打开时仍然有效。 */
+function toggleSelect(el) { if (el) el.classList.toggle('selected'); }
+</style>
+</head>
+<body>
+<style>
+@font-face{font-family:'PixelCN';src:url('../../../src/assets/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');font-display:block;}
+.px{font-family:'PixelCN',monospace;-webkit-font-smoothing:none;font-smooth:never}
+.px *{box-sizing:border-box}
+.pix{display:block;shape-rendering:crispEdges}
+.pix rect{fill:currentColor}
+.ph,.tb2{background:#F5EDDF;color:#3D3226;border:5px solid #C9B79A;box-shadow:10px 10px 0 rgba(61,50,38,.18);display:flex;flex-direction:column;overflow:hidden}
+.ph{width:360px;height:700px;border-radius:20px}
+.tb2{width:900px;height:560px;border:5px solid #C9B79A}
+.bar{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#EFE4D0;border-bottom:4px solid #C9B79A}
+.circ{width:50px;height:50px;border:4px solid #3D3226;border-radius:50%;display:grid;place-items:center;background:#FFB56B;flex:none}
+.ttl{font-size:24px;line-height:1;color:#6B5A44;flex:1}
+.grow{flex:1}
+.body{flex:1;padding:14px;overflow:hidden;min-height:0}
+.cardgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pcard{background:#FFF9EE;border:4px solid #3D3226;border-radius:16px;box-shadow:0 6px 0 #D8C9AC;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.thumb{background:#2A2320;display:grid;place-items:center;padding:10px}
+.pname{font-size:24px;line-height:1.1;padding:8px 10px 2px;color:#3D3226}
+.pmeta{font-size:12px;color:#8A7455;padding:0 10px 10px}
+.gear{position:absolute;right:6px;top:6px;width:40px;height:40px;border:3px solid #3D3226;border-radius:50%;background:#FFB56B;display:grid;place-items:center;box-shadow:0 3px 0 #C98A4A}
+.big{display:flex;align-items:center;justify-content:center;gap:12px;background:#E4572E;border:4px solid #3D3226;border-radius:18px;box-shadow:0 7px 0 #A83A18;color:#FFF3E2;font-size:36px;line-height:1;padding:22px;margin:14px}
+.acts{display:flex;gap:12px;padding:0 14px 6px}
+.act{flex:1;height:76px;border:4px solid #3D3226;border-radius:16px;background:#FFF9EE;display:grid;place-items:center;box-shadow:0 5px 0 #D8C9AC;color:#3D3226}
+.pager{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#EFE4D0;border-top:4px solid #C9B79A}
+.pg{width:56px;height:56px;border:4px solid #3D3226;border-radius:14px;background:#FFB56B;display:grid;place-items:center;box-shadow:0 4px 0 #C98A4A;flex:none}
+.pgnum{font-size:24px;color:#6B5A44;flex:1;text-align:center}
+</style>
+
+<h2>剩下三个页面</h2>
+<p class="subtitle">同一套语言铺过去，主要看有没有撑不住的地方。三个都是手机上最挤的排法。</p>
+
+<div style="display:flex;gap:26px;justify-content:center;flex-wrap:wrap;align-items:flex-start">
+
+  <!-- ===== 作品库 ===== -->
+  <div>
+    <p class="label" style="margin-bottom:8px">1 · 作品库（打开 App 第一眼）</p>
+    <div class="ph px">
+      <div class="bar">
+        <div class="ttl">我的图纸</div>
+        <div class="circ" style="background:#17A398;color:#EFFCFA"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="7" y="2" width="2" height="12"/><rect x="2" y="7" width="12" height="2"/></svg></div>
+      </div>
+      <div class="body">
+        <div class="cardgrid">
+          <div class="pcard">
+            <div class="thumb"><svg width="110" height="110" viewBox="0 0 16 16" style="shape-rendering:geometricPrecision"><g fill="#FF5A6E"><rect x="3" y="2" width="3" height="1"/><rect x="10" y="2" width="3" height="1"/><rect x="2" y="3" width="5" height="1"/><rect x="9" y="3" width="5" height="1"/><rect x="2" y="4" width="12" height="1"/><rect x="1" y="5" width="14" height="3"/><rect x="2" y="8" width="12" height="1"/><rect x="3" y="9" width="10" height="1"/><rect x="4" y="10" width="8" height="1"/><rect x="5" y="11" width="6" height="1"/><rect x="6" y="12" width="4" height="1"/><rect x="7" y="13" width="2" height="1"/></g></svg></div>
+            <div class="pname">小兔子</div>
+            <div class="pmeta">58 × 44 · 12 色</div>
+            <div class="gear"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="12"/><rect x="2" y="6" width="12" height="4"/></svg></div>
+          </div>
+          <div class="pcard">
+            <div class="thumb"><svg width="110" height="110" viewBox="0 0 16 16" style="shape-rendering:geometricPrecision"><g fill="#7FD1AE"><rect x="4" y="3" width="8" height="2"/><rect x="3" y="5" width="10" height="2"/><rect x="3" y="7" width="10" height="2"/><rect x="4" y="9" width="8" height="2"/><rect x="6" y="11" width="4" height="2"/></g><g fill="#2A2320"><rect x="6" y="6" width="1" height="1"/><rect x="9" y="6" width="1" height="1"/></g></svg></div>
+            <div class="pname">小恐龙</div>
+            <div class="pmeta">29 × 29 · 8 色</div>
+            <div class="gear"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="12"/><rect x="2" y="6" width="12" height="4"/></svg></div>
+          </div>
+          <div class="pcard">
+            <div class="thumb"><svg width="110" height="110" viewBox="0 0 16 16" style="shape-rendering:geometricPrecision"><g fill="#F2B33D"><rect x="2" y="2" width="12" height="12"/></g><g fill="#2A2320"><rect x="5" y="5" width="2" height="2"/><rect x="9" y="5" width="2" height="2"/><rect x="5" y="9" width="6" height="2"/></g></svg></div>
+            <div class="pname">笑脸</div>
+            <div class="pmeta">29 × 29 · 3 色</div>
+            <div class="gear"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="12"/><rect x="2" y="6" width="12" height="4"/></svg></div>
+          </div>
+          <div class="pcard" style="background:#E9DFC9;box-shadow:none;border-style:dashed;align-items:center;justify-content:center;min-height:190px">
+            <svg class="pix" width="46" height="46" viewBox="0 0 16 16" style="color:#B9A585"><rect x="7" y="2" width="2" height="12"/><rect x="2" y="7" width="12" height="2"/></svg>
+            <div class="pmeta" style="padding-top:8px">新图纸</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#6b7280;line-height:1.7;max-width:360px;margin-top:10px">
+      <b>改动最大的一屏。</b>现在每张卡上是「名字 + 58×44 · 12 种颜色 + 时间」三行字配四个文字按钮，认的是字不是图。<br>
+      改成：<b>成品缩略图当主角</b>，名字缩成一行，尺寸字号降到最小。点卡片 = 打开（唯一的大动作）；改名 / 删除收进右上角齿轮里。<br>
+      理由：8 岁认图比读字快得多，而且「58 × 44 · 12 种颜色」对他完全没有意义。
+    </p>
+  </div>
+
+  <!-- ===== 结果页 ===== -->
+  <div>
+    <p class="label" style="margin-bottom:8px">2 · 结果页（生成完了）</p>
+    <div class="ph px">
+      <div class="bar">
+        <div class="circ"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="10" y="4" width="2" height="8"/><rect x="8" y="6" width="2" height="4"/><rect x="6" y="7" width="2" height="2"/><rect x="12" y="2" width="2" height="12"/></svg></div>
+        <div class="ttl">拼好啦！</div>
+      </div>
+      <div class="body" style="padding:0;display:flex;flex-direction:column">
+        <div style="background:#2A2320;flex:1;display:grid;place-items:center;background-image:radial-gradient(#463A32 3px,transparent 3.4px);background-size:20px 20px">
+          <svg width="260" height="260" viewBox="0 0 16 16" style="shape-rendering:geometricPrecision"><g fill="#FF5A6E"><rect x="3.06" y="2.06" width="2.88" height="1"/><rect x="10.06" y="2.06" width="2.88" height="1"/><rect x="2.06" y="3.06" width="4.88" height="1"/><rect x="9.06" y="3.06" width="4.88" height="1"/><rect x="2.06" y="4.06" width="11.88" height="1"/><rect x="1.06" y="5.06" width="13.88" height="3"/><rect x="2.06" y="8.06" width="11.88" height="1"/><rect x="3.06" y="9.06" width="9.88" height="1"/><rect x="4.06" y="10.06" width="7.88" height="1"/><rect x="5.06" y="11.06" width="5.88" height="1"/><rect x="6.06" y="12.06" width="3.88" height="1"/><rect x="7.06" y="13.06" width="1.88" height="1"/></g></svg>
+        </div>
+        <div class="acts" style="padding:14px">
+          <div class="act"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="10" y="1" width="4" height="4"/><rect x="8" y="3" width="4" height="4"/><rect x="6" y="5" width="4" height="4"/><rect x="4" y="7" width="4" height="4"/><rect x="2" y="9" width="4" height="4"/><rect x="1" y="12" width="3" height="3"/></svg></div>
+          <div class="act"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="2"/><rect x="2" y="2" width="2" height="5"/><rect x="9" y="2" width="5" height="2"/><rect x="12" y="2" width="2" height="5"/><rect x="2" y="12" width="5" height="2"/><rect x="2" y="9" width="2" height="5"/><rect x="9" y="12" width="5" height="2"/><rect x="12" y="9" width="2" height="5"/><rect x="6" y="6" width="4" height="4"/></svg></div>
+          <div class="act"><svg class="pix" width="30" height="30" viewBox="0 0 16 16"><rect x="2" y="5" width="9" height="8"/><rect x="10" y="7" width="2" height="4"/><rect x="12" y="5" width="3" height="8"/><rect x="1" y="13" width="14" height="2"/></svg></div>
+        </div>
+      </div>
+      <div class="big">完成
+        <svg class="pix" width="34" height="34" viewBox="0 0 16 16"><rect x="1" y="8" width="3" height="3"/><rect x="3" y="10" width="3" height="3"/><rect x="6" y="8" width="3" height="3"/><rect x="9" y="6" width="3" height="3"/><rect x="12" y="3" width="3" height="3"/></svg>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#6b7280;line-height:1.7;max-width:360px;margin-top:10px">
+      成品占满上半屏——<b>目标是让他先看到"我做成的东西"</b>，再问下一步。三个图形按钮 = 继续涂 / 看施工图 / 存到相册；最下面一个大的「完成」收尾。<br>
+      文字信息（用了多少颗豆、多少厘米）我全删了，那些是给你看的，不是给他的。
+    </p>
+  </div>
+</div>
+
+<!-- ===== 施工图查看 ===== -->
+<p class="label" style="margin:30px 0 8px">3 · 施工图（拼豆时盯着的一屏 · 平板横屏）</p>
+<div style="display:flex;justify-content:center">
+  <div class="tb2 px">
+    <div class="bar">
+      <div class="circ"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="10" y="4" width="2" height="8"/><rect x="8" y="6" width="2" height="4"/><rect x="6" y="7" width="2" height="2"/><rect x="12" y="2" width="2" height="12"/></svg></div>
+      <div class="ttl">小兔子</div>
+      <div class="circ" style="background:#FFF9EE;box-shadow:0 4px 0 #D8C9AC"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="2"/><rect x="2" y="2" width="2" height="5"/><rect x="9" y="2" width="5" height="2"/><rect x="12" y="2" width="2" height="5"/><rect x="2" y="12" width="5" height="2"/><rect x="2" y="9" width="2" height="5"/><rect x="9" y="12" width="5" height="2"/><rect x="12" y="9" width="2" height="5"/><rect x="6" y="6" width="4" height="4"/></svg></div>
+      <div class="circ" style="background:#FFF9EE;box-shadow:0 4px 0 #D8C9AC"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="7" width="12" height="2"/><rect x="7" y="2" width="2" height="12"/></svg></div>
+      <div class="circ" style="background:#FFF9EE;box-shadow:0 4px 0 #D8C9AC"><svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="7" width="12" height="2"/></svg></div>
+    </div>
+    <div style="flex:1;background:#2A2320;display:grid;place-items:center;overflow:hidden">
+      <svg width="720" height="400" viewBox="0 0 6 4" style="shape-rendering:geometricPrecision">
+        <rect x="0" y="0" width="6" height="4" fill="#1E1916"/>
+        <rect x="2" y="0" width="2" height="1" fill="#D8384F"/><rect x="1" y="1" width="4" height="1" fill="#D8384F"/>
+        <rect x="0" y="2" width="6" height="1" fill="#D8384F"/><rect x="1" y="3" width="4" height="1" fill="#D8384F"/>
+        <g stroke="#4A4038" stroke-width=".015"><path d="M0 .5h6M0 1.5h6M0 2.5h6M0 3.5h6M.5 0v4M1.5 0v4M2.5 0v4M3.5 0v4M4.5 0v4M5.5 0v4"/></g>
+        <g font-family="PixelCN" font-size=".34" text-anchor="middle" fill="#0D0B09" opacity=".8">
+          <text x=".5" y=".63">A1</text><text x="1.5" y=".63">A1</text><text x="4.5" y=".63">A1</text><text x="5.5" y=".63">A1</text>
+          <text x="2.5" y=".63">R4</text><text x="3.5" y=".63">R4</text>
+          <text x=".5" y="1.63">A1</text><text x="5.5" y="1.63">A1</text><text x="3.5" y="1.63">R4</text>
+          <text x=".5" y="2.63">R4</text><text x="1.5" y="2.63">R4</text><text x="2.5" y="2.63">R4</text><text x="3.5" y="2.63">R4</text><text x="4.5" y="2.63">R4</text><text x="5.5" y="2.63">R4</text>
+          <text x=".5" y="3.63">A1</text><text x="5.5" y="3.63">A1</text><text x="2.5" y="3.63">R4</text><text x="3.5" y="3.63">R4</text>
+        </g>
+      </svg>
+    </div>
+    <div class="pager">
+      <div class="pg"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="10" y="3" width="2" height="10"/><rect x="8" y="5" width="2" height="6"/><rect x="6" y="7" width="2" height="2"/></svg></div>
+      <div class="pgnum">3 / 12</div>
+      <div class="pg"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="4" y="3" width="2" height="10"/><rect x="6" y="5" width="2" height="6"/><rect x="8" y="7" width="2" height="2"/></svg></div>
+      <div class="grow" style="flex:1"></div>
+      <div class="grow" style="flex:1;background:#FFF9EE;border:4px solid #3D3226;border-radius:14px;height:56px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 0 #D8C9AC;gap:10px">
+        <svg class="pix" width="24" height="24" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>
+        <span style="font-size:24px;color:#6B5A44">色号</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p style="font-size:13px;color:#6b7280;line-height:1.8;margin-top:16px">
+  <b>这一屏的判断：</b>他拼豆的时候手上有镊子、眼睛盯着格子，能用的操作越少越好。所以顶栏只留三个圆按钮（关掉 / 放大 / 缩小），底部只剩翻页和一个「色号」开关（一页图太大，色号字会看不清，需要能在"看形状"和"看色号"之间切）。<br>
+  <b>「3 / 12」我保留了数字。</b>页码是数字，8 岁认识，而且他需要知道还剩几页——这个画不出图标，也不该画。
+</p>
+
+</body>
+</html>

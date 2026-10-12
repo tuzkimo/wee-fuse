@@ -1,0 +1,44 @@
+- generic [active] [ref=e1]:
+  - heading "三套视觉方向，同一个页面" [level=2] [ref=e2]
+  - paragraph [ref=e3]: 三张都是「选图页」的同一布局，只有视觉语言不同——这样比较的是风格本身，不是布局好坏。字体已经是真的：缝合像素字体 12px，按 24px 整数倍显示。
+  - generic [ref=e4]:
+    - generic [ref=e5] [cursor=pointer]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - generic [ref=e9]: 8:30
+          - generic [ref=e10]: ▮▮▯
+        - generic [ref=e11]: 一起拼豆
+        - generic [ref=e17]: 选照片
+        - generic [ref=e33]:
+          - generic [ref=e34]: 作品
+          - generic [ref=e41]: 新图
+      - generic [ref=e48]:
+        - heading "A · 糖果硬边" [level=3] [ref=e49]
+        - paragraph [ref=e50]: 粗黑描边 + 硬投影 + 高饱和糖果色，像掌机游戏。最有「游戏感」，字和图形都靠描边从背景里跳出来，屏幕再花也不怕。
+    - generic [ref=e51] [cursor=pointer]:
+      - generic [ref=e53]:
+        - generic [ref=e54]:
+          - generic [ref=e55]: 8:30
+          - generic [ref=e56]: ▮▮▯
+        - generic [ref=e57]: 一起拼豆
+        - generic [ref=e63]: 选照片
+        - generic [ref=e79]:
+          - generic [ref=e80]: 作品
+          - generic [ref=e87]: 新图
+      - generic [ref=e94]:
+        - heading "B · 软糖圆润" [level=3] [ref=e95]
+        - paragraph [ref=e96]: 浅粉底、无描边、大圆角、留白多，像动森/星露谷那类现代像素。最「柔和温馨」，长时间看不累；代价是画面偏淡，第一眼没那么抢。
+    - generic [ref=e97] [cursor=pointer]:
+      - generic [ref=e99]:
+        - generic [ref=e100]:
+          - generic [ref=e101]: 8:30
+          - generic [ref=e102]: ▮▮▯
+        - generic [ref=e103]: 一起拼豆
+        - generic [ref=e109]: 选照片
+        - generic [ref=e125]:
+          - generic [ref=e126]: 作品
+          - generic [ref=e133]: 新图
+      - generic [ref=e140]:
+        - heading "C · 拼豆板" [level=3] [ref=e141]
+        - paragraph [ref=e142]: 米色点阵底（就是拼豆板的孔），按钮做成豆粒的圆边，暖色系。最贴主题，小朋友一眼能认出「这是拼豆」；代价是和 MARD 色卡放一起时容易混成一片，得靠深色描边隔开。
+  - paragraph [ref=e143]: 想看的细节：主按钮的「描边+硬投影」在 A 和 C 里是主要识别手段，B 取消了；底部两个功能按钮在三套里用的是同一对图标（作品 / 新图）——顺便看看不配文字你能不能认出来。

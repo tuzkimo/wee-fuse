@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>一起拼豆 · 像素风屏稿</title>
+<style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Header branding and connection status
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #frame-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .brand { display: flex; align-items: center; min-width: 0; overflow: hidden; color: var(--text-secondary); line-height: 1; }
+    .brand a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; line-height: 1; }
+    .brand-copy { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; transform: translateY(-1px); }
+    .brand-logo { display: block; height: 1em; width: auto; max-width: 180px; flex-shrink: 0; filter: invert(1); }
+    @media (prefers-color-scheme: dark) {
+      .brand-logo { filter: none; }
+    }
+    .status { font-size: 0.7rem; color: var(--status-color, var(--success)); display: flex; align-items: center; gap: 0.4rem; justify-self: end; white-space: nowrap; line-height: 1; }
+    .status::before { content: ''; width: 6px; height: 6px; background: var(--status-color, var(--success)); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #frame-content { padding: 2rem; min-height: 100%; }
+
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1rem;
+      min-height: 42px;
+    }
+    .header .brand { justify-self: start; width: 100%; font-size: 0.75rem; line-height: 1; }
+    .header .status { grid-column: 2; line-height: 1; }
+    .header span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .header .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  
+
+/* 屏稿原件里 onclick="toggleSelect(this)" 用的是 brainstorm 服务端的 helper.js。
+   这里补一个等价的最小实现，只为让「点一下选中」在离线打开时仍然有效。 */
+function toggleSelect(el) { if (el) el.classList.toggle('selected'); }
+</style>
+</head>
+<body>
+<style>
+@font-face{font-family:'PixelCN';src:url('../../../src/assets/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');font-display:block;}
+.tab{font-family:'PixelCN',monospace;-webkit-font-smoothing:none;font-smooth:never;
+  width:1040px;height:648px;background:#F5EDDF;border:5px solid #C9B79A;box-shadow:10px 10px 0 rgba(61,50,38,.18);
+  display:flex;flex-direction:column;color:#3D3226;overflow:hidden}
+.tab *{box-sizing:border-box}
+.pix{display:block;shape-rendering:crispEdges}
+.pix rect{fill:currentColor}
+
+.top{height:80px;display:flex;align-items:center;gap:16px;padding:0 20px;border-bottom:4px solid #C9B79A;background:#EFE4D0}
+.circ{width:56px;height:56px;border:4px solid #3D3226;border-radius:50%;display:grid;place-items:center;background:#FFB56B;color:#3D3226}
+.name{font-size:24px;line-height:1;padding:10px 18px;border:3px dashed #B9A585;border-radius:12px;color:#6B5A44}
+.grow{flex:1}
+.go{height:60px;padding:0 26px;display:flex;align-items:center;gap:12px;background:#E4572E;border:4px solid #3D3226;
+  border-radius:16px;box-shadow:0 6px 0 #A83A18;color:#FFF3E2;font-size:36px;line-height:1}
+
+.body{flex:1;display:flex;gap:14px;padding:16px 20px 20px}
+.col{display:flex;flex-direction:column;gap:12px}
+.left{width:236px}
+.right{width:262px}
+.mid{flex:1}
+.ttl{font-size:24px;line-height:1;color:#8A7455}
+
+/* 左栏：选范围 */
+.photo{width:236px;height:180px;border:4px solid #3D3226;border-radius:12px;position:relative;overflow:hidden;
+  background:linear-gradient(150deg,#8FC8E8,#63A8D6 42%,#4E8F7C 43%,#3E7A68 70%,#8AB864 71%,#6B9C4A)}
+.crop{position:absolute;inset:26px 34px;border:3px dashed #FFDD55}
+.crop i{position:absolute;width:14px;height:14px;background:#FFDD55}
+.crop i:nth-child(1){left:-8px;top:-8px}.crop i:nth-child(2){right:-8px;top:-8px}
+.crop i:nth-child(3){left:-8px;bottom:-8px}.crop i:nth-child(4){right:-8px;bottom:-8px}
+.slider{padding:4px 0}
+.track{height:12px;background:#DCCFB8;border:3px solid #3D3226;border-radius:99px;position:relative}
+.knob{position:absolute;left:58%;top:-14px;width:34px;height:34px;background:#17A398;border:4px solid #3D3226;border-radius:50%}
+.rowbtn{display:flex;gap:12px}
+.sq{flex:1;height:60px;border:4px solid #3D3226;border-radius:14px;background:#FFB56B;display:grid;place-items:center;box-shadow:0 4px 0 #C98A4A}
+
+/* 中栏：预览 */
+.board{flex:1;background:#2A2320;border:4px solid #3D3226;border-radius:16px;display:grid;place-items:center;
+  background-image:radial-gradient(#463A32 3px,transparent 3.4px);background-size:22px 22px;background-position:11px 11px}
+.sum{display:flex;align-items:center;gap:10px;font-size:24px;line-height:1;color:#7A6851}
+.chip{background:#E9DFC9;border:3px solid #C0AE90;border-radius:10px;padding:8px 14px}
+
+/* 右栏：参数 */
+.grp{display:flex;flex-direction:column;gap:10px}
+.opts{display:flex;gap:10px}
+.opt{flex:1;height:96px;border:4px solid #3D3226;border-radius:14px;background:#FFF9EE;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:6px;box-shadow:0 4px 0 #D8C9AC}
+.opt.on{background:#FFE0B8;box-shadow:0 4px 0 #E4572E;border-color:#3D3226}
+.opt .n{font-size:24px;line-height:1;color:#6B5A44}
+.boards{display:grid;gap:3px}
+.boards i{width:13px;height:13px;background:#E4572E;border-radius:2px}
+.stripes{width:52px;height:34px;border:3px solid #3D3226;border-radius:6px;display:flex}
+.stripes i{flex:1}
+.switch{display:flex;align-items:center;justify-content:space-between;font-size:24px;line-height:1;
+  background:#FFF9EE;border:4px solid #3D3226;border-radius:14px;padding:12px 14px;box-shadow:0 4px 0 #D8C9AC}
+.sw{width:74px;height:38px;border:4px solid #3D3226;border-radius:99px;background:#17A398;position:relative}
+.sw i{position:absolute;right:2px;top:2px;width:26px;height:26px;background:#FFF9EE;border:3px solid #3D3226;border-radius:50%}
+.note{font-size:13px;color:#6b7280;margin:14px 0 0;line-height:1.7}
+</style>
+
+<h2>平板横屏：一屏做完</h2>
+<p class="subtitle">1280×800 的真实比例。左栏定范围、中间就是成品长什么样、右栏调参数，改哪边中间立刻变。字体是真字体，24px / 36px（12 的整数倍）。</p>
+
+<div class="mockup">
+  <div class="mockup-header">SetupPage · 平板横屏 · 三栏一屏</div>
+  <div class="mockup-body" style="display:flex;justify-content:center;padding:18px">
+
+    <div class="tab">
+      <div class="top">
+        <div class="circ"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="3" y="6" width="2" height="4"/><rect x="5" y="5" width="2" height="6"/><rect x="7" y="4" width="2" height="8"/><rect x="9" y="6" width="2" height="4"/><rect x="11" y="7" width="2" height="2"/></svg></div>
+        <div class="name">小兔子 ✎</div>
+        <div class="grow"></div>
+        <div class="go">开始拼
+          <svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="4" y="3" width="2" height="10"/><rect x="6" y="4" width="2" height="8"/><rect x="8" y="5" width="2" height="6"/><rect x="10" y="6" width="2" height="4"/><rect x="12" y="7" width="2" height="2"/></svg>
+        </div>
+      </div>
+
+      <div class="body">
+        <!-- 左：选范围 -->
+        <div class="col left">
+          <div class="ttl">选范围</div>
+          <div class="photo">
+            <div class="crop"><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="slider"><div class="track"><div class="knob"></div></div></div>
+          <div class="rowbtn">
+            <div class="sq"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="6" y="2" width="2" height="9"/><rect x="3" y="5" width="2" height="3"/><rect x="4" y="9" width="8" height="2"/><rect x="11" y="3" width="2" height="2"/><rect x="12" y="5" width="2" height="2"/><rect x="11" y="7" width="2" height="2"/></svg></div>
+            <div class="sq"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="2"/><rect x="12" y="4" width="2" height="10"/><rect x="2" y="12" width="10" height="2"/><rect x="2" y="4" width="2" height="4"/><rect x="7" y="7" width="2" height="2"/><rect x="10" y="10" width="2" height="2"/></svg></div>
+          </div>
+        </div>
+
+        <!-- 中：预览（深色衬底，色卡之外唯一的高饱和来源） -->
+        <div class="col mid">
+          <div class="ttl">会变成这样</div>
+          <div class="board">
+            <svg width="380" height="380" viewBox="0 0 16 16" style="shape-rendering:geometricPrecision">
+              <g fill="#FF5A6E">
+                <rect x="3.06" y="2.06" width="2.88" height="1"/><rect x="10.06" y="2.06" width="2.88" height="1"/>
+                <rect x="2.06" y="3.06" width="4.88" height="1"/><rect x="9.06" y="3.06" width="4.88" height="1"/>
+                <rect x="2.06" y="4.06" width="11.88" height="1"/>
+                <rect x="1.06" y="5.06" width="13.88" height="1"/>
+                <rect x="1.06" y="6.06" width="13.88" height="1"/>
+                <rect x="1.06" y="7.06" width="13.88" height="1"/>
+                <rect x="2.06" y="8.06" width="11.88" height="1"/>
+                <rect x="3.06" y="9.06" width="9.88" height="1"/>
+                <rect x="4.06" y="10.06" width="7.88" height="1"/>
+                <rect x="5.06" y="11.06" width="5.88" height="1"/>
+                <rect x="6.06" y="12.06" width="3.88" height="1"/>
+                <rect x="7.06" y="13.06" width="1.88" height="1"/>
+              </g>
+            </svg>
+          </div>
+          <div class="sum">
+            <div class="chip">58 × 44</div>
+            <div class="chip">4 块板</div>
+            <div class="chip">约 15 cm</div>
+            <div class="grow" style="flex:1"></div>
+            <span>12 种颜色</span>
+          </div>
+        </div>
+
+        <!-- 右：调参数 -->
+        <div class="col right">
+          <div class="ttl">要多大</div>
+          <div class="opts">
+            <div class="opt on"><div class="boards" style="grid-template-columns:repeat(1,13px)"><i></i></div><div class="n">1</div></div>
+            <div class="opt"><div class="boards" style="grid-template-columns:repeat(2,13px)"><i></i><i></i><i></i><i></i></div><div class="n">2</div></div>
+            <div class="opt"><div class="boards" style="grid-template-columns:repeat(2,13px)"><i></i><i></i><i></i><i></i></div><div class="n">4</div></div>
+          </div>
+
+          <div class="ttl" style="margin-top:6px">要多少颜色</div>
+          <div class="opts">
+            <div class="opt"><div class="stripes"><i style="background:#E4572E"></i><i style="background:#F2B33D"></i><i style="background:#17A398"></i></div><div class="n">8</div></div>
+            <div class="opt on"><div class="stripes"><i style="background:#E4572E"></i><i style="background:#F2B33D"></i><i style="background:#17A398"></i><i style="background:#4E8F7C"></i><i style="background:#8A6FBF"></i></div><div class="n">16</div></div>
+            <div class="opt"><div class="stripes"><i style="background:#E4572E"></i><i style="background:#F2B33D"></i><i style="background:#17A398"></i><i style="background:#4E8F7C"></i><i style="background:#8A6FBF"></i><i style="background:#3E6FB0"></i></div><div class="n">不限</div></div>
+          </div>
+
+          <div class="ttl" style="margin-top:6px">背景</div>
+          <div class="switch">去掉背景<div class="sw"><i></i></div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<p class="note">
+  <b>几个我替你做的决定，不同意的直接说：</b><br>
+  ① 顶部没有「第 2 步 / 共 3 步」那种进度条——既然一屏看得完，进度条就是多余的；位置感由中间的成品预览提供。<br>
+  ② 参数全部改成图形：板数是画出来的格子数（1/2/4 块），用色数是色条（8 / 16 / 不限）。唯独「去掉背景」还留着四个字，因为「背景」这个概念画不出一个 8 岁能认的图标——识别测试时重点看这个。<br>
+  ③ 顶栏中间是作品名「小兔子」，点一下能改，默认自动起名，不强制他打字。<br>
+  ④ 「不限」那一档原本是 24 色和 221 色两档，我压成一档了，因为对小孩来说 16 和 24 的区别看不出来。<br>
+  <b>中间那块深色底是关键：</b>全屏只有拼豆本身是鲜艳的，这样他看图纸、对色卡的时候眼睛有参照物。
+</p>
+
+</body>
+</html>

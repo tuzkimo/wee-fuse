@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>一起拼豆 · 像素风屏稿</title>
+<style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Header branding and connection status
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #frame-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .brand { display: flex; align-items: center; min-width: 0; overflow: hidden; color: var(--text-secondary); line-height: 1; }
+    .brand a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; line-height: 1; }
+    .brand-copy { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; transform: translateY(-1px); }
+    .brand-logo { display: block; height: 1em; width: auto; max-width: 180px; flex-shrink: 0; filter: invert(1); }
+    @media (prefers-color-scheme: dark) {
+      .brand-logo { filter: none; }
+    }
+    .status { font-size: 0.7rem; color: var(--status-color, var(--success)); display: flex; align-items: center; gap: 0.4rem; justify-self: end; white-space: nowrap; line-height: 1; }
+    .status::before { content: ''; width: 6px; height: 6px; background: var(--status-color, var(--success)); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #frame-content { padding: 2rem; min-height: 100%; }
+
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1rem;
+      min-height: 42px;
+    }
+    .header .brand { justify-self: start; width: 100%; font-size: 0.75rem; line-height: 1; }
+    .header .status { grid-column: 2; line-height: 1; }
+    .header span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .header .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  
+
+/* 屏稿原件里 onclick="toggleSelect(this)" 用的是 brainstorm 服务端的 helper.js。
+   这里补一个等价的最小实现，只为让「点一下选中」在离线打开时仍然有效。 */
+function toggleSelect(el) { if (el) el.classList.toggle('selected'); }
+</style>
+</head>
+<body>
+<style>
+@font-face{font-family:'PixelCN';src:url('../../../src/assets/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');font-display:block;}
+.wf{font-family:'PixelCN',monospace;-webkit-font-smoothing:none;font-smooth:never;text-rendering:geometricPrecision}
+.wf *{box-sizing:border-box}
+.phone{width:290px;height:600px;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.pix{display:block;shape-rendering:crispEdges}
+.pix rect{fill:currentColor}
+.sbar{font-size:16px;padding:5px 12px;display:flex;justify-content:space-between;opacity:.55;line-height:1}
+.hd{display:flex;align-items:center;justify-content:space-between;padding:10px 14px 6px;line-height:1}
+.logo{font-size:24px;letter-spacing:0}
+.ibtn{width:36px;height:36px;display:grid;place-items:center;cursor:default}
+.prim{margin:6px 14px 14px;height:76px;display:grid;place-items:center;font-size:26px;line-height:1;cursor:default}
+.prim .row{display:flex;align-items:center;gap:10px}
+.grid{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px 10px;align-content:start}
+.tile{aspect-ratio:1;position:relative;overflow:hidden}
+.tile i{position:absolute;inset:0;display:block}
+.foot{display:flex;gap:10px;padding:0 14px 16px}
+.foot>div{flex:1;height:56px;display:grid;place-items:center;font-size:20px;gap:6px;cursor:default}
+.foot .row{display:flex;align-items:center;gap:8px;line-height:1}
+
+/* ---------- A 糖果硬边 (8-bit 游戏机) ---------- */
+.a{--ink:#241E3B;--bg:#FFF6E5;--paper:#FFFFFF}
+.a .phone{background:var(--bg);border:4px solid var(--ink);box-shadow:9px 9px 0 var(--ink)}
+.a .sbar{color:var(--ink);background:#FFD23F;border-bottom:4px solid var(--ink)}
+.a .logo{color:var(--ink);text-shadow:3px 3px 0 #FFD23F}
+.a .ibtn{background:#4DA8FF;border:4px solid var(--ink);box-shadow:0 4px 0 var(--ink);color:var(--ink)}
+.a .prim{background:#FF4D8D;border:4px solid var(--ink);box-shadow:0 7px 0 var(--ink);color:#fff;text-shadow:3px 3px 0 var(--ink)}
+.a .grid{background:#2E2749;border:4px solid var(--ink);margin:0 14px 12px;padding:10px;flex:none;height:250px}
+.a .tile{border:4px solid var(--ink);background:var(--paper)}
+.a .foot>div{background:#3DDC97;border:4px solid var(--ink);box-shadow:0 5px 0 var(--ink);color:var(--ink)}
+
+/* ---------- B 软糖 (圆润、留白) ---------- */
+.b{--ink:#6B5A66;--bg:#FFF4F7}
+.b .phone{background:var(--bg);border-radius:22px;box-shadow:0 10px 24px rgba(107,90,102,.22)}
+.b .sbar{color:var(--ink);background:#FFE3EE}
+.b .logo{color:#8A6F7E;font-size:26px}
+.b .ibtn{background:#fff;border-radius:14px;color:#B79AA8;box-shadow:0 4px 0 rgba(107,90,102,.10)}
+.b .prim{background:#FFC2D8;border-radius:20px;color:#8A5470;box-shadow:0 6px 0 #F0A7C2;margin-top:14px;margin-bottom:24px}
+.b .grid{background:#FFFFFF;border-radius:18px;margin:0 14px 18px;padding:12px;gap:14px;flex:none;height:250px;box-shadow:inset 0 0 0 2px #F3E4EC}
+.b .tile{border-radius:14px}
+.b .foot>div{background:#B7E4C7;border-radius:16px;color:#4E7A62;box-shadow:0 5px 0 #9ACCAE}
+
+/* ---------- C 拼豆板 (豆粒颗粒感) ---------- */
+.c{--ink:#3D3226;--bg:#F5EDDF}
+.c .phone{background:var(--bg);background-image:radial-gradient(#DCCFB8 1.5px,transparent 1.6px);background-size:10px 10px;border:5px solid #C9B79A;box-shadow:9px 9px 0 rgba(61,50,38,.22)}
+.c .sbar{color:#7A6851;background:#E7DBC4}
+.c .logo{color:#3D3226;text-shadow:2px 2px 0 #FFB56B}
+.c .ibtn{background:#FFB56B;border:3px solid var(--ink);color:var(--ink);border-radius:50%}
+.c .prim{background:#E4572E;border:4px solid var(--ink);border-radius:16px;box-shadow:0 6px 0 #A83A18;color:#FFF3E2;margin-top:10px}
+.c .grid{background:#E9DFC9;border:4px dashed #C0AE90;border-radius:14px;margin:0 14px 14px;padding:10px;gap:10px;flex:none;height:250px}
+.c .tile{border-radius:10px;border:3px solid var(--ink)}
+.c .foot>div{background:#17A398;border:3px solid var(--ink);border-radius:14px;box-shadow:0 5px 0 #0E6E66;color:#EFFCFA}
+.wfnote{font-size:13px;color:#6b7280;margin:6px 0 18px;line-height:1.6}
+</style>
+
+<h2>三套视觉方向，同一个页面</h2>
+<p class="subtitle">三张都是「选图页」的同一布局，只有视觉语言不同——这样比较的是风格本身，不是布局好坏。字体已经是真的：缝合像素字体 12px，按 24px 整数倍显示。</p>
+
+<div class="cards wf">
+
+  <!-- ============ A ============ -->
+  <div class="card a" data-choice="A" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 0 4px;display:flex;justify-content:center">
+      <div class="phone">
+        <div class="sbar"><span>8:30</span><span>▮▮▯</span></div>
+        <div class="hd">
+          <div class="logo">一起拼豆</div>
+          <div class="ibtn"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="7" y="3" width="2" height="10"/><rect x="3" y="7" width="10" height="2"/></svg></div>
+        </div>
+        <div class="prim"><div class="row"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="1"/><rect x="2" y="13" width="12" height="1"/><rect x="2" y="3" width="1" height="10"/><rect x="13" y="3" width="1" height="10"/><rect x="4" y="4" width="2" height="2"/><rect x="5" y="11" width="6" height="1"/><rect x="6" y="10" width="4" height="1"/><rect x="7" y="9" width="2" height="1"/></svg>选照片</div></div>
+        <div class="grid">
+          <div class="tile" style="background:#4DA8FF"></div>
+          <div class="tile" style="background:#FF4D8D"></div>
+          <div class="tile" style="background:#FFD23F"></div>
+          <div class="tile" style="background:#3DDC97"></div>
+        </div>
+        <div class="foot">
+          <div><div class="row"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>作品</div></div>
+          <div><div class="row"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="7" y="2" width="2" height="12"/><rect x="2" y="7" width="12" height="2"/><rect x="5" y="4" width="6" height="1"/><rect x="5" y="11" width="6" height="1"/></svg>新图</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · 糖果硬边</h3>
+      <p>粗黑描边 + 硬投影 + 高饱和糖果色，像掌机游戏。最有「游戏感」，字和图形都靠描边从背景里跳出来，屏幕再花也不怕。</p>
+    </div>
+  </div>
+
+  <!-- ============ B ============ -->
+  <div class="card b" data-choice="B" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 0 4px;display:flex;justify-content:center">
+      <div class="phone">
+        <div class="sbar"><span>8:30</span><span>▮▮▯</span></div>
+        <div class="hd">
+          <div class="logo">一起拼豆</div>
+          <div class="ibtn"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="7" y="3" width="2" height="10"/><rect x="3" y="7" width="10" height="2"/></svg></div>
+        </div>
+        <div class="prim"><div class="row"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="1"/><rect x="2" y="13" width="12" height="1"/><rect x="2" y="3" width="1" height="10"/><rect x="13" y="3" width="1" height="10"/><rect x="4" y="4" width="2" height="2"/><rect x="5" y="11" width="6" height="1"/><rect x="6" y="10" width="4" height="1"/><rect x="7" y="9" width="2" height="1"/></svg>选照片</div></div>
+        <div class="grid">
+          <div class="tile" style="background:#A8D8F0"></div>
+          <div class="tile" style="background:#FFC2D8"></div>
+          <div class="tile" style="background:#FFE29A"></div>
+          <div class="tile" style="background:#B7E4C7"></div>
+        </div>
+        <div class="foot">
+          <div><div class="row"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>作品</div></div>
+          <div><div class="row"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="7" y="2" width="2" height="12"/><rect x="2" y="7" width="12" height="2"/><rect x="5" y="4" width="6" height="1"/><rect x="5" y="11" width="6" height="1"/></svg>新图</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · 软糖圆润</h3>
+      <p>浅粉底、无描边、大圆角、留白多，像动森/星露谷那类现代像素。最「柔和温馨」，长时间看不累；代价是画面偏淡，第一眼没那么抢。</p>
+    </div>
+  </div>
+
+  <!-- ============ C ============ -->
+  <div class="card c" data-choice="C" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 0 4px;display:flex;justify-content:center">
+      <div class="phone">
+        <div class="sbar"><span>8:30</span><span>▮▮▯</span></div>
+        <div class="hd">
+          <div class="logo">一起拼豆</div>
+          <div class="ibtn"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="7" y="3" width="2" height="10"/><rect x="3" y="7" width="10" height="2"/></svg></div>
+        </div>
+        <div class="prim"><div class="row"><svg class="pix" width="26" height="26" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="1"/><rect x="2" y="13" width="12" height="1"/><rect x="2" y="3" width="1" height="10"/><rect x="13" y="3" width="1" height="10"/><rect x="4" y="4" width="2" height="2"/><rect x="5" y="11" width="6" height="1"/><rect x="6" y="10" width="4" height="1"/><rect x="7" y="9" width="2" height="1"/></svg>选照片</div></div>
+        <div class="grid">
+          <div class="tile" style="background:#17A398"></div>
+          <div class="tile" style="background:#E4572E"></div>
+          <div class="tile" style="background:#FFB56B"></div>
+          <div class="tile" style="background:#6BAA75"></div>
+        </div>
+        <div class="foot">
+          <div><div class="row"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>作品</div></div>
+          <div><div class="row"><svg class="pix" width="20" height="20" viewBox="0 0 16 16"><rect x="7" y="2" width="2" height="12"/><rect x="2" y="7" width="12" height="2"/><rect x="5" y="4" width="6" height="1"/><rect x="5" y="11" width="6" height="1"/></svg>新图</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · 拼豆板</h3>
+      <p>米色点阵底（就是拼豆板的孔），按钮做成豆粒的圆边，暖色系。最贴主题，小朋友一眼能认出「这是拼豆」；代价是和 MARD 色卡放一起时容易混成一片，得靠深色描边隔开。</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="wfnote">想看的细节：主按钮的「描边+硬投影」在 A 和 C 里是主要识别手段，B 取消了；底部两个功能按钮在三套里用的是同一对图标（作品 / 新图）——顺便看看不配文字你能不能认出来。</p>
+
+</body>
+</html>
