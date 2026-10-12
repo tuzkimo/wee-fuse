@@ -135,6 +135,8 @@ function stubContext(): { argsOf: (op: string) => unknown[] | undefined; ops: ()
     restore: record("restore"),
     translate: record("translate"),
     rotate: record("rotate"),
+    // 裁剪框改虚线后 `draw` 会调它；本组只钉绘制接线（顺序 / 参数），外观不在这里断言。
+    setLineDash: (): void => {},
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 0,
@@ -156,6 +158,78 @@ function stubContext(): { argsOf: (op: string) => unknown[] | undefined; ops: ()
     // 全部调用的**发生顺序**（同名调用按次数重复出现）。顺序本身是被断言的行为：
     // `save` / `restore` 之间夹着的 `translate` / `rotate` / `drawImage` 决定了位图画在哪个坐标系里。
     ops: () => calls.map((call) => call.op),
+  };
+}
+
+/** 一次绘制调用 + 它发生时上下文里的样式快照。 */
+interface StyleCall {
+  readonly op: string;
+  readonly args: unknown[];
+  readonly strokeStyle: string;
+  readonly fillStyle: string;
+  readonly lineWidth: number;
+  readonly lineDash: number[];
+}
+
+/**
+ * 记录「每次绘制调用**当时**的样式快照」的 2D 上下文桩（外观用例专用）。
+ * `stubContext` 只记调用顺序与参数，而颜色 / 线宽 / 虚线是**绘制时读的**：事后读 `ctx.strokeStyle`
+ * 只能拿到最后一次赋值，分辨不出「哪一次 `strokeRect` 用的哪个色」——外观断言需要的是快照。
+ */
+function stubStyleLog(): {
+  all: (op: string) => StyleCall[];
+  last: (op: string) => StyleCall | undefined;
+} {
+  const calls: StyleCall[] = [];
+  let strokeStyle = "";
+  let fillStyle = "";
+  let lineWidth = 0;
+  let lineDash: number[] = [];
+  const record =
+    (op: string) =>
+    (...args: unknown[]): void => {
+      calls.push({ op, args, strokeStyle, fillStyle, lineWidth, lineDash: [...lineDash] });
+    };
+  const ctx = {
+    setTransform: record("setTransform"),
+    clearRect: record("clearRect"),
+    drawImage: record("drawImage"),
+    fillRect: record("fillRect"),
+    strokeRect: record("strokeRect"),
+    save: record("save"),
+    restore: record("restore"),
+    translate: record("translate"),
+    rotate: record("rotate"),
+    setLineDash: (...args: unknown[]): void => {
+      lineDash = Array.isArray(args[0]) ? (args[0] as number[]) : [];
+      calls.push({ op: "setLineDash", args, strokeStyle, fillStyle, lineWidth, lineDash: [...lineDash] });
+    },
+    get strokeStyle(): string {
+      return strokeStyle;
+    },
+    set strokeStyle(value: string) {
+      strokeStyle = value;
+    },
+    get fillStyle(): string {
+      return fillStyle;
+    },
+    set fillStyle(value: string) {
+      fillStyle = value;
+    },
+    get lineWidth(): number {
+      return lineWidth;
+    },
+    set lineWidth(value: number) {
+      lineWidth = value;
+    },
+    imageSmoothingEnabled: false,
+    imageSmoothingQuality: "low",
+  };
+  const spy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+  spy.mockImplementation((() => ctx) as unknown as typeof HTMLCanvasElement.prototype.getContext);
+  return {
+    all: (op) => calls.filter((call) => call.op === op),
+    last: (op) => calls.filter((call) => call.op === op).at(-1),
   };
 }
 
@@ -1197,5 +1271,61 @@ describe('fit 档下 else 分支的两个入口都判回「移动选框」（三
     // 所以这里期望值与起点相同（本条的判别力**不在**载荷数值上，而在「有 crop、无 pan」这个分流上：
     // 改走 pan 时 update:crop 变 undefined、update:pan 变成 [{x:0,y:0}]，两条断言各杀一次）。
     expect(wrapper.emitted("update:crop")?.at(-1)).toEqual([{ x: 0, y: 0, width: 800, height: 600 }]);
+  });
+});
+
+/**
+ * 裁剪框与手柄的像素风外观（§7.3）。**只钉绘制接线**——手势那几组一条不动，拖拽 / 缩放 / 夹取 /
+ * 换档取景的数学一律没有本组的事。
+ *
+ * 颜色 / 线宽 / 虚线是「绘制时读的」：`ctx` 的属性赋值不会被 `stubContext` 记下来，所以本组用
+ * `stubStyleLog`（每次绘制调用拍一张当时的样式快照）。happy-dom 没有像素，这里断的是**交给平台的
+ * 样式值**，与既有「绘制」那组同一取舍。
+ */
+describe("裁剪框与手柄的像素风外观（§7.3）", () => {
+  it("框 = accent 3px 虚线；遮罩 = bead-ink 半透明（不再是默认调色板的 slate）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const log = stubStyleLog();
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 场景自检：选框屏幕矩形仍是既有口径（换皮带偏视图时先红在这里）。
+    const box = log.last("strokeRect");
+    expect(box?.args).toEqual([50, 100, 150, 150]);
+    // 框：accent（`--color-bead-accent`）+ 3px（§6.3 描边只有 3 / 4 两档）+ 虚线。
+    expect(box?.strokeStyle).toBe("#E4572E");
+    expect(box?.lineWidth).toBe(3);
+    expect(box?.lineDash).toEqual([12, 6]);
+
+    // 框外四块遮罩：bead-ink 45%（原来是 `rgba(15, 23, 42, .45)` 这种默认调色板字面量）。
+    const mask = log.all("fillRect").filter((entry) => entry.fillStyle === "rgba(61, 50, 38, 0.45)");
+    expect(mask).toHaveLength(4);
+  });
+
+  it("四个手柄 = 14px 方块：ink 外框 3px + accent 内芯（canvas 没有 border，画两层）", async () => {
+    stubContainer();
+    stubResizeObserver();
+    window.devicePixelRatio = 1;
+    const log = stubStyleLog();
+    const wrapper = mountCanvas();
+    await wrapper.vm.$nextTick();
+
+    // 默认选区 {100,100,300,300} 在屏幕上是 {50,100,150,150}，四角中心 (50,100)/(200,100)/(50,250)/(200,250)。
+    const edges = log.all("fillRect").filter((entry) => entry.fillStyle === "#3D3226");
+    expect(edges.map((entry) => entry.args)).toEqual([
+      [43, 93, 14, 14],
+      [193, 93, 14, 14],
+      [43, 243, 14, 14],
+      [193, 243, 14, 14],
+    ]);
+    const cores = log.all("fillRect").filter((entry) => entry.fillStyle === "#E4572E");
+    expect(cores.map((entry) => entry.args)).toEqual([
+      [46, 96, 8, 8],
+      [196, 96, 8, 8],
+      [46, 246, 8, 8],
+      [196, 246, 8, 8],
+    ]);
   });
 });

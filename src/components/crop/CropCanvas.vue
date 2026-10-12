@@ -36,8 +36,21 @@ import { useCanvasSurface } from "@/composables/useCanvasSurface";
 const HANDLE_HIT_SIZE = 48;
 /** 手柄命中半径：命中区是边长 `HANDLE_HIT_SIZE` 的**方块**，半径即其一半。 */
 const HANDLE_HIT_RADIUS = HANDLE_HIT_SIZE / 2;
-/** 手柄视觉方块的 CSS 尺寸。 */
-const HANDLE_DRAW_SIZE = 20;
+/** 手柄视觉方块的 CSS 尺寸（§7.3：14px 方块）。命中区仍是 `HANDLE_HIT_SIZE`，两者互不相干。 */
+const HANDLE_DRAW_SIZE = 14;
+/** 裁剪框描边宽度（§6.3 描边只有 3 / 4 两档，3px 是小元素那一档）。 */
+const CROP_BOX_WIDTH = 3;
+/**
+ * 裁剪框的虚线段长（`setLineDash` 的 [实线, 空白]）。
+ *
+ * 下面三个颜色值必须写字面量：Canvas 2D 不解析 CSS 的 `var()`。它们与 `src/style.css` 的
+ * `--color-bead-accent` / `--color-bead-ink` 同源（§6.1 的 token），改 token 时一起改。
+ */
+const CROP_DASH = [12, 6];
+const CROP_BOX_COLOR = "#E4572E";
+const HANDLE_EDGE_COLOR = "#3D3226";
+/** 选框外的遮罩：bead-ink 45%（原来是默认调色板的 `rgba(15, 23, 42, .45)`）。 */
+const CROP_MASK_COLOR = "rgba(61, 50, 38, 0.45)";
 
 const props = defineProps<{
   preview: HTMLCanvasElement;
@@ -335,19 +348,32 @@ function draw(): void {
   ctx.restore();
 
   const screenCrop = sourceRectToScreen(props.crop, current, props.rotation, props.sourceSize);
-  // 选框外压一层半透明遮罩
-  ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
+  // 选框外压一层半透明遮罩（bead-ink 45%，与调色板同一支深色）
+  ctx.fillStyle = CROP_MASK_COLOR;
   ctx.fillRect(0, 0, size.width, screenCrop.y);
   ctx.fillRect(0, screenCrop.y + screenCrop.height, size.width, size.height - screenCrop.y - screenCrop.height);
   ctx.fillRect(0, screenCrop.y, screenCrop.x, screenCrop.height);
   ctx.fillRect(screenCrop.x + screenCrop.width, screenCrop.y, size.width - screenCrop.x - screenCrop.width, screenCrop.height);
 
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 2;
+  // 裁剪框：accent 的 3px 虚线（§7.3）。虚线设完立刻复位：不复位的话下面手柄的边框也会变成虚线。
+  ctx.strokeStyle = CROP_BOX_COLOR;
+  ctx.lineWidth = CROP_BOX_WIDTH;
+  ctx.setLineDash(CROP_DASH);
   ctx.strokeRect(screenCrop.x, screenCrop.y, screenCrop.width, screenCrop.height);
-  ctx.fillStyle = "#ffffff";
+  ctx.setLineDash([]);
+  // 手柄：14px 方块 = ink 外框 + accent 内芯。canvas 没有 border，用两层 `fillRect` 画出 border-3。
   for (const center of handleCenters(screenCrop)) {
-    ctx.fillRect(center.x - HANDLE_DRAW_SIZE / 2, center.y - HANDLE_DRAW_SIZE / 2, HANDLE_DRAW_SIZE, HANDLE_DRAW_SIZE);
+    const x = center.x - HANDLE_DRAW_SIZE / 2;
+    const y = center.y - HANDLE_DRAW_SIZE / 2;
+    ctx.fillStyle = HANDLE_EDGE_COLOR;
+    ctx.fillRect(x, y, HANDLE_DRAW_SIZE, HANDLE_DRAW_SIZE);
+    ctx.fillStyle = CROP_BOX_COLOR;
+    ctx.fillRect(
+      x + CROP_BOX_WIDTH,
+      y + CROP_BOX_WIDTH,
+      HANDLE_DRAW_SIZE - CROP_BOX_WIDTH * 2,
+      HANDLE_DRAW_SIZE - CROP_BOX_WIDTH * 2,
+    );
   }
 }
 

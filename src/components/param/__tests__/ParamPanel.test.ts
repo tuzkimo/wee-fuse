@@ -407,3 +407,73 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
     expect(wrapper.get("[data-testid='summary']").text()).toContain("44 × 58 颗");
   });
 });
+
+/**
+ * 参数全部图形化（§7.3）：两套档位换成图形按钮、勾选框换成像素开关。
+ *
+ * 两条滑条与数字输入框**一字不动**（档位语义留在 `TierSlider`，见它自己的用例）；图形按钮只是把
+ * 同样的档位值接到同一条既有出口（`update:longSide` / `update:maxColors`）——不是新加一条通路。
+ * 取值与「点了就生效」两件事都钉：只钉形状的话，按钮点了没反应照样全绿。
+ */
+describe("参数全部图形化（§7.3）", () => {
+  it("长边的档位 = 画出来的格子数（1 / 2 / 4 个方块）", () => {
+    const wrapper = mountPanel();
+    const tiers = wrapper.findAll("[data-testid^='long-side-tier-']");
+    expect(tiers.map((tier) => tier.findAll("[data-square]").length)).toEqual([1, 2, 4]);
+  });
+
+  it("点长边档位按钮 ⇒ 走既有 update:longSide，摘要当场跟着变（不等父级回灌）", async () => {
+    const wrapper = mountPanel();
+    await wrapper.findAll("[data-testid^='long-side-tier-']")[2]!.trigger("click");
+    expect(wrapper.emitted("update:longSide")?.at(-1)).toEqual([116]);
+    expect(wrapper.get("[data-testid='summary']").text()).toContain("116 × 116 颗");
+  });
+
+  it("用色的档位 = 色条（段数递增 1 / 2 / 3）", () => {
+    const wrapper = mountPanel();
+    const tiers = wrapper.findAll("[data-testid^='color-tier-']");
+    expect(tiers.map((tier) => tier.findAll("[data-segment]").length)).toEqual([1, 2, 3]);
+  });
+
+  it("点用色档位按钮 ⇒ 走既有 update:maxColors，父级回灌后读数跟着变", async () => {
+    const wrapper = mountPanel();
+    await wrapper.findAll("[data-testid^='color-tier-']")[0]!.trigger("click");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([8]);
+    // 读数读的是 **props**（色数没有本地草稿，与长边不同）：父级写回后才变——
+    // 断言真实流（按钮 → emit → 父级 → props），而不是在组件里另生一个本地状态。
+    expect(wrapper.get("[data-testid='max-colors-value']").text()).toBe("24 种");
+    await wrapper.setProps({ maxColors: 8 });
+    expect(wrapper.get("[data-testid='max-colors-value']").text()).toBe("8 种");
+  });
+
+  it("像素开关：74×38、rounded-full、border-4 border-bead-ink、选中态 bg-bead-go，且仍是真 checkbox", () => {
+    const wrapper = mountPanel({ removeBackground: true });
+    const box = wrapper.get("[data-testid='remove-background']");
+    expect(box.attributes("type")).toBe("checkbox");
+    const classes = box.classes().join(" ");
+    expect(classes).toContain("h-[38px]");
+    expect(classes).toContain("w-[74px]");
+    expect(classes).toContain("rounded-full");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    // 选中态是 go 色（关态是沙色凹槽）；`checked:bg-bead-go` 用子串匹配就够，语义由下面这条 `.checked` 钉住。
+    expect(classes).toContain("bg-bead-go");
+    expect((box.element as HTMLInputElement).checked).toBe(true);
+
+    // 滑块：`<input>` 是替换元素，画不了 `::after`，所以它是兄弟元素，靠 `peer-checked:` 滑到右端。
+    const knob = wrapper.get("[data-knob]");
+    expect(knob.classes()).toContain("pointer-events-none"); // 不吃滑条 / 勾选框的命中
+    expect(knob.classes()).toContain("rounded-full");
+    expect(knob.classes().join(" ")).toContain("peer-checked:translate-x-[36px]");
+  });
+
+  /**
+   * §7.3 逐字保留的那一处解释性文字（规格写「去掉背景」，仓里 shipped 的文案是「去除背景」，
+   * 四个字都没动）。testid 挂在 `<input>` 上，所以名字只能从它的 `label` 上读。
+   */
+  it("「去除背景」的四个字仍在（§7.3 唯一允许保留的解释性文字）", () => {
+    const wrapper = mountPanel();
+    const label = wrapper.get("[data-testid='remove-background']").element.closest("label");
+    expect(label?.textContent ?? "").toContain("去除背景");
+  });
+});

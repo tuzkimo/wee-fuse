@@ -133,15 +133,16 @@ describe("TierSlider（C8 第 4 项）", () => {
   });
 
   /**
-   * 触控目标（主规格 §6.4 / 本任务约束：轨道 ≥44px）。
+   * 触控目标（规格 §6.5 / 本任务约束 R35：最小 56×56，44px 是 Material 的口径）。
    *
    * happy-dom 没有布局，`getBoundingClientRect` 恒 0——与仓里既有那批用例同一条纪律：
-   * 「≥44px」**唯一可观察的形式就是类名**（`h-11` = 2.75rem = 44px），所以这里钉类名。
-   * 拇指高度由浏览器决定（原生滑条），不在本组件的控制面上、也无法在 happy-dom 里读。
+   * 「≥56px」**唯一可观察的形式就是类名**（`h-14` = 3.5rem = 56px），所以这里钉类名。
+   * 旋钮的视觉尺寸（一个 34px 的圆）由伪元素定，手感仍由浏览器给的原生滑条承担。
    */
-  it("触控目标：轨道 h-11（44px）、数字输入框 min-h-12", () => {
+  it("触控目标：轨道 h-14（56px）、数字输入框 min-h-12", () => {
     const wrapper = mountSlider();
-    expect(wrapper.get("[data-testid='long-side-slider']").classes()).toContain("h-11");
+    // R35：`h-11`（44px）→ `h-14`（56px）。同一节点、同一个 `toContain` 匹配器，值更严。
+    expect(wrapper.get("[data-testid='long-side-slider']").classes()).toContain("h-14");
     expect(wrapper.get("[data-testid='long-side']").classes()).toContain("min-h-12");
   });
 });
@@ -264,5 +265,50 @@ describe("TierSlider 的 labels 两种画法", () => {
     // 这条画法不画刻度线、也没有下方数字行。
     expect(wrapper.findAll("[data-tick]")).toHaveLength(0);
     expect(wrapper.find("[data-node-line]").exists()).toBe(false);
+  });
+});
+
+/**
+ * 像素风外观（§7.3）：轨道 / 旋钮换皮，**吸附与档位语义一个字不动**（本组一条都不碰它们）。
+ *
+ * 原生滑条的轨道与旋钮只能在厂商伪元素上画，`[&::-webkit-slider-…]` 任意变体是唯一不经
+ * `<style>` 块的写法。happy-dom 不解析 CSS，所以这里钉的是**类名**——与触控目标那条同一口径。
+ */
+describe("TierSlider 的像素风外观（§7.3）", () => {
+  it("轨道 = 3px ink 描边的沙色圆条，旋钮 = 34px 的 go 圆，都在 56px 的触控区里", () => {
+    const slider = mountSlider().get("[data-testid='long-side-slider']");
+    const classes = slider.classes().join(" ");
+    expect(classes).toContain("h-14"); // 触控区（R35）
+    expect(classes).toContain("[&::-webkit-slider-runnable-track]:box-border");
+    expect(classes).toContain("[&::-webkit-slider-runnable-track]:h-3");
+    expect(classes).toContain("[&::-webkit-slider-runnable-track]:rounded-full");
+    expect(classes).toContain("[&::-webkit-slider-runnable-track]:border-bead-ink");
+    expect(classes).toContain("[&::-webkit-slider-runnable-track]:bg-bead-sand-3");
+    expect(classes).toContain("[&::-webkit-slider-thumb]:box-border");
+    expect(classes).toContain("[&::-webkit-slider-thumb]:h-[34px]");
+    expect(classes).toContain("[&::-webkit-slider-thumb]:w-[34px]");
+    expect(classes).toContain("[&::-webkit-slider-thumb]:rounded-full");
+    expect(classes).toContain("[&::-webkit-slider-thumb]:border-4");
+    expect(classes).toContain("[&::-webkit-slider-thumb]:bg-bead-go");
+    // 默认调色板与默认字号都不许再出现在这条滑条上（任务 19 的守卫 (a) / (f) 在文件层再扫一遍）。
+    expect(classes).not.toContain("accent-slate-900");
+    expect(classes).not.toContain("text-lg");
+  });
+
+  /**
+   * `labels` 的两种画法是**对外契约**（`ParamPanel` 的用色那条必须 `below`：8 / 16 / 24 在 220px
+   * 轨道上会重叠；长边那条必须 `track`）。这里用真实的 `data-*` 钩子（仓里没有 `tier-labels-*`
+   * 这种 testid）钉住「两种画法各自出哪些节点」，防止换皮时把某一支的节点删掉。
+   */
+  it("两套标签位置没被改（用色数 below 画刻度线、长边 track 画轨道数字）", () => {
+    const below = mountSlider({ labels: "below" });
+    expect(below.find("[data-tick]").exists()).toBe(true);
+    expect(below.find("[data-node-line]").exists()).toBe(true);
+    expect(below.find("[data-node]").exists()).toBe(false);
+
+    const track = mountSlider({ labels: "track" });
+    expect(track.find("[data-node]").exists()).toBe(true);
+    expect(track.find("[data-tick]").exists()).toBe(false);
+    expect(track.find("[data-node-line]").exists()).toBe(false);
   });
 });
