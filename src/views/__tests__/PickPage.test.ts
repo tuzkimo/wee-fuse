@@ -263,6 +263,37 @@ describe("PickPage", () => {
     expect(button.text()).toBe("下一步");
   });
 
+  it("浏览器分支的主按钮也是 photos 图标 + 36px 文字，且带 aria-label", () => {
+    stubPlatform();
+    const wrapper = mount(PickPage);
+    const button = wrapper.get("[data-testid='pick-file']");
+    expect(button.attributes("aria-label")).toBe("下一步");
+    expect(button.find("svg").exists()).toBe(true);
+    expect(button.classes().join(" ")).toContain("bg-bead-accent");
+    expect(button.classes().join(" ")).toContain("shadow-pop-lg");
+    // 36px 落在按钮内的文字节点上：BeadButton 的 primary 变体自带 24px，字号不能靠同名工具类的
+    // CSS 先后顺序去盖（谁后生成谁赢），写在内层 span 上才是确定的。
+    expect(button.get("span").classes()).toContain("text-[36px]");
+  });
+
+  it("下半屏是照片网格：手机 2 列 / 平板 4 列，无照片时只有一张虚线占位格", () => {
+    stubPlatform();
+    const wrapper = mount(PickPage);
+    const grid = wrapper.get("[data-testid='pick-grid']");
+    expect(grid.classes()).toContain("grid-cols-2");
+    expect(grid.classes()).toContain("md:grid-cols-4");
+    // 平台接口只有 pickFromAlbum / capturePhoto（没有相册枚举）⇒ 眼下网格恒为空态，
+    // 只渲染那张占位格；这条钉住「不是一整块空白」。
+    const cells = grid.findAll("li");
+    expect(cells).toHaveLength(1);
+    expect(cells[0].attributes("data-testid")).toBe("pick-empty");
+    const classes = cells[0].classes().join(" ");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-dashed");
+    expect(classes).toContain("border-bead-ink");
+    expect(classes).toContain("rounded-bead-sm");
+  });
+
   it("草稿里还有上次的图时，给一个「继续上次的选区」入口", async () => {
     stubPlatform();
     const draft = useDraft();
@@ -334,6 +365,17 @@ describe("PickPage（native-picker 分支）", () => {
     const withoutCamera = mount(PickPage);
     expect(withoutCamera.find("[data-testid='pick-album']").exists()).toBe(true);
     expect(withoutCamera.find("[data-testid='pick-camera']").exists()).toBe(false);
+  });
+
+  it("主按钮是 photos 图标 + 36px 短文字，且带中文 aria-label", () => {
+    setPlatform(fakeShellPlatform({ canCapture: true }));
+    const wrapper = mount(PickPage);
+    const button = wrapper.get("[data-testid='pick-album']");
+    expect(button.attributes("aria-label")).toBe("从相册选一张");
+    expect(button.find("svg").exists()).toBe(true);
+    expect(button.classes().join(" ")).toContain("bg-bead-accent");
+    expect(button.classes().join(" ")).toContain("shadow-pop-lg");
+    expect(button.get("span").classes()).toContain("text-[36px]");
   });
 
   it("点「从相册选一张」⇒ 用 pickFromAlbum 拿到的文件走完解码与落草稿，并跳选区页", async () => {
