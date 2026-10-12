@@ -18,11 +18,11 @@ const slots = useSlots();
  */
 const VARIANTS: Record<BeadVariant, { classes: string; pop: string }> = {
   primary: {
-    classes: "bg-bead-accent text-bead-card rounded-bead-md shadow-pop-md px-6 text-2xl",
+    classes: "bg-bead-accent text-bead-card rounded-bead-md shadow-pop-md px-6 text-[24px]",
     pop: "var(--color-bead-accent-dark)",
   },
   secondary: {
-    classes: "bg-bead-card text-bead-ink rounded-bead-md shadow-pop-md px-6 text-2xl",
+    classes: "bg-bead-card text-bead-ink rounded-bead-md shadow-pop-md px-6 text-[24px]",
     pop: "var(--color-bead-card-shadow)",
   },
   // 圆图标按钮（§6.5）：pill + 50~56px，不带可见文字，靠 aria-label 定锚点。
@@ -31,11 +31,11 @@ const VARIANTS: Record<BeadVariant, { classes: string; pop: string }> = {
     pop: "var(--color-bead-card-shadow)",
   },
   danger: {
-    classes: "bg-bead-danger text-bead-card rounded-bead-md shadow-pop-md px-6 text-2xl",
+    classes: "bg-bead-danger text-bead-card rounded-bead-md shadow-pop-md px-6 text-[24px]",
     pop: "var(--color-bead-danger)",
   },
   go: {
-    classes: "bg-bead-go text-bead-card rounded-bead-md shadow-pop-md px-6 text-2xl",
+    classes: "bg-bead-go text-bead-card rounded-bead-md shadow-pop-md px-6 text-[24px]",
     pop: "var(--color-bead-go-dark)",
   },
 };

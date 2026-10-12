@@ -343,7 +343,7 @@ describe("LibraryPage", () => {
     expect(line.text()).toContain("58 × 44");
     expect(line.text()).toContain("色 ·");
     // 尺寸行属于「辅助信息」档：12px + bead-line-2（§7.1）
-    expect(line.classes()).toContain("text-xs");
+    expect(line.classes()).toContain("text-[12px]");
     expect(line.classes()).toContain("text-bead-line-2");
   });
 

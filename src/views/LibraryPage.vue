@@ -185,7 +185,7 @@ function open(id: string): void {
     <header
       class="flex h-16 items-center justify-between gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
     >
-      <h1 class="text-2xl text-bead-ink md:text-4xl">我的图纸</h1>
+      <h1 class="text-[24px] text-bead-ink md:text-[36px]">我的图纸</h1>
       <BeadButton
         data-testid="new-project"
         variant="go"
@@ -201,14 +201,14 @@ function open(id: string): void {
       <p
         v-if="storeUnavailable"
         data-testid="store-unavailable"
-        class="rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-2xl text-bead-warn-ink"
+        class="rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
       >
         {{ storeFailureText }}
       </p>
       <p
         v-if="error && !storeUnavailable"
         data-testid="error-hint"
-        class="mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-2xl text-bead-warn-ink"
+        class="mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
       >
         {{ error }}
       </p>
@@ -225,7 +225,7 @@ function open(id: string): void {
               v-model="renameDraft"
               data-testid="rename-input"
               :maxlength="PROJECT_NAME_MAX"
-              class="min-h-14 w-full min-w-0 rounded-bead-sm border-4 border-bead-line bg-bead-card px-2 text-2xl text-bead-ink"
+              class="min-h-14 w-full min-w-0 rounded-bead-sm border-4 border-bead-line bg-bead-card px-2 text-[24px] text-bead-ink"
             />
             <BeadButton data-testid="rename-confirm" variant="primary" @click="confirmRename">好</BeadButton>
             <BeadButton variant="secondary" @click="renamingId = null">算了</BeadButton>
@@ -242,14 +242,14 @@ function open(id: string): void {
             >
               <span class="flex h-32 w-full items-center justify-center overflow-hidden rounded-t-bead-sm bg-bead-board">
                 <img v-if="meta.thumbnail" :src="meta.thumbnail" alt="" class="h-full w-full object-contain" />
-                <span v-else class="text-xs text-bead-line-2">没有封面</span>
+                <span v-else class="text-[12px] text-bead-line-2">没有封面</span>
               </span>
               <span class="block p-3">
-                <span data-testid="project-name" class="project-name text-2xl text-bead-ink">
+                <span data-testid="project-name" class="project-name text-[24px] text-bead-ink">
                   {{ meta.name }}
                 </span>
                 <!-- 尺寸行与相对时间合成一行 12px 辅助信息（§7.1），`project-updated-at` 节点保留 -->
-                <span data-testid="project-updated-at" class="block text-xs text-bead-line-2">
+                <span data-testid="project-updated-at" class="block text-[12px] text-bead-line-2">
                   {{ meta.width }} × {{ meta.height }} · {{ meta.colorCount }} 色 ·
                   {{ formatRelativeTime(meta.updatedAt, new Date()) }}
                 </span>
@@ -300,7 +300,7 @@ function open(id: string): void {
             @click="router.push({ name: 'pick' })"
           >
             <PixelIcon name="plus" :size="24" />
-            <span class="text-2xl">新图纸</span>
+            <span class="text-[24px]">新图纸</span>
           </button>
         </li>
       </ul>
@@ -325,7 +325,7 @@ function open(id: string): void {
       class="fixed inset-0 z-20 flex items-center justify-center bg-bead-ink/40 p-4"
     >
       <div class="w-full max-w-md rounded-bead-md border-4 border-bead-ink bg-bead-card p-6 shadow-pop-lg">
-        <p class="text-2xl text-bead-ink">确定删掉「{{ pendingDelete.name }}」吗？删了就找不回来了。</p>
+        <p class="text-[24px] text-bead-ink">确定删掉「{{ pendingDelete.name }}」吗？删了就找不回来了。</p>
         <div class="mt-6 flex gap-4">
           <BeadButton data-testid="delete-confirm" variant="danger" class="flex-1" @click="confirmDelete">
             删掉
