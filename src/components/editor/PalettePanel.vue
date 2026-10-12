@@ -104,10 +104,9 @@ const rows = computed<UsageRow[]>(() =>
  * 一旦落笔，`core/pattern/edit.ts` 只守 `0..EMPTY`（不守色数上界），那个值就被**静默涂开**。
  * 与裁决 3 的口径一致（`core/project/file.ts`：查不到就响亮失败），故不静默回落。
  *
- * 这是**防御性分支，生产路径不可达**——三处写入者都收了口：
- * `editor.setCurrentColor`（`src/stores/editor.ts:283-288`，越界即抛）、
- * `editor.beginSession` 的播种（`:217`，色卡外回落 0）、
- * `editor.pickFromCell`（`:356-362`，经 `setCurrentColor` 的同一份守卫）。
+ * 这是**防御性分支，生产路径不可达**——两处写入者都收了口：
+ * `editor.setCurrentColor`（越界即抛）与 `editor.beginSession` 的播种（色卡外回落 0）。
+ * （吸管 `pickFromCell` 已在删除工具那一轮删掉，经它写入的第三条路径随之消失。）
  * 组件是纯展示组件，props 可以被喂任何值，所以这条分支仍然要拦。
  *
  * `EMPTY` 是「橡皮」这个**合法状态**的取值，必须放行。
@@ -181,7 +180,7 @@ function onPick(index: number): void {
 </script>
 
 <template>
-  <section class="space-y-4">
+  <section class="space-y-4 md:w-[250px]">
     <!--
       当前画笔槽：**不随已用色列表变化**（§9.1 第 1 条）。它必须固定，因为从选择器里选中的色
       很可能用了 0 颗、不在列表里（裁决 3 的直接后果）。
@@ -198,19 +197,19 @@ function onPick(index: number): void {
       type="button"
       data-testid="palette-current"
       :aria-expanded="picking"
-      class="flex min-h-11 w-full items-center gap-2 rounded border border-slate-300 bg-white px-3 text-base"
+      class="flex min-h-14 w-full items-center gap-2 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[12px] text-bead-ink"
       @click="togglePicker"
     >
       <template v-if="current">
         <span
-          class="inline-block h-6 w-6 rounded border border-slate-300"
+          class="inline-block h-7 w-7 shrink-0 rounded-bead-sm border-3 border-bead-ink"
           :style="{ backgroundColor: `rgb(${current.rgb[0]}, ${current.rgb[1]}, ${current.rgb[2]})` }"
         />
-        <span class="font-semibold">{{ current.code }}</span>
-        <span v-if="current.name" class="text-slate-500">{{ current.name }}</span>
+        <span>{{ current.code }}</span>
+        <span v-if="current.name" class="text-bead-line-2">{{ current.name }}</span>
       </template>
       <!-- 橡皮态只在这儿显示「橡皮」：独立的橡皮按钮在工具栏上（C8 第 3 项） -->
-      <span v-else class="font-semibold">橡皮</span>
+      <span v-else>橡皮</span>
     </button>
 
     <!--
@@ -237,43 +236,58 @@ function onPick(index: number): void {
     <div
       v-if="selectedRows.length > 0"
       data-testid="select-bar"
-      class="flex flex-wrap items-center gap-2 rounded border border-slate-300 bg-white px-3 py-2"
+      class="flex flex-wrap items-center gap-2 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 py-2 text-[12px] text-bead-ink"
     >
-      <span class="text-base text-slate-700">已选 {{ selectedRows.length }} 个色号 · 共 {{ selectedCount }} 颗</span>
+      <span>已选 {{ selectedRows.length }} 个色号 · 共 {{ selectedCount }} 颗</span>
       <button
         data-testid="select-bar-recolor"
-        class="min-h-11 rounded bg-slate-900 px-3 text-base text-white"
+        class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-accent px-3 text-[12px] text-bead-card"
         @click="beginRecolor"
       >
         换成…
       </button>
       <button
         data-testid="select-bar-clear"
-        class="min-h-11 rounded border border-slate-300 px-3 text-base"
+        class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[12px] text-bead-ink"
         @click="emit('update:selected', [])"
       >
         取消选择
       </button>
     </div>
 
-    <ul class="space-y-1">
-      <li v-for="row in rows" :key="row.code">
+    <!--
+      §7.4 的两套排法**靠类分叉、不靠 `v-if`（R3）**：同一个 `ul` 就是手机上的横滑色豆条
+      （`overflow-x-auto` + 56px 圆豆）与平板上的 250px 右栏清单（`md:flex-col` + 整行）。
+      用 `v-if` 按断点渲染两份会让 `palette-row` 在 DOM 里出现两次——`wrapper.get` 遇到重复会抛。
+    -->
+    <ul
+      data-testid="palette-strip-mobile"
+      class="flex gap-3 overflow-x-auto pb-1 md:flex-col md:gap-2 md:overflow-x-visible md:pb-0"
+    >
+      <li v-for="row in rows" :key="row.code" class="shrink-0 md:w-full">
         <button
           data-testid="palette-row"
           :data-code="row.code"
           :data-current="currentColor === row.index ? '1' : undefined"
           :data-selected="selectedSet.has(row.index) ? '1' : undefined"
           :aria-pressed="selectedSet.has(row.index) ? 'true' : 'false'"
-          class="flex min-h-11 w-full items-center gap-2 rounded px-3 text-base"
-          :class="selectedSet.has(row.index) ? 'border-2 border-slate-900' : 'border border-slate-200'"
+          class="flex h-14 min-h-14 w-full items-center gap-2 rounded-bead-sm border-bead-ink bg-bead-card px-3 text-[12px] text-bead-ink max-md:w-14! max-md:shrink-0 max-md:justify-center max-md:border-0! max-md:px-0!"
+          :class="selectedSet.has(row.index) ? 'border-4 bg-bead-warm' : 'border-3'"
           @click="toggleRow(row.index)"
         >
+          <!--
+            手机：这颗 56px 圆豆就是整颗色豆（按钮在窄屏是无描边的 56px 外壳，描边在色豆上，
+            免得两层各 3px 变成 62px）；色号与颗数用 `max-md:hidden` 藏起来，不删节点——
+            用 `v-if` 按断点删会让 jsdom（宽 1024）验不到、手机上真缺信息。
+            平板：`md:` 收回成 §7.4 要求的小色块（`border-3 border-bead-ink` + `rounded-bead-sm`）。
+          -->
           <span
-            class="inline-block h-6 w-6 rounded border border-slate-300"
+            data-testid="palette-bead"
+            class="inline-block h-14 w-14 shrink-0 rounded-bead-pill border-3 border-bead-ink md:h-7 md:w-7 md:rounded-bead-sm"
             :style="{ backgroundColor: `rgb(${row.rgb[0]}, ${row.rgb[1]}, ${row.rgb[2]})` }"
           />
-          <span class="font-semibold">{{ row.code }}</span>
-          <span class="text-slate-500">{{ row.count }} 颗</span>
+          <span class="max-md:hidden">{{ row.code }}</span>
+          <span class="text-bead-line-2 max-md:hidden">{{ row.count }} 颗</span>
         </button>
       </li>
     </ul>

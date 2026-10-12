@@ -179,14 +179,25 @@ describe("色值与关闭", () => {
     expect(wrapper.emitted("pick")).toBeUndefined();
   });
 
-  // 主规格 §6.4 / B3 规格 §10：触控目标 ≥44px、字号 ≥16px。happy-dom 无布局，
-  // 只能断言类名（同 PatternToolbar 的代理断言口径）。
-  it("色块触控目标 ≥44px、字号 ≥16px", () => {
+  // 主规格 §6.5：触控目标硬下界 56px。**R35 授权改写**：原来是 44px / `text-base`，与 §6.5 的
+  // 56×56 直接冲突，且 `text-base` 被 R22 禁用（Tailwind 默认字号类）。同一 matcher、同一节点，
+  // 值改严：44→56px、16→24px。happy-dom 无布局，只能断言类名（同 PatternToolbar 的代理断言口径）。
+  it("色块触控目标 ≥56px、字号 ≥24px", () => {
     const classes = mountPicker({ palette: SCRAMBLED })
       .get("[data-testid='picker-color']")
       .classes();
-    expect(classes).toContain("min-h-11"); // 2.75rem = 44px
-    expect(classes).toContain("min-w-11");
-    expect(classes).toContain("text-base"); // 1rem = 16px
+    expect(classes).toContain("min-h-14"); // 3.5rem = 56px
+    expect(classes).toContain("min-w-14");
+    expect(classes).toContain("text-[24px]"); // 1.5rem = 24px
+  });
+
+  // 【任务 14 新增】§7.4：选择器是像素覆盖层卡片（`bead-card` 底 + 4px `bead-ink` 描边 +
+  // 零模糊大投影）。四条缺一不可：只断言背景时，「卡片没有描边/投影」照样绿。
+  it("选择器是像素覆盖层卡片（bg-bead-card + border-4 border-bead-ink + shadow-pop-lg）", () => {
+    const classes = mountPicker({ palette: SCRAMBLED }).get("[data-testid='picker']").classes();
+    expect(classes).toContain("bg-bead-card");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    expect(classes).toContain("shadow-pop-lg");
   });
 });
