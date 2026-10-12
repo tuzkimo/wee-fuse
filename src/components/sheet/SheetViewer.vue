@@ -50,6 +50,8 @@ import {
 } from "@/core/pattern/view";
 import type { SheetPlan } from "@/core/render/layout";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import { useOverlayBack } from "@/composables/useOverlayBack";
 import { getPlatform } from "@/services/platform/capabilities";
 import { exportFilename } from "@/services/exporter";
@@ -63,6 +65,12 @@ const props = defineProps<{
   thumbnail?: string;
 }>();
 const emit = defineEmits<{ close: [] }>();
+
+/** 深色拼豆板的板孔点阵（§7.6 主体；间距 22px，与 `PatternCanvas` / `SetupPage` / `ResultPanel` 同一口径）。 */
+const boardDots = {
+  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
+  backgroundSize: "22px 22px",
+};
 
 /** 覆盖层返回栈（C8 规格 §3.6.2）：Android 返回键先关查看层，而不是离开页面。 */
 useOverlayBack(() => emit("close"));
@@ -468,28 +476,40 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <section data-testid="sheet-viewer" class="fixed inset-0 z-30 flex flex-col bg-white p-4">
-    <!-- 标题行 = 返回箭头 + 标题。**`sheet-close` 这个 id 沿用**（四个测试文件在读它），
-         按钮的形态从「关闭」变成看图 app 的返回箭头。 -->
-    <header class="mx-auto flex w-full max-w-6xl items-center gap-3">
-      <button
-        data-testid="sheet-close"
-        aria-label="返回"
-        class="min-h-11 min-w-11 shrink-0 rounded border border-slate-300 text-xl leading-none"
-        @click="emit('close')"
-      >
-        ←
-      </button>
-      <h2 data-testid="sheet-title" class="project-name min-w-0 truncate text-2xl font-bold text-slate-900">
+  <section data-testid="sheet-viewer" class="fixed inset-0 z-30 flex flex-col bg-bead-sand p-4">
+    <!--
+      顶栏（§7.6）：圆 `close` + 作品名 + 右侧圆 `print` / `save`。**三颗图标按钮都留在原地**
+      （§12 第 3 条：不收入 gear）。`sheet-save-state` 是按钮旁的一行 12px 小字。
+      三个 id **一个都不改**（§11.1 的封闭清单）。
+    -->
+    <header class="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2">
+      <BeadButton data-testid="sheet-close" variant="icon" aria-label="关闭" @click="emit('close')">
+        <PixelIcon name="close" :size="24" />
+      </BeadButton>
+      <h2 data-testid="sheet-title" class="project-name min-w-0 flex-1 text-[24px] text-bead-ink">
         {{ name }} · 施工图
       </h2>
+      <span v-if="saveState" data-testid="sheet-save-state" class="shrink-0 text-[12px] text-bead-ink">{{ saveState }}</span>
+      <BeadButton data-testid="sheet-print" variant="icon" aria-label="打印" @click="printing = true">
+        <PixelIcon name="print" :size="24" />
+      </BeadButton>
+      <BeadButton
+        data-testid="sheet-save"
+        variant="icon"
+        aria-label="保存"
+        :disabled="sheetBlob === null || saving"
+        @click="save"
+      >
+        <PixelIcon name="save" :size="24" />
+      </BeadButton>
     </header>
 
-    <p v-if="busy" data-testid="sheet-loading" class="mx-auto mt-3 w-full max-w-6xl text-base text-slate-500">正在生成施工图…</p>
-    <p v-if="error" data-testid="sheet-error" class="mx-auto mt-3 w-full max-w-6xl rounded bg-amber-50 p-4 text-lg text-amber-800">{{ error }}</p>
+    <!-- 提示条（§6.1）：`bead-warn-bg` 底 + `bead-warn-ink` 字 + 4px `bead-ink` 描边。**文案一字未动**。 -->
+    <p v-if="busy" data-testid="sheet-loading" class="mx-auto mt-3 w-full max-w-6xl rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg px-4 py-2 text-[12px] text-bead-warn-ink">正在生成施工图…</p>
+    <p v-if="error" data-testid="sheet-error" class="mx-auto mt-3 w-full max-w-6xl rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg px-4 py-2 text-[12px] text-bead-warn-ink">{{ error }}</p>
 
     <!--
-      图纸舞台：`overflow-hidden` + `flex-1` ⇒ 放大后拖动看局部。`<img>` 的 transform 由 `view` 给，
+      图纸舞台：外层壳的 `overflow-hidden` + `flex-1` ⇒ 放大后拖动看局部。`<img>` 的 transform 由 `view` 给，
       **组件不自己算坐标**（`offsetX/offsetY/scale` 全部来自 `core/pattern/view.ts`）。
       `touch-none`（Tailwind 的 `touch-action: none`）把手势从浏览器的滚动 / 双击缩放手里拿回来，
       否则真机上双指捏合会被页面的滚动接管。
@@ -506,55 +526,68 @@ async function save(): Promise<void> {
       `origin-top-left` 已经让 img 原点落在画布原点，
       因此**不需要**额外的 `translate`。计划未到手（`sheetPlan === null`）时仍是 `maxWidth: 100%` 兜底。
     -->
-    <div
-      ref="stage"
-      data-testid="sheet-stage"
-      class="mx-auto mt-3 w-full max-w-6xl flex-1 touch-none overflow-hidden rounded bg-slate-100"
-      @wheel="onWheel"
-      @pointerdown="onPointerDown"
-      @pointermove="onPointerMove"
-      @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
-    >
-      <img
-        v-if="previewSrc !== ''"
-        data-testid="sheet-preview"
-        :src="previewSrc"
-        alt="施工图"
-        class="origin-top-left select-none"
-        :style="
-          view === null || sheetPlan === null
-            ? { maxWidth: '100%' }
-            : {
-                transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale / sheetPlan.cellPx})`,
-                maxWidth: 'none',
-                imageRendering: 'auto',
-              }
-        "
-        draggable="false"
-      />
+    <!--
+      描边与裁切放在**外层壳**上（与 `EditorPage` 包 `PatternCanvas` 同一写法）：`sheet-stage` 是
+      **被量尺寸的那个元素**，它身上多一圈 4px 描边会让 `getBoundingClientRect()`（含边框）比实际
+      可放图的 content box 大 8px，默认适配就会溢出被裁。
+    -->
+    <div class="mx-auto mt-3 w-full max-w-6xl flex-1 overflow-hidden rounded-bead-md border-4 border-bead-ink">
+      <div
+        ref="stage"
+        data-testid="sheet-stage"
+        class="h-full w-full touch-none bg-bead-board"
+        :style="boardDots"
+        @wheel="onWheel"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+      >
+        <img
+          v-if="previewSrc !== ''"
+          data-testid="sheet-preview"
+          :src="previewSrc"
+          alt="施工图"
+          class="origin-top-left select-none"
+          :style="
+            view === null || sheetPlan === null
+              ? { maxWidth: '100%' }
+              : {
+                  transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale / sheetPlan.cellPx})`,
+                  maxWidth: 'none',
+                  imageRendering: 'auto',
+                }
+          "
+          draggable="false"
+        />
+      </div>
     </div>
 
-    <!-- 底部固定操作条（C8 规格 §4.3）：放大 / 缩小 / 打印 / 保存。「适配」按钮删掉了——双击即适配。 -->
-    <div class="mx-auto mt-3 flex w-full max-w-6xl flex-wrap items-center gap-3">
-      <button data-testid="sheet-zoom-in" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="zoomBy(1.25)">
-        放大
-      </button>
-      <button data-testid="sheet-zoom-out" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="zoomBy(1 / 1.25)">
-        缩小
-      </button>
-      <button data-testid="sheet-print" class="min-h-11 rounded border border-slate-300 px-4 text-base" @click="printing = true">
-        打印
+    <!--
+      底部操作条（§7.6）：`sheet-zoom-out` / `sheet-zoom-in` 两颗 **56px 方按钮**居中。
+      手写原生 `<button>` 是裁定 R9：`BeadButton` 没有方按钮变体，不为它加 size/square 开关，
+      而是复用同一套 token 类（`border-4 border-bead-ink` / `rounded-bead-md` / `shadow-pop-sm` /
+      按下 `translate-y-1 shadow-none`）。“适配”按钮删掉了——双击即适配（C8 规格）。
+    -->
+    <div class="mx-auto mt-3 flex w-full max-w-6xl items-center justify-center gap-4">
+      <button
+        data-testid="sheet-zoom-out"
+        type="button"
+        aria-label="缩小"
+        class="inline-flex h-14 w-14 items-center justify-center rounded-bead-md border-4 border-bead-ink bg-bead-card text-bead-ink shadow-pop-sm active:translate-y-1 active:shadow-none"
+        @click="zoomBy(1 / 1.25)"
+      >
+        <PixelIcon name="zoom-out" :size="24" />
       </button>
       <button
-        data-testid="sheet-save"
-        :disabled="sheetBlob === null || saving"
-        class="min-h-11 rounded bg-slate-900 px-6 text-base text-white disabled:opacity-50"
-        @click="save"
+        data-testid="sheet-zoom-in"
+        type="button"
+        aria-label="放大"
+        class="inline-flex h-14 w-14 items-center justify-center rounded-bead-md border-4 border-bead-ink bg-bead-card text-bead-ink shadow-pop-sm active:translate-y-1 active:shadow-none"
+        @click="zoomBy(1.25)"
       >
-        保存
+        <PixelIcon name="zoom-in" :size="24" />
       </button>
-      <span v-if="saveState" data-testid="sheet-save-state" class="text-base text-slate-600">{{ saveState }}</span>
     </div>
 
     <!--

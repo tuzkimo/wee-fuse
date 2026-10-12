@@ -677,3 +677,101 @@ describe("SheetViewer 的画布像素 → 格 映射（C8 修复 ②）", () => 
     expect(shrunk * plan.canvasHeight).toBeLessThanOrEqual(VIEWPORT.height + 0.5);
   });
 });
+
+/**
+ * 任务 16：像素风换皮（§7.6）。这一组只钉「换皮没有动到既有锚点」与「新外观真的落地」——
+ * 缩放数学、手势、保存路径的判别力在文件前面的各组里，这里一条都不重复。
+ *
+ * **testid 是封闭清单（§11.1）**：施工图是单张图，分页在 `ExportPanel`。这里同时钉住
+ * `page-prev` / `page-next` **不存在**——防止后来者照着已被推翻的头脑风暴屏稿加回多页模型。
+ */
+describe("SheetViewer 的像素风换皮（任务 16）", () => {
+  it("12 个既有 testid 一个不少（条件分支的三个也各挂一次）", async () => {
+    const ok = mountViewer();
+    // `sheet-loading` 只在现算结算前出现，先钉它；结算后它必须消失（不受本次换皮影响）
+    expect(ok.find("[data-testid='sheet-loading']").exists()).toBe(true);
+    await flushPromises();
+    for (const id of [
+      "sheet-viewer", "sheet-close", "sheet-title", "sheet-stage", "sheet-preview",
+      "sheet-zoom-in", "sheet-zoom-out", "sheet-print", "sheet-save",
+    ]) {
+      expect(ok.find(`[data-testid='${id}']`).exists(), id).toBe(true);
+    }
+    expect(ok.find("[data-testid='sheet-loading']").exists()).toBe(false);
+
+    // 剩下两个是条件分支：失败支的 `sheet-error`、保存后的 `sheet-save-state`
+    renderSheetBlob.mockRejectedValueOnce(new Error("渲染失败"));
+    const bad = mountViewer();
+    await flushPromises();
+    expect(bad.find("[data-testid='sheet-error']").exists()).toBe(true);
+
+    await ok.get("[data-testid='sheet-save']").trigger("click");
+    await flushPromises();
+    expect(ok.find("[data-testid='sheet-save-state']").exists()).toBe(true);
+  });
+
+  it("没有分页元素（施工图是单张，分页在打印面板）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='page-prev']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='page-next']").exists()).toBe(false);
+    // 不新增「适配窗口」（现在没有，规格 §7.6 明说不要）
+    expect(wrapper.find("[data-testid='sheet-zoom-fit']").exists()).toBe(false);
+  });
+
+  it("五颗图标按钮都带中文 aria-label（图标是它们唯一的可见内容）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-close']").attributes("aria-label")).toBe("关闭");
+    expect(wrapper.get("[data-testid='sheet-print']").attributes("aria-label")).toBe("打印");
+    expect(wrapper.get("[data-testid='sheet-save']").attributes("aria-label")).toBe("保存");
+    expect(wrapper.get("[data-testid='sheet-zoom-in']").attributes("aria-label")).toBe("放大");
+    expect(wrapper.get("[data-testid='sheet-zoom-out']").attributes("aria-label")).toBe("缩小");
+  });
+
+  it("深色底用的是 bead-board，且点阵真的落在行内样式上（Review Focus 3）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+    expect(stage.classes().join(" ")).toContain("bg-bead-board");
+    expect(stage.attributes("style")).toContain("radial-gradient");
+  });
+
+  it("五颗按钮都满足 56px 硬下界（R35：旧的 44px 已作废）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    // 顶栏三颗圆按钮走 `BeadButton` 的 icon 变体（min-h-14 / min-w-14）
+    for (const id of ["sheet-close", "sheet-print", "sheet-save"]) {
+      const classes = wrapper.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(classes, id).toContain("min-h-14");
+      expect(classes, id).toContain("min-w-14");
+    }
+    // 底栏两颗方按钮是手写的原生 button（R9：不为 BeadButton 加 size/square 开关）
+    for (const id of ["sheet-zoom-in", "sheet-zoom-out"]) {
+      const classes = wrapper.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(classes, id).toContain("h-14");
+      expect(classes, id).toContain("w-14");
+      expect(classes, id).toContain("border-4");
+    }
+  });
+
+  it("loading / error 换成本文提示条样式，文案一字未动", async () => {
+    const wrapper = mountViewer();
+    const loading = wrapper.get("[data-testid='sheet-loading']");
+    expect(loading.text()).toBe("正在生成施工图…");
+    const loadingClasses = loading.classes().join(" ");
+    expect(loadingClasses).toContain("bg-bead-warn-bg");
+    expect(loadingClasses).toContain("text-bead-warn-ink");
+    expect(loadingClasses).toContain("border-bead-ink");
+
+    renderSheetBlob.mockRejectedValueOnce(new Error("画布尺寸被浏览器钳制"));
+    const bad = mountViewer();
+    await flushPromises();
+    const error = bad.get("[data-testid='sheet-error']");
+    expect(error.text()).toBe("图纸生成失败：画布尺寸被浏览器钳制");
+    const errorClasses = error.classes().join(" ");
+    expect(errorClasses).toContain("bg-bead-warn-bg");
+    expect(errorClasses).toContain("text-bead-warn-ink");
+    expect(errorClasses).toContain("border-bead-ink");
+  });
+});
