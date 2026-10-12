@@ -38,8 +38,16 @@ const props = withDefaults(
     name?: string;
     /** 查看层的垫场缩略图（可能没有：编辑器来源的结果页没有现算好的封面）。 */
     thumbnail?: string;
+    /**
+     * 是否渲染底部那颗「完成」（`result-ok`）。
+     *
+     * `SetupPage` 的中栏宿主传 `false`——顶栏已经有「完成 ✓」了，同一页里两颗同名按钮会让
+     * 8 岁用户分不清哪颗是收尾动作（§7.3）。全屏宿主 `EditResultPage` 不传，保持默认 `true`
+     * （四颗按钮都在）。**任务 15 重写本组件时这个 prop 必须保留**。
+     */
+    showDone?: boolean;
   }>(),
-  { name: "图纸" },
+  { name: "图纸", showDone: true },
 );
 const emit = defineEmits<{ rerun: []; edit: []; ok: [] }>();
 
@@ -123,6 +131,7 @@ const size = computed(() => {
         编辑
       </button>
       <button
+        v-if="showDone"
         data-testid="result-ok"
         class="min-h-12 rounded bg-slate-900 px-4 text-base text-white"
         @click="emit('ok')"

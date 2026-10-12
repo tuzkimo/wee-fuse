@@ -278,6 +278,23 @@ function seedDraft(crop = { x: 200, y: 100, width: 400, height: 300 }, file: Fil
   return draft;
 }
 
+/** 中栏三态的固定起点：生成前（中栏是裁剪预览）。 */
+async function mountSetupBeforeGenerate() {
+  stubPlatform();
+  seedDraft();
+  const wrapper = mount(SetupPage);
+  await flushPromises();
+  return wrapper;
+}
+
+/** 生成一次之后（中栏是结果卡片）、左右两栏仍在的状态。 */
+async function mountSetupGenerated() {
+  const wrapper = await mountSetupBeforeGenerate();
+  await wrapper.get("[data-testid='generate']").trigger("click");
+  await flushPromises();
+  return wrapper;
+}
+
 beforeEach(async () => {
   setActivePinia(createPinia());
   setProjectStore(await createMemoryProjectStore());
@@ -394,20 +411,22 @@ describe("断点布局", () => {
     breakpoint.resizeTo(1024);
     await flushPromises();
 
-    expect(layout.classes()).toContain("grid");
+    // 平板改成横向三栏（`flex` 默认行向）——类名从 D1 起就是这套，判据不变：**跨断点时容器类当场换掉**。
+    expect(layout.classes()).toContain("flex");
     expect(layout.classes()).not.toContain("space-y-6");
     expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
   });
 
   /**
-   * **修复轮 1（审查发现）**：容器类起初只看 `isWide`，于是平板的结果阶段照样切成
-   * `grid lg:grid-cols-[2fr_1fr]`，而那一栏只剩结果卡片一个子元素 ⇒ 卡片只占左侧 2/3、
-   * 右边留一条空白。判据必须把 `showEditor` 也算进去。
+   * **D1/§7.3 的规格变更**：`showEditor` 与 `showResult` **不再互斥**——生成之后左右两栏仍在，
+   * 结果出现在中栏（「一屏做完」）。
    *
-   * 判别力（不依赖布局引擎，只读类名）：把容器类改回 `isWide ? …`，本用例生成之后那三条立刻红。
+   * 本条是 C8「平板结果阶段占满整行」用例的**改写版**：那条的前提（结果阶段整页只剩一个子元素 ⇒
+   * 容器不该分栏）已被 §7.3 直接推翻（容器恒三栏），改判「生成后三栏都在」。判别力：把中栏改回
+   * `showResult ? 只渲染结果 : 只渲染预览`，`crop-pane` / `param-pane` 立刻消失。
    */
-  it("平板结果阶段占满整行（容器不再分两栏：结果阶段只剩一个子元素）", async () => {
+  it("生成后裁剪与参数两栏仍然渲染（阶段不再互斥，§7.3）", async () => {
     const { breakpoint } = stubPlatform();
     seedDraft();
     window.innerWidth = 1024;
@@ -415,18 +434,15 @@ describe("断点布局", () => {
     const wrapper = mount(SetupPage);
     await flushPromises();
 
-    // 前提：≥768px 确实是平板布局（编辑阶段两栏），否则下面的断言可能靠「断点没生效」蒙过去。
+    // 前提：≥768px 确实是平板布局，否则下面的断言可能靠「断点没生效」蒙过去。
     expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
-    expect(wrapper.get("main div.mt-6").classes()).toContain("lg:grid-cols-[2fr_1fr]");
 
     await wrapper.get("[data-testid='generate']").trigger("click");
     await flushPromises();
 
-    const layout = wrapper.get("main div.mt-6");
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
-    expect(layout.classes()).not.toContain("lg:grid-cols-[2fr_1fr]");
-    expect(layout.classes()).not.toContain("grid");
-    expect(layout.classes()).toContain("space-y-6");
+    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
   });
 
   it("断点查询串就是 768px（写错这个串 = 平板布局静默失效）", async () => {
@@ -440,6 +456,69 @@ describe("断点布局", () => {
     // 上面那三条布局用例照样全绿——只有这里读得到真正问出去的串。而串写错就等于平板两栏
     // 布局在真机上静默失效（组件在 `onMounted` 只问一次，问错就永远拿不到正确布局）。
     expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
+  });
+});
+
+/**
+ * 中栏三态与顶栏主按钮（§7.3）。三态：还没生成过 = 裁剪预览；刚生成 = 结果卡片；
+ * 生成后又改参数 = 一成不变（不变暗、不重算）。中栏的数据源是**上一次的结果**，不是实时预览。
+ *
+ * 中栏的**那份** `ResultPanel` 不渲染 `result-ok`（顶栏已经有「完成 ✓」了，同页两颗同名按钮会让
+ * 用户分不清哪颗是收尾）——`showDone` prop 默认 `true`，只有本页中栏传 `false`。
+ */
+describe("中栏三态与顶栏主按钮（§7.3）", () => {
+  it("还没生成过时中栏是裁剪预览 + 一行提示，不是空", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+
+    const pane = wrapper.get("[data-testid='preview-pane']");
+    // 复用左栏同一份 `draft.preview`（不新算）：中栏必须自己画出那张图，不能是空块。
+    expect(pane.find("canvas, img").exists()).toBe(true);
+    expect(pane.text()).toContain("点开始拼看看");
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
+  });
+
+  it("中栏那份 ResultPanel 不渲染 result-ok（顶栏已经有「完成」）", async () => {
+    const wrapper = await mountSetupGenerated();
+
+    const pane = wrapper.get("[data-testid='result-pane']");
+    expect(pane.find("[data-testid='result-ok']").exists()).toBe(false);
+    expect(pane.find("[data-testid='result-rerun']").exists()).toBe(true);
+    expect(pane.find("[data-testid='result-view-sheet']").exists()).toBe(true);
+    expect(pane.find("[data-testid='open-editor']").exists()).toBe(true);
+  });
+
+  it("顶栏主按钮两态：未生成「开始拼 ▶」、已生成「完成 ✓」（点它回图纸库）", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+    expect(wrapper.get("[data-testid='setup-primary']").text()).toContain("开始拼");
+
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    const primary = wrapper.get("[data-testid='setup-primary']");
+    expect(primary.text()).toContain("完成");
+    expect(primary.text()).not.toContain("开始拼");
+
+    // 「完成」走的还是现有那条回家路（与结果卡片里那颗 `result-ok` 同一个动作）。
+    push.mockClear();
+    await primary.trigger("click");
+    expect(push).toHaveBeenCalledWith({ name: "home" });
+  });
+
+  it("生成后中栏有尺寸 chip（产物自身），未生成没有", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+    expect(wrapper.find("[data-testid='size-chip']").exists()).toBe(false);
+
+    await wrapper.get("[data-testid='generate']").trigger("click");
+    await flushPromises();
+
+    // 选区 400×300 + 长边 58 → 58 × 44 颗，需 2 × 2 = 4 块板（`boardCount` 的真换算）。
+    const chip = wrapper.get("[data-testid='size-chip']");
+    expect(chip.text()).toContain("58 × 44");
+    expect(chip.text()).toContain("4 块板");
+    expect(chip.text()).toContain("厘米");
+    expect(chip.classes()).toContain("bg-bead-sand-3");
+    expect(chip.classes()).toContain("border-bead-line-2");
+    expect(chip.classes()).toContain("text-[24px]");
   });
 });
 
@@ -502,11 +581,12 @@ describe("页头返回箭头（按阶段分叉）", () => {
     expect(wrapper.find("[data-testid='back-to-library']").exists()).toBe(false);
     const back = wrapper.get("[data-testid='setup-back']");
     expect(back.element.tagName).toBe("BUTTON");
-    expect(back.text()).toContain("←");
-    // 触控目标 ≥44px（主规格 §6.4）；箭头没有文字标签，读屏用户靠 `aria-label` 才听得到名字。
+    // 图标按钮（D1 起与选图页同一口径）：箭头是像素图标、没有可见文字，读屏用户靠 `aria-label`
+    // 才听得到名字；触控目标 56×56（§6.5 的主规格值，C8 的 44px 已被推翻）。
+    expect(back.find("svg").exists()).toBe(true);
     expect(back.attributes("aria-label")).toBe("返回");
-    expect(back.classes()).toContain("min-h-11");
-    expect(back.classes()).toContain("min-w-11");
+    expect(back.classes()).toContain("min-h-14");
+    expect(back.classes()).toContain("min-w-14");
 
     await back.trigger("click");
     expect(backMock).not.toHaveBeenCalled();
@@ -626,8 +706,8 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     await flushPromises();
 
     // ③ 摘要豆数 = 成品尺寸：rotation 1 → 朝向 300×400 → 长边 58 → 44×58。
-    // **C8 第 4 项起这一读必须在生成之前**：结果阶段不再渲染参数面板（一页里只剩结果卡片，
-    // `showEditor = stage !== "result"`），摘要那句话在生成之后就取不到了。判据本身没变
+    // **C8 第 4 项起这一读必须在生成之前**：**D1/§7.3 起参数面板不再随阶段隐藏**，生成之后也读得到，
+    // 但摘要是**生成前的预测**，在生成前读才是它要钉的那个值。判据本身没变
     // ——摘要（预测）与落盘 doc（产物）读的是同两个数字，改任一端这条都红。
     expect(wrapper.get("[data-testid='summary']").text()).toContain("44 × 58 颗");
 
@@ -755,8 +835,9 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       expect(first.updatedAt).toBe(t1.toISOString());
 
       vi.setSystemTime(t2);
-      // C8 第 4 项起结果阶段不渲染参数面板，改参数要走结果卡片的「重做」回编辑阶段
-      // （`@rerun` → `setStage("edit")`）。仍走 `$emit`：与上面同一处假时钟时序的处置。
+      // 改参数前先把阶段切回编辑（`@rerun` → `setStage("edit")`）：§7.3 起参数面板不再
+      // 随阶段隐藏，这一步不是必需，但它是生产里「改参数再生成」的真实路径。仍走 `$emit`：
+      // 与上面同一处假时钟时序的处置。
       wrapper.findComponent(ResultPanel).vm.$emit("rerun");
       await flushPromises();
       draft.setLongSide(116);
@@ -784,8 +865,8 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
    * 「1..色卡色数 的整数」，滑条上界 = 色卡色数 = 「不限」。所以这条从原来那个
    * 「档位五档落盘」用例改成「拨到哪就是哪个数字」：`221` **不再**变成 `"all"`。
    *
-   * 每次生成之后都要经结果卡片的「重做」回编辑阶段：结果阶段不渲染参数面板
-   * （`showEditor = stage !== "result"`），否则下一条的 `max-colors-slider` 取不到。
+   * 每次生成之后都要经结果卡片的「重做」回编辑阶段（§7.3 起参数面板不再随阶段隐藏，
+   * 这一步不是必需，但它是生产里「改参数再生成」的真实路径）。
    */
   it("用色滑条拨到哪就落盘哪个数字：8 / 16 / 24 / 220 / 221（221 不再变成 'all'）", async () => {
     stubPlatform();
@@ -919,7 +1000,7 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       await flushPromises();
 
       // 重挂载时 `stage` 仍是 `"result"`（它随 store 存活），于是页面先显示结果卡片；
-      // 回编辑阶段要走结果卡片的「重做」（C8 第 4 项起结果阶段不渲染参数面板）。
+      // 改参数前切回编辑（`result-rerun` → `setStage("edit")`）。
       expect(second.find("[data-testid='result-pane']").exists()).toBe(true);
       second.findComponent(ResultPanel).vm.$emit("rerun");
       await flushPromises();
@@ -1270,7 +1351,7 @@ describe("保存失败与重试", () => {
     const before = (await real.list())[0]!;
 
     // ③ 改参数再生成：身份既然在 store 里，这一次就是就地重跑。
-    //    结果阶段不渲染参数面板（C8 第 4 项），所以先经「重做」回编辑阶段。
+    //    先经「重做」把阶段切回编辑（§7.3 起参数面板恒常驻，这一步不是必需）。
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='long-side']").setValue("116");
@@ -1345,7 +1426,7 @@ describe("结果阶段", () => {
     expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已保存到图纸库");
 
     // 改长边再生成 = 就地重跑（身份由 store 里的 `rerunOf` 提供，与页面级 ref 无关）。
-    // 结果阶段不渲染参数面板（C8 第 4 项），先经「重做」回编辑阶段。
+    // 先经「重做」把阶段切回编辑（§7.3 起参数面板恒常驻，这一步不是必需）。
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='long-side']").setValue("116");
@@ -1473,15 +1554,15 @@ describe("结果阶段", () => {
   /**
    * 「重做」：C8 规格 §3.4 起，结果页回编辑的路径就是这一颗——页内切阶段，**不跳路由**。
    *
-   * **修复轮 1 的注释更正**：本条原先写「平板上右栏参数常驻、左栏当场换回画布」——单页化之后
-   * 结果阶段整页只有结果卡片（`showEditor = stage !== "result"`，参数面板与画布都不在），
-   * 「重做」是把**它们一起**换回来。下面 :1336 / :1340 的断言正是这件事的判据。
+   * **修复轮 1 的注释更正**：本条原先写「平板上右栏参数常驻、左栏当场换回画布」——C8 单页化之后
+   * 结果阶段整页只有结果卡片（`showEditor = stage !== "result"`）。**D1/§7.3 又推翻了它**：
+   * 生成之后左右两栏本来就还在（中栏三态的「一屏做完」），「重做」是把中栏换回裁剪预览。
    *
    * 本条是原「平板结果阶段能页内回选区」用例的**改名 + 改判据版**：`back-to-crop` 那颗按钮
    * 按规格被删掉了，同一件事现在走 `result-rerun`，行为（`draft.stage` 变 `"edit"`）一字未变。
    * 加 `expect(push).not.toHaveBeenCalled()`：0 次调用才排得掉「切了阶段又跳走了」这种接法。
    */
-  it("结果页的「重做」页内回编辑（画布与参数一起换回来，不跳路由）", async () => {
+  it("结果页的「重做」把中栏换回裁剪预览（左右两栏不跳路由）", async () => {
     stubPlatform();
     const draft = seedDraft();
     window.innerWidth = 1024;
@@ -1492,35 +1573,32 @@ describe("结果阶段", () => {
     await flushPromises();
 
     expect(draft.stage).toBe("result");
-    // 结果阶段一页里只剩结果卡片（C8 第 4 项：`showEditor = stage !== "result"`）。
-    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(false);
+    // §7.3：生成之后左右两栏**仍在**（阶段不再互斥），中栏是结果卡片。
+    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
 
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
 
     // 阶段取值从 `"crop"` 收敛成 `"edit"`（C8 第 4 项：手机单页之后两者渲染的是同一屏）。
     expect(draft.stage).toBe("edit");
+    // 中栏换回裁剪预览；左右两栏一字未动。
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
     expect(push).not.toHaveBeenCalled();
   });
 
   /**
-   * 「OK」：主操作（结束回家）——四颗按钮里**唯一**的收尾动作。
+   * 顶栏「完成 ✓」（§7.3）：生成之后主按钮从「开始拼 ▶」换成它，走现有 `result-ok` 那条路。
    *
-   * 新增（规格 §3.4 的按钮表点名了这一颗，而旧结果页没有它）。判别力：把 `@ok` 的接线删掉
-   * 或改成跳别的名字，这里立刻红。
+   * 原先这条点的是**中栏 ResultPanel 里**的 `result-ok`——本任务把它从 SetupPage 的中栏移除了
+   * （`showDone=false`），但「结束回家」的动作没有消失，只是换到了顶栏那颗主按钮上。
    */
-  it("结果页的「OK」回图纸库", async () => {
-    stubPlatform();
-    seedDraft();
+  it("结果页的「完成」回图纸库", async () => {
+    const wrapper = await mountSetupGenerated();
 
-    const wrapper = mount(SetupPage);
-    await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
-    await flushPromises();
-
-    await wrapper.get("[data-testid='result-ok']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
 
     expect(push).toHaveBeenCalledWith({ name: "home" });
   });

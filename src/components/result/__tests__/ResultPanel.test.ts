@@ -73,6 +73,21 @@ describe("ResultPanel（C8：四颗按钮、没有打印）", () => {
     expect(mountPanel({ canRerun: false }).find("[data-testid='result-rerun']").exists()).toBe(false);
   });
 
+  /**
+   * `showDone`（任务 10 新增，§7.3）：`SetupPage` 的中栏传 `false`——顶栏已经有「完成 ✓」了，
+   * 同页两颗同名按钮会让 8 岁用户分不清哪颗是收尾；全屏宿主 `EditResultPage` 不传，保持默认
+   * `true`（四颗都在）。**任务 15 重写本组件时这个 prop 必须保留**。
+   */
+  it("showDone 默认 true（全屏宿主四颗都在）；传 false 时只剩三颗", () => {
+    expect(mountPanel().find("[data-testid='result-ok']").exists()).toBe(true);
+
+    const wrapper = mountPanel({ showDone: false });
+    expect(wrapper.find("[data-testid='result-ok']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-view-sheet']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='open-editor']").exists()).toBe(true);
+  });
+
   it("三颗按钮各 emit 自己那一个事件", async () => {
     const wrapper = mountPanel();
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
