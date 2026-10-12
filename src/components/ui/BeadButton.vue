@@ -50,7 +50,8 @@ const collectText = (nodes: unknown): string => {
 };
 
 // 入口校验：prop validator 只会警告，非法变体与「图标按钮没锚点」都必须响亮失败。
-if (!VARIANTS[props.variant]) {
+// 用 `Object.hasOwn` 而非 falsy 判定：`VARIANTS["constructor"]` 这类原型键查询是 truthy。
+if (!Object.hasOwn(VARIANTS, props.variant)) {
   throw new Error(`BeadButton: 未知变体「${String(props.variant)}」`);
 }
 if (props.variant === "icon" && !collectText(slots.default?.()).trim() && !props.ariaLabel) {

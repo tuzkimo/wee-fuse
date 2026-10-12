@@ -46,10 +46,17 @@ describe("BeadButton", () => {
     expect(w.get("button").text()).toBe("保存");
   });
 
-  it("未知变体响亮失败（入口校验）", () => {
-    expect(() =>
-      mount(BeadButton, { props: { variant: "huge" as BeadVariant }, slots: { default: "保存" } }),
-    ).toThrow(/变体/);
+  it("未知变体响亮失败（入口校验，含原型键）", () => {
+    // 原型键也走 `VARIANTS[x]` 查表：`constructor` / `toString` / `__proto__` 都是 truthy 查询，
+    // 只用 falsy 判定会放它们过去（`.classes` 为 undefined，静默无样式渲染）。
+    for (const variant of ["huge", "constructor", "toString", "__proto__"]) {
+      expect(() =>
+        mount(BeadButton, {
+          props: { variant: variant as BeadVariant },
+          slots: { default: "保存" },
+        }),
+      ).toThrow(/变体/);
+    }
   });
 
   it("五个变体的类名与投影色各按规格落位", () => {
