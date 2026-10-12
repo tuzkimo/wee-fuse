@@ -394,7 +394,7 @@ describe("EditorPage（B1 只读版 + B3 编辑器宿主）", () => {
   });
 
   /**
-   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具栏输出行）。
+   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具条；任务 12 起在左组）。
    *
    * 两条分支合在一条里断言，理由与旧版相同：**互斥性只有同时看到两侧才有判别力**——
    * 只有「有原图时渲染」时，把 `:can-rerun` 绑成常量 `true` 也绿。
@@ -476,15 +476,20 @@ describe("改参数重新生成（B2 规格 §7）", () => {
     const wrapper = await mountPage();
 
     // 入口的名字是给用户看的：只有按钮没有标签、或标签写错，用户不知道这一下会发生什么。
-    // **C8 第 3 项改名**：它从页面中部搬进工具栏输出行，文案由「改参数重新生成」收敛成「重做」。
-    expect(wrapper.get("[data-testid='rerun']").text()).toContain("重做");
+    // **C8 第 3 项改名**：它从页面中部搬进工具条，文案由「改参数重新生成」收敛成「重做」。
+    // **任务 12（§7.4）**：它成了图标按钮（没有可见文字），名字从 `text()` 搬到 `aria-label`——
+    // 两条判据等价（都钉「这个名字必须存在」），而且「可见文字必须为空」由
+    // `PatternToolbar.test.ts` 单独钉住，所以这句不是放宽。
+    const rerunButton = wrapper.get("[data-testid='rerun']");
+    expect(rerunButton.attributes("aria-label")).toBe("重做");
+    expect(rerunButton.text()).toBe("");
 
     const draft = useDraft();
     // 点之前草稿必须是干净的：否则下面的断言分不清「这一点点出来的」还是「本来就有的」。
     expect(draft.source).toBeNull();
     expect(draft.rerunOf).toBeNull();
 
-    await wrapper.get("[data-testid='rerun']").trigger("click");
+    await rerunButton.trigger("click");
 
     // 只跳一次、而且只跳选区页（不是 pick，也不是 editor）
     expect(pushMock).toHaveBeenCalledTimes(1);
@@ -1619,7 +1624,49 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 长工程名不撑宽页面（B6 任务 2）。标题在 `flex flex-wrap` 容器里：`h1` 既没有截断也没有断行
+// 顶栏（§7.4 / 任务 12）：保存按钮与未保存圆点从工具条搬到这里。
+//
+// **R2**：`editor-save` 的 aria-label 与 `editor-dirty` 圆点归本文件钉——工具条那一侧只钉它
+// 自己那十一颗按钮（`PatternToolbar.test.ts`）。**R3**：顶栏的作品名只有**一个**节点，手机上
+// 靠 `hidden md:block` 藏，而不是渲染两份同名节点。
+// ---------------------------------------------------------------------------
+
+describe("顶栏：保存与未保存圆点（§7.4）", () => {
+  it("保存按钮的 aria-label 是「保存」，未保存时右上角出现 bead-danger 圆点", async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.get("[data-testid='editor-save']").attributes("aria-label")).toBe("保存");
+    // 干净时不渲染圆点（CONTRACT §8 的逐字口径）
+    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
+
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    const dot = wrapper.get("[data-testid='editor-dirty']");
+    // 内容从「未保存」三个字换成一颗圆点：节点里不该再有文字
+    expect(dot.text()).toBe("");
+    expect(dot.classes()).toEqual(
+      expect.arrayContaining(["bg-bead-danger", "size-[22px]", "border-4", "border-bead-ink"]),
+    );
+  });
+
+  it("作品名只有一个 h1 节点，手机上整块不显示（隐藏类在宿主上，不是复制节点）", async () => {
+    const wrapper = await mountPage();
+    const titles = wrapper.findAll("h1");
+    expect(titles).toHaveLength(1);
+    expect(titles[0]?.classes()).toContain("project-name");
+    // 隐藏必须在**宿主**上：`.project-name` 是 `style.css` 末尾的**无层级**全局类
+    // （`display:-webkit-box`），按 CSS 层叠规则它压过 `@layer utilities` 里的 `hidden` /
+    // `md:block`——写在 h1 上真浏览器里不生效，而 jsdom 不解析布局，这类错只能靠类名归属发现。
+    const host = titles[0]?.element.parentElement;
+    expect(host?.classList.contains("hidden")).toBe(true);
+    expect(host?.classList.contains("md:block")).toBe(true);
+    // 反证：隐藏类不在 h1 自己身上（否则上面那条理由是空话）
+    expect(titles[0]?.classes()).not.toContain("hidden");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 长工程名不撑宽页面（B6 任务 2）。标题在顶栏的 `flex` 容器里：`h1` 既没有截断也没有断行
 // 约束，而文件名派生出的名字是无空格长串 ⇒ 页面被横向撑开、手机上要左右滑。
 //
 // **弱断言**：只挡「类名被删」，挡不住「CSS 写错」（happy-dom 没有布局语义）；真布局判别力在

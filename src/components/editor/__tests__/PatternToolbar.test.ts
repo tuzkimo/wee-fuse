@@ -6,6 +6,9 @@ import type { EditorTool } from "@/stores/editor";
 /**
  * 工具栏的默认 props：干净、没有可撤销的东西、画笔、两个开关都开。
  * 每一项都在用例里被显式改过至少一次——默认值只是省掉重复（CONTRACT §5 的逐字清单）。
+ *
+ * **任务 12 起 `saving` / `dirty` / `save` 不再是本组件的接口**：保存按钮连同未保存圆点搬进
+ * `EditorPage` 的顶栏（§7.4），本组件只剩「报告点了什么」的十一个动作。
  */
 function mountToolbar(overrides: Record<string, unknown> = {}) {
   return mount(PatternToolbar, {
@@ -15,8 +18,6 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
       tool: "brush",
       showGrid: true,
       showLabels: true,
-      saving: false,
-      dirty: false,
       // C8 第 3 项新增的两个 prop：默认「有原图（可以重做）」「当前色不是橡皮」。
       canRerun: true,
       eraserActive: false,
@@ -29,6 +30,24 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
 const TOOL_BUTTONS: readonly (readonly [string, EditorTool])[] = [
   ["tool-brush", "brush"],
   ["tool-fill", "fill"],
+];
+
+/**
+ * 工具栏自己的十一颗按钮：testid → 它必须逐字带上的中文 `aria-label`（§7.4 的表 / R2）。
+ * `editor-save` **不在**这份清单里——它在 `EditorPage` 的顶栏，由 `EditorPage.test.ts` 钉。
+ */
+const ICON_BUTTONS: readonly (readonly [string, string])[] = [
+  ["undo", "撤销"],
+  ["redo", "恢复"],
+  ["rerun", "重做"],
+  ["tool-brush", "画笔"],
+  ["tool-fill", "填充"],
+  ["eraser", "橡皮"],
+  ["toggle-grid", "网格线"],
+  ["toggle-labels", "格内色号"],
+  ["zoom-in", "放大"],
+  ["zoom-out", "缩小"],
+  ["zoom-fit", "适配"],
 ];
 
 describe("工具切换", () => {
@@ -172,61 +191,109 @@ describe("视图按钮", () => {
   });
 });
 
-describe("保存与未保存指示", () => {
-  it("点保存 emit 一次空载荷的 save", async () => {
-    const wrapper = mountToolbar({ dirty: true });
-    await wrapper.get("[data-testid='editor-save']").trigger("click");
-    expect(wrapper.emitted("save")).toEqual([[]]);
+/**
+ * 图标按钮的两个新风险（§7.4 / §11.2）：**按钮上没有可见文字**。
+ * 一是读屏用户听到的是一个没有名字的按钮（必须有中文 `aria-label`），
+ * 二是手机与平板两套排法若用「各渲染一份」实现，同名 testid 会在 DOM 里出现两次。
+ */
+describe("图标按钮：锚点与唯一性", () => {
+  it("工具栏自己那十一颗按钮的 aria-label 逐字是中文原词", () => {
+    const wrapper = mountToolbar();
+    for (const [testid, label] of ICON_BUTTONS) {
+      expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-label")).toBe(label);
+    }
   });
 
-  // 长任务期间唯一的进度反馈与唯一的并发守卫（与 ParamPanel 的 busy / 「正在生成…」同一口径）。
-  it("saving 期间保存按钮禁用并显示进行中的文案", () => {
-    const button = mountToolbar({ saving: true }).get("[data-testid='editor-save']");
-    expect(button.attributes("disabled")).toBeDefined();
-    expect(button.text()).toContain("正在保存");
+  // 十一颗按钮都没有可见文字（aria-label 因此是承重的，不是装饰）；
+  // 这一条同时把「偷偷留了个文字按钮」也判红。
+  it("十一颗按钮都没有可见文字（全靠 aria-label 定锚点）", () => {
+    const wrapper = mountToolbar();
+    for (const [testid] of ICON_BUTTONS) {
+      expect(wrapper.get(`[data-testid='${testid}']`).text()).toBe("");
+    }
   });
 
-  // 【同一实例、两个方向】CONTRACT §8 的逐字口径是「干净时不渲染」。
-  // 分开挂载只能证明「依赖 dirty」，证不出「对 dirty 变化响应」——后者才是用户点一下画笔后
-  // 立刻看到「未保存」的那条路径（`session.dirty` 由 store 翻转，组件只跟着渲染）。
-  it("editor-dirty 只在 dirty 为真时渲染（同一实例两个方向）", async () => {
-    const wrapper = mountToolbar({ dirty: false });
-    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
+  // **R3 的正面守卫**：手机与平板两种排法靠 `md:` / `max-md:` 类分叉，不靠复制节点、也不靠 `v-if`。
+  // `wrapper.get(...)` 在重复 testid 上会直接抛错，但那条规则值得被显式钉住——每个 testid 恰好一个节点。
+  it("每个 testid 在 DOM 里恰好一个节点", () => {
+    const wrapper = mountToolbar();
+    for (const [testid] of ICON_BUTTONS) {
+      expect(wrapper.findAll(`[data-testid='${testid}']`)).toHaveLength(1);
+    }
+  });
 
-    await wrapper.setProps({ dirty: true });
-    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(true);
+  it("两种屏幕的按钮都在 DOM 里（靠 class 分叉，不是靠 v-if）", () => {
+    const wrapper = mountToolbar();
+    // jsdom 宽 1024 ⇒ 走 md: 那一套，但手机那一套的节点必须仍然存在
+    for (const testid of ["undo", "tool-brush", "toggle-labels", "zoom-fit"]) {
+      expect(wrapper.findAll(`[data-testid='${testid}']`).length).toBeGreaterThan(0);
+    }
+  });
 
-    await wrapper.setProps({ dirty: false });
-    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
+  it("canRerun 为假时只剩十颗（不渲染「重做」，其余照常在 DOM 里）", () => {
+    const wrapper = mountToolbar({ canRerun: false });
+    expect(wrapper.find("[data-testid='rerun']").exists()).toBe(false);
+    for (const [testid] of ICON_BUTTONS) {
+      if (testid === "rerun") continue;
+      expect(wrapper.findAll(`[data-testid='${testid}']`)).toHaveLength(1);
+    }
   });
 });
 
-describe("触控目标与字号", () => {
+describe("触控目标与字号（§6.5 / §7.4）", () => {
   // happy-dom 没有布局（`getBoundingClientRect()` 恒 0，CONTRACT §9.5），屏幕尺寸在 CI 里
-  // 不可观察；「≥44px / ≥16px」（主规格 §6.4、B3 规格 §10）唯一可观察的形式就是类名。
-  // 这是**代理断言**、不是像素断言：它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
-  //
-  // **标题如实修正（任务 4 修复轮 F4，断言一行未动）**：原标题写的是「**所有**按钮的触控目标
-  // ≥44px、字号 ≥16px」，而下面这份 testid 清单是**硬编码**的、**不含** B4 新增的 `export`——
-  // 「所有」在新增按钮之后**字面失实**。标题现在如实说明它覆盖的是「下面这份清单里的既有按钮」；
-  // `export` 的尺寸类断言在同文件下面的 `导出入口` 那组。把 `export` 并进清单要改既有断言，
-  // 属**延后 Minor**（任务 4 报告第 8 条）。
-  it("清单内的既有按钮触控目标 ≥44px、字号 ≥16px（不含 B4 新增的 export）", () => {
+  // 不可观察；尺寸的唯一可观察形式就是类名。这是**代理断言**、不是像素断言：
+  // 它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
+  it("3 个主工具 64×64、3 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
     const wrapper = mountToolbar();
-    for (const testid of [
-      "tool-brush",
-      "undo",
-      "redo",
-      "toggle-grid",
-      "toggle-labels",
-      "zoom-fit",
-      "zoom-in",
-      "zoom-out",
-      "editor-save",
-    ]) {
-      const classes = wrapper.get(`[data-testid='${testid}']`).classes();
-      expect(classes).toContain("min-h-11"); // 2.75rem = 44px
-      expect(classes).toContain("text-base"); // 1rem = 16px
+    for (const testid of ["tool-brush", "tool-fill", "eraser"]) {
+      expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
+        expect.arrayContaining(["h-16", "w-16"]), // 4rem = 64px
+      );
+    }
+    for (const testid of ["undo", "redo", "rerun"]) {
+      expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
+        expect.arrayContaining(["h-14", "w-14"]), // 3.5rem = 56px
+      );
+    }
+    for (const testid of ["toggle-grid", "toggle-labels", "zoom-in", "zoom-out", "zoom-fit"]) {
+      expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
+        // 52px：`BeadButton` 的基准是 `min-h-14` / `min-w-14`（56px），必须显式盖掉（`!`）
+        expect.arrayContaining(["min-h-[52px]!", "min-w-[52px]!"]),
+      );
+    }
+  });
+
+  // 规格 §7.4 逐字要求「不许缩按钮尺寸」：flex 子项默认 `flex-shrink: 1`，窄屏会把 64px 的主工具
+  // 压成 min-width（56px）。溢出必须交给横滑，所以每颗按钮都要 `shrink-0`。
+  it("十一颗按钮都带 shrink-0（溢出靠横滑，不靠压缩）", () => {
+    const wrapper = mountToolbar();
+    for (const [testid] of ICON_BUTTONS) {
+      expect(wrapper.get(`[data-testid='${testid}']`).classes()).toContain("shrink-0");
+    }
+  });
+
+  // 两套排法的**机制**本身也要被钉住：手机上两组各自是一行可横滑的条，平板上两组被
+  // `md:contents` 摊平进同一条 flex 行。不钉这一条时，把 `md:contents` 删掉照样全绿，
+  // 而平板会变成上下两行（真窗口才看得出来）。分组容器不能新加 testid（§11.1 是封闭清单），
+  // 所以从根节点的子元素上读。
+  it("两套排法靠容器类分叉：手机两组各自横滑、平板 md:contents 摊平成一行", () => {
+    const groups = Array.from(mountToolbar().element.children) as HTMLElement[];
+    expect(groups).toHaveLength(2);
+    for (const group of groups) {
+      expect(group.classList.contains("max-md:flex-nowrap")).toBe(true);
+      expect(group.classList.contains("max-md:overflow-x-auto")).toBe(true);
+      expect(group.classList.contains("md:contents")).toBe(true);
+    }
+  });
+
+  // R22：字号只认任意值（12 / 24 / 36px 的 12 倍数）。Tailwind 的默认字号阶在像素风下会
+  // 让字形落在非整像素栅格上，字体文件只有 12px 一套点阵。
+  it("十一颗按钮不带任何 Tailwind 默认字号类（R22）", () => {
+    const wrapper = mountToolbar();
+    const forbidden = /\btext-(xs|sm|base|lg|xl|2xl|3xl|4xl)\b/;
+    for (const [testid] of ICON_BUTTONS) {
+      expect(wrapper.get(`[data-testid='${testid}']`).classes().join(" ")).not.toMatch(forbidden);
     }
   });
 });
@@ -235,37 +302,38 @@ describe("触控目标与字号", () => {
  * C8 第 3 项：出口收敛。
  *
  * 这一组替换掉原来那组「导出与打印入口」的用例（`view-sheet` / `print` 两颗按钮已按规格删除）：
- * 唯一的外部出口是「保存」→ 结果页，改参数重新生成从页面中部搬进本行并改名「重做」，橡皮从
- * 调色板搬进工具行，历史行第二颗按钮改叫「恢复」（它仍是 `redo`）。
+ * 唯一的外部出口是「保存」→ 结果页（C8 第 3 项起保存按钮在**顶栏**），改参数重新生成从页面中部
+ * 搬进工具条并改名「重做」，橡皮从调色板搬进工具条，历史第二颗按钮改叫「恢复」（它仍是 `redo`）。
  *
- * 三个「存在性」判据与三个「行为」判据各自独立：按钮挪错行、按下态读错 prop、emit 载荷错、
- * 没有原图却仍然渲染「重做」——四种错法各有一条会红。
+ * **任务 12（§7.4 / R4）**：五行行容器与其中的「重做 + 保存同行」断言取消——保存搬去了顶栏，
+ * 这条断言拆成两处独立的：本文件钉「重做」的存在与样式，`EditorPage.test.ts` 钉「保存」。
  */
 describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
-  it("工具行里有「橡皮」，它带按下态（C8 第 3 项：挪进画笔那一行）", async () => {
+  it("工具条里有「橡皮」，它带按下态、点它 emit eraser", async () => {
     const wrapper = mountToolbar({ eraserActive: true });
-    const row = wrapper.get("[data-testid='toolbar-row-tools']");
-    expect(row.text()).toContain("橡皮");
     const eraser = wrapper.get("[data-testid='eraser']");
+    expect(eraser.attributes("aria-label")).toBe("橡皮");
     expect(eraser.attributes("aria-pressed")).toBe("true");
     await eraser.trigger("click");
     expect(wrapper.emitted("eraser")).toHaveLength(1);
   });
 
-  it("输出行是「重做 + 保存」：没有查看施工图、没有打印（C8 第 3 项）", () => {
+  it("工具条里不再有查看施工图 / 打印 / 保存（C8 第 3 项 + 任务 12 保存搬去顶栏）", () => {
     const wrapper = mountToolbar();
-    const row = wrapper.get("[data-testid='toolbar-row-output']");
-    expect(row.text()).toContain("重做");
-    expect(row.text()).toContain("保存");
     expect(wrapper.find("[data-testid='view-sheet']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='print']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='editor-save']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
   });
 
-  it("「重做」在保存那一行、白底，点它 emit rerun", async () => {
+  // 「重做」是**次按钮**（`bead-card` 底），视觉权重不能压过顶栏那颗 `go` 保存：它会丢掉手工涂改。
+  // 判据是「带上 `bg-bead-card`、且绝不带 `bg-bead-accent`」——规格 §7.4 逐字要求 `rerun` 不能是
+  // 主按钮。点它 emit rerun。
+  it("「重做」是次按钮（bead-card，绝不是 bead-accent），点它 emit rerun", async () => {
     const wrapper = mountToolbar();
     const rerun = wrapper.get("[data-testid='rerun']");
-    expect(rerun.classes()).toContain("border-slate-300");
-    expect(rerun.classes()).not.toContain("bg-slate-900");
+    expect(rerun.classes()).toContain("bg-bead-card");
+    expect(rerun.classes()).not.toContain("bg-bead-accent");
     await rerun.trigger("click");
     expect(wrapper.emitted("rerun")).toHaveLength(1);
   });
@@ -274,77 +342,11 @@ describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
     expect(mountToolbar({ canRerun: false }).find("[data-testid='rerun']").exists()).toBe(false);
   });
 
-  it("历史行的第二颗按钮叫「恢复」（它仍是 redo 事件）", async () => {
+  it("历史的两颗按钮是「撤销」与「恢复」（后者仍是 redo 事件）", async () => {
     const wrapper = mountToolbar({ canRedo: true });
-    const row = wrapper.get("[data-testid='toolbar-row-history']");
-    expect(row.text()).toContain("撤销");
-    expect(row.text()).toContain("恢复");
-    expect(row.text()).not.toContain("重做");
+    expect(wrapper.get("[data-testid='undo']").attributes("aria-label")).toBe("撤销");
+    expect(wrapper.get("[data-testid='redo']").attributes("aria-label")).toBe("恢复");
     await wrapper.get("[data-testid='redo']").trigger("click");
     expect(wrapper.emitted("redo")).toHaveLength(1);
-  });
-});
-
-/** 五行分组：行 id → 该行应出现的 testid（顺序即 DOM 顺序）。产品口径见规格 §5.1。 */
-const TOOLBAR_ROWS: readonly (readonly [string, readonly string[]])[] = [
-  // C8 第 3 项：橡皮从调色板搬进工具行**尾部**（位置口径：工具挨着工具）。
-  // 填充是第 2 个工具，排在画笔之后、橡皮（色槽按钮）之前。
-  ["tools", ["tool-brush", "tool-fill", "eraser"]],
-  ["history", ["undo", "redo"]],
-  ["display", ["toggle-grid", "toggle-labels"]],
-  ["view", ["zoom-fit", "zoom-in", "zoom-out"]],
-  // C8 第 3 项：查看施工图 / 打印两颗按钮删除，改参数重新生成搬进来并改名「重做」。
-  ["output", ["rerun", "editor-save"]],
-];
-
-describe("五行分组", () => {
-  it("每行一个容器，行内 testid 集合逐字相符（顺序也相符）", () => {
-    const wrapper = mountToolbar();
-    for (const [row, testids] of TOOLBAR_ROWS) {
-      const container = wrapper.get(`[data-testid='toolbar-row-${row}']`);
-      // **同时收 button 与 `span[data-testid]`**：那颗「未保存」指示是 `span`（下面单独一条用例
-      // 在 `dirty: true` 下钉它的归属），只遍历 `button` 时它落在哪一行完全不可观察。
-      const found = container
-        .findAll("button, span[data-testid]")
-        .map((element) => element.attributes("data-testid"))
-        .filter((id): id is string => id !== undefined);
-      expect(found).toEqual([...testids]);
-    }
-    // 恰好 5 行：多一行说明有人顺手加了没归类的按钮
-    expect(wrapper.findAll("[data-testid^='toolbar-row-']")).toHaveLength(TOOLBAR_ROWS.length);
-  });
-
-  /**
-   * **行与行之间的顺序**（任务 4 的审查者点名的覆盖缺口）：上面那条用例钉的是「行内 testid 序列」
-   * 与「恰好 5 行」——把 `history` 与 `display` 两行**对调**仍然全绿，而规格 §5.1 是**位置口径**
-   * （用户找按钮靠位置）。这条把行本身的顺序钉死。
-   */
-  it("行的顺序是产品口径：tools → history → display → view → output", () => {
-    const wrapper = mountToolbar();
-    expect(
-      wrapper
-        .findAll("[data-testid^='toolbar-row-']")
-        .map((row) => row.attributes("data-testid")),
-    ).toEqual([
-      "toolbar-row-tools",
-      "toolbar-row-history",
-      "toolbar-row-display",
-      "toolbar-row-view",
-      "toolbar-row-output",
-    ]);
-  });
-
-  /**
-   * **`editor-dirty` 的归属**：它是 `<span>`，落在哪一行原先没有被任何断言钉住（遍历 `button`
-   * 的写法看不见它）。`dirty: true` 时 output 行必须是 `rerun / editor-save / editor-dirty`
-   * ——把指示挪到别的行、或挪到「保存」之前，都会在这里红。
-   */
-  it("output 行在 dirty 时同时收 button 与 span：rerun / editor-save / editor-dirty", () => {
-    const wrapper = mountToolbar({ dirty: true });
-    const found = wrapper
-      .get("[data-testid='toolbar-row-output']")
-      .findAll("button, span[data-testid]")
-      .map((element) => element.attributes("data-testid"));
-    expect(found).toEqual(["rerun", "editor-save", "editor-dirty"]);
   });
 });
