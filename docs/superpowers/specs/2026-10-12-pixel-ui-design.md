@@ -497,6 +497,8 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
    `scale(`。
 6. **深色底滥用**：`bead-board` 只允许出现在 `PatternCanvas` / `ResultPanel` / `SheetViewer` /
    `SetupPage` 的预览区这四处。
+   > **更正（2026-10-13，控制者裁定）**：实现里是**五处**——`LibraryPage.vue` 的卡片缩略图是第五处，
+   > 因为 §7.1 逐字要求缩略图是深色底。守卫 `designTokens.test.ts` 的 `BOARD_ALLOWED` 已按五处放行。
 7. **旧的 `slate-*` / `amber-*` 残留**：实现完成时用 grep 清零（§6.1），残留会让新旧两套语言同屏。
 8. **平板横屏下 `SetupPage` 三栏挤压**：中栏预览是 `flex: 1`，左右两栏定宽。窄到 `768px` 时左栏
    236px + 右栏 262px + 间距已占 520px，中栏只剩 248px ⇒ 在 `768~900px` 区间把左右栏宽度降到
@@ -571,6 +573,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
   (c) 不出现 `scale(`；
   (d) 不出现 `1px solid` / `2px solid`；
   (e) `bead-board` 只出现在 §10.6 的四个文件里。
+      > **更正（2026-10-13）**：是**五个**文件，外加 `LibraryPage.vue` 的缩略图（§10.6 的更正注记）。
   **必须排除三个探针页** `src/views/{CanvasLabPage,DecodeLabPage,ShellProbePage}.vue`——
   §5 明确说了它们不改，而它们实打实在用 `slate-*` / `amber-*`，按字面扫这条守卫**必然红**。
   排除名单写在测试里并附一句理由（它们是 DEV-only 探针页）。

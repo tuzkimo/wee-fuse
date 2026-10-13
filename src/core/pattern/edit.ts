@@ -95,9 +95,9 @@ export function indicesWithValues(cells: Uint16Array, values: readonly number[])
 /**
  * 取某格的色号；坐标越界或非整数时返回 EMPTY。
  *
- * **为何公开**：`stores/editor.ts` 的 `pickFromCell()`（吸管）是生产消费者——它要读的正是
- * 「这一格是什么色号」。返回 `EMPTY` 而不是 `undefined` 是这个 API 的契约，而**边界判空仍由
- * 调用方自己做**（照搬 `EMPTY` 会把「点空处」静默变成「选了橡皮」，见 `pickFromCell` 的 JSDoc）。
+ * **为何公开**：`core/render/layout.ts`（分片范围统计）、`core/render/sheet.ts`（逐格真色绘制）、
+ * `services/sheetExport.ts`（导出位图）都是生产消费者——它们要读的正是「这一格是什么色号」。
+ * 返回 `EMPTY` 而不是 `undefined` 是这个 API 的契约，而**边界判空仍由调用方自己做**。
  */
 export function cellAt(pattern: Pattern, x: number, y: number): number {
   // `Number.isInteger` 与「非负」两条都要：只比较上下界时 `NaN` 会让四个比较同时为假

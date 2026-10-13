@@ -8,7 +8,7 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { maxCellScale, minCellScale } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
-import { GRID_ON_DARK, LABEL_ON_DARK } from "@/components/ui/beadColors";
+import { GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 
 /**
  * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
@@ -22,8 +22,8 @@ import { GRID_ON_DARK, LABEL_ON_DARK } from "@/components/ui/beadColors";
  *   ③ `cellPx < GRID_LINE_MIN_CELL_PX` 时**不画网格线**（及其闭区间边界线的条数）；
  *   ④ `visibleCellRange === null`（图纸整块移出视口）时**不画**网格线与色号——删掉那条判空守卫，
  *      `drawGrid` 会在 `range.x0` 上抛 TypeError，该用例恰好 1 红（见用例所在的 describe）。
- *   ⑤ 深色底上的两个绘制色（网格线 `GRID_ON_DARK` / 格内色号 `LABEL_ON_DARK`）——改回旧的浅色
- *      / 亮度取反就红（Review Focus 3）。
+ *   ⑤ 深色底上的网格线色 `GRID_ON_DARK` 与格内色号的两档按豆粒明暗取色（浅豆 `LABEL_ON_LIGHT` /
+ *      深豆 `LABEL_ON_DARK`）——写死成任一单色（旧实现是无条件 `LABEL_ON_DARK`）就红（Review Focus 3）。
  * 其余一律走事件与状态断言；**拿不出能证明承重的变异**的画法（`imageSmoothingEnabled`、
  * 色号 `fillText` 的字号）仍然**有意不写**。
  *
@@ -1019,13 +1019,22 @@ describe("深色拼豆板底（Review Focus 3）", () => {
     expect(wrapper.get("[data-testid='editor-surface']").classes().join(" ")).toContain("bg-bead-board");
   });
 
-  it("网格线用 GRID_ON_DARK、格内色号用 LABEL_ON_DARK（都不是 ink）", async () => {
-    // 默认图纸是全 A1（#ffffff）白格：旧实现会在白底上写深字（亮度取反），这条用例因此有判别力。
-    // 32px/格 ≥ CELL_LABEL_MIN_CELL_PX（28），色号才真的会画。
-    const wrapper = mountCanvas({ showLabels: true, view: { scale: 32, offsetX: 0, offsetY: 0 } });
-    await wrapper.vm.$nextTick();
+  it("网格线用 GRID_ON_DARK；格内色号按豆粒明暗取色：浅豆用 LABEL_ON_LIGHT、深豆用 LABEL_ON_DARK", async () => {
+    // 32px/格 ≥ CELL_LABEL_MIN_CELL_PX（28），色号才真的会画。一浅一深两份图纸是这条的判别力来源：
+    // 浅色豆（A1 #ffffff）上必须写深字，深色豆（A3 #000000）上必须写亮字；
+    // 写死成任一单色（旧实现是无条件 LABEL_ON_DARK）时浅豆那一半会红。
+    const light = mountCanvas({ showLabels: true, view: { scale: 32, offsetX: 0, offsetY: 0 } });
+    await light.vm.$nextTick();
 
     expect(lastStrokeColor()).toBe(GRID_ON_DARK);
+    expect(labelFillColor()).toBe(LABEL_ON_LIGHT);
+
+    const dark = mountCanvas({
+      pattern: solidPattern(32, 32, 2),
+      showLabels: true,
+      view: { scale: 32, offsetX: 0, offsetY: 0 },
+    });
+    await dark.vm.$nextTick();
     expect(labelFillColor()).toBe(LABEL_ON_DARK);
   });
 });

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
-import { GRID_ON_DARK, LABEL_ON_DARK } from "@/components/ui/beadColors";
+import { GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 import css from "../../../style.css?raw";
 
 /**
@@ -13,9 +13,11 @@ import css from "../../../style.css?raw";
  * 的第一步）报 TS2307。与 `src/__tests__/designTokens.test.ts` 同一口径。
  */
 describe("深色底画布颜色常量（§9 / Review Focus 3）", () => {
-  it("GRID_ON_DARK / LABEL_ON_DARK 与 style.css 的同名 token 逐字一致", () => {
+  it("GRID_ON_DARK / LABEL_ON_DARK / LABEL_ON_LIGHT 与 style.css 的同名 token 逐字一致", () => {
     expect(css).toContain(`--color-bead-grid: ${GRID_ON_DARK}`);
     expect(css).toContain(`--color-bead-label-on-dark: ${LABEL_ON_DARK}`);
+    // 浅豆上的色号借的是 ink——它本就是设计系统里「浅底上的字」那一档。
+    expect(css).toContain(`--color-bead-ink: ${LABEL_ON_LIGHT}`);
   });
 
   it("格内色号不是 ink（#3D3226 在深色底上看不见）", () => {

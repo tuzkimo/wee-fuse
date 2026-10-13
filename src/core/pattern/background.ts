@@ -147,7 +147,7 @@ export function maskBackground(grid: SampledGrid, tolerance: number): void {
 
 /**
  * 事后去背景：点选图纸上某格，返回与它连通的背景格下标（行优先），供编辑页的
- * `EditorPage.onBackground`（去背景工具）把这些格置为空格。
+ * `EditorPage.onFill`（去背景工具）把这些格置为空格。
  *
  * 与 `cellAt` 的「越界返回 `EMPTY`」**刻意不同**：种子落在图纸外、非整数、或该格已是
  * `EMPTY` 时返回 `[]`——调用方拿空数组表示「什么都不做」。

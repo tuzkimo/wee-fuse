@@ -203,7 +203,7 @@ describe("beginSession：会话播种", () => {
 
 describe("reset：把会话清回初始态", () => {
   it("13 个字段逐一回默认，且**不碰 session**（`dirty` 留给保存流程）", () => {
-    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 17 个动作之一、页面卸载 / 换工程时
+    // 简报的 43 条用例里 `reset` 一次都没被调用过——而它是 16 个动作之一、页面卸载 / 换工程时
     // 会走到。少了这条，「reset 漏清 viewInitialized」这类错误在屏幕上是「换工程后视图还是旧的」，
     // 不报错、只有真机看得出来。
     const { editor, session } = seedEditor();

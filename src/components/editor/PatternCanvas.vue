@@ -9,7 +9,8 @@
 // 状态变化，缓存它带来的失效判定比绘制成本更贵（§5.4）。
 import { ref, watch } from "vue";
 import { screenToOriented, type Point, type Size, type ViewTransform } from "@/core/crop/view";
-import { GRID_ON_DARK, LABEL_ON_DARK } from "@/components/ui/beadColors";
+import type { RGB } from "@/core/color/space";
+import { GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
@@ -430,6 +431,11 @@ function onWheel(event: WheelEvent): void {
 // 绘制
 // ---------------------------------------------------------------------------
 
+/** 亮度（Rec.601）：格内色号写在**豆粒自身的颜色**上，浅豆写深字、深豆写亮字。 */
+function isLight(rgb: RGB): boolean {
+  return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 >= 0.5;
+}
+
 /** 当前色的半透明预览色。`EMPTY`（橡皮）用中性深灰，其余回色卡本身的三通道。 */
 function rgbaOf(index: number, alpha: number): string {
   const color = props.palette.colors[index];
@@ -487,7 +493,7 @@ function drawLabels(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: num
       const color = props.palette.colors[value];
       if (color === undefined) continue;
       if (color.code.length > maxChars) continue;
-      ctx.fillStyle = LABEL_ON_DARK;
+      ctx.fillStyle = isLight(color.rgb) ? LABEL_ON_LIGHT : LABEL_ON_DARK;
       ctx.fillText(color.code, view.offsetX + (x + 0.5) * cellPx, view.offsetY + (y + 0.5) * cellPx);
     }
   }
