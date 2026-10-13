@@ -30,7 +30,7 @@ const SCRAMBLED: Palette = loadPalette({
 
 function mountPicker(overrides: Record<string, unknown> = {}) {
   return mount(PalettePicker, {
-    props: { palette, usedIndices: [], mode: "brush", ...overrides },
+    props: { palette, usedIndices: [], ...overrides },
   });
 }
 
@@ -153,10 +153,12 @@ describe("顶部「已用色」组", () => {
   });
 });
 
-describe("换色模式", () => {
-  it("mode=brush 时不渲染橡皮项；mode=recolor 时渲染，点它 emit EMPTY", async () => {
-    expect(mountPicker({ mode: "brush" }).find("[data-testid='picker-eraser']").exists()).toBe(false);
-    const wrapper = mountPicker({ mode: "recolor" });
+describe("橡皮项（两种用途下都在）", () => {
+  // 2026-10-13 起橡皮从工具栏搬进了这里（规格 §5.2），画笔与换色两种用途下都渲染。
+  // 原来那个 `mode` prop 唯一的消费者就是这个 v-if——两模式行为一致后连同 prop 一起删掉了。
+  it("渲染橡皮项，点它 emit EMPTY（空格）", async () => {
+    const wrapper = mountPicker();
+    expect(wrapper.find("[data-testid='picker-eraser']").exists()).toBe(true);
     await wrapper.get("[data-testid='picker-eraser']").trigger("click");
     expect(wrapper.emitted("pick")?.at(-1)).toEqual([EMPTY]);
   });

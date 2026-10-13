@@ -5,12 +5,12 @@
 // （屏幕 → 格子的整条链错了不会报错，只会把颜色涂到别的格子上）。
 //
 // 分层（规格 §5）：**色块层**恒为「图纸尺寸 × 1px/格」的离屏 canvas，与 `view` 无关；主画布每帧
-// 重新合成为「棋盘底纹 → drawImage(色块层) → 叠加层」。叠加层不缓存：它只画可见格，且随视图与
+// 重新合成为「纸底 → drawImage(色块层) → 叠加层」。叠加层不缓存：它只画可见格，且随视图与
 // 状态变化，缓存它带来的失效判定比绘制成本更贵（§5.4）。
 import { ref, watch } from "vue";
 import { screenToOriented, type Point, type Size, type ViewTransform } from "@/core/crop/view";
 import type { RGB } from "@/core/color/space";
-import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DARK } from "@/components/ui/beadColors";
 import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
@@ -183,7 +183,9 @@ function syncLayer(): void {
 
 type ToolGesture =
   | { kind: "brush"; pointerId: number; last: CellPoint; preview: Set<number> }
-  | { kind: "fill"; pointerId: number; cell: CellPoint };
+  | { kind: "fill"; pointerId: number; cell: CellPoint }
+  /** 拖动工具：单指平移。位移从**按下那一刻**的视图与落点算起（不是逐帧累加）。 */
+  | { kind: "pan"; pointerId: number; start: Point; startView: ViewTransform };
 
 interface ViewGesture {
   readonly ids: [number, number];
@@ -253,6 +255,8 @@ function startViewGesture(): void {
 function startToolGesture(pointerId: number, point: Point): void {
   const cell = cellFromScreen(point);
   // 单指落在图纸外：本次手势什么也不做（不涂画、也不平移——平移统一归双指与工具栏按钮，§6.2）。
+  // **拖动工具同样受这条守卫**（2026-10-13 裁定 3）：按下那一刻就决定本次手势不成立，
+  // 不能中途再换成平移。
   if (cell === null) return;
   if (props.tool === "brush") {
     toolGesture = {
@@ -266,6 +270,10 @@ function startToolGesture(pointerId: number, point: Point): void {
   if (props.tool === "fill") {
     // 只在按下那一刻记格，拖动不改（见 finishToolGesture）。
     toolGesture = { kind: "fill", pointerId, cell };
+    return;
+  }
+  if (props.tool === "pan") {
+    toolGesture = { kind: "pan", pointerId, start: point, startView: props.view };
   }
 }
 
@@ -329,6 +337,20 @@ function onPointerMove(event: PointerEvent): void {
 
   const gesture = toolGesture;
   if (gesture === null || gesture.pointerId !== event.pointerId) return;
+  if (gesture.kind === "pan") {
+    // 位移基于 `startView` 与按下那一刻的落点（不是逐帧累加）：多次 emit 不会累出漂移。
+    emit(
+      "update:view",
+      panCellView(
+        gesture.startView,
+        viewport.value,
+        gridSize(),
+        point.x - gesture.start.x,
+        point.y - gesture.start.y,
+      ),
+    );
+    return;
+  }
   if (gesture.kind === "brush") {
     const cell = cellFromScreen(point);
     if (cell === null) return; // 拖出图纸：跳过这次采样，`last` 不动 → 回到图内从上一格补起
@@ -344,6 +366,8 @@ function onPointerMove(event: PointerEvent): void {
 
 /** 工具手势的唯一出口：抬手（或捕获被无声丢失）才提交，一次手势 = 一条命令（§6.2）。 */
 function finishToolGesture(gesture: ToolGesture): void {
+  // 拖动只改视图，抬手不发任何命令（它已经逐次 update:view 过了）。
+  if (gesture.kind === "pan") return;
   if (gesture.kind === "brush") {
     const indices = [...gesture.preview];
     // 不可达，**无判别力用例**（有意不写）：`startToolGesture` 建的画笔手势 `preview` 必然 ≥1 格，
@@ -575,7 +599,16 @@ function draw(): void {
   ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ctx.clearRect(0, 0, size.width, size.height);
 
-  // 空格不铺底：透明格透出容器那层深色拼豆板（`bg-bead-board` + 板孔点阵，§6.1「看图一律深色衬底」）。
+  // 纸底：铺满**图纸矩形**（不是整块画布）。色块层里的空格是透明的，透出这层纸而不是深板底
+  // （§5.4）——没有它，一张去了背景、边线是黑的图会与板底糊在一起。画布外那一圈仍是深色板底 +
+  // 板孔点阵（§6.1 对那一圈仍逐字成立）。必须画在 `drawImage` **之前**，否则会把豆粒盖住。
+  ctx.fillStyle = PAPER_ON_DARK;
+  ctx.fillRect(
+    view.offsetX,
+    view.offsetY,
+    props.pattern.width * cellPx,
+    props.pattern.height * cellPx,
+  );
 
   // 无插值放大：图纸是色块，插值会产生图纸里不存在的中间色（与 patternThumbnail 同口径，§5.7）。
   ctx.imageSmoothingEnabled = false;

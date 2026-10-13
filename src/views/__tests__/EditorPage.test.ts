@@ -310,6 +310,9 @@ async function dragPaint(
   from: readonly [number, number],
   to: readonly [number, number],
 ): Promise<void> {
+  // 默认工具从本批起是「拖动」（规格 §5.3），而本夹具的名字就是「拖出一笔」——先显式握住画笔。
+  // 默认值本身由 `stores/__tests__/editor.test.ts` 钉，这里只管「拿画笔时能涂」。
+  await wrapper.get("[data-testid='tool-brush']").trigger("click");
   await pointerAtCell(wrapper, "pointerdown", from[0], from[1]);
   await pointerAtCell(wrapper, "pointermove", to[0], to[1]);
   await pointerAtCell(wrapper, "pointerup", to[0], to[1]);
@@ -1249,7 +1252,7 @@ describe("页面接线（终）：类型兼容的 props 错接（画布 / 工具
 
   it("工具栏收到 `tool`：跟着 store 走（绑常量必红）", async () => {
     const wrapper = await mountPage();
-    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("brush"); // 播种值
+    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("pan"); // 默认工具是拖动（规格 §5.3）
 
     useEditor().setTool("fill");
     await nextTick();
@@ -1586,29 +1589,26 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
   });
 
   /**
-   * 「橡皮」剥掉了它在本页的最后一层皮：按钮在工具栏（`PatternToolbar` 的 `eraser`），
-   * 真正要做的两件事在**页面**这一层——设当前色为 `EMPTY`、**并切回画笔**。
+   * 入口搬家（规格 §5.2，2026-10-13）：工具栏那颗橡皮删了，橡皮只能从选色区拿到。
    *
-   * 后半句是这条用例的核心：在非画笔工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
-   * （用户点完必须看得出自己已经手握橡皮）。所以起点**刻意先切到填充**——否则「切回画笔」与
-   * 「本来就是画笔」不可区分。
+   * 旧版这条用例考的是 `EditorPage.onEraser`（设当前色为 `EMPTY` **并切回画笔**）。两件事现在都
+   * 没了：入口在 `PalettePanel` → `PalettePicker`（已由 `PalettePanel.test.ts` 钉），而「不切画笔」
+   * 是本批**刻意**要的——橡皮 + 填充 = 大片擦除（就是原来的去背景），切回画笔反而把那条路子堵了。
    */
-  it("工具栏「橡皮」：设当前色为 EMPTY 并切回画笔，按下态跟着当前色", async () => {
+  it("[入口搬家] 从选色区选橡皮：当前色变 EMPTY，工具不变，不碰图纸", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
 
     expect(editor.currentColor).toBe(0); // 播种色
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     expect(editor.tool).toBe("fill");
-    // `:eraser-active` 接的是「当前色是不是 EMPTY」：此刻不是，所以没有按下态
-    expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("false");
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
 
     expect(editor.currentColor).toBe(EMPTY);
-    expect(editor.tool).toBe("brush");
-    expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("true");
-    // 只改当前色与工具，不碰图纸
+    // 旧 `onEraser` 会顺手切回画笔——那条现在**必须**不存在。
+    expect(editor.tool).toBe("fill");
+    // 只改当前色，不碰图纸。
     expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
   });
 
@@ -1859,7 +1859,7 @@ describe("平板定高 shell（§7.4 T4）：顶栏固定、工具条贴画布�
       "rerun",
       "tool-brush",
       "tool-fill",
-      "eraser",
+      "tool-pan",
       "toggle-grid",
       "toggle-labels",
       "zoom-in",
@@ -1958,6 +1958,16 @@ async function tapCell(wrapper: ReturnType<typeof mount>, x: number, y: number):
   await pointerAtCell(wrapper, "pointerup", x, y);
 }
 
+/**
+ * 从选色区拿到橡皮（规格 §5.2）：点当前色槽开选择器 → 点橡皮项。
+ *
+ * 这是编辑器里**唯一**的橡皮入口（工具栏那颗已删），所以填充/擦除用例都走它。
+ */
+async function pickEraser(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper.get("[data-testid='palette-current']").trigger("click");
+  await wrapper.get("[data-testid='picker-eraser']").trigger("click");
+}
+
 /** 取图纸（载入成功是这些用例的前提；null 当成夹具坏了，响亮失败而不是静默跳过断言）。 */
 function loadedCells(editor: ReturnType<typeof useEditor>): Uint16Array {
   const pattern = editor.pattern;
@@ -1979,7 +1989,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const editor = useEditor();
 
     // 现在的「去背景」= 拿橡皮 + 填充：容差 10 才吃得掉整片背景
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     expect(editor.tool).toBe("fill");
     await tapCell(wrapper, 0, 0);
@@ -1994,7 +2004,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 1, 1);
 
@@ -2008,7 +2018,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const editor = useEditor();
     const before = Array.from(loadedCells(editor));
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
     // 一次点击 = 一条命令：撤销按钮此刻可用，点一下就整片回退
@@ -2030,7 +2040,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const editor = useEditor();
     const session = useProjectSession();
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
 
@@ -2058,12 +2068,45 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const wrapper = await mountGrid(FILL_NEARBY_FIXTURE, 3, 1);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
 
     // 容差 10 把 141 也吃掉——这正是原来的「去背景」行为
     expect(Array.from(loadedCells(editor))).toEqual([EMPTY, EMPTY, EMPTY]);
+  });
+
+  /**
+   * **本批的头号用户故事**（规格 §5.1）：「我用画笔在空白区域画了个图案，然后想在中间填色」。
+   *
+   * 上面那些用例走的是「种子有颜色」那一支；这一条走「种子是空格」那一支——两支在 core 里
+   * 分岔，而页面这一层的接线（`onFill` → `patternRegionIndices` → `paintCells`）是同一条。
+   * 跨组件、一次点击一条命令、一步撤销，全在这里钉住。
+   */
+  it("[空格可填] 手里拿颜色、点被围住的空白：连通的整片空格被涂成该色，且一步可撤销", async () => {
+    // 5×3：外圈是 A1（色号 0），中间一整条空白（下标 6/7/8）被四边完全围住。
+    const wrapper = await mountGrid(
+      [0, 0, 0, 0, 0,
+       0, EMPTY, EMPTY, EMPTY, 0,
+       0, 0, 0, 0, 0],
+      5,
+      3,
+    );
+    const editor = useEditor();
+    const before = Array.from(loadedCells(editor));
+    editor.setCurrentColor(5); // 手里拿颜色 5（不是橡皮）
+
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    await tapCell(wrapper, 2, 1); // 点中间那个空格
+
+    const cells = loadedCells(editor);
+    // 整片（不只是种子那一格）、也没有漏到外面
+    expect([cells[6], cells[7], cells[8]]).toEqual([5, 5, 5]);
+    expect([cells[0], cells[1], cells[4]]).toEqual([0, 0, 0]);
+    // 一次点击 = 一条命令：撤销一次整片回退
+    expect(editor.canUndo).toBe(true);
+    await wrapper.get("[data-testid='undo']").trigger("click");
+    expect(Array.from(loadedCells(editor))).toEqual(before);
   });
 });
 

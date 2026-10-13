@@ -235,9 +235,10 @@ describe("当前色槽即入口（§9.1 第 3 条）", () => {
     expect(follows).toBeTruthy();
   });
 
-  // 两颗按钮都不许留个壳：`palette-add` 的入口功能已并入当前色槽，
-  // `palette-eraser` 搬到了工具栏（`PatternToolbar` 的 `eraser`）。
-  it("没有「添加颜色」按钮，也没有橡皮按钮（橡皮搬到工具栏）", () => {
+  // 两颗按钮都不许留个壳：`palette-add` 的入口功能已并入当前色槽；
+  // `palette-eraser` 先搬去工具栏、**2026-10-13 又搬回了选色区**——它现在是 `picker-eraser`
+  // （规格 §5.2），而不是这个槽位上的第二颗按钮。
+  it("没有「添加颜色」按钮，也没有独立的橡皮按钮（橡皮是选择器里的一个条目）", () => {
     const wrapper = mountPanel();
     expect(wrapper.find("[data-testid='palette-add']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='palette-eraser']").exists()).toBe(false);
@@ -392,15 +393,29 @@ describe("选中与操作条", () => {
 
   // §5.3 第 4 条 + §5.4：色槽**永远**是「改画笔色」的入口——挂着选中时点它进的是画笔模式，
   // 挑完画笔色回来选中与操作条都还在。反向守卫：色槽被接成换色入口、或选完把选中清掉，这条必红。
+  //
+  // 2026-10-13：橡皮项不再是「换色模式」的判别标——它在两种用途下都渲染（规格 §5.2），
+  // 所以本用例不再拿它当画笔模式的代理，改由下面那条专门的跨组件用例钉「拿到的是 EMPTY」。
   it("有选中时点当前色槽进的仍是画笔模式：点目标色只 emit update:currentColor，选中与操作条都保留", async () => {
     const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
     await wrapper.get("[data-testid='palette-current']").trigger("click");
-    expect(wrapper.find("[data-testid='picker-eraser']").exists()).toBe(false);
 
     await wrapper.get("[data-testid='picker'] [data-code='A1']").trigger("click");
     expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([0]);
     expect(wrapper.emitted("recolor")).toBeUndefined();
     expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(true);
+  });
+
+  // 入口搬家的跨组件判据（规格 §7）：编辑器不再有工具栏橡皮按钮，橡皮只能从选色区拿到。
+  // 「面板渲染了橡皮项」与「页面收到 EMPTY」两件事分开才看得出来——接线断了只有这条会红。
+  it("[入口搬家] 点当前色槽 → 点橡皮：交出的当前色是 EMPTY", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
+    expect(wrapper.find("[data-testid='picker-eraser']").exists()).toBe(true);
+
+    await wrapper.get("[data-testid='picker-eraser']").trigger("click");
+    expect(wrapper.emitted("update:currentColor")?.at(-1)).toEqual([EMPTY]);
+    expect(wrapper.emitted("recolor")).toBeUndefined();
   });
 
   it("进入换色模式后点关闭：既不 emit recolor 也不 emit update:currentColor", async () => {

@@ -26,7 +26,7 @@ export const BACKGROUND_TOLERANCE = 10;
  * 校验顺序：尺寸 → `0×0` 早退 → 缓冲区长度 → 容差 → 种子；全部校验在任何写入之前。
  *
  * **为何公开**：生产消费者是本计划的「事前去背景」（`services/pipeline.ts` 在量化前把命中格
- * 的 `filled` 置 0）与「事后去背景」（`core/pattern/background.ts` 的 `patternBackgroundIndices`
+ * 的 `filled` 置 0）与「事后去背景」（`core/pattern/background.ts` 的 `patternRegionIndices`
  * → 编辑页的 `buildPaintCommand`）。在此之前本仓库内只有测试在调用它。
  */
 export function floodBackground(
@@ -146,19 +146,29 @@ export function maskBackground(grid: SampledGrid, tolerance: number): void {
 }
 
 /**
- * 事后去背景：点选图纸上某格，返回与它连通的背景格下标（行优先），供编辑页的
- * `EditorPage.onFill`（去背景工具）把这些格置为空格。
+ * 同质连通区：点选图纸上某格，返回**与它同质且连通**的那一片格下标（行优先），供编辑页的
+ * `EditorPage.onFill` 使用。
  *
- * 与 `cellAt` 的「越界返回 `EMPTY`」**刻意不同**：种子落在图纸外、非整数、或该格已是
- * `EMPTY` 时返回 `[]`——调用方拿空数组表示「什么都不做」。
+ * **「同质」的口径随种子分岔**（2026-10-13 起）：
+ * - 种子是**空格**（`EMPTY`）⇒ 可吃的是**连通的空格**，有色格是墙。这是「给空白区填色」——
+ *   先用画笔勾个轮廓、再点里面一灌到底。容差在这条路上用不上（所有空格的 Lab 都是 `0,0,0`）。
+ * - 种子**有颜色** ⇒ 可吃的是与它色差 ≤ `tolerance` 的连通有色格，空格与色卡外下标都是墙。
+ *   容差 0 = 「同色一片」（拿颜色时）、容差 `BACKGROUND_TOLERANCE` = 「相近色一片」（拿橡皮时，
+ *   即原来的事后去背景）。
  *
- * 色号越界（`EMPTY` 或超出 `labs` 长度）一律按不可吃处理，不报错：图纸来自落盘校验，
- * 越界色号已被 `validateProjectDocument` 挡在门外。不修改 `pattern`。
+ * 这不是两个函数：泛洪本身（`floodBackground`）对两者是同一算法，只有「哪些格可吃」不同。
+ * 曾经这里把空格一律当实心墙（连种子是空格都早退成 `[]`），那条对「去背景」对、「填色」错。
+ *
+ * 与 `cellAt` 的「越界返回 `EMPTY`」**刻意不同**：种子落在图纸外或非整数时返回 `[]`——
+ * 调用方拿空数组表示「什么都不做」。
+ *
+ * 色号越界（超出 `labs` 长度）一律按不可吃处理，不报错：图纸来自落盘校验，越界色号已被
+ * `validateProjectDocument` 挡在门外。不修改 `pattern`。
  *
  * `cells` 长度必须等于 `width * height`（同 `patternStats`）：长度不符时下面按尺寸建表、
  * 按尺寸遍历，读到的格与图纸格错位，`cells` 越界处还会抛 `undefined` 的读属性错误。
  */
-export function patternBackgroundIndices(
+export function patternRegionIndices(
   pattern: Pattern,
   labs: readonly Lab[],
   seed: { x: number; y: number },
@@ -182,13 +192,20 @@ export function patternBackgroundIndices(
   }
 
   const seedIndex = seed.y * width + seed.x;
-  if (cells[seedIndex] === EMPTY) return [];
+  /** 种子是空格 ⇒ 可吃的是连通的空格；否则可吃的是与种子近色的连通有色格。 */
+  const seedIsEmpty = cells[seedIndex] === EMPTY;
 
   const cellCount = width * height;
   const cellLabs = new Float32Array(cellCount * 3);
   const eatable = new Uint8Array(cellCount);
   for (let i = 0; i < cellCount; i++) {
     const colorIndex = cells[i];
+    if (seedIsEmpty) {
+      // 空格走这条路：Lab 留 `0,0,0`（种子也是 `0,0,0`，ΔE76 = 0 ≤ 任何合法容差），
+      // 所以不需要为空格造颜色、也不需要为这条路径单独传容差。
+      if (colorIndex === EMPTY) eatable[i] = 1;
+      continue;
+    }
     if (colorIndex === EMPTY || colorIndex >= labs.length) continue; // 留 0,0,0 且不可吃
     const lab = labs[colorIndex];
     cellLabs[i * 3] = lab[0];

@@ -10,13 +10,15 @@
 // `disabled` **逐字**读 `canUndo` / `canRedo`（规格 §6.6）：能不能撤只有 `EditHistory` 知道，
 // 组件里再算一次「有没有东西可撤」就是第二份真相，漂移的那天没有任何信号。
 //
-// **两套排法靠类分叉、不靠 `v-if`（R3）**：十一颗按钮各自只有一个 DOM 节点，手机与平板的分歧
+// **两套排法靠类分叉、不靠 `v-if`（R3）**：十颗按钮各自只有一个 DOM 节点，手机与平板的分歧
 // 全在 `max-md:` / `md:` 类上。用 `v-if` 按断点删按钮会让手机端真缺功能，jsdom（宽 1024）里
 // 也根本验不到手机那一套。手机上左组一行、右组一行（两组都可横滑，`overflow-x-auto`），
 // 平板上两组用 `md:contents` 摊平进同一条 flex 行。
 //
-// 橡皮从调色板搬进工具条；`eraser` 的接收方（`EditorPage.onEraser`）除了把当前色设成橡皮，
-// 还要顺手切回画笔——那是页面的事，不在这里替它决定。
+// 橡皮从调色板搬进工具条（C8 第 3 项），**2026-10-13 又搬回了选色区**（规格 §5.2）——它不是工具，
+// 而是「当前色 = `EMPTY`」，与画笔 / 填充正交，放在工具条上与它们并排会让用户以为它们是三选一。
+// 它现在的位置是 `PalettePicker` 的橡皮项，本组件不再有 `eraser` emit 与 `eraserActive` prop。
+// 第三个主工具是「拖动」：单指平移视图，因此**它也是新会话的默认工具**（见 `store` 的 `DEFAULT_TOOL`）。
 // 「重做」（改参数重新生成）**不在这里**：T5 起它搬进了 `EditorPage` 的顶栏、与「保存」同级
 // （实机反馈 6：「重做」与工具按钮放一起不合逻辑）。本组件因此也不再声明 `rerun` emit 与
 // `canRerun` prop——那两颗只会在页面里接线，多一份接口就是多一份可能漂移的真相。
@@ -34,8 +36,6 @@ defineProps<{
   tool: EditorTool;
   showGrid: boolean;
   showLabels: boolean;
-  /** 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。 */
-  eraserActive: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -47,14 +47,13 @@ const emit = defineEmits<{
   fit: [];
   "zoom-in": [];
   "zoom-out": [];
-  /** 把当前色槽设为橡皮（`EMPTY`）**并切回画笔**——见 `EditorPage.onEraser`。 */
-  eraser: [];
 }>();
 
-/** 两个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
+/** 三个主工具：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
 const TOOLS: readonly { readonly tool: EditorTool; readonly label: string }[] = [
   { tool: "brush", label: "画笔" },
   { tool: "fill", label: "填充" },
+  { tool: "pan", label: "拖动" },
 ];
 
 /**
@@ -100,7 +99,7 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
       >
         <PixelIcon name="redo" :size="24" />
       </BeadButton>
-      <!-- 三个主工具 64×64（§6.5）：按下态读 `tool === item.tool`；橡皮读 `eraserActive`。 -->
+      <!-- 三个主工具 64×64（§6.5）：按下态读 `tool === item.tool`。 -->
       <BeadButton
         v-for="item in TOOLS"
         :key="item.tool"
@@ -112,16 +111,6 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
         @click="emit('update:tool', item.tool)"
       >
         <PixelIcon :name="item.tool" :size="36" />
-      </BeadButton>
-      <BeadButton
-        data-testid="eraser"
-        :variant="eraserActive ? 'primary' : 'secondary'"
-        aria-label="橡皮"
-        :aria-pressed="eraserActive"
-        :class="TOOL_SIZE"
-        @click="emit('eraser')"
-      >
-        <PixelIcon name="eraser" :size="36" />
       </BeadButton>
     </div>
 

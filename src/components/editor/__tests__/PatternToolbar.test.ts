@@ -20,8 +20,6 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
       tool: "brush",
       showGrid: true,
       showLabels: true,
-      // 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。
-      eraserActive: false,
       ...overrides,
     },
   });
@@ -31,6 +29,7 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
 const TOOL_BUTTONS: readonly (readonly [string, EditorTool])[] = [
   ["tool-brush", "brush"],
   ["tool-fill", "fill"],
+  ["tool-pan", "pan"],
 ];
 
 /**
@@ -43,7 +42,7 @@ const ICON_BUTTONS: readonly (readonly [string, string])[] = [
   ["redo", "恢复"],
   ["tool-brush", "画笔"],
   ["tool-fill", "填充"],
-  ["eraser", "橡皮"],
+  ["tool-pan", "拖动"],
   ["toggle-grid", "网格线"],
   ["toggle-labels", "格内色号"],
   ["zoom-in", "放大"],
@@ -54,7 +53,7 @@ const ICON_BUTTONS: readonly (readonly [string, string])[] = [
 describe("工具切换", () => {
   // 断言的是**载荷**：`toEqual([[tool]])` 同时钉住「emit 的是自己那个工具名」与「只 emit 一次」。
   // 写成 `toHaveBeenCalled` / `toHaveLength(1)` 时，两个按钮都 emit "brush" 也照样绿。
-  it("两个工具按钮各自 emit 自己的工具名（载荷逐字）", async () => {
+  it("每颗工具按钮各自 emit 自己的工具名（载荷逐字）", async () => {
     for (const [testid, tool] of TOOL_BUTTONS) {
       const wrapper = mountToolbar({ tool: "brush" });
       await wrapper.get(`[data-testid='${testid}']`).trigger("click");
@@ -63,9 +62,9 @@ describe("工具切换", () => {
   });
 
   // 当前工具在界面上必须看得出来（用户不知道自己拿的是画笔还是填充时，点一下就会涂错）。
-  // aria-pressed 是这里唯一的外部可观察量：两个工具一起遍历，写死某一颗必红。
-  it("当前工具那颗按钮 aria-pressed 为 true，另一颗为 false", () => {
-    for (const current of ["brush", "fill"] as const) {
+  // aria-pressed 是这里唯一的外部可观察量：三个工具一起遍历，写死某一颗必红。
+  it("当前工具那颗按钮 aria-pressed 为 true，其余为 false", () => {
+    for (const current of ["brush", "fill", "pan"] as const) {
       const wrapper = mountToolbar({ tool: current });
       for (const [testid, tool] of TOOL_BUTTONS) {
         expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-pressed")).toBe(
@@ -249,7 +248,7 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
   // 它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
   it("3 个主工具 64×64、2 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
     const wrapper = mountToolbar();
-    for (const testid of ["tool-brush", "tool-fill", "eraser"]) {
+    for (const testid of ["tool-brush", "tool-fill", "tool-pan"]) {
       expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
         expect.arrayContaining(["h-16", "w-16"]), // 4rem = 64px
       );
@@ -315,14 +314,13 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
  * （存在性、`canRerun` 为假时不渲染、次按钮样式）属于**授权改写**：全部改到 `EditorPage.test.ts`
  * 去钉顶栏那一颗（R2 的口径——哪个组件拥有它就由哪个组件的用例钉）。
  */
-describe("C8 第 3 项：橡皮与历史两颗（重做已搬去顶栏）", () => {
-  it("工具条里有「橡皮」，它带按下态、点它 emit eraser", async () => {
-    const wrapper = mountToolbar({ eraserActive: true });
-    const eraser = wrapper.get("[data-testid='eraser']");
-    expect(eraser.attributes("aria-label")).toBe("橡皮");
-    expect(eraser.attributes("aria-pressed")).toBe("true");
-    await eraser.trigger("click");
-    expect(wrapper.emitted("eraser")).toHaveLength(1);
+describe("C8 第 3 项：历史两颗（重做已搬去顶栏）", () => {
+  // 2026-10-13（规格 §5.2）：工具栏那颗橡皮删了，橡皮是选择器里的一个条目（`PalettePicker`）。
+  // 它本来就不是工具（是「当前色 = `EMPTY`」），与画笔 / 填充并排会让用户以为三者是三选一。
+  it("工具条里不再有橡皮", () => {
+    const wrapper = mountToolbar();
+    expect(wrapper.find("[data-testid='eraser']").exists()).toBe(false);
+    expect(wrapper.emitted("eraser")).toBeUndefined();
   });
 
   it("工具条里不再有查看施工图 / 打印 / 保存（C8 第 3 项 + 任务 12 保存搬去顶栏）", () => {

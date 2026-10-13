@@ -40,14 +40,23 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 编辑器工具：画笔 / 填充（单指分工，规格 §6.1）。
+ * 编辑器工具：画笔 / 填充 / 拖动（单指分工，规格 §6.1）。
  *
  * **填充是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
- * 填充则按整片区域入账，先选工具再点画布（容差随手里拿的东西变，见 `EditorPage.onFill`）。
+ * 填充则按整片区域入账，先选工具再点画布（目标区域与容差随手里拿的东西变，见 `EditorPage.onFill`）。
+ *
+ * **拖动（`pan`）是唯一不动图纸的工具**：单指拖动只改视图（`view`）、不进历史也不置脏，
+ * 与双指手势走同一个 `update:view` 出口。它也是新会话的默认工具（见 `DEFAULT_TOOL`）。
  */
-export type EditorTool = "brush" | "fill";
+export type EditorTool = "brush" | "fill" | "pan";
 
-const DEFAULT_TOOL: EditorTool = "brush";
+/**
+ * 新会话的默认工具。**是拖动，不是画笔**（2026-10-13 规格 §5.3，人类伙伴的原话：双指拖动很难用）。
+ *
+ * 代价说清楚：进编辑页后**第一下拖动是平移、不会涂色**，要涂色得先点一次「画笔」。真机上觉得
+ * 别扭时，改这一个字符串就能回去，不需要动其它任何东西。
+ */
+const DEFAULT_TOOL: EditorTool = "pan";
 
 // ---------------------------------------------------------------------------
 // 入口校验（规格 §12）
@@ -252,9 +261,9 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "fill") {
+    if (next !== "brush" && next !== "fill" && next !== "pan") {
       throw new Error(
-        `编辑器工具非法：${String(next)}（只允许 "brush" / "fill"）`,
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "fill" / "pan"）`,
       );
     }
     tool.value = next;
@@ -351,7 +360,7 @@ export const useEditor = defineStore("editor", () => {
   /**
    * 去背景：把一批格子置为空格，**一次点击一条命令**（可一步撤销）。
    *
-   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账；写入委托
+   * 判定「哪些格子是背景」在 core（`patternRegionIndices`），这里只负责入账；写入委托
    * `paintCells`，所以「点空格」既不留空的撤销记录、也不置脏。
    */
   function eraseCells(indices: readonly number[]): void {

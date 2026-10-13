@@ -8,7 +8,7 @@ import {
   BACKGROUND_TOLERANCE,
   floodBackground,
   maskBackground,
-  patternBackgroundIndices,
+  patternRegionIndices,
 } from "../background";
 
 const RED: Lab = rgbToLab(255, 0, 0);
@@ -171,7 +171,7 @@ describe("maskBackground", () => {
   });
 });
 
-describe("patternBackgroundIndices", () => {
+describe("patternRegionIndices", () => {
   /** 3×3 图纸：`indexAt(x,y)` 给色号（默认全 0、中心 1），labs 是与色号一一对应的 Lab 表。 */
   function makePattern(indexAt: (x: number, y: number) => number = () => 0): Pattern {
     const cells = new Uint16Array(9);
@@ -181,21 +181,22 @@ describe("patternBackgroundIndices", () => {
   const LABS: readonly Lab[] = [RED, BLUE];
 
   it("同色连通区域整片返回，含种子自己", () => {
-    const indices = patternBackgroundIndices(makePattern(), LABS, { x: 1, y: 1 }, BACKGROUND_TOLERANCE);
+    const indices = patternRegionIndices(makePattern(), LABS, { x: 1, y: 1 }, BACKGROUND_TOLERANCE);
     expect([...indices].sort((a, b) => a - b)).toEqual([...Array(9).keys()]);
   });
 
   it("色差大于容差的区域不被吃", () => {
     const pattern = makePattern((x, y) => (x === 1 && y === 1 ? 1 : 0));
-    const indices = patternBackgroundIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
+    const indices = patternRegionIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
     expect(indices).not.toContain(4); // 与种子色差超容差的中心块不被吃
     expect([...indices].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 5, 6, 7, 8]);
   });
 
-  it("[主体不会被穿越] 空格既不被吃、也挡住泛洪", () => {
-    // 中间一列是空格，左列与右列同为色号 0
+  it("[主体不会被穿越] 种子有颜色时，空格既不被吃、也挡住泛洪", () => {
+    // 中间一列是空格，左列与右列同为色号 0。**这条现在是有条件的**：种子是空格时恰恰相反，
+    // 空格就是可吃的那一片（见下面「空格可填」那几条）。
     const pattern = makePattern((x) => (x === 1 ? EMPTY : 0));
-    const indices = patternBackgroundIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
+    const indices = patternRegionIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
     expect([...indices].sort((a, b) => a - b)).toEqual([0, 3, 6]);
   });
 
@@ -213,7 +214,7 @@ describe("patternBackgroundIndices", () => {
     const labs = createPaletteRuntime(loadPalette(mardRaw)).labs;
 
     // 第 2 格与第 0 格同色号，但被第 1 格挡住、四连通不可达——容差 0 停在墙上
-    expect(patternBackgroundIndices(pattern, labs, { x: 0, y: 0 }, 0)).toEqual([0]);
+    expect(patternRegionIndices(pattern, labs, { x: 0, y: 0 }, 0)).toEqual([0]);
   });
 
   it("容差 10：相近色一起被吃（原来的「去背景」行为）", () => {
@@ -226,15 +227,41 @@ describe("patternBackgroundIndices", () => {
     const labs = createPaletteRuntime(loadPalette(mardRaw)).labs;
 
     expect(
-      patternBackgroundIndices(pattern, labs, { x: 0, y: 0 }, BACKGROUND_TOLERANCE),
+      patternRegionIndices(pattern, labs, { x: 0, y: 0 }, BACKGROUND_TOLERANCE),
     ).toEqual([0, 1, 2]);
   });
 
-  it("种子落在空格 / 图纸外 / 非整数时返回空数组", () => {
+  it("种子落在图纸外 / 非整数时返回空数组", () => {
     const pattern = makePattern((x) => (x === 1 ? EMPTY : 0));
-    expect(patternBackgroundIndices(pattern, LABS, { x: 1, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
-    expect(patternBackgroundIndices(pattern, LABS, { x: 3, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
-    expect(patternBackgroundIndices(pattern, LABS, { x: -1, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
-    expect(patternBackgroundIndices(pattern, LABS, { x: 0.5, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+    expect(patternRegionIndices(pattern, LABS, { x: 3, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+    expect(patternRegionIndices(pattern, LABS, { x: -1, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+    expect(patternRegionIndices(pattern, LABS, { x: 0.5, y: 0 }, BACKGROUND_TOLERANCE)).toEqual([]);
+  });
+
+  it("[空格可填] 种子落在空格时，返回空格所在的那一片", () => {
+    // 中间整列是空格、彼此连通：不是只返回种子那一格，也不是两侧的有色格
+    const pattern = makePattern((x) => (x === 1 ? EMPTY : 0));
+    expect([...patternRegionIndices(pattern, LABS, { x: 1, y: 0 }, BACKGROUND_TOLERANCE)].sort((a, b) => a - b)).toEqual([
+      1, 4, 7,
+    ]);
+  });
+
+  it("[空格可填] 空格被有色格隔开时，只返回种子那一块", () => {
+    // 中间整列是色号 0（墙），左右两列是空格、彼此不连通
+    const pattern = makePattern((x) => (x === 1 ? 0 : EMPTY));
+    expect(patternRegionIndices(pattern, LABS, { x: 0, y: 0 }, 0)).toEqual([0, 3, 6]);
+    expect(patternRegionIndices(pattern, LABS, { x: 2, y: 0 }, 0)).toEqual([2, 5, 8]);
+  });
+
+  it("[空格可填] 孤立的单个空格只返回它自己", () => {
+    const pattern = makePattern((x, y) => (x === 1 && y === 1 ? EMPTY : 0));
+    expect(patternRegionIndices(pattern, LABS, { x: 1, y: 1 }, BACKGROUND_TOLERANCE)).toEqual([4]);
+  });
+
+  it("[空格可填] 整张都是空格时返回全部格", () => {
+    const pattern = makePattern(() => EMPTY);
+    expect([...patternRegionIndices(pattern, LABS, { x: 0, y: 0 }, 0)].sort((a, b) => a - b)).toEqual([
+      ...Array(9).keys(),
+    ]);
   });
 });

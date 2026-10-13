@@ -153,7 +153,7 @@ describe("beginSession：会话播种", () => {
 
     editor.beginSession(makePattern(), COLOR_COUNT);
 
-    expect(editor.tool).toBe("brush");
+    expect(editor.tool).toBe("pan");
     expect(editor.showGrid).toBe(true);
     expect(editor.showLabels).toBe(true);
     expect(editor.saving).toBe(false);
@@ -226,7 +226,7 @@ describe("reset：把会话清回初始态", () => {
     expect(editor.colorCount).toBe(0);
     expect(editor.revision).toBe(0);
     expect(editor.lastDirty).toBeNull();
-    expect(editor.tool).toBe("brush");
+    expect(editor.tool).toBe("pan");
     expect(editor.currentColor).toBe(0);
     expect(editor.history.undoDepth).toBe(0);
     expect(editor.history.canUndo).toBe(false);
@@ -328,13 +328,19 @@ describe("onViewport：首次落默认缩放，其后只夹取（规格 §4.2）
 describe("工具 / 当前色 / 视图 / 显示开关", () => {
   it("setTool 写入非默认工具；非法工具抛错且不改状态", () => {
     const { editor } = seedEditor();
-    expect(editor.tool).toBe("brush");
+    expect(editor.tool).toBe("pan"); // 默认工具是拖动（规格 §5.3）
 
     editor.setTool("fill");
     expect(editor.tool).toBe("fill");
 
     expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(/工具/);
     expect(editor.tool).toBe("fill");
+  });
+
+  it("pan 是合法工具（拖动）", () => {
+    const { editor } = seedEditor();
+    editor.setTool("pan");
+    expect(editor.tool).toBe("pan");
   });
 
   it("setCurrentColor 接受 0..colorCount-1 与 EMPTY，拒绝越界 / 非整数 / NaN", () => {
@@ -701,19 +707,20 @@ describe("涂色与去背景", () => {
     expect("applyRect" in editor).toBe(false);
   });
 
-  it("吸管已删除：只允许 \"brush\" / \"fill\"，旧名一律响亮拒绝，store 上也没有 pickFromCell", () => {
+  it("吸管已删除：只允许 \"brush\" / \"fill\" / \"pan\"，旧名一律响亮拒绝，store 上也没有 pickFromCell", () => {
     const { editor } = seedEditor();
 
     // 文案与判据必须同源：清单里多一个名字、或旧名被静默放行，这里都要红。
     // 断言整份允许清单（不是只查 fill），并逐个点名被删掉的旧工具名。
-    const allowed = /只允许 "brush" \/ "fill"/;
+    // 2026-10-13：清单里多了 "pan"，正则同步改——不改就变成只断言前缀，「pan 被静默拒掉」照样绿。
+    const allowed = /只允许 "brush" \/ "fill" \/ "pan"/;
     expect(() => editor.setTool("select" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("pick" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("background" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("bg" as unknown as EditorTool)).toThrow(allowed);
     expect(() => editor.setTool("erase" as unknown as EditorTool)).toThrow(allowed);
 
-    expect(editor.tool).toBe("brush");
+    expect(editor.tool).toBe("pan");
     expect("pickFromCell" in editor).toBe(false);
   });
 
