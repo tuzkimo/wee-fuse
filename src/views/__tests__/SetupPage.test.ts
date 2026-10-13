@@ -503,7 +503,11 @@ describe("手机竖屏排法（§7.3）", () => {
 
     const preview = wrapper.get("[data-testid='preview-pane']");
     expect(preview.classes()).toContain("sticky");
-    expect(preview.classes()).toContain("top-0");
+    // **T4 修复（R55）**：原来是 `top-0`。顶栏自己吸顶后（`sticky top-0 z-20 h-16`）两者都贴视口顶，
+    // 中栏块顶部 64px（4px 描边 + `p-3` + 预览/结果内容的顶）被顶栏永久盖住。`top-16` = 64px
+    // = 手机顶栏高，吸顶时正好落在顶栏下沿。**同一匹配器、同一节点，不是放宽**（封住内容才是错的）。
+    expect(preview.classes()).toContain("top-16");
+    expect(preview.classes()).not.toContain("top-0");
     // 固定高的盒子里内容比盒子高（生成态的结果卡片就是）：手机上要能自己滚，
     // 否则溢出会盖到下面的选范围块上，吸顶也就名存实亡。
     expect(preview.classes()).toContain("overflow-y-auto");

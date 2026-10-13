@@ -492,10 +492,12 @@ function resetCrop(): void {
         手机吸顶且固定高 48vh（§7.3 的「高约 40vh」给了这个余地；R42：40vh 下固定的 chip +
         保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外），`md` 下两者都取消
         （平板上它是并排的中间一栏，不跟着页面滚）。
+        **T4 修复（R55）**：吸顶偏移是 `top-16`（= 手机顶栏的 64px）而不是 `top-0`——顶栏自己也
+        吸顶（`sticky top-0 z-20 h-16`），`top-0` 会让本块的顶部 64px 永远被顶栏盖住。
       -->
       <section
         data-testid="preview-pane"
-        class="relative z-10 sticky top-0 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="relative z-10 sticky top-16 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
         :style="boardDots"
       >
         <template v-if="paneShowsResult">
