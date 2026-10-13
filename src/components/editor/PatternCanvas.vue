@@ -183,7 +183,9 @@ function syncLayer(): void {
 
 type ToolGesture =
   | { kind: "brush"; pointerId: number; last: CellPoint; preview: Set<number> }
-  | { kind: "fill"; pointerId: number; cell: CellPoint };
+  | { kind: "fill"; pointerId: number; cell: CellPoint }
+  /** 拖动工具：单指平移。位移从**按下那一刻**的视图与落点算起（不是逐帧累加）。 */
+  | { kind: "pan"; pointerId: number; start: Point; startView: ViewTransform };
 
 interface ViewGesture {
   readonly ids: [number, number];
@@ -253,6 +255,8 @@ function startViewGesture(): void {
 function startToolGesture(pointerId: number, point: Point): void {
   const cell = cellFromScreen(point);
   // 单指落在图纸外：本次手势什么也不做（不涂画、也不平移——平移统一归双指与工具栏按钮，§6.2）。
+  // **拖动工具同样受这条守卫**（2026-10-13 裁定 3）：按下那一刻就决定本次手势不成立，
+  // 不能中途再换成平移。
   if (cell === null) return;
   if (props.tool === "brush") {
     toolGesture = {
@@ -266,6 +270,10 @@ function startToolGesture(pointerId: number, point: Point): void {
   if (props.tool === "fill") {
     // 只在按下那一刻记格，拖动不改（见 finishToolGesture）。
     toolGesture = { kind: "fill", pointerId, cell };
+    return;
+  }
+  if (props.tool === "pan") {
+    toolGesture = { kind: "pan", pointerId, start: point, startView: props.view };
   }
 }
 
@@ -329,6 +337,20 @@ function onPointerMove(event: PointerEvent): void {
 
   const gesture = toolGesture;
   if (gesture === null || gesture.pointerId !== event.pointerId) return;
+  if (gesture.kind === "pan") {
+    // 位移基于 `startView` 与按下那一刻的落点（不是逐帧累加）：多次 emit 不会累出漂移。
+    emit(
+      "update:view",
+      panCellView(
+        gesture.startView,
+        viewport.value,
+        gridSize(),
+        point.x - gesture.start.x,
+        point.y - gesture.start.y,
+      ),
+    );
+    return;
+  }
   if (gesture.kind === "brush") {
     const cell = cellFromScreen(point);
     if (cell === null) return; // 拖出图纸：跳过这次采样，`last` 不动 → 回到图内从上一格补起
@@ -344,6 +366,8 @@ function onPointerMove(event: PointerEvent): void {
 
 /** 工具手势的唯一出口：抬手（或捕获被无声丢失）才提交，一次手势 = 一条命令（§6.2）。 */
 function finishToolGesture(gesture: ToolGesture): void {
+  // 拖动只改视图，抬手不发任何命令（它已经逐次 update:view 过了）。
+  if (gesture.kind === "pan") return;
   if (gesture.kind === "brush") {
     const indices = [...gesture.preview];
     // 不可达，**无判别力用例**（有意不写）：`startToolGesture` 建的画笔手势 `preview` 必然 ≥1 格，

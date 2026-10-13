@@ -565,6 +565,59 @@ describe('填充 tool = "fill"：按下定格、抬手才 emit', () => {
   });
 });
 
+describe("拖动工具：单指平移视图（不改图纸）", () => {
+  it("单指拖动 emit update:view（平移），抬手不发 paint / fill", async () => {
+    const wrapper = mountCanvas({ tool: "pan" });
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 100, 100);
+    await pointer(wrapper, "pointermove", 130, 120);
+    // 位移 (30, 20) 直接加到按下那一刻的 offset 上；夹取交给 panCellView（-170 / -180 都在合法范围内）。
+    expect(wrapper.emitted("update:view")?.at(-1)).toEqual([{ scale: 24, offsetX: -170, offsetY: -180 }]);
+
+    await pointer(wrapper, "pointerup", 130, 120);
+    expect(wrapper.emitted("paint")).toBeUndefined();
+    expect(wrapper.emitted("fill")).toBeUndefined();
+  });
+
+  it("落在图纸外按下时全程什么都不做", async () => {
+    // 8×8、24px/格、偏移 0 → 图纸只占屏幕左上角 192×192，(300,300) 在图纸外。
+    // 这条守卫是刻意的：按下那一刻就决定本次手势不成立，不能中途换成平移。
+    const outside = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "pan" });
+    await outside.vm.$nextTick();
+
+    await pointer(outside, "pointerdown", 300, 300);
+    await pointer(outside, "pointermove", 320, 320);
+    await pointer(outside, "pointerup", 320, 320);
+
+    expect(outside.emitted("update:view")).toBeUndefined();
+    expect(outside.emitted("paint")).toBeUndefined();
+    expect(outside.emitted("fill")).toBeUndefined();
+  });
+
+  it("拖到一半加第二根手指 → 转成双指手势（缩放生效）", async () => {
+    const wrapper = mountCanvas({ tool: "pan" });
+    await wrapper.vm.$nextTick();
+
+    await pointer(wrapper, "pointerdown", 100, 100);
+    await pointer(wrapper, "pointermove", 120, 100);
+    // **前置**：单指平移这一刻已经生效。没有这一条，本用例在「拖动未实现」时也会因为双指那一支
+    // 而绿——那就变成在测已经存在的行为。
+    expect(wrapper.emitted("update:view")?.at(-1)).toEqual([{ scale: 24, offsetX: -180, offsetY: -200 }]);
+
+    await pointer(wrapper, "pointerdown", 200, 100, { pointerId: 2, isPrimary: false });
+    await pointer(wrapper, "pointermove", 250, 100, { pointerId: 2, isPrimary: false });
+
+    // 两指间距从 80 拉到 130 ⇒ 缩放比 1.625 ⇒ scale 从 24 涨到 39。
+    // **只断言方向与量级**：锚点换算后的 offset 是 zoomCellView 的内部结果，写死精确值会让
+    // 这条用例随那条口径漂，而它要钉的是「第二指落下后确实转成了双指手势」。
+    const last = wrapper.emitted("update:view")?.at(-1)?.[0] as ViewTransform;
+    expect(last.scale).toBeGreaterThan(24);
+    expect(wrapper.emitted("paint")).toBeUndefined();
+    expect(wrapper.emitted("fill")).toBeUndefined();
+  });
+});
+
 describe("双指：视图手势与「第二指落下取消笔画」", () => {
   it("双指中点位移 → emit update:view（平移）", async () => {
     const wrapper = mountCanvas();
