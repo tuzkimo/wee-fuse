@@ -5,12 +5,12 @@
 // （屏幕 → 格子的整条链错了不会报错，只会把颜色涂到别的格子上）。
 //
 // 分层（规格 §5）：**色块层**恒为「图纸尺寸 × 1px/格」的离屏 canvas，与 `view` 无关；主画布每帧
-// 重新合成为「棋盘底纹 → drawImage(色块层) → 叠加层」。叠加层不缓存：它只画可见格，且随视图与
+// 重新合成为「纸底 → drawImage(色块层) → 叠加层」。叠加层不缓存：它只画可见格，且随视图与
 // 状态变化，缓存它带来的失效判定比绘制成本更贵（§5.4）。
 import { ref, watch } from "vue";
 import { screenToOriented, type Point, type Size, type ViewTransform } from "@/core/crop/view";
 import type { RGB } from "@/core/color/space";
-import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DARK } from "@/components/ui/beadColors";
 import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
@@ -599,7 +599,16 @@ function draw(): void {
   ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ctx.clearRect(0, 0, size.width, size.height);
 
-  // 空格不铺底：透明格透出容器那层深色拼豆板（`bg-bead-board` + 板孔点阵，§6.1「看图一律深色衬底」）。
+  // 纸底：铺满**图纸矩形**（不是整块画布）。色块层里的空格是透明的，透出这层纸而不是深板底
+  // （§5.4）——没有它，一张去了背景、边线是黑的图会与板底糊在一起。画布外那一圈仍是深色板底 +
+  // 板孔点阵（§6.1 对那一圈仍逐字成立）。必须画在 `drawImage` **之前**，否则会把豆粒盖住。
+  ctx.fillStyle = PAPER_ON_DARK;
+  ctx.fillRect(
+    view.offsetX,
+    view.offsetY,
+    props.pattern.width * cellPx,
+    props.pattern.height * cellPx,
+  );
 
   // 无插值放大：图纸是色块，插值会产生图纸里不存在的中间色（与 patternThumbnail 同口径，§5.7）。
   ctx.imageSmoothingEnabled = false;

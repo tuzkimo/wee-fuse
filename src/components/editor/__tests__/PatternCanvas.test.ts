@@ -8,7 +8,7 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { maxCellScale, minCellScale } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
-import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DARK } from "@/components/ui/beadColors";
 
 /**
  * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
@@ -259,6 +259,7 @@ function stubContext(): void {
         puts.push({ target, args: [data, ...rest], data: data.data });
       },
       drawImage: (...drawArgs: unknown[]): void => {
+        ops.push("drawImage"); // 纸底必须先于它：顺序反了会把豆粒盖住（无像素可断言，只能靠调用序）
         draws.push({ target, args: drawArgs });
       },
     };
@@ -1131,5 +1132,30 @@ describe("深色拼豆板底（Review Focus 3）", () => {
     });
     // 顺序也承重：网格线后画就会把贴边那一条边的框盖住（§7.4 的更正注记）。
     expect(ops.indexOf("strokeRect")).toBeGreaterThan(ops.lastIndexOf("stroke"));
+  });
+
+  // 2026-10-13（规格 §5.4）：图纸矩形内铺一层浅纸底，空格不再透出深板底。
+  // 没有它时，一张去了背景、边线是黑的图会与板底糊在一起——人类伙伴的实机反馈。
+  it("图纸矩形内铺纸底 PAPER_ON_DARK（不是铺满整块画布）", async () => {
+    // 8×8 + VIEW_8：图纸矩形就是 [0,0,192,192]，手算得出「铺的是图纸那一片」。
+    // 写成 `fillRect(0, 0, viewport.w, viewport.h)`（铺满画布）在这条上立刻红。
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8 });
+    await wrapper.vm.$nextTick();
+
+    expect(fills.find((fill) => fill.fillStyle === PAPER_ON_DARK)).toEqual({
+      x: 0,
+      y: 0,
+      w: 192,
+      h: 192,
+      fillStyle: PAPER_ON_DARK,
+    });
+  });
+
+  it("纸底画在色块层之前（顺序反了会把豆粒盖住）", async () => {
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8 });
+    await wrapper.vm.$nextTick();
+
+    // 无选中、无进行中的手势时，`fillRect` 只有纸底那一次——所以第一条调用就是它。
+    expect(ops.indexOf("fillRect")).toBeLessThan(ops.indexOf("drawImage"));
   });
 });

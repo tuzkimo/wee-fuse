@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
-import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DARK } from "@/components/ui/beadColors";
 import css from "../../../style.css?raw";
 
 /**
@@ -27,5 +27,10 @@ describe("深色底画布颜色常量（§9 / Review Focus 3）", () => {
   it("FRAME_ON_DARK（图纸外框）与 --color-bead-line 同源", () => {
     // 外框借的是「容器外框」那一档（§6.1 的更正注记 / R57）：没有同名 token，同源对象是 bead-line。
     expect(css).toContain(`--color-bead-line: ${FRAME_ON_DARK}`);
+  });
+
+  it("PAPER_ON_DARK（图纸纸底）与 --color-bead-card 同源", () => {
+    // 纸底借的是设计系统里「纸」那一档（§5.4）：没有同名 token，同源对象是 bead-card。
+    expect(css).toContain(`--color-bead-card: ${PAPER_ON_DARK}`);
   });
 });
