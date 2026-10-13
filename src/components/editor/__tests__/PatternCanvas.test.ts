@@ -5,10 +5,11 @@ import { screenToOriented, type ViewTransform } from "@/core/crop/view";
 import { loadPalette } from "@/core/palette/registry";
 import type { Palette } from "@/core/palette/types";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
-import { maxCellScale, minCellScale } from "@/core/pattern/view";
+import { maxCellScale, minCellScale, visibleCellRange } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DARK } from "@/components/ui/beadColors";
+import { EMPTY_STROKE } from "@/core/render/sheet";
 
 /**
  * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
@@ -24,8 +25,10 @@ import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DA
  *      `drawGrid` 会在 `range.x0` 上抛 TypeError，该用例恰好 1 红（见用例所在的 describe）。
  *   ⑤ 深色底上的网格线色 `GRID_ON_DARK` 与格内色号的两档按豆粒明暗取色（浅豆 `LABEL_ON_LIGHT` /
  *      深豆 `LABEL_ON_DARK`）——写死成任一单色（旧实现是无条件 `LABEL_ON_DARK`）就红（Review Focus 3）。
+ *   ⑥ 空格斜线：可见的每个空格一次 `moveTo` + 一次 `lineTo`（用 `EMPTY_STROKE`），且**先于**网格线——
+ *      去掉空格过滤（全格都画）、扫整张图纸而不只看可见范围、把斜线挪到网格线之后，各精确转红。
  * 其余一律走事件与状态断言；**拿不出能证明承重的变异**的画法（`imageSmoothingEnabled`、
- * 色号 `fillText` 的字号）仍然**有意不写**。
+ * 色号 `fillText` 的字号、**斜线的方向**）仍然**有意不写**。
  *
  * 场景（全文件共用）：色卡 3 色；两份图纸——
  *   · 32×32 + 视图 `{24, -200, -200}`：图纸（768px）比 400×400 的视口大，平移 / 缩放都可观察；
@@ -267,7 +270,10 @@ function stubContext(): void {
   });
 }
 
-/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（色号用 `fillText`）。 */
+/**
+ * 网格线与**空格斜线**是仅有的两种用 `moveTo` / `lineTo` 的绘制（色号用 `fillText`、
+ * 纸底与高亮用 `fillRect`）。
+ */
 function moveToCount(): number {
   return ops.filter((op) => op === "moveTo").length;
 }
@@ -685,6 +691,68 @@ describe("双指：视图手势与「第二指落下取消笔画」", () => {
     await pointer(wrapper, "pointerup", 150, 150);
 
     expect(wrapper.emitted("paint")).toBeUndefined();
+  });
+});
+
+/**
+ * 空格长什么样：**照抄施工图的斜线**（2026-10-13 真机反馈：纯色浅纸底与浅色豆混在一起分不出）。
+ *
+ * 判据用「调用签名」而不是像素：一条斜线 = 一次 `moveTo` + 一次 `lineTo`（与
+ * `core/render/sheet.ts` 的 `paintCells` 同构），加上施图那个颜色常量。
+ *
+ * **方向（左上 → 右下）有意不断言**：那需要把桩扩成记录坐标，而「画反方向」不是一个真实缺陷
+ * （只是与施工图镜像）；施工图侧的常量与注释已经是那个方向的真源。
+ */
+describe("空格斜线底纹（施工图口径）", () => {
+  // 3×1：实色 / 空格 / 实色——三种格都在，手算得出「只给空格画」。
+  const MIXED: Pattern = {
+    width: 3,
+    height: 1,
+    paletteId: PALETTE.id,
+    cells: Uint16Array.from([1, EMPTY, 1]),
+  };
+
+  it("每个可见空格一条斜线、实色格不画；颜色取自施工图那个常量", async () => {
+    const wrapper = mountCanvas({ pattern: MIXED, view: VIEW_8, showGrid: false });
+    await wrapper.vm.$nextTick();
+
+    // 给实色格也画（3 条）、或一格都不画（0 条）都会红。
+    expect(moveToCount()).toBe(1);
+    expect(ops.filter((op) => op === "lineTo")).toHaveLength(1);
+    // 网格线关掉了，所以这一帧唯一的 `stroke()` 就是斜线——颜色写死成别的值也红。
+    expect(lastStrokeColor()).toBe(EMPTY_STROKE);
+  });
+
+  it("斜线先于网格线描（与施工图同一层序）", async () => {
+    const wrapper = mountCanvas({ pattern: MIXED, view: VIEW_8, showGrid: true });
+    await wrapper.vm.$nextTick();
+
+    // 3×1、24px/格 ≥ 阈值：4 条竖线 + 2 条横线 = 6，另加 1 条斜线。
+    expect(moveToCount()).toBe(7);
+    // 只取前两次描边的**顺序**：多跑一轮 `draw()` 时后面的条目会重复，顺序不变量不变。
+    expect(strokeColors.slice(0, 2)).toEqual([EMPTY_STROKE, GRID_ON_DARK]);
+  });
+
+  it("只给**可见的**那些空格画斜线（图纸比视口大时不能扫整张）", async () => {
+    // 32×32 全空 + VIEW_32（24px/格、偏移 -200）⇒ 图纸 768px 比 400×400 的视口大，
+    // 可见范围是严格子集。这条是「一轮 draw() 的成本上限」的唯一判据。
+    const ALL_EMPTY: Pattern = {
+      width: 32,
+      height: 32,
+      paletteId: PALETTE.id,
+      cells: new Uint16Array(32 * 32).fill(EMPTY),
+    };
+    const wrapper = mountCanvas({ pattern: ALL_EMPTY, view: VIEW_32, showGrid: false });
+    await wrapper.vm.$nextTick();
+
+    const range = visibleCellRange(VIEW_32, { width: 400, height: 400 }, { width: 32, height: 32 });
+    if (range === null) throw new Error("夹具坏了：图纸与视口应当有交集");
+    const visible = (range.x1 - range.x0 + 1) * (range.y1 - range.y0 + 1);
+    // 夹具自证：可见范围确实是真子集（不然本用例与「扫整张」等价）
+    expect(visible).toBeGreaterThan(0);
+    expect(visible).toBeLessThan(32 * 32);
+
+    expect(moveToCount()).toBe(visible);
   });
 });
 

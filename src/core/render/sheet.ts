@@ -60,8 +60,13 @@ const SHEET_BACKGROUND = "#ffffff";
 const GRID_STROKE = "#0f172a";
 /** 每格细线的颜色：**很淡**（参照施工图口径），免得细线把色块压暗。 */
 const GRID_THIN_STROKE = "#dcdcdc";
-/** 空格斜线的「浅灰」；方向为左上 → 右下。 */
-const EMPTY_STROKE = "#e2e8f0";
+/**
+ * 空格斜线的「浅灰」；方向为左上 → 右下。
+ *
+ * **编辑器的画布也用它**（`PatternCanvas.vue` 的空格斜线底纹）：空格长什么样在施工图上早就定下了，
+ * 2026-10-13 的真机反馈又把这件事拉回了编辑器（纯色浅纸底与浅色豆分不开），所以这里是唯一真源。
+ */
+export const EMPTY_STROKE = "#e2e8f0";
 /** 文字墨色（标题 / 刻度 / 用料条正文）。格内色号**不**用它，仍取 `labelInk`。 */
 const TEXT_INK = "#0f172a";
 /** 色块外框：画在真色填充**之上**的细框，让浅色块在白底上也有边界（用该色本身）。 */
