@@ -67,6 +67,26 @@ const pipelineSpy = vi.hoisted(() => ({
   maxColors: [] as number[],
   removeBackground: [] as (boolean | undefined)[],
 }));
+
+/**
+ * 实时预览的**透传替身**：真实现照跑（预览本身的行为由 `services/__tests__/livePreview.test.ts`
+ * 单独覆盖），这里只记下调用次数与入参。防抖那条用例需要一个可数的观察点——没有它，「连续改两次
+ * 只算一次」这句话就无法断言（数不到调用次数）。
+ */
+const livePreviewSpy = vi.hoisted(() => ({ calls: [] as { longSide: number }[] }));
+vi.mock("@/services/livePreview", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/livePreview")>();
+  return {
+    ...actual,
+    renderLivePreview: (
+      request: Parameters<typeof actual.renderLivePreview>[0],
+      palette: Parameters<typeof actual.renderLivePreview>[1],
+    ) => {
+      livePreviewSpy.calls.push({ longSide: request.longSide });
+      return actual.renderLivePreview(request, palette);
+    },
+  };
+});
 vi.mock("@/services/pipeline", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/pipeline")>();
   return {
@@ -130,25 +150,25 @@ function makeCtx(pixels: Uint8ClampedArray) {
  * 断点可测」——实测不成立）：happy-dom 20.14.5 的 `matchMedia` 对着它自己的默认视口求值，
  * 把 `window.innerWidth` 设成 500 或 2000 都一样——`(min-width: 768px)` 与
  * `(min-width: 1024px)` 恒 true、`(min-width: 2000px)` 恒 false（原始输出见报告 §测试侧更正 T2）。
- * 于是「手机 <768px」这一支在真实环境里根本走不到，用它当判据的用例会假绿。
+ * 于是「手机 <1024px」这一支在真实环境里根本走不到，用它当判据的用例会假绿。
  *
  * 这个桩按浏览器的契约实现两件事：`matches` 读 `window.innerWidth`（测试能控的那个值），
  * 跨过断点时派发 `change`。用例测的因此仍是**组件的行为**（读 `matches`、听 `change`），
  * 而不是 happy-dom 那个解析器。
  *
- * 桩还**记录收到的查询串**（返回值里的 `queries`）。桩的 `matches` 只认 768 这一个阈值，
- * 于是组件把 `"(min-width: 768px)"` 写成别的串（例如 `"(min-width: 700px)"`）时，所有布局
+ * 桩还**记录收到的查询串**（返回值里的 `queries`）。桩的 `matches` 只认 1024 这一个阈值，
+ * 于是组件把 `"(min-width: 1024px)"` 写成别的串（例如 `"(min-width: 700px)"`）时，所有布局
  * 用例照样全绿——而写错这个串就等于平板布局静默失效。`queries` 是唯一能判死这类变异的输出。
  */
 function stubBreakpoint(): { resizeTo(width: number): void; queries: string[] } {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
-  const query = "(min-width: 768px)";
+  const query = "(min-width: 1024px)";
   const queries: string[] = [];
   const mql = {
     media: query,
     onchange: null,
     get matches(): boolean {
-      return window.innerWidth >= 768;
+      return window.innerWidth >= 1024;
     },
     addEventListener(type: string, listener: (event: MediaQueryListEvent) => void): void {
       if (type === "change") listeners.add(listener);
@@ -305,7 +325,7 @@ function submitGenerate(wrapper: VueWrapper): void {
 beforeEach(async () => {
   setActivePinia(createPinia());
   setProjectStore(await createMemoryProjectStore());
-  window.innerWidth = 1024;
+  window.innerWidth = 1280;
 });
 
 afterEach(() => {
@@ -317,6 +337,7 @@ afterEach(() => {
   backMock.mockClear();
   pipelineSpy.maxColors.length = 0;
   pipelineSpy.removeBackground.length = 0;
+  livePreviewSpy.calls.length = 0;
   // 历史里默认没有上一页（`backOrHome` 走「回图纸库」那一支）；要测另一支的用例自己喂值。
   delete historyState.back;
   setProjectStore(null);
@@ -362,10 +383,10 @@ describe("入口守卫与准备阶段", () => {
 });
 
 describe("断点布局", () => {
-  it("平板（≥768px）同时显示选区与参数两栏", async () => {
+  it("平板（≥1024px）同时显示选区与参数两栏", async () => {
     stubPlatform();
     seedDraft();
-    window.innerWidth = 1024;
+    window.innerWidth = 1280;
 
     const wrapper = mount(SetupPage);
     await flushPromises();
@@ -382,7 +403,7 @@ describe("断点布局", () => {
    * 判别力：把 `showEditor` 改回「按 stage 挑一屏」（例如 `stage === "edit" && isWide`），
    * 手机上 `param-pane` 就不在了，本用例立刻红。
    */
-  it("手机（<768px）单页：选区与参数同时在，分页按钮已删除（C8 第 4 项）", async () => {
+  it("手机（<1024px）单页：选区与参数同时在，分页按钮已删除（C8 第 4 项）", async () => {
     stubPlatform();
     seedDraft();
     window.innerWidth = 500;
@@ -413,7 +434,7 @@ describe("断点布局", () => {
     expect(layout.classes()).toContain("space-y-6");
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
 
-    breakpoint.resizeTo(1024);
+    breakpoint.resizeTo(1280);
     await flushPromises();
 
     // 平板改成横向三栏（`flex` 默认行向）——类名从 D1 起就是这套，判据不变：**跨断点时容器类当场换掉**。
@@ -434,13 +455,13 @@ describe("断点布局", () => {
   it("生成后裁剪与参数两栏仍然渲染（阶段不再互斥，§7.3）", async () => {
     const { breakpoint } = stubPlatform();
     seedDraft();
-    window.innerWidth = 1024;
+    window.innerWidth = 1280;
 
     const wrapper = mount(SetupPage);
     await flushPromises();
 
-    // 前提：≥768px 确实是平板布局，否则下面的断言可能靠「断点没生效」蒙过去。
-    expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
+    // 前提：≥1024px 确实是平板布局，否则下面的断言可能靠「断点没生效」蒙过去。
+    expect(breakpoint.queries).toEqual(["(min-width: 1024px)"]);
 
     await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
@@ -452,17 +473,131 @@ describe("断点布局", () => {
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
   });
 
-  it("断点查询串就是 768px（写错这个串 = 平板布局静默失效）", async () => {
+  it("断点查询串就是 1024px（写错这个串 = 平板布局静默失效）", async () => {
     const { breakpoint } = stubPlatform();
     seedDraft();
 
     mount(SetupPage);
     await flushPromises();
 
-    // 桩的 `matches` 只认 768 这一个阈值：组件把串写成别的（例如 `"(min-width: 700px)"`）时，
+    // 桩的 `matches` 只认 1024 这一个阈值：组件把串写成别的（例如 `"(min-width: 700px)"`）时，
     // 上面那三条布局用例照样全绿——只有这里读得到真正问出去的串。而串写错就等于平板两栏
     // 布局在真机上静默失效（组件在 `onMounted` 只问一次，问错就永远拿不到正确布局）。
-    expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
+    expect(breakpoint.queries).toEqual(["(min-width: 1024px)"]);
+  });
+});
+
+/**
+ * 平板定高 shell（§5.2）：整页不滚、中栏固定、**只有左右两栏各自上下滚**（人类伙伴在真机上
+ * 跑完流程后的原话）。断言全是类名（happy-dom 不解析布局），真实观感在规格 §8 的真机清单里。
+ *
+ * 写法照拄 `EditorPage.test.ts` 的「平板定高 shell（§7.4 T4）」那一组：那里坐实了同一条机制。
+ */
+describe("平板定高 shell（§5.2）", () => {
+  it("main 是定高 flex 列，只有左右两栏能滚", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+
+    const main = wrapper.get("main");
+    // 四个类缺一不可：只加 h-screen 而不加 flex/flex-col 时三栏容器会在 header 下面**再占一个
+    // 视口高**、底部被 overflow-hidden 裁掉——那是「底部内容消失」而不是「只有左右两栏滚」，
+    // 所以断言必须把 md:flex / md:flex-col 一起钉住，只查 h-screen 抓不到那种失败。
+    for (const cls of ["md:flex", "md:flex-col", "md:h-screen", "md:overflow-hidden"]) {
+      expect(main.classes()).toContain(cls);
+    }
+    expect(main.classes()).toContain("min-h-screen"); // 手机仍可滚
+
+    const body = wrapper.get("[data-testid='setup-body']");
+    // 三栏容器的类由 `isWide` 当场换（不是 `md:` 前缀），这是本页既有机制、`断点布局` 那组用例
+    // 已经钉着（跨断点时容器类当场换掉）⇒ 这里断的是**当前生效的那一支**，不是前缀。
+    expect(body.classes()).toEqual(expect.arrayContaining(["flex-1", "min-h-0"]));
+
+    expect(wrapper.get("[data-testid='crop-pane']").classes()).toEqual(
+      expect.arrayContaining(["md:min-h-0", "md:overflow-y-auto"]),
+    );
+    expect(wrapper.get("[data-testid='param-pane']").classes()).toEqual(
+      expect.arrayContaining(["md:min-h-0", "md:overflow-y-auto"]),
+    );
+    // 中栏**不滚**：它按短边把内容缩进盒子（Task 5/8）。
+    const previewPane = wrapper.get("[data-testid='preview-pane']");
+    expect(previewPane.classes()).toContain("md:overflow-hidden");
+    expect(previewPane.classes()).not.toContain("md:overflow-y-auto");
+    expect(previewPane.classes()).not.toContain("md:min-h-[60vh]");
+  });
+});
+
+/**
+ * 中栏实时预览（规格 §5.4）：调参时中栏跟着变，且由 `draft.generated` 门控——生成之后接着调参，
+ * 屏幕上必须看得见参数的影响，而不是一张**已经作废的**结果卡片（那是改造前的形态）。
+ */
+describe("中栏实时预览（§5.4）", () => {
+  it("未生成时中栏是网格块实时预览（不再是原图裁剪预览）", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+    const pane = wrapper.get("[data-testid='preview-pane']");
+
+    expect(pane.find("[data-testid='live-preview']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='preview-canvas']").exists()).toBe(false);
+    expect(pane.text()).toContain("预览");
+    expect(pane.text()).not.toContain("点开始拼看看");
+  });
+
+  it("已生成后改参数 ⇒ 中栏回到实时预览；再点「开始拼」⇒ 又是结果卡片", async () => {
+    const wrapper = await mountSetupGenerated();
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(false);
+
+    useDraft().setLongSide(116);
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(true);
+    expect(wrapper.get("[data-testid='preview-pane']").text()).toContain("预览");
+    // 顶栏主按钮也必须回到「开始拼 ▶」：它还写着「完成 ✓」的话，下面那一下点的是「回家」
+    // 而不是「重新生成」——这正是本批最容易接错的那根线（接错了屏上看起来完全正常）。
+    expect(wrapper.get("[data-testid='setup-primary']").text()).toContain("开始拼");
+
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(false);
+  });
+
+  it("调参防抖：连续改两次只算一次（~200ms）", async () => {
+    // 只假 `setTimeout` / `clearTimeout`：`flushPromises` 走 `setImmediate`，把它一起冻住
+    // 会让每一次 `await flushPromises()` 永远挂住（那是测试基础设施的坑，不是被测行为）。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      stubPlatform();
+      const draft = seedDraft();
+      mount(SetupPage);
+      await flushPromises();
+      livePreviewSpy.calls.length = 0; // 初值那一次（挂载即算、不等防抖）不算在防抖里
+
+      draft.setMaxColors(30);
+      await flushPromises();
+      draft.setMaxColors(31);
+      await flushPromises();
+      // 还没到防抖窗口：拖动中的每一次变更都不该触发计算。
+      expect(livePreviewSpy.calls).toHaveLength(0);
+
+      vi.advanceTimersByTime(200);
+      expect(livePreviewSpy.calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("draft.preview 被释放后中栏什么都不画（不抛）", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(true);
+
+    useDraft().releasePreview();
+    await flushPromises();
+
+    // 什么都不能画（也不留旧图），但不报错：中栏只剩「预览」标识。
+    expect(wrapper.get("[data-testid='preview-pane']").text()).toContain("预览");
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='preview-canvas']").exists()).toBe(false);
   });
 });
 
@@ -513,11 +648,16 @@ describe("手机竖屏排法（§7.3）", () => {
     // 旧的 40vh 不再允许出现在这个节点上（回退到旧值这一条会红）。
     expect(preview.classes()).toContain("h-[48vh]");
     expect(preview.classes()).not.toContain("h-[40vh]");
-    // 平板上高度是 auto，溢出处理该还回去（不把中栏变成一个内部滚动容器）。
-    expect(preview.classes()).toContain("md:overflow-visible");
+    // 平板上高度跟着定高 shell 走（§5.2）——**不再是 auto**：中栏要吃掉父容器的高度，
+    // 才能把「整页不滚、只有左右两栏滚」这件事交给左右两栏。溢出处理从 `visible` 改成
+    // `hidden`：两者都是同一个属性的工具类，同时留着谁赢取决于产物顺序；而「不把中栏变成
+    // 一个内部滚动容器」这条本意由 `hidden` 同样满足（内容按短边缩进盒子，本就不该溢出）。
+    expect(preview.classes()).toContain("md:overflow-hidden");
+    expect(preview.classes()).not.toContain("md:overflow-visible");
     // `md` 下取消吸顶与固定高（平板上中栏是并排的中间一栏，不跟着页面滚）。
     expect(preview.classes()).toContain("md:static");
-    expect(preview.classes()).toContain("md:h-auto");
+    expect(preview.classes()).toContain("md:h-full");
+    expect(preview.classes()).not.toContain("md:h-auto");
     // T2（实机反馈 1）：吸顶块必须自己起层叠（`relative z-10`）——否则后面的兄弟
     // （`TierSlider` 的 `absolute` 刻度、去背景开关）按 DOM 顺序画在它上面。
     expect(preview.classes()).toContain("relative");
@@ -709,20 +849,22 @@ describe("手机竖屏排法（§7.3）", () => {
 });
 
 /**
- * 中栏三态与顶栏主按钮（§7.3）。三态：还没生成过 = 裁剪预览；刚生成 = 结果卡片；
- * 生成后又改参数 = 一成不变（不变暗、不重算）。中栏的数据源是**上一次的结果**，不是实时预览。
+ * 中栏两态与顶栏主按钮（§7.3 + 2026-10-13 规格 §6.4）。两态：还没生成过 / 生成之后又改了参数
+ * = **当前参数的实时预览**；已生成 = 结果卡片。中栏的数据源因此是**当前参数**，不是上一次的
+ * 结果——规格 §4.3 明确推翻了旧的「生成后又改参数 = 一成不变」那条裁定。
  *
  * 中栏的**那份** `ResultPanel` 不渲染 `result-ok`（顶栏已经有「完成 ✓」了，同页两颗同名按钮会让
  * 用户分不清哪颗是收尾）——`showDone` prop 默认 `true`，只有本页中栏传 `false`。
  */
-describe("中栏三态与顶栏主按钮（§7.3）", () => {
-  it("还没生成过时中栏是裁剪预览 + 一行提示，不是空", async () => {
+describe("中栏两态与顶栏主按钮（§7.3）", () => {
+  it("还没生成过时中栏是实时预览 + 「预览」标识，不是空", async () => {
     const wrapper = await mountSetupBeforeGenerate();
 
     const pane = wrapper.get("[data-testid='preview-pane']");
-    // 复用左栏同一份 `draft.preview`（不新算）：中栏必须自己画出那张图，不能是空块。
-    expect(pane.find("canvas, img").exists()).toBe(true);
-    expect(pane.text()).toContain("点开始拼看看");
+    // 中栏必须自己画出网格块（不是空块），并挂一行「预览」标识——预览走的是 1600px 输入 +
+    // 小网格，与成品可能不同，所以成品一律以「开始拼」的产物为准（规格 §5.4）。
+    expect(pane.find("[data-testid='live-preview']").exists()).toBe(true);
+    expect(pane.text()).toContain("预览");
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
   });
 
@@ -1259,11 +1401,13 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       const second = mount(SetupPage);
       await flushPromises();
 
-      // 重挂载时 `stage` 仍是 `"result"`（它随 store 存活），于是页面先显示结果卡片；
-      // 改参数前切回编辑（`result-rerun` → `setStage("edit")`）。
-      expect(second.find("[data-testid='result-pane']").exists()).toBe(true);
-      second.findComponent(ResultPanel).vm.$emit("rerun");
-      await flushPromises();
+      // 重挂载时 `stage` 仍是 `"result"`（它随 store 存活），但 `generated` 在 ① 已经落回 false ⇒
+      // 中栏显示**实时预览**，不是那张已经作废的结果卡片（规格 §6.4）——所以这里不再需要先经
+      // `result-rerun` 切回编辑阶段，直接点主按钮就是「重新生成」。
+      expect(second.find("[data-testid='result-pane']").exists()).toBe(false);
+      // 预览位图是重挂载后**现解码**的，防抖 200ms 内还没算出来 ⇒ 这里只断「中栏不是那张结果
+      // 卡片、而是预览那一态」；「网格块真的画出来了」由 `中栏实时预览` 组断言（那里挂载时预览已在手）。
+      expect(second.get("[data-testid='preview-pane']").text()).toContain("预览");
 
       await second.get("[data-testid='setup-primary']").trigger("click");
       await flushPromises();
@@ -1835,7 +1979,7 @@ describe("结果阶段", () => {
   it("结果页的「重做」把中栏换回裁剪预览（左右两栏不跳路由）", async () => {
     stubPlatform();
     const draft = seedDraft();
-    window.innerWidth = 1024;
+    window.innerWidth = 1280;
 
     const wrapper = mount(SetupPage);
     await flushPromises();
@@ -1873,7 +2017,7 @@ describe("结果阶段", () => {
     expect(push).toHaveBeenCalledWith({ name: "home" });
   });
 
-  it("手机生成成功后的中栏只显示裁剪预览（结果在独立结果页，T2）", async () => {
+  it("手机生成成功后的中栏只显示实时预览（结果在独立结果页，T2）", async () => {
     stubPlatform();
     seedDraft();
     window.innerWidth = 500;
@@ -1890,7 +2034,7 @@ describe("结果阶段", () => {
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(false);
     expect(
-      wrapper.get("[data-testid='preview-pane']").find("[data-testid='preview-canvas']").exists(),
+      wrapper.get("[data-testid='preview-pane']").find("[data-testid='live-preview']").exists(),
     ).toBe(true);
   });
 

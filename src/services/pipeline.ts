@@ -1,7 +1,7 @@
 import type { Decoder } from "@/core/image/decode";
 import { rotateGrid, rotatedSize } from "@/core/image/rotate";
 import { resampleToGrid } from "@/core/image/resample";
-import type { Rect, Rotation, SampledGrid } from "@/core/image/types";
+import type { RgbaImage, Rect, Rotation, SampledGrid } from "@/core/image/types";
 import { BACKGROUND_TOLERANCE, maskBackground } from "@/core/pattern/background";
 import { buildPattern, computeDecodeSize, computeGridSize } from "@/core/pattern/build";
 import type { MaxColors, Pattern } from "@/core/pattern/types";
@@ -122,10 +122,74 @@ export interface GenerateDeps {
 }
 
 /**
+ * 「从像素到图纸」的接缝（规格 §6.3）：**实时预览与正式生成走同一份量化管线**。
+ *
+ * 抽出来的理由：`generatePattern` 原先把「按裁剪解码」与「重采样 → 旋转 → 去背景 → 量化」焊在
+ * 一起，而实时预览（`services/livePreview.ts`）手里已经有像素、只需要后一半。各写一份的代价是
+ * 量化参数（尤其是去背景与用色数）在两条路上漂移，而漂移的那天没有任何信号。
+ */
+export interface PatternFromPixelsRequest {
+  /** 已解码的像素（**未旋转**朝向）。 */
+  readonly image: RgbaImage;
+  /** 裁剪框在**未旋转**朝向下的尺寸。 */
+  readonly cropSize: { readonly width: number; readonly height: number };
+  readonly rotation: Rotation;
+  readonly longSide: number;
+  readonly maxColors: MaxColors;
+  /** 是否在量化**之前**排除背景（缺省 = 老行为，与 `GenerateRequest` 同口径）。 */
+  readonly removeBackground?: boolean;
+}
+
+/**
+ * 从已解码像素造一张图纸：`generatePattern` 的「解码之后」那一半就是它。
+ *
+ * **校验的顺序与消息与 `generatePattern` 逐字相同**（`rotation` → `computeGridSize` 的裁剪尺寸）：
+ * 实时预览会**绕开** `generatePattern` 直接调本函数，校验不能只留在解码那条路上。
+ */
+export function patternFromPixels(
+  request: PatternFromPixelsRequest,
+  palette: Palette,
+): Pattern {
+  const { image, cropSize, rotation, longSide, maxColors } = request;
+
+  if (!Number.isInteger(rotation) || rotation < 0 || rotation > 3) {
+    throw new Error(`旋转角度非法：${rotation}`);
+  }
+
+  // 网格尺寸在「最终朝向」下计算，因此长边一定落在成品的长边上。换轴规则只从 `rotatedSize` 来
+  // （1/3 换轴、0/2 恒等）——同一规则有两份手写分支时，漏改一处就会得到转错方向的图纸。
+  const oriented = rotatedSize(cropSize.width, cropSize.height, rotation);
+  const finalGrid = computeGridSize(oriented.width, oriented.height, longSide);
+  // 重采样在「未旋转」朝向下进行：`rotatedSize` 对 1/3 是自逆、对 0/2 是恒等，所以这一次调用
+  // 正好把 finalGrid 换回未旋转朝向。
+  const rawGrid = rotatedSize(finalGrid.width, finalGrid.height, rotation);
+
+  // 不假设解码器返回的就是 target 尺寸：快路径承诺 target、保底路径返回裁剪原生尺寸，
+  // 两者都与 target 可能不同（解码器 `name` 里写明口径：`fast:` / `exact:`），所以按返回值
+  // 实际尺寸重采样。
+  const sampled: SampledGrid = resampleToGrid(image, rawGrid.width, rawGrid.height);
+  // rotation === 0 时 rotateGrid 返回入参本身（同一引用）。buildPattern 只读网格的
+  // rgb / filled，不会就地改写；唯一的写操作是下面 removeBackground 分支里的 maskBackground，
+  // 它就地清 filled 而 `sampled` / `rotated` 都是本函数局部、改后无人再读，故同样安全。
+  // 下游若再新增写操作，仍要先复制。
+  const rotated = rotateGrid(sampled, rotation);
+  // 事前排除背景：maskBackground 就地清 filled，buildPattern 只处理 filled !== 0 的格，
+  // 于是直方图、聚类与用色名额都自动跳过背景。rotation === 0 时 rotateGrid 返回入参本身，
+  // 就地改 filled 会同时改到 sampled——两者都是本函数局部的，改后无人再读，安全。
+  if (request.removeBackground === true) {
+    maskBackground(rotated, BACKGROUND_TOLERANCE);
+  }
+  return buildPattern(rotated, palette, { maxColors });
+}
+
+/**
  * 完整生成流水线：按裁剪框解码 → 面积平均重采样 → 旋转网格 → 构建图纸。
  *
  * 旋转放在重采样之后：对 90° 整数倍旋转，这与「先旋转位图再重采样」完全等价，
  * 但旋转网格只需一次索引重映射——无内存开销、无插值、可被纯函数测试完整覆盖。
+ *
+ * 「解码之后」那一半实体在 `patternFromPixels`（规格 §6.3）：本函数只负责入口校验、择路、
+ * 解码与算解码尺寸，然后把它交给那条接缝——实时预览走的就是同一个函数。
  */
 export async function generatePattern(
   request: GenerateRequest,
@@ -195,20 +259,15 @@ export async function generatePattern(
   const decoder = chooseDecoderPath(crop) === "exact" ? deps.exactDecoder : deps.fastDecoder;
   const image = await decoder.decode(request.source, { crop, targetWidth, targetHeight });
 
-  // 不假设解码器返回的就是 target 尺寸：快路径承诺 target、保底路径返回裁剪原生尺寸，
-  // 两者都与 target 可能不同（解码器 `name` 里写明口径：`fast:` / `exact:`），所以按返回值
-  // 实际尺寸重采样。
-  const sampled: SampledGrid = resampleToGrid(image, rawGrid.width, rawGrid.height);
-  // rotation === 0 时 rotateGrid 返回入参本身（同一引用）。buildPattern 只读网格的
-  // rgb / filled，不会就地改写；唯一的写操作是下面 removeBackground 分支里的 maskBackground，
-  // 它就地清 filled 而 `sampled` / `rotated` 都是本函数局部、改后无人再读，故同样安全。
-  // 下游若再新增写操作，仍要先复制。
-  const rotated = rotateGrid(sampled, rotation);
-  // 事前排除背景：maskBackground 就地清 filled，buildPattern 只处理 filled !== 0 的格，
-  // 于是直方图、聚类与用色名额都自动跳过背景。rotation === 0 时 rotateGrid 返回入参本身，
-  // 就地改 filled 会同时改到 sampled——两者都是本函数局部的，改后无人再读，安全。
-  if (request.removeBackground === true) {
-    maskBackground(rotated, BACKGROUND_TOLERANCE);
-  }
-  return buildPattern(rotated, deps.palette, { maxColors });
+  return patternFromPixels(
+    {
+      image,
+      cropSize: { width: crop.width, height: crop.height },
+      rotation,
+      longSide,
+      maxColors,
+      removeBackground: request.removeBackground,
+    },
+    deps.palette,
+  );
 }

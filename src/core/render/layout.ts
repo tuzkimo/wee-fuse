@@ -717,6 +717,73 @@ export function planSheet(
 }
 
 /**
+ * **网格块计划**（2026-10-13 预览改造，规格 §5.3）：按预览盒子的**短边**定格像素、网格在盒子里居中。
+ * 生图页中栏与结果卡片共用它。
+ *
+ * 与 `planSheet` 的承重差异只有一条：`canvasWidth/Height` **就是盒子**（不是 `豆数 × cellPx`）——
+ * 绘制仍在画布坐标系里做，盒子比网格大出来的部分就是留白（纸底只铺网格矩形，留白仍是宿主的深色板底）。
+ *
+ * **没有任何「格小到就别画了」的降级开关**（2026-10-13 真机反馈后删掉）：预览根本不画色号与
+ * 网格线（那是施工信息，不是成品信息），所以 `labelFontPx` / `showGridLines` / `ruler` 三个字段
+ * 一并删除了。要看网格与色号，入口是「看施工图」。
+ */
+export interface GridTilePlan extends TileGeometry {
+  readonly kind: "tile";
+  /** = 盒子宽（**不是** `cols × cellPx`）。 */
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+}
+
+/** 预览盒子：两个方向都必须是 ≥1 的有限数（`ResizeObserver` 量到 0 时组件自己就不该调这里）。 */
+function requireBox(box: { readonly width: number; readonly height: number }): {
+  readonly width: number;
+  readonly height: number;
+} {
+  if (!Number.isFinite(box.width) || box.width < 1) {
+    throw new Error(`预览盒子宽必须是 ≥1 的有限数字（当前 ${String(box.width)}）`);
+  }
+  if (!Number.isFinite(box.height) || box.height < 1) {
+    throw new Error(`预览盒子高必须是 ≥1 的有限数字（当前 ${String(box.height)}）`);
+  }
+  return box;
+}
+
+export function planGridTile(
+  pattern: Pattern,
+  palette: Palette,
+  box: { readonly width: number; readonly height: number },
+): GridTilePlan {
+  requirePattern(pattern);
+  requirePalette(pattern, palette);
+  const { width, height } = requireBox(box);
+  // 「适配短边」的字面含义就是 `min`，**不设人为上限**（上限就是盒子本身）：一张 4×4 的图在
+  // 400px 的盒子里就是 100px/格、色号 36px。下限 1 只挡「盒子小到一格分不到一个像素」。
+  const cellPx = Math.max(1, Math.floor(Math.min(width / pattern.width, height / pattern.height)));
+  const gridWidth = pattern.width * cellPx;
+  const gridHeight = pattern.height * cellPx;
+  const geometry = makeGridGeometry({
+    originCol: 0,
+    originRow: 0,
+    cols: pattern.width,
+    rows: pattern.height,
+    cellPx,
+    x: Math.floor((width - gridWidth) / 2),
+    y: Math.floor((height - gridHeight) / 2),
+  });
+  return {
+    kind: "tile",
+    cellPx,
+    originCol: 0,
+    originRow: 0,
+    cols: pattern.width,
+    rows: pattern.height,
+    ...geometry,
+    canvasWidth: width,
+    canvasHeight: height,
+  };
+}
+
+/**
  * 格坐标 → **片内**像素矩形。**分片与单张共用这一条映射**（规格 §4.2 的承重不变量）。
  *
  * 越界（不在本片范围内）与小数 / 非安全整数一律抛错，不静默取整、不夹取：静默会把「接缝错行」变成

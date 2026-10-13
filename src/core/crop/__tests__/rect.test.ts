@@ -7,6 +7,7 @@ import {
   isCropResolvable,
   moveRect,
   resizeByHandle,
+  scaleRect,
 } from "../rect";
 import { orientedSizeOf, orientedToSource, sourceRectToOriented } from "../view";
 
@@ -484,5 +485,26 @@ describe("入口校验（规格 §12）", () => {
     expect(() => resizeByHandle(rect, "center" as unknown as "se", { x: 1, y: 1 }, "free", 0, SOURCE)).toThrow(/手柄/);
     expect(() => applyAspect(rect, "16:9" as unknown as "4:3", 0, SOURCE)).toThrow(/比例/);
     expect(() => isCropResolvable(rect, { width: 10, height: 10 }, 5 as unknown as 0)).toThrow(/旋转角度/);
+  });
+});
+
+/**
+ * 原图坐标 → 另一套坐标的唯一换算（2026-10-13，为实时预览的「原图 → 预览像素」新增）。
+ */
+describe("scaleRect", () => {
+  it("四个字段各乘一个比例，两轴各自算（预览两轴是各自 round 出来的）", () => {
+    expect(scaleRect({ x: 10, y: 20, width: 30, height: 40 }, 0.5, 0.25)).toEqual({
+      x: 5,
+      y: 5,
+      width: 15,
+      height: 10,
+    });
+  });
+
+  it("非法比例与非法矩形都响亮失败（比例写错不会报错，只会静默裁错区域）", () => {
+    const rect = { x: 0, y: 0, width: 10, height: 10 };
+    expect(() => scaleRect(rect, Number.NaN, 1)).toThrow(/水平缩放比例/);
+    expect(() => scaleRect(rect, 1, Number.POSITIVE_INFINITY)).toThrow(/垂直缩放比例/);
+    expect(() => scaleRect({ ...rect, width: 0 }, 1, 1)).toThrow(/选区/);
   });
 });

@@ -16,11 +16,12 @@ import { ICONS } from "@/components/ui/PixelIcon.vue";
  * **运行时证明**——真读了 store 又没有 active pinia 时，挂载期会以 `no active Pinia` 抛错。
  * `ResultPanel` 是本任务新引入的 store-free 组件，它唯一的运行时证明就是这一条；
  * 加 pinia 等于把这条证明悄悄关掉（这不是打磨，是判据丢失）。
+ *
+ * **2026-10-13 起不再桩 `@/services/patternThumbnail`**：预览换成施工图网格块之后，本组件
+ * （以及 `GridTilePreview` / `SheetViewer`）一行都不再引它——留着那个桩会把「还在走位图那条路」
+ * 这句谎话钉在文件里。
  */
-vi.mock("@/services/patternThumbnail", () => ({
-  renderPatternThumbnail: () => "data:image/png;base64,AAAA",
-  RESULT_PREVIEW_MAX_EDGE: 1600,
-}));
+
 /**
  * 渲染通道替身：**留具名引用**（`vi.hoisted` + `vi.fn`，而不是写死的箭头函数）。
  *
@@ -69,7 +70,10 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
 
   it("成品预览在上半屏的深色板底 + 板孔点阵上居中（§7.5）", () => {
     const wrapper = mountPanel();
-    const board = wrapper.get("[data-testid='result-preview']").element.parentElement as HTMLElement;
+    const preview = wrapper.get("[data-testid='result-preview']");
+    // 预览从 2026-10-13 起是 `GridTilePreview` 里的一块 canvas，而那个组件自带一层量测用的盒子
+    // （画布不能量自己，否则会形成每帧放大的循环）⇒ 板底要从 canvas **往上找**，不是取 parentElement。
+    const board = preview.element.closest(".bg-bead-board") as HTMLElement;
     expect(board.classList.contains("bg-bead-board")).toBe(true);
     expect(board.getAttribute("style") ?? "").toContain("radial-gradient");
     expect(board.classList.contains("items-center")).toBe(true);
@@ -92,6 +96,9 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
     // 少了任一条，短机窗口下三颗动作按钮就会盖到 chip 上（真窗口实测见任务 15 报告 §F/§G）。
     expect(board.classList.contains("max-md:p-2!")).toBe(true);
     expect(root.classList.contains("gap-2")).toBe(true);
+    // 预览换成网格块之后 `renderPatternThumbnail` **不再参与**（它产的是位图、靠 CSS 缩放）：
+    // canvas 没有 `src`，这条判死「悄悄退回 <img :src=…>」那种回退。
+    expect(preview.attributes("src")).toBeUndefined();
   });
 
   it("三颗动作按钮是 bead-card 底 64px 图形按钮 + 12px 短中文兜底，完成是通栏 accent 大按钮", () => {
@@ -125,7 +132,10 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
     const wrapper = mountPanel();
     expect(wrapper.find("[data-testid='result-stats']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='result-size']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
+    // **2026-10-13 起它是 `<canvas>`（施工图网格块），不再是 `<img>`**：预览按盒子的短边现画
+    // 逐格真色 + 色号 + 网格线（规格 §5.3），所以线条是清晰的 1–2 物理像素，而不是被
+    // `object-contain` 放大糊掉的「每格 1 像素」位图（那是改造前的毛病）。
+    expect(wrapper.get("[data-testid='result-preview']").element.tagName).toBe("CANVAS");
     expect(wrapper.find("[data-testid='result-save-state']").exists()).toBe(true);
   });
 

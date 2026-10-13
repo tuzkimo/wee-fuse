@@ -185,19 +185,14 @@ async function pickNative(source: "album" | "camera"): Promise<void> {
       </section>
 
       <!--
-        下半屏照片网格（§7.2）。**目前恒为空态**：平台接口只有 `pickFromAlbum` / `capturePhoto`，
-        没有枚举最近照片的能力（规格 §4.1），所以没有可 v-for 的数据源——只有那张虚线占位格。
-        将来接上相册枚举时，在这里渲染 <li> 格子（每格 `border-4 border-bead-ink` + `rounded-bead-sm`）。
+        下半屏的「最近照片网格」**不渲染**（2026-10-13 真机反馈）。
+
+        平台接口只有 `pickFromAlbum` / `capturePhoto`，没有枚举最近照片的能力（规格 §4.1），所以
+        它没有任何可 `v-for` 的数据源；先前那张虚线占位格因此永远只是「一个框」——不承载动作，
+        反而让人以为「这里本该有照片」。将来接上相册枚举时，在主体区渲染
+        `<ul class="grid grid-cols-2 gap-4 md:grid-cols-4">`，每格 `<li>` 一颗
+        `border-4 border-bead-ink rounded-bead-sm`（规格 §7.2）。
       -->
-      <ul data-testid="pick-grid" class="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <li
-          data-testid="pick-empty"
-          class="flex aspect-square flex-col items-center justify-center gap-2 rounded-bead-sm border-4 border-dashed border-bead-ink text-bead-ink"
-        >
-          <PixelIcon name="photos" :size="36" />
-          <span class="text-[12px]">还没有照片</span>
-        </li>
-      </ul>
 
       <!-- role="alert"：失败原因要立刻被读屏念出来，而不是等用户摸到那一行才知道。 -->
       <p

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT, PAPER_ON_DARK } from "@/components/ui/beadColors";
+import { TILE_PAPER } from "@/core/render/sheet";
 import css from "../../../style.css?raw";
 
 /**
@@ -32,5 +33,11 @@ describe("深色底画布颜色常量（§9 / Review Focus 3）", () => {
   it("PAPER_ON_DARK（图纸纸底）与 --color-bead-card 同源", () => {
     // 纸底借的是设计系统里「纸」那一档（§5.4）：没有同名 token，同源对象是 bead-card。
     expect(css).toContain(`--color-bead-card: ${PAPER_ON_DARK}`);
+  });
+
+  it("网格块预览的纸底与编辑页的纸底同色（两处都在深色板底上，空格不能一个是纸、一个是黑格）", () => {
+    // `TILE_PAPER` 住在 core（core 不得 import 组件），两张纸的同源关系只能在这里钉：
+    // 改了 `PAPER_ON_DARK` / `--color-bead-card` 而没改 `TILE_PAPER`（或反过来）时这条红。
+    expect(TILE_PAPER).toBe(PAPER_ON_DARK);
   });
 });

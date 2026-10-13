@@ -7,6 +7,7 @@ import {
   chooseDecoderPath,
   generatePattern,
   MAX_EXACT_CROP_EDGE,
+  patternFromPixels,
   type GenerateDeps,
 } from "../pipeline";
 
@@ -701,5 +702,45 @@ describe("removeBackground（事前排除）", () => {
     );
     expect(pattern.width).toBe(4);
     expect([...pattern.cells].every((value) => value === EMPTY)).toBe(true);
+  });
+});
+
+/**
+ * 抽取的接缝（规格 §6.3）：实时预览与正式生成必须走**同一份**「怎么从像素得到图纸」。
+ *
+ * 两条路漂了（比如某一侧多接了一颗 `maskBackground`）时，这里的 `toEqual` 是第一道信号；
+ * 它也是重构「只搬不改」的证据——本文件现有的全部用例跑一遍就是第二道。
+ */
+describe("patternFromPixels（抽取的接缝）", () => {
+  it("与 generatePattern 在同一输入下产出同一条图纸", async () => {
+    const request = { source, sourceSize, crop, rotation: 0, longSide: 2, maxColors: 2 } as const;
+    const viaPipeline = await generatePattern(request, deps);
+    // 解码器桩返回的就是上面那张 224×224 的象限图：直接嗂像素等价于「解码之后」那一半。
+    const viaSeam = patternFromPixels(
+      { image, cropSize: { width: 224, height: 224 }, rotation: 0, longSide: 2, maxColors: 2 },
+      palette,
+    );
+    expect(viaSeam.cells).toEqual(viaPipeline.cells);
+    expect(viaSeam.width).toBe(viaPipeline.width);
+    expect(viaSeam.height).toBe(viaPipeline.height);
+  });
+
+  it("接缝自己的入口校验：绕开 generatePattern 直接调，非法输入照样响亮失败", () => {
+    const base = { image, cropSize: { width: 224, height: 224 }, maxColors: 2 };
+    // 刻意构造契约外的值（同 generatePattern 那条 rotation 用例）：持久化参数 / 平台回传可能是任意 number。
+    for (const bad of [5, -1, 1.5, Number.NaN]) {
+      expect(() =>
+        patternFromPixels({ ...base, rotation: bad as unknown as Rotation, longSide: 2 }, palette),
+      ).toThrow(/旋转角度非法/);
+    }
+    expect(() => patternFromPixels({ ...base, rotation: 0, longSide: 2, maxColors: 0 }, palette)).toThrow(
+      /用色档位/,
+    );
+    expect(() =>
+      patternFromPixels(
+        { ...base, rotation: 0, longSide: 2, cropSize: { width: 0, height: 224 } },
+        palette,
+      ),
+    ).toThrow(/裁剪/);
   });
 });

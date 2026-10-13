@@ -56,6 +56,23 @@ describe("设计 token（§6.1 / §6.3）", () => {
   });
 });
 
+describe("断点阶梯（版式断点 §4.1）", () => {
+  it("平板阈值是 64rem，且断点阶梯严格递增", () => {
+    // 断点 token 是「全 App 的平板档」，删掉它整个 App 会静默退回 768——这一行就是那颗钉子。
+    expect(css).toMatch(/--breakpoint-md:\s*64rem;/);
+    const rem = (token: string): number => {
+      const found = css.match(new RegExp(`${token}:\\s*([0-9.]+)rem`));
+      if (found === null) throw new Error(`style.css 里没有 ${token}`); // 写死一个默认值会让下面三条恒真
+      return Number(found[1]);
+    };
+    // 阶梯必须严格递增，否则 lg(64rem) 与 md 同值：后人写 lg: 时会撞上「两个断点同时生效、
+    // 谁赢取决于产物里的顺序」这种没法推理的情况。
+    expect(rem("--breakpoint-md")).toBeLessThan(rem("--breakpoint-lg"));
+    expect(rem("--breakpoint-lg")).toBeLessThan(rem("--breakpoint-xl"));
+    expect(rem("--breakpoint-xl")).toBeLessThan(rem("--breakpoint-2xl"));
+  });
+});
+
 describe("像素字体（§6.2）", () => {
   it("字体文件与许可证都在仓库里且不是空文件", () => {
     // `?raw` 会把二进制按 utf-8 解码，长度与字节数不严格相等（阈值差着 6 倍，够用）；

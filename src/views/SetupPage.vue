@@ -6,10 +6,11 @@
 // 断点**只决定布局**（平板三栏 / 手机单栏上下排），行为不分叉。
 //
 // **D1/§7.3 起两个阶段不再互斥**：生成之后左栏（裁剪）与右栏（参数）仍然可见可改，中栏
-// （`preview-pane`）换成上一次的结果——这正是「一屏做完」的意思。中栏三态：未生成 = 放大裁剪
-// 预览（复用 `draft.preview`，不新算）；已生成 = 结果卡片；生成后又改参数 = 一成不变。
+// （`preview-pane`）换成上一次的结果——这正是「一屏做完」的意思。中栏**两态**（2026-10-13 起由
+// `draft.generated` 门控，规格 §6.4）：未生成 / 生成之后又改了参数 = **当前参数的实时预览**
+// （施工图网格块，防抖 ~200ms）；已生成 = 结果卡片。
 // **T2 更正注记**：结果卡片只平板、或手机保存失败那一支渲染（`paneShowsResult`）；手机成功那一支
-// 已 `push` 到独立结果页，中栏只留裁剪预览。
+// 已 `push` 到独立结果页，中栏只留实时预览。
 //
 // 生成即落盘，重跑覆盖同一条记录：走 `useProjectSession().adopt()` + `save()`，
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
@@ -20,15 +21,17 @@ import type { ZoomLevel } from "@/core/crop/view";
 import { rotatedSize } from "@/core/image/rotate";
 import { boardCount, beadsToCm, formatCm } from "@/core/pattern/board";
 import { computeGridSize } from "@/core/pattern/build";
-import { EMPTY } from "@/core/pattern/types";
+import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { toProjectDocument } from "@/core/project/file";
 import BeadButton from "@/components/ui/BeadButton.vue";
 import PixelIcon from "@/components/ui/PixelIcon.vue";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import ResultPanel from "@/components/result/ResultPanel.vue";
+import GridTilePreview from "@/components/sheet/GridTilePreview.vue";
 import { createDomBitmapPlatform, createExactDecoder, createFastDecoder } from "@/services/decoders";
 import { loadImageSource } from "@/services/imageSource";
+import { renderLivePreview } from "@/services/livePreview";
 import { getBuiltinPalette } from "@/services/palette";
 import { renderPatternThumbnail } from "@/services/patternThumbnail";
 import { generatePattern } from "@/services/pipeline";
@@ -44,7 +47,8 @@ const session = useProjectSession();
 const storeError = ref("");
 const preparing = ref(false);
 // 断点由 `md:` 前缀（列宽）与这个 JS 旗标（排法：平板横向三栏 / 手机单栏纵向）共同承担；
-// 保留 JS 这一路是因为它已有两条用例钉着（视口跨断点时类名当场换、查询串就是 768px）。
+// 保留 JS 这一路是因为它已有两条用例钉着（视口跨断点时类名当场换、查询串就是 1024px）。
+// **阈值与 CSS 必须逐字一致**：`md` 是 `--breakpoint-md: 64rem`（`style.css` 的 `@theme`）。
 const isWide = ref(false);
 let media: MediaQueryList | null = null;
 
@@ -92,10 +96,18 @@ const lastSaveFailed = ref(false);
 
 /**
  * 中栏是不是「上一次的结果」（§7.3）。**不再与编辑两栏互斥**：生成之后 `crop-pane` /
- * `param-pane` 照旧渲染，中栏从裁剪预览换成结果卡片。改完参数不自动重算（一成不变）；
- * 想再看一次走中栏的 `result-rerun`（把阶段切回 `edit`，与「重做」的既有语义一致）。
+ * `param-pane` 照旧渲染，中栏从实时预览换成结果卡片。
+ *
+ * **2026-10-13（规格 §6.4）起还必须 `draft.generated`**：`generated` 的语义是「本次生成成功、
+ * 此后没改过会影响产物的东西」，而既有 setter 在任一参数变更时把它置回 false ⇒ 改完参数中栏
+ * 自动回到实时预览，屏幕上当场看得见参数的影响，而不是一张**已经作废的**结果卡片。
+ * 顶栏主按钮与中栏读同一个量，所以「开始拼 ▶」也同时回来（两者分家时，中栏是预览、按钮却写着
+ * 「完成 ✓」——点下去是回家，不是重新生成）。
+ * `stage` 仍管它本来管的事（返回箭头的去向、手机跳独立结果页）。
  */
-const showResult = computed(() => draft.stage === "result" && session.pattern !== null);
+const showResult = computed(
+  () => draft.generated && draft.stage === "result" && session.pattern !== null,
+);
 
 /**
  * 中栏是否渲染结果卡片（§7.3 + T2 更正注记）：平板恒渲染（`isWide && showResult`）；手机只在
@@ -130,28 +142,67 @@ const sizeChip = computed(() => {
 });
 
 /**
- * 未生成时中栏那份放大的裁剪预览。
+ * 中栏的**实时预览**产物（规格 §5.4）。`null` = 现在画不出来（还没有预览位图 / 裁剪换算后空了）
+ * ⇒ 中栏只显示「预览」标识、什么都不画。
  *
- * **复用左栏同一份 `draft.preview`，不新算**（§7.3）：只是把它再叠画到中栏这块画布上，
- * 没有解码、没有重采样。画布内尺寸取预览原尺寸，缩放交给 CSS（`max-*` 保持宽高比）。
+ * **不进 draft store**：它是从参数派生出来的临时产物，不属于草稿状态（也不进历史、不落盘、
+ * 不进 `session.dirty`）。
  */
-const previewCanvas = ref<HTMLCanvasElement | null>(null);
+const livePattern = ref<Pattern | null>(null);
+/** 防抖窗口（规格 §5.4）：拖动滑条期间只在停下来时算一次。 */
+const LIVE_PREVIEW_DEBOUNCE_MS = 200;
+let livePreviewTimer: ReturnType<typeof setTimeout> | null = null;
 
-function drawPreview(): void {
-  const element = previewCanvas.value;
-  const source = draft.preview;
-  if (element === null || source === null) return;
-  element.width = source.width;
-  element.height = source.height;
-  const ctx = element.getContext("2d");
-  if (ctx === null) return;
-  // 像素风不重采样（§6.2）。
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(source, 0, 0);
+/**
+ * 算一次实时预览。**同步**：`renderLivePreview` 不解码、只读一次缓存的预览像素，所以不存在
+ * 「上一次还在算、新参数已经来了」的窗口——防抖一个窗口内只会算一次，不需要序号或
+ * `AbortController` 去丢弃旧结果。将来它若变成异步，那时才需要重入序号。
+ */
+function computeLivePreview(): void {
+  if (livePreviewTimer !== null) {
+    clearTimeout(livePreviewTimer);
+    livePreviewTimer = null;
+  }
+  const preview = draft.preview;
+  if (preview === null || draft.sourceSize === null || draft.crop === null) {
+    livePattern.value = null;
+    return;
+  }
+  livePattern.value = renderLivePreview(
+    {
+      preview,
+      sourceSize: draft.sourceSize,
+      crop: draft.crop,
+      rotation: draft.rotation,
+      longSide: draft.longSide,
+      maxColors: draft.maxColors,
+      removeBackground: draft.removeBackground,
+    },
+    palette,
+  );
 }
 
-// 中栏画布是 `v-if` 建的：元素挂上 / 拆下、或预览换了一份，都要重画。
-watch([previewCanvas, () => draft.preview], drawPreview, { flush: "post" });
+// 六个会影响产物的参数任一变化就重算（防抖）。**`zoom` / `pan` 刻意不在里面**：那是左栏裁剪框的
+// 视图状态，与「拼出来会是什么样」无关。
+watch(
+  [
+    () => draft.preview,
+    () => draft.crop,
+    () => draft.rotation,
+    () => draft.longSide,
+    () => draft.maxColors,
+    () => draft.removeBackground,
+  ],
+  () => {
+    // 预览位图没了（`releasePreview`）：立刻清空——留一张旧图看着像还有预览，等 200ms 更没有意义。
+    if (draft.preview === null) {
+      computeLivePreview();
+      return;
+    }
+    if (livePreviewTimer !== null) clearTimeout(livePreviewTimer);
+    livePreviewTimer = setTimeout(computeLivePreview, LIVE_PREVIEW_DEBOUNCE_MS);
+  },
+);
 
 /** 中栏深色底的板孔点阵（§7.3：`radial-gradient`，间距 22px）。 */
 const boardDots = {
@@ -218,7 +269,7 @@ onMounted(async () => {
     storeError.value = e instanceof Error ? e.message : String(e);
   }
 
-  media = window.matchMedia("(min-width: 768px)");
+  media = window.matchMedia("(min-width: 1024px)");
   isWide.value = media.matches;
   media.addEventListener("change", onMediaChange);
   /*
@@ -235,6 +286,10 @@ onMounted(async () => {
     await router.replace({ name: "pick" });
     return;
   }
+
+  // 中栏的初值：**不等防抖**（挂载时预览已在手，中栏当场就有内容）。重跑路径下 preview 还是
+  // null，这里得到空结果，随后 `setPreview` 会触发 watch 那条路（防抖 200ms 后出图）。
+  computeLivePreview();
 
   // 重跑路径：草稿里有原图但预览要现解码（编辑器里不重复这段逻辑，见规格 §7）。
   if (draft.preview === null) {
@@ -256,6 +311,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   media?.removeEventListener("change", onMediaChange);
   media = null;
+  // 防抖里的那一次重算随页面一起消失（不清的话，定时器会在组件已销毁后再碰 `livePattern`）。
+  if (livePreviewTimer !== null) {
+    clearTimeout(livePreviewTimer);
+    livePreviewTimer = null;
+  }
   // 规格 §9 的两条出口（见 `lastSaveFailed` 的 JSDoc）：已生成**且图纸确实进了库** → 整份草稿
   // 作废；中途退出，或这一次生成没能落盘 → 只释放预览，选区与参数留着。
   if (lastSaveFailed.value) {
@@ -385,7 +445,7 @@ async function generate(): Promise<void> {
       // 不一致；失败后的续存由 `retrySave()` 成功时补写。
       draft.setRerunOf({ id: meta.id, createdAt: meta.createdAt });
       lastSaveFailed.value = false;
-      // 手机（<768px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
+      // 手机（<1024px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
       // （`meta.id` 此刻一定存在）——保存失败那一支没有可跳的 id，留在本页显示结果 + 重试。
       if (!isWide.value) {
         await router.push(resultPush(meta.id));
@@ -415,7 +475,7 @@ async function retrySave(): Promise<void> {
     }
     lastSaveFailed.value = false;
     draft.setError("");
-    // 手机（<768px）与 `generate()` 成功支同口径：补存成功也跳独立结果页。否则 `lastSaveFailed`
+    // 手机（<1024px）与 `generate()` 成功支同口径：补存成功也跳独立结果页。否则 `lastSaveFailed`
     // 置假 ⇒ `paneShowsResult` 翻假 ⇒ 结果卡片消失，而这里又不跳，用户留在本页、主按钮还写着
     // 「完成 ✓」（T2 审查发现 1）。
     if (!isWide.value && meta !== undefined) {
@@ -440,7 +500,13 @@ function resetCrop(): void {
 
 <template>
   <!-- 手机上底部那颗 `fixed` 动作条会盖住内容：主体留出它的高度把最后一张卡片顶出来。 -->
-  <main class="min-h-screen bg-bead-sand pb-20 md:pb-0">
+  <!--
+    平板（≥1024px）下是**定高 shell**（§5.2）：整页不滚、中栏固定、只有左右两栏各自滚。
+    `md:flex md:flex-col` **不能省**：main 不是 flex 容器时，只加 h-screen 会让三栏容器从 header
+    下面开始再占一个视口高，底部被 overflow-hidden 裁掉——那是「底部内容消失」而不是「只有左右两栏
+    滚」。同款做法的先例是 `EditorPage.vue`（那个页面也是这四类）。
+  -->
+  <main class="min-h-screen bg-bead-sand pb-20 md:flex md:h-screen md:flex-col md:overflow-hidden md:pb-0">
     <!--
       顶栏（§6.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
       主按钮两态（§7.3）：未生成「开始拼 ▶」（走现有生成）、已生成「完成 ✓」（走现有回家那条路）。
@@ -487,41 +553,48 @@ function resetCrop(): void {
     <!--
       三栏（§7.3）：左 = 选区（`crop-pane`）、中 = 上一次的结果（`preview-pane`）、右 = 参数
       （`param-pane`）。**阶段不再互斥**：生成之后左右两栏仍在，这是「一屏做完」。
-      侧栏在 `md` 区间收窄、`lg` 才加宽：768~900px 三栏同屏时中栏不会被左右挤死（R30）。
+      侧栏列宽只有一档：阈值上移到 1024px 之后，768~900px 那段挤压区（R30 那两档窄宽度
+      就是为它设的）现在走单列，不需要窄档。
 
-      手机（<768px）单列，顺序 **中栏 → 选范围 → 参数**：`preview-pane` 因而排在 DOM 首位
+      手机（<1024px）单列，顺序 **中栏 → 选范围 → 参数**：`preview-pane` 因而排在 DOM 首位
       （单列下没有 `order`，DOM 顺序就是看到的顺序）；平板用 `md:order-*` 把它挪回中间。
       顺序不能倒——先裁剪后参数会让他调完参数还要往回滚才能看到结果。
     -->
     <div
       data-testid="setup-body"
-      :class="isWide ? 'mt-6 flex gap-4 p-4' : 'mt-6 space-y-6 p-4'"
+      :class="isWide ? 'mt-6 flex min-h-0 flex-1 gap-4 p-4' : 'mt-6 space-y-6 p-4'"
     >
       <!--
-        中栏（§7.3）：未生成 = 放大的裁剪预览（复用 `draft.preview`，不新算）+ 一行提示；
-        已生成 = 共用组件 `ResultPanel` + 尺寸 chip。背景是四处允许的深色看图底的其中一处。
-        `preview-pane` 是本任务新加的容器 testid；`result-pane` 仍挂在宿主这个 `<section>` 上。
+        中栏（§7.3 + 2026-10-13 规格 §6.4）：未生成 / 生成后改了参数 = **当前参数的实时预览**
+        （施工图网格块，`GridTilePreview`）+ 一行「预览」标识；已生成 = 共用组件 `ResultPanel`
+        + 尺寸 chip。门控看 `paneShowsResult`（内部已经含 `draft.generated`）——**不是 `stage`**：
+        既有 setter 在任一参数变更时把 `generated` 置回 false，中栏因此自动回到预览。
+        背景是四处允许的深色看图底的其中一处。`preview-pane` 是本任务新加的容器 testid；
+        `result-pane` 仍挂在宿主这个 `<section>` 上。
         手机吸顶且固定高 48vh（§7.3 的「高约 40vh」给了这个余地；R42：40vh 下固定的 chip +
-        保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外），`md` 下两者都取消
-        （平板上它是并排的中间一栏，不跟着页面滚）。
+        保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外）。
+        **平板（§5.2）**：`md:h-full md:overflow-hidden`——它是定高 flex 列里的中栏，高度吃掉父容器、
+        自己的内容（预览画布 / 结果卡）不滚；原来那对 `md:h-auto md:overflow-visible` 与 `md:min-h-[60vh]`
+        必须删掉，否则中栏会把定高 shell 顶出去（两个同属性工具类谁赢取决于产物顺序）。
         **T4 修复（R55）**：吸顶偏移是 `top-16`（= 手机顶栏的 64px）而不是 `top-0`——顶栏自己也
         吸顶（`sticky top-0 z-20 h-16`），`top-0` 会让本块的顶部 64px 永远被顶栏盖住。
       -->
       <section
         data-testid="preview-pane"
-        class="relative z-10 sticky top-16 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="relative z-10 sticky top-16 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-full md:overflow-hidden md:flex-1 md:min-w-0"
         :style="boardDots"
       >
         <template v-if="paneShowsResult">
           <!-- `max-md:flex-1` + `max-md:min-h-0`（R41 修复 2）：手机上这个吸顶盒是定高的 flex
                列，结果卡片因此吃掉 chip 之外的全部高度；`ResultPanel` 里的预览盒有着明确的百分比
                高度可依，才能被压进剩余空间（否则 55vh 的预览会把三颗动作按钮顶进内滚区）。
-               平板上盒高 auto，这几个类不生效（`max-md:`），仍由 `md:min-h-[60vh]` 主导。
+               **平板**（§5.2）：定高 shell 里它同样必须能缩（`md:flex-1 md:min-h-0`），否则
+               `ResultPanel` 的 `basis-[55vh]` 会把三颗动作按钮顶出可视区。
                `min-h-0`（而不是 `min-h-min`）：卡片的 min-content 会被预览盒的 `basis-[55vh]`
                污染成 55vh，用 `min-h-min` 就等于取消变矮，真窗口实测卡片会撑到 555px。 -->
           <section
             data-testid="result-pane"
-            class="max-md:flex-1 max-md:min-h-0 rounded-bead-md bg-bead-card p-4 md:p-6"
+            class="max-md:flex-1 max-md:min-h-0 rounded-bead-md bg-bead-card p-4 md:flex-1 md:min-h-0 md:p-6"
           >
             <ResultPanel
               v-if="session.pattern !== null"
@@ -545,19 +618,23 @@ function resetCrop(): void {
           </p>
         </template>
 
-        <div v-else class="flex h-full flex-col items-center justify-center gap-4">
-          <canvas
-            ref="previewCanvas"
-            data-testid="preview-canvas"
-            class="max-h-full max-w-full rounded-bead-sm md:max-h-[45vh]"
-          ></canvas>
-          <p v-if="draft.preview !== null" class="text-[24px] text-bead-sand-2">点开始拼看看</p>
+        <div v-else class="flex h-full min-h-0 w-full flex-col items-center justify-center gap-4">
+          <!-- 预览是**近似**（规格 §5.4）：走 1600px 输入 + 小网格，与「原图 + 成品网格」的量化
+               结果可能不同 ⇒ 未生成时挂一行「预览」标识，最终成品一律以「开始拼」的产物为准。
+               `livePattern === null`（还没有预览位图 / 裁剪换算后空了）时只显示标识、不画任何东西。 -->
+          <GridTilePreview
+            v-if="livePattern !== null"
+            :pattern="livePattern"
+            :palette="palette"
+            testid="live-preview"
+          />
+          <p class="text-[24px] text-bead-sand-2">预览</p>
         </div>
       </section>
 
       <section
         data-testid="crop-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:w-[200px] md:shrink-0 lg:w-[236px]"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:min-h-0 md:w-[236px] md:shrink-0 md:overflow-y-auto"
       >
         <div class="h-[40vh] min-h-[240px] md:h-[46vh]">
           <CropCanvas
@@ -614,7 +691,7 @@ function resetCrop(): void {
 
       <section
         data-testid="param-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:w-[220px] md:shrink-0 lg:w-[262px]"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:min-h-0 md:w-[262px] md:shrink-0 md:overflow-y-auto"
       >
         <ParamPanel
           v-if="draft.crop !== null"

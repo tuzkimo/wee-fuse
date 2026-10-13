@@ -14,6 +14,7 @@ import {
   rgbCss,
   type BoardPagePlan,
   type GridGeometry,
+  type GridTilePlan,
   type LegendBandPlan,
   type PageChromePlan,
   type SheetPlan,
@@ -67,6 +68,14 @@ const GRID_THIN_STROKE = "#dcdcdc";
  * 2026-10-13 的真机反馈又把这件事拉回了编辑器（纯色浅纸底与浅色豆分不开），所以这里是唯一真源。
  */
 export const EMPTY_STROKE = "#e2e8f0";
+/**
+ * 网格块预览的**纸底**（= `--color-bead-card`，与编辑页的 `PAPER_ON_DARK` 同色）。
+ *
+ * **它不是装饰**（2026-10-13 真机反馈）：空格只描一条 `EMPTY_STROKE` 斜线，底下透出的若是宿主的
+ * 深色板底，空格就成了一块黑格子压一条浅线；预览与编辑页是同一个场景（深色板底上的一块纸），
+ * 所以两边纸底同色。
+ */
+export const TILE_PAPER = "#FFF9EE";
 /** 文字墨色（标题 / 刻度 / 用料条正文）。格内色号**不**用它，仍取 `labelInk`。 */
 const TEXT_INK = "#0f172a";
 /** 色块外框：画在真色填充**之上**的细框，让浅色块在白底上也有边界（用该色本身）。 */
@@ -149,10 +158,11 @@ function requireLegendSameSource(
  */
 interface GridStepPlan extends TileGeometry, PageChromePlan {}
 
-/** 一条待画的格内色号：色号 + 墨色 + 中心点（先收集、后统一画）。 */
+/** 一条待画的格内色号：色号 + 真色 + 中心点（先收集、后统一画）。 */
 interface LabelCell {
   readonly code: string;
-  readonly ink: string;
+  /** **保留 rgb 而不是算好的墨色**：`labelInk` 是一次 `rgbToLab`，只有真画色号时才值得算。 */
+  readonly rgb: readonly [number, number, number];
   readonly cx: number;
   readonly cy: number;
 }
@@ -257,7 +267,7 @@ function paintCells(
   target: RenderTarget2D,
   pattern: Pattern,
   palette: Palette,
-  plan: GridStepPlan,
+  plan: TileGeometry,
 ): readonly LabelCell[] {
   const emptyBoxes: PixelRect[] = [];
   const labelCells: LabelCell[] = [];
@@ -274,7 +284,7 @@ function paintCells(
       target.fillRect(box.x, box.y, box.width, box.height);
       labelCells.push({
         code: color.code,
-        ink: labelInk(color.rgb),
+        rgb: color.rgb,
         cx: box.x + box.width / 2,
         cy: box.y + box.height / 2,
       });
@@ -294,13 +304,17 @@ function paintCells(
 }
 
 /** 格内色号：字号取 plan 的 labelFontPx、墨色取 labelInk（Lab 的 L*），位置取 cellBox 的中心。 */
-function drawLabels(target: RenderTarget2D, cells: readonly LabelCell[], plan: GridStepPlan): void {
+function drawLabels(
+  target: RenderTarget2D,
+  cells: readonly LabelCell[],
+  plan: { readonly labelFontPx: number },
+): void {
   if (cells.length === 0) return;
   target.font = `${plan.labelFontPx}px sans-serif`;
   target.textAlign = "center";
   target.textBaseline = "middle";
   for (const cell of cells) {
-    target.fillStyle = cell.ink;
+    target.fillStyle = labelInk(cell.rgb);
     target.fillText(cell.code, cell.cx, cell.cy);
   }
 }
@@ -315,7 +329,7 @@ function drawCellsAndLabels(
   target: RenderTarget2D,
   pattern: Pattern,
   palette: Palette,
-  plan: GridStepPlan,
+  plan: TileGeometry & { readonly labelFontPx: number },
 ): void {
   drawLabels(target, paintCells(target, pattern, palette, plan), plan);
 }
@@ -368,7 +382,10 @@ function drawGridLines(target: RenderTarget2D, plan: GridGeometry): void {
  * **每 5 格由全局格号判定**（`origin + index`），所以打印页第 2 页的虚线落在 30 / 35… 上，
  * 与「刻度每格都有」同一条口径。**跳过 index 0**：网格外框已经画在 0 上，再叠一条虚线是重复。
  */
-function drawMajorGuides(target: RenderTarget2D, plan: GridStepPlan): void {
+function drawMajorGuides(
+  target: RenderTarget2D,
+  plan: TileGeometry & { readonly ruler: { readonly stepPx: number } },
+): void {
   const { ruler } = plan;
   target.lineWidth = 2;
   target.strokeStyle = SHEET_MAJOR_GUIDE_STROKE;
@@ -396,7 +413,7 @@ function drawMajorGuides(target: RenderTarget2D, plan: GridStepPlan): void {
 }
 
 /** 整图外框（网格四条边），画在最后，让边框压在虚线之上。 */
-function drawGridFrame(target: RenderTarget2D, plan: GridStepPlan): void {
+function drawGridFrame(target: RenderTarget2D, plan: GridGeometry): void {
   target.beginPath();
   target.lineWidth = 2;
   target.strokeStyle = GRID_STROKE;
@@ -406,6 +423,42 @@ function drawGridFrame(target: RenderTarget2D, plan: GridStepPlan): void {
   target.lineTo(plan.grid.x, plan.grid.y + plan.grid.height);
   target.lineTo(plan.grid.x, plan.grid.y);
   target.stroke();
+}
+
+/**
+ * 网格块预览（2026-10-13，规格 §5.3）：**只画「拼出来长什么样」**。
+ *
+ * 四层，顺序固定：**纸底** → 逐格真色（空格在同一个循环里收集）→ 空格斜线 → 整图外框。
+ * **不画**格内色号 / 每格细线 / 板边界 / 每 5 格虚线——那四样是施工信息，不是成品信息
+ * （2026-10-13 真机反馈）；它们的入口是「看施工图」。
+ *
+ * **两个恒定动作不要改成条件**：
+ * - 纸底铺在**网格矩形**上（不是整块画布）：空格与留白透出的必须是纸，否则空格就是一块黑格子
+ *   压一条 `EMPTY_STROKE` 斜线，与编辑页 / 施工图看到的不是一回事。盒子比网格大出来的留白
+ *   仍是宿主的深色板底。
+ * - 外框恒画：它标出网格块的边界，也是这个方块与深色板底之间的分隔。
+ */
+export function drawGridTile(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  tile: GridTilePlan,
+): void {
+  if ((tile.kind as string) !== "tile") {
+    throw new Error(`plan 的类型不匹配：期望 tile，实际 ${String(tile.kind)}`);
+  }
+  if (pattern.paletteId !== palette.id) {
+    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
+  }
+  // 与 `drawSheet` 同一条守卫：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验，
+  // 没有它一条 cells 短一截的图纸会一路画完（`cellAt` 越界静默取空），不报错、只产出错图。
+  countTileBeads(pattern, tile);
+
+  target.fillStyle = TILE_PAPER;
+  target.fillRect(tile.grid.x, tile.grid.y, tile.grid.width, tile.grid.height);
+  // 返回值（待画的色号）**刻意丢掉**：预览不画色号，空格斜线在 `paintCells` 内部已经描完。
+  paintCells(target, pattern, palette, tile);
+  drawGridFrame(target, tile);
 }
 
 /**

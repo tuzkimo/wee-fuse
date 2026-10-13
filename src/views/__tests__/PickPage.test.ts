@@ -278,25 +278,15 @@ describe("PickPage", () => {
     expect(button.get("span").classes()).toContain("text-[36px]");
   });
 
-  it("下半屏是照片网格：手机 2 列 / 平板 4 列，无照片时只有一张虚线占位格", () => {
+  it("下半屏不再有永远为空的虚线占位格（2026-10-13 真机反馈：它不承载任何动作）", () => {
     stubPlatform();
     const wrapper = mount(PickPage);
-    const grid = wrapper.get("[data-testid='pick-grid']");
-    expect(grid.classes()).toContain("grid-cols-2");
-    expect(grid.classes()).toContain("md:grid-cols-4");
-    // 平台接口只有 pickFromAlbum / capturePhoto（没有相册枚举）⇒ 眼下网格恒为空态，
-    // 只渲染那张占位格；这条钉住「不是一整块空白」。
-    const cells = grid.findAll("li");
-    expect(cells).toHaveLength(1);
-    expect(cells[0].attributes("data-testid")).toBe("pick-empty");
-    const classes = cells[0].classes().join(" ");
-    expect(classes).toContain("border-4");
-    expect(classes).toContain("border-dashed");
-    expect(classes).toContain("border-bead-ink");
-    expect(classes).toContain("rounded-bead-sm");
-    // R29：占位格原用 `text-bead-line-2`，在 `bg-bead-sand` 上只有约 1.9:1 对比度（12px 文字与 36px 图标都糊）。
-    expect(classes).toContain("text-bead-ink");
-    expect(classes).not.toContain("text-bead-line-2");
+    // 平台接口只有 pickFromAlbum / capturePhoto（没有相册枚举）⇒ 这半屏没有任何可渲染的数据源。
+    // 一个永远为空、还占下半屏的虚线框，除了让人以为「这里本该有照片」之外没有作用。
+    expect(wrapper.find("[data-testid='pick-grid']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='pick-empty']").exists()).toBe(false);
+    // 主入口照旧（去掉那张框不该动这半屏以外的东西）。
+    expect(wrapper.find("[data-testid='pick-file']").exists()).toBe(true);
   });
 
   it("草稿里还有上次的图时，给一个「继续上次的选区」入口", async () => {
