@@ -67,6 +67,26 @@ const pipelineSpy = vi.hoisted(() => ({
   maxColors: [] as number[],
   removeBackground: [] as (boolean | undefined)[],
 }));
+
+/**
+ * 实时预览的**透传替身**：真实现照跑（预览本身的行为由 `services/__tests__/livePreview.test.ts`
+ * 单独覆盖），这里只记下调用次数与入参。防抖那条用例需要一个可数的观察点——没有它，「连续改两次
+ * 只算一次」这句话就无法断言（数不到调用次数）。
+ */
+const livePreviewSpy = vi.hoisted(() => ({ calls: [] as { longSide: number }[] }));
+vi.mock("@/services/livePreview", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/livePreview")>();
+  return {
+    ...actual,
+    renderLivePreview: (
+      request: Parameters<typeof actual.renderLivePreview>[0],
+      palette: Parameters<typeof actual.renderLivePreview>[1],
+    ) => {
+      livePreviewSpy.calls.push({ longSide: request.longSide });
+      return actual.renderLivePreview(request, palette);
+    },
+  };
+});
 vi.mock("@/services/pipeline", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/pipeline")>();
   return {
@@ -317,6 +337,7 @@ afterEach(() => {
   backMock.mockClear();
   pipelineSpy.maxColors.length = 0;
   pipelineSpy.removeBackground.length = 0;
+  livePreviewSpy.calls.length = 0;
   // 历史里默认没有上一页（`backOrHome` 走「回图纸库」那一支）；要测另一支的用例自己喂值。
   delete historyState.back;
   setProjectStore(null);
@@ -501,6 +522,82 @@ describe("平板定高 shell（§5.2）", () => {
     expect(previewPane.classes()).toContain("md:overflow-hidden");
     expect(previewPane.classes()).not.toContain("md:overflow-y-auto");
     expect(previewPane.classes()).not.toContain("md:min-h-[60vh]");
+  });
+});
+
+/**
+ * 中栏实时预览（规格 §5.4）：调参时中栏跟着变，且由 `draft.generated` 门控——生成之后接着调参，
+ * 屏幕上必须看得见参数的影响，而不是一张**已经作废的**结果卡片（那是改造前的形态）。
+ */
+describe("中栏实时预览（§5.4）", () => {
+  it("未生成时中栏是网格块实时预览（不再是原图裁剪预览）", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+    const pane = wrapper.get("[data-testid='preview-pane']");
+
+    expect(pane.find("[data-testid='live-preview']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='preview-canvas']").exists()).toBe(false);
+    expect(pane.text()).toContain("预览");
+    expect(pane.text()).not.toContain("点开始拼看看");
+  });
+
+  it("已生成后改参数 ⇒ 中栏回到实时预览；再点「开始拼」⇒ 又是结果卡片", async () => {
+    const wrapper = await mountSetupGenerated();
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(false);
+
+    useDraft().setLongSide(116);
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(true);
+    expect(wrapper.get("[data-testid='preview-pane']").text()).toContain("预览");
+    // 顶栏主按钮也必须回到「开始拼 ▶」：它还写着「完成 ✓」的话，下面那一下点的是「回家」
+    // 而不是「重新生成」——这正是本批最容易接错的那根线（接错了屏上看起来完全正常）。
+    expect(wrapper.get("[data-testid='setup-primary']").text()).toContain("开始拼");
+
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(false);
+  });
+
+  it("调参防抖：连续改两次只算一次（~200ms）", async () => {
+    // 只假 `setTimeout` / `clearTimeout`：`flushPromises` 走 `setImmediate`，把它一起冻住
+    // 会让每一次 `await flushPromises()` 永远挂住（那是测试基础设施的坑，不是被测行为）。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      stubPlatform();
+      const draft = seedDraft();
+      mount(SetupPage);
+      await flushPromises();
+      livePreviewSpy.calls.length = 0; // 初值那一次（挂载即算、不等防抖）不算在防抖里
+
+      draft.setMaxColors(30);
+      await flushPromises();
+      draft.setMaxColors(31);
+      await flushPromises();
+      // 还没到防抖窗口：拖动中的每一次变更都不该触发计算。
+      expect(livePreviewSpy.calls).toHaveLength(0);
+
+      vi.advanceTimersByTime(200);
+      expect(livePreviewSpy.calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("draft.preview 被释放后中栏什么都不画（不抛）", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(true);
+
+    useDraft().releasePreview();
+    await flushPromises();
+
+    // 什么都不能画（也不留旧图），但不报错：中栏只剩「预览」标识。
+    expect(wrapper.get("[data-testid='preview-pane']").text()).toContain("预览");
+    expect(wrapper.find("[data-testid='live-preview']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='preview-canvas']").exists()).toBe(false);
   });
 });
 
@@ -752,20 +849,22 @@ describe("手机竖屏排法（§7.3）", () => {
 });
 
 /**
- * 中栏三态与顶栏主按钮（§7.3）。三态：还没生成过 = 裁剪预览；刚生成 = 结果卡片；
- * 生成后又改参数 = 一成不变（不变暗、不重算）。中栏的数据源是**上一次的结果**，不是实时预览。
+ * 中栏两态与顶栏主按钮（§7.3 + 2026-10-13 规格 §6.4）。两态：还没生成过 / 生成之后又改了参数
+ * = **当前参数的实时预览**；已生成 = 结果卡片。中栏的数据源因此是**当前参数**，不是上一次的
+ * 结果——规格 §4.3 明确推翻了旧的「生成后又改参数 = 一成不变」那条裁定。
  *
  * 中栏的**那份** `ResultPanel` 不渲染 `result-ok`（顶栏已经有「完成 ✓」了，同页两颗同名按钮会让
  * 用户分不清哪颗是收尾）——`showDone` prop 默认 `true`，只有本页中栏传 `false`。
  */
-describe("中栏三态与顶栏主按钮（§7.3）", () => {
-  it("还没生成过时中栏是裁剪预览 + 一行提示，不是空", async () => {
+describe("中栏两态与顶栏主按钮（§7.3）", () => {
+  it("还没生成过时中栏是实时预览 + 「预览」标识，不是空", async () => {
     const wrapper = await mountSetupBeforeGenerate();
 
     const pane = wrapper.get("[data-testid='preview-pane']");
-    // 复用左栏同一份 `draft.preview`（不新算）：中栏必须自己画出那张图，不能是空块。
-    expect(pane.find("canvas, img").exists()).toBe(true);
-    expect(pane.text()).toContain("点开始拼看看");
+    // 中栏必须自己画出网格块（不是空块），并挂一行「预览」标识——预览走的是 1600px 输入 +
+    // 小网格，与成品可能不同，所以成品一律以「开始拼」的产物为准（规格 §5.4）。
+    expect(pane.find("[data-testid='live-preview']").exists()).toBe(true);
+    expect(pane.text()).toContain("预览");
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
   });
 
@@ -1302,11 +1401,13 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       const second = mount(SetupPage);
       await flushPromises();
 
-      // 重挂载时 `stage` 仍是 `"result"`（它随 store 存活），于是页面先显示结果卡片；
-      // 改参数前切回编辑（`result-rerun` → `setStage("edit")`）。
-      expect(second.find("[data-testid='result-pane']").exists()).toBe(true);
-      second.findComponent(ResultPanel).vm.$emit("rerun");
-      await flushPromises();
+      // 重挂载时 `stage` 仍是 `"result"`（它随 store 存活），但 `generated` 在 ① 已经落回 false ⇒
+      // 中栏显示**实时预览**，不是那张已经作废的结果卡片（规格 §6.4）——所以这里不再需要先经
+      // `result-rerun` 切回编辑阶段，直接点主按钮就是「重新生成」。
+      expect(second.find("[data-testid='result-pane']").exists()).toBe(false);
+      // 预览位图是重挂载后**现解码**的，防抖 200ms 内还没算出来 ⇒ 这里只断「中栏不是那张结果
+      // 卡片、而是预览那一态」；「网格块真的画出来了」由 `中栏实时预览` 组断言（那里挂载时预览已在手）。
+      expect(second.get("[data-testid='preview-pane']").text()).toContain("预览");
 
       await second.get("[data-testid='setup-primary']").trigger("click");
       await flushPromises();
@@ -1916,7 +2017,7 @@ describe("结果阶段", () => {
     expect(push).toHaveBeenCalledWith({ name: "home" });
   });
 
-  it("手机生成成功后的中栏只显示裁剪预览（结果在独立结果页，T2）", async () => {
+  it("手机生成成功后的中栏只显示实时预览（结果在独立结果页，T2）", async () => {
     stubPlatform();
     seedDraft();
     window.innerWidth = 500;
@@ -1933,7 +2034,7 @@ describe("结果阶段", () => {
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(false);
     expect(
-      wrapper.get("[data-testid='preview-pane']").find("[data-testid='preview-canvas']").exists(),
+      wrapper.get("[data-testid='preview-pane']").find("[data-testid='live-preview']").exists(),
     ).toBe(true);
   });
 
