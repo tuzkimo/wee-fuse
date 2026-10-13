@@ -192,7 +192,7 @@ async function pickNative(source: "album" | "camera"): Promise<void> {
       <ul data-testid="pick-grid" class="grid grid-cols-2 gap-4 md:grid-cols-4">
         <li
           data-testid="pick-empty"
-          class="flex aspect-square flex-col items-center justify-center gap-2 rounded-bead-sm border-4 border-dashed border-bead-ink text-bead-line-2"
+          class="flex aspect-square flex-col items-center justify-center gap-2 rounded-bead-sm border-4 border-dashed border-bead-ink text-bead-ink"
         >
           <PixelIcon name="photos" :size="36" />
           <span class="text-[12px]">还没有照片</span>

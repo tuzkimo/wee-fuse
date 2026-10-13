@@ -690,6 +690,9 @@ describe("保存", () => {
     // 主规格 §8：保存失败 → 提示，保留内存中的编辑态不丢
     expect(wrapper.get("[data-testid='save-error']").text()).toContain("磁盘已满");
     expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(true);
+    // R47：与确认条同口径，重试保存也要够 56px。
+    expect(wrapper.get("[data-testid='retry-save']").classes()).toContain("min-h-14");
+    expect(wrapper.get("[data-testid='retry-save']").classes()).not.toContain("min-h-12");
     expect(session.dirty).toBe(true);
     expect(Array.from(editor.pattern?.cells ?? [])).toEqual(painted);
 
@@ -764,6 +767,11 @@ describe("未保存离开的拦截", () => {
     expect(wrapper.get("[data-testid='leave-save']").text()).toContain("保存并离开");
     expect(wrapper.get("[data-testid='leave-discard']").text()).toContain("放弃改动");
     expect(wrapper.get("[data-testid='leave-cancel']").text()).toContain("继续编辑");
+    // R47：这三个按钮原为 `min-h-12`（48px），低于规格 §6.5 的硬下界（56px）。
+    for (const id of ["leave-save", "leave-discard", "leave-cancel"]) {
+      expect(wrapper.get(`[data-testid='${id}']`).classes()).toContain("min-h-14");
+      expect(wrapper.get(`[data-testid='${id}']`).classes()).not.toContain("min-h-12");
+    }
     // 取消了导航，就没有发生任何跳转
     expect(pushMock).not.toHaveBeenCalled();
   });

@@ -703,21 +703,21 @@ function rerun(): void {
       <p class="text-[24px] text-bead-warn-ink">有未保存的改动，确定要离开吗？</p>
       <button
         data-testid="leave-save"
-        class="min-h-12 rounded-bead-sm bg-bead-ink px-4 text-[24px] text-bead-card"
+        class="min-h-14 rounded-bead-sm bg-bead-ink px-4 text-[24px] text-bead-card"
         @click="saveAndLeave"
       >
         保存并离开
       </button>
       <button
         data-testid="leave-discard"
-        class="min-h-12 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
+        class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
         @click="discardAndLeave"
       >
         放弃改动
       </button>
       <button
         data-testid="leave-cancel"
-        class="min-h-12 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
+        class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
         @click="cancelLeave"
       >
         继续编辑
@@ -735,7 +735,7 @@ function rerun(): void {
     <button
       v-if="editor.error"
       data-testid="retry-save"
-      class="ml-4 mt-3 min-h-12 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink md:ml-8"
+      class="ml-4 mt-3 min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink md:ml-8"
       @click="saveThenResult"
     >
       重试保存

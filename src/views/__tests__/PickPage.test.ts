@@ -270,7 +270,9 @@ describe("PickPage", () => {
     expect(button.attributes("aria-label")).toBe("下一步");
     expect(button.find("svg").exists()).toBe(true);
     expect(button.classes().join(" ")).toContain("bg-bead-accent");
-    expect(button.classes().join(" ")).toContain("shadow-pop-lg");
+    // R29：末位的 `!` 是语义的一部分（BeadButton 的 primary 自带 `shadow-pop-md`，两个工具类同特异性、
+    // `md` 在产物 CSS 里排在 `lg` 之后），去掉 `!` 会静默退回 medium 投影——所以连 `!` 一起钉住。
+    expect(button.classes().join(" ")).toContain("shadow-pop-lg!");
     // 36px 落在按钮内的文字节点上：BeadButton 的 primary 变体自带 24px，字号不能靠同名工具类的
     // CSS 先后顺序去盖（谁后生成谁赢），写在内层 span 上才是确定的。
     expect(button.get("span").classes()).toContain("text-[36px]");
@@ -292,6 +294,9 @@ describe("PickPage", () => {
     expect(classes).toContain("border-dashed");
     expect(classes).toContain("border-bead-ink");
     expect(classes).toContain("rounded-bead-sm");
+    // R29：占位格原用 `text-bead-line-2`，在 `bg-bead-sand` 上只有约 1.9:1 对比度（12px 文字与 36px 图标都糊）。
+    expect(classes).toContain("text-bead-ink");
+    expect(classes).not.toContain("text-bead-line-2");
   });
 
   it("草稿里还有上次的图时，给一个「继续上次的选区」入口", async () => {
@@ -374,7 +379,7 @@ describe("PickPage（native-picker 分支）", () => {
     expect(button.attributes("aria-label")).toBe("从相册选一张");
     expect(button.find("svg").exists()).toBe(true);
     expect(button.classes().join(" ")).toContain("bg-bead-accent");
-    expect(button.classes().join(" ")).toContain("shadow-pop-lg");
+    expect(button.classes().join(" ")).toContain("shadow-pop-lg!");
     expect(button.get("span").classes()).toContain("text-[36px]");
   });
 
