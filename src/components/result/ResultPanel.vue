@@ -12,15 +12,15 @@
 //    查看层反而打断「改参数再生成」这条路；「重做」那颗按钮才是离开本页面的动作。
 // 3. 根节点是**单根** `<section>`：`SetupPage` 的 `<section data-testid="result-pane">` 包着它，
 //    多根会让宿主传下来的属性落不到任何元素上。查看层因此放在根 section 的**最后一行**。
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import type { Palette } from "@/core/palette/types";
 import type { Pattern } from "@/core/pattern/types";
+import GridTilePreview from "@/components/sheet/GridTilePreview.vue";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import BeadButton from "@/components/ui/BeadButton.vue";
 import PixelIcon from "@/components/ui/PixelIcon.vue";
-import { RESULT_PREVIEW_MAX_EDGE, renderPatternThumbnail } from "@/services/patternThumbnail";
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     pattern: Pattern;
     palette: Palette;
@@ -54,9 +54,6 @@ const emit = defineEmits<{ rerun: []; edit: []; ok: [] }>();
 /** 查看施工图是否打开。**就地打开，不跳编辑器**：本页已经有图纸与用量。 */
 const sheetOpen = ref(false);
 
-/** 结果预览缩略图（结果面板的那张小图，也是查看施工图现算完成前的垫场图）。 */
-const preview = computed(() => renderPatternThumbnail(props.pattern, props.palette, RESULT_PREVIEW_MAX_EDGE));
-
 /** 上半屏的板孔点阵（§7.5：`radial-gradient`，间距 22px；与 `SetupPage` 中栏 / `PatternCanvas` 同写法）。 */
 const boardDots = {
   backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
@@ -68,8 +65,12 @@ const boardDots = {
   <section class="flex h-full min-h-0 flex-col gap-2 md:gap-4">
     <!--
       上半屏（约 55%）：成品预览在深色板底 + 板孔点阵上居中（§7.5）。深色底是本组件被允许的
-      四处看图底之一（§10.6 白名单）。`max-h-full` + `object-contain`：缩略图按原比例缩到盒内，
-      不裁切、不拉伸（像素风不重采样）。
+      四处看图底之一（§10.6 白名单）。
+
+      预览从 2026-10-13 起是**施工图的网格块**（`GridTilePreview`，规格 §5.3）：按这个盒子的
+      **短边**定格像素现画逐格真色 + 色号 + 网格线 + 板边界 + 每 5 格虚线 + 外框——所以
+      「适配预览区域」与「线条清晰」是同一件事，不再靠 `object-contain` 缩放一张糊图
+      （改造前每格只有 1 像素）。
 
       高度**跟随宿主**（R41 修复 2）：`basis-[55vh]` 是基准（宿主高度 auto 时它就是 55vh，
       全屏 `EditResultPage` 因此不变），`grow` + `min-h-0` 让它在**有定高**的宿主里被压进剩余
@@ -83,12 +84,7 @@ const boardDots = {
       class="flex min-h-0 grow basis-[55vh] max-md:p-2! items-center justify-center rounded-bead-md border-4 border-bead-ink bg-bead-board p-4"
       :style="boardDots"
     >
-      <img
-        data-testid="result-preview"
-        :src="preview"
-        alt=""
-        class="max-h-full max-w-full object-contain"
-      />
+      <GridTilePreview :pattern="pattern" :palette="palette" testid="result-preview" />
     </div>
     <p data-testid="result-save-state" class="text-[24px] text-bead-ink">
       {{ isNew ? "已保存到图纸库" : "已更新这张图纸" }}
@@ -156,14 +152,15 @@ const boardDots = {
 
     <!--
       查看施工图（C7 起是单张施工图的唯一出口）。吃 props 进来的那张图纸——宿主刚生成 / 刚保存的
-      那一份，不是回库读的。
+      那一份，不是回库读的。垫场图用宿主的 `thumbnail`（可能没有：编辑器来源的结果页没有现算好的
+      封面）——缺省时 `SheetViewer` 自己的 `previewSrc` 会退化为空串，而不是渲染一张废图。
     -->
     <SheetViewer
       v-if="sheetOpen"
       :pattern="pattern"
       :palette="palette"
       :name="name"
-      :thumbnail="thumbnail ?? preview"
+      :thumbnail="thumbnail"
       @close="sheetOpen = false"
     />
   </section>
