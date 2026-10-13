@@ -182,6 +182,31 @@ export function moveRect(rect: Rect, dx: number, dy: number, source: Size): Rect
 }
 
 /**
+ * 把矩形从一个坐标系按比例换到另一个坐标系（**原图 → 预览像素**的唯一换算）。
+ *
+ * 2026-10-13 为生图页的实时预览新增（规格 §5.4）：`draft.crop` 在**原图**坐标上，而要裁的是
+ * 一张 ≤1600px 的**预览位图**。这条换算此前不存在于任何地方（`CropCanvas` 是把预览拉伸到
+ * `sourceSize × scale` 的隐式换算，`core/crop` 里全是原图 / 屏幕坐标），所以它作为纯函数独立存在。
+ *
+ * **两轴比例由调用方给**，本函数不猜：预览的两轴是各自 round 出来的，理论上差亚像素，强行
+ * 推一个统一比例就是第二份数学。
+ *
+ * **为何公开**：`services/livePreview.ts` 是唯一的生产消费者；公开是为了让这条口径能逐个字段测
+ * （比例写错**不会抛错**，只会静默裁错区域）。
+ */
+export function scaleRect(rect: Rect, scaleX: number, scaleY: number): Rect {
+  requireRect(rect, "选区");
+  requireFinite(scaleX, "水平缩放比例");
+  requireFinite(scaleY, "垂直缩放比例");
+  return {
+    x: rect.x * scaleX,
+    y: rect.y * scaleY,
+    width: rect.width * scaleX,
+    height: rect.height * scaleY,
+  };
+}
+
+/**
  * 套用比例锁：以**当前选区中心为锚**，取「能放进当前选区的、符合目标比例的最大矩形」（只缩不放）。
  *
  * 比例定义在显示空间，所以先在 `rotation` 下算出朝向后的尺寸、按比例收缩、再换回源坐标
