@@ -1859,6 +1859,7 @@ describe("平板定高 shell（§7.4 T4）：顶栏固定、工具条贴画布�
       "rerun",
       "tool-brush",
       "tool-fill",
+      "tool-pan",
       "eraser",
       "toggle-grid",
       "toggle-labels",

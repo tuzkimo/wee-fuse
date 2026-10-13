@@ -31,6 +31,7 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
 const TOOL_BUTTONS: readonly (readonly [string, EditorTool])[] = [
   ["tool-brush", "brush"],
   ["tool-fill", "fill"],
+  ["tool-pan", "pan"],
 ];
 
 /**
@@ -43,6 +44,7 @@ const ICON_BUTTONS: readonly (readonly [string, string])[] = [
   ["redo", "恢复"],
   ["tool-brush", "画笔"],
   ["tool-fill", "填充"],
+  ["tool-pan", "拖动"],
   ["eraser", "橡皮"],
   ["toggle-grid", "网格线"],
   ["toggle-labels", "格内色号"],
@@ -54,7 +56,7 @@ const ICON_BUTTONS: readonly (readonly [string, string])[] = [
 describe("工具切换", () => {
   // 断言的是**载荷**：`toEqual([[tool]])` 同时钉住「emit 的是自己那个工具名」与「只 emit 一次」。
   // 写成 `toHaveBeenCalled` / `toHaveLength(1)` 时，两个按钮都 emit "brush" 也照样绿。
-  it("两个工具按钮各自 emit 自己的工具名（载荷逐字）", async () => {
+  it("每颗工具按钮各自 emit 自己的工具名（载荷逐字）", async () => {
     for (const [testid, tool] of TOOL_BUTTONS) {
       const wrapper = mountToolbar({ tool: "brush" });
       await wrapper.get(`[data-testid='${testid}']`).trigger("click");
@@ -63,9 +65,9 @@ describe("工具切换", () => {
   });
 
   // 当前工具在界面上必须看得出来（用户不知道自己拿的是画笔还是填充时，点一下就会涂错）。
-  // aria-pressed 是这里唯一的外部可观察量：两个工具一起遍历，写死某一颗必红。
-  it("当前工具那颗按钮 aria-pressed 为 true，另一颗为 false", () => {
-    for (const current of ["brush", "fill"] as const) {
+  // aria-pressed 是这里唯一的外部可观察量：三个工具一起遍历，写死某一颗必红。
+  it("当前工具那颗按钮 aria-pressed 为 true，其余为 false", () => {
+    for (const current of ["brush", "fill", "pan"] as const) {
       const wrapper = mountToolbar({ tool: current });
       for (const [testid, tool] of TOOL_BUTTONS) {
         expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-pressed")).toBe(
@@ -247,9 +249,9 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
   // happy-dom 没有布局（`getBoundingClientRect()` 恒 0，CONTRACT §9.5），屏幕尺寸在 CI 里
   // 不可观察；尺寸的唯一可观察形式就是类名。这是**代理断言**、不是像素断言：
   // 它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
-  it("3 个主工具 64×64、2 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
+  it("4 个主工具 64×64、2 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
     const wrapper = mountToolbar();
-    for (const testid of ["tool-brush", "tool-fill", "eraser"]) {
+    for (const testid of ["tool-brush", "tool-fill", "tool-pan", "eraser"]) {
       expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
         expect.arrayContaining(["h-16", "w-16"]), // 4rem = 64px
       );

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // src/components/editor/PatternToolbar.vue
 //
-// 编辑器工具条（§7.4）：**十颗图标按钮**（撤销/恢复 + 三个主工具 + 五个「看的方式」）。
+// 编辑器工具条（§7.4）：**十一颗图标按钮**（撤销/恢复 + 三个主工具 + 五个「看的方式」）。
 // props 进、事件出，**不读 store**；保存按钮与未保存圆点已搬进 `EditorPage` 的顶栏，不在本组件。
 //
 // 三个开关类按钮 emit 的是**翻转后的值**而不是当前值：本组件不持有开关状态，
@@ -15,8 +15,10 @@
 // 也根本验不到手机那一套。手机上左组一行、右组一行（两组都可横滑，`overflow-x-auto`），
 // 平板上两组用 `md:contents` 摊平进同一条 flex 行。
 //
-// 橡皮从调色板搬进工具条；`eraser` 的接收方（`EditorPage.onEraser`）除了把当前色设成橡皮，
-// 还要顺手切回画笔——那是页面的事，不在这里替它决定。
+// 橡皮从调色板搬进工具条（C8 第 3 项），**2026-10-13 又搬回了选色区**（规格 §5.2）——它不是工具，
+// 而是「当前色 = `EMPTY`」，与画笔 / 填充正交，放在工具条上与它们并排会让用户以为它们是三选一。
+// 它现在的位置是 `PalettePicker` 的橡皮项，本组件不再有 `eraser` emit 与 `eraserActive` prop。
+// 第三个主工具是「拖动」：单指平移视图，因此**它也是新会话的默认工具**（见 `store` 的 `DEFAULT_TOOL`）。
 // 「重做」（改参数重新生成）**不在这里**：T5 起它搬进了 `EditorPage` 的顶栏、与「保存」同级
 // （实机反馈 6：「重做」与工具按钮放一起不合逻辑）。本组件因此也不再声明 `rerun` emit 与
 // `canRerun` prop——那两颗只会在页面里接线，多一份接口就是多一份可能漂移的真相。
@@ -51,14 +53,15 @@ const emit = defineEmits<{
   eraser: [];
 }>();
 
-/** 两个工具按钮：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
+/** 三个主工具：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
 const TOOLS: readonly { readonly tool: EditorTool; readonly label: string }[] = [
   { tool: "brush", label: "画笔" },
   { tool: "fill", label: "填充" },
+  { tool: "pan", label: "拖动" },
 ];
 
 /**
- * 十颗图标按钮共用的尺寸类。
+ * 十一颗图标按钮共用的尺寸类。
  *
  * `p-0!`：主/次按钮变体自带 `px-6`（给文字按钮的），图标按钮必须显式清掉——否则 64px 的方框里
  * 左右各 24px 内边距把内容挤成 0 宽，图标会偏出中心。
@@ -75,7 +78,7 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
 
 <template>
   <div class="max-md:space-y-3 md:flex md:flex-wrap md:items-center md:gap-2">
-    <!-- 平板上十颗（≈640px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
+    <!-- 平板上十一颗（≈700px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
     <!-- 左组：撤销 / 恢复 + 三个主工具（手机上占第一行，可横滑）。 -->
     <div
       class="max-md:flex max-md:flex-nowrap max-md:items-center max-md:gap-3 max-md:overflow-x-auto md:contents"
