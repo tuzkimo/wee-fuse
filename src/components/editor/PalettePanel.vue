@@ -48,13 +48,15 @@ const emit = defineEmits<{
  * 选择器是否展开。**只在这里**，父级不持有它。
  *
  * C8 第 3 项：入口是**当前色槽本身**（点它开合，`aria-expanded` 陈述这个状态）——原来那颗
- * 「添加颜色」按钮已删除（它和色槽说的是同一件事，两颗按钮让用户以为要选一个）。独立的橡皮
- * 也搬到了工具栏（`PatternToolbar`），本面板不再有第二个入口。
+ * 「添加颜色」按钮已删除（它和色槽说的是同一件事，两颗按钮让用户以为要选一个）。
+ * **2026-10-13 起工具栏那颗橡皮也删了**：橡皮是选择器里的一个条目（`picker-eraser`），本面板
+ * 因此是编辑器里唯一的橡皮入口。
  */
 const picking = ref(false);
 
 /**
- * 选择器的用途（§5.3）。点当前色槽永远是 `brush`，`[换成…]` 才是 `recolor`。
+ * 选择器的**用途**（§5.3）。它只服务 `onPick` 的分岔（批量换色 / 改画笔色）——2026-10-13 起
+ * **不再往选择器里传**：橡皮在两种用途下都渲染，选择器那个 `mode` prop 已经删掉。
  *
  * **不做「有选中就是换色」的隐式语义**（§5.4）：用户挂着选择、只想改画笔色时，一按就误改一整片。
  * 多一次点击换「不会误伤」。
@@ -208,7 +210,7 @@ function onPick(index: number): void {
         <span>{{ current.code }}</span>
         <span v-if="current.name" class="text-bead-line-2">{{ current.name }}</span>
       </template>
-      <!-- 橡皮态只在这儿显示「橡皮」：独立的橡皮按钮在工具栏上（C8 第 3 项） -->
+      <!-- 橡皮态只在这儿显示「橡皮」：橡皮的入口是选择器里的一个条目，工具栏上已经没有了 -->
       <span v-else>橡皮</span>
     </button>
 
@@ -221,7 +223,6 @@ function onPick(index: number): void {
       v-if="picking"
       :palette="palette"
       :used-indices="usedIndices"
-      :mode="pickMode"
       @pick="onPick"
       @close="picking = false"
     />

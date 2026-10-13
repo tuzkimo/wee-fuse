@@ -2,8 +2,8 @@
 // src/components/editor/PalettePicker.vue
 //
 // MARD 221 全色卡选择器：顶部一组「已用色」快捷入口（按 `usedIndices` 顺序），下面按色号首字母
-// 分组、色块 + 色号、已用色加标记。
-// `mode` 决定用途（§5.3）：`recolor` 时多一个橡皮项、交出的都是目标色；`brush` 时是画笔色。
+// 分组、色块 + 色号、已用色加标记；顶部还有一个**橡皮项**（emit `EMPTY`）。
+// 橡皮在画笔与换色两种用途下都提供（2026-10-13 规格 §5.2：它从工具栏搬到了这里）。
 // props 进、事件出，**不读 store、不 import services**（色卡由父级以 props 给进来）。
 //
 // **分组顺序取数据里首次出现的顺序**，不硬编码九色系表、也不按字母排序：色卡是可插拔的
@@ -20,8 +20,6 @@ const props = defineProps<{
   palette: Palette;
   /** 已用色的**全色卡下标**（与 `Pattern.cells` / `currentColor` 同一口径，§9.2）。 */
   usedIndices: readonly number[];
-  /** 选择器用途：`recolor` 时多给一个橡皮项（emit `EMPTY`），其余同 `brush`。 */
-  mode: "brush" | "recolor";
 }>();
 
 const emit = defineEmits<{
@@ -77,7 +75,6 @@ const usedItems = computed(() =>
     </header>
 
     <button
-      v-if="mode === 'recolor'"
       data-testid="picker-eraser"
       class="mt-3 min-h-14 min-w-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink"
       @click="emit('pick', EMPTY)"
