@@ -152,8 +152,7 @@
 **几何**：预览不是「整张施工图缩一缩」，而是**按预览盒子的短边定格像素、现画一块网格**：
 
 - `cellPx = floor(min(盒宽 / 豆数宽, 盒高 / 豆数高))`，下限 1；**不设人为上限**（上限就是盒子本身
-  ——「适配短边」的字面含义）。一张 4×4 的图在一个 400 px 的盒子里就是 100 px/格，色号 36 px，
-  清晰得很。
+  ——「适配短边」的字面含义）。一张 4×4 的图在一个 400 px 的盒子里就是 100 px/格，清晰得很。
 - 计划里的**画布 = 盒子尺寸，网格在其中居中**（`grid` 的 `x/y` 是居中量）：于是绘制仍全部在
   画布坐标系里做，既有那五个网格层函数一行都不用改；盒子比网格大出来的部分就是留白。
 - DPR 由组件负责：与 `PatternCanvas.vue` 同款的 `ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)`。
@@ -236,6 +235,13 @@
   必须回来同步它，并让新文件过掉四条词法检查（不出现 `cellPx`、不直接读 `pattern.cells`、
   必须出现 `cellAt(`、不得有 `canvasWidth /` 这类除法）。
 
+> **更正注记（2026-10-13，真机反馈第 2 轮）**：本节第 1 条与第 2 条里关于 `GridTilePlan` 出参和
+> `drawGridTile` 层序的描述**已作废**（见 §5.3 的更正注记）：`GridTilePlan` **没有**
+> `labelFontPx` / `showGridLines` / `ruler` 三个字段，`planGridTile` 也不读 28 / 6 那两个阈值；
+> `drawGridTile` 只调 `paintCells`（空格斜线在里面）+ `drawGridFrame`，并先铺一层 `TILE_PAPER` 纸底。
+> 三条不变的：① `canvasWidth/Height` 就是盒子；② 五个网格层函数的参数类型收窄保留（四个仍有
+> 生产消费者，`drawLabels` 的窄化保留）；③ 词法闸门基线不用改（本批仍未新增渲染器文件）。
+
 ### 6.2 预览组件
 
 新增 `components/sheet/GridTilePreview.vue`（放在 `sheet/` 下：它画的是施工图那一套，不是编辑器的）：
@@ -292,6 +298,11 @@
   盒子大到格像素 ≥ 28 ⇒ `labelFontPx ≥ 10` 且网格线开关为真，盒子小到格像素 < 6 ⇒ 开关为假，
   `labelFontPx = 0` 而**不抛错**（与 `planSheet` 对同一输入抛错的对照就是这条的判别力）。
   `drawGridTile` 画了那六层（用既有的渲染目标桩计数），且**不画**标题 / 刻度带 / 用料条。
+
+  > **更正注记（2026-10-13，真机反馈第 2 轮）**：本条的「两档降级各一条」与「画了那六层」**已作废**
+  > （见 §5.3）。现在的判据是**两个格像素量级**（40px/格 与 5px/格）各钉一次：路径**恰好两条**
+  > （空格斜线 + 外框）、`fillText` **零次**、无刻度带底色、无用料条，且第一条 `fillRect` 就是
+  > 网格矩形上的 `TILE_PAPER` 纸底。
 - `services/__tests__/`：新的「原图坐标 → 预览像素」换算函数（整数边界、取整方向、
   `preview.width / sourceSize.width` 的比例）。
 - `components/sheet/__tests__/GridTilePreview.test.ts`：盒子变化时按短边重算格像素（用例手法照抄

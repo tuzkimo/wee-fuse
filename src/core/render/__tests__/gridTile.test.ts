@@ -59,7 +59,7 @@ describe("planGridTile", () => {
 });
 
 describe("drawGridTile", () => {
-  /** 10×10、三个空格——空格才是「纸底 + 斜线」那条链的观测点。 */
+  /** 10×10、**两个**空格——空格才是「纸底 + 斜线」那条链的观测点。 */
   function mixedPattern(): Pattern {
     const pattern = makePattern(10, 10);
     pattern.cells[0] = EMPTY;
@@ -94,7 +94,7 @@ describe("drawGridTile", () => {
       // 纸底 + 每个实心格一次填充（10×10 减两个空格）。
       expect(calls.fills).toHaveLength(99);
 
-      // 空格斜线：三个空格收集在**一条**路径里（`EMPTY_STROKE`），一次 `stroke`。
+      // 空格斜线：两个空格收集在**一条**路径里（`EMPTY_STROKE`），一次 `stroke`。
       const hatch = calls.paths[0];
       expect(hatch?.strokeStyle).toBe(EMPTY_STROKE);
       expect(hatch?.ops.filter((op) => op.op === "lineTo")).toHaveLength(2);
