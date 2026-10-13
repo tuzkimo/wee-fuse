@@ -40,12 +40,15 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 编辑器工具：画笔 / 填充（单指分工，规格 §6.1）。
+ * 编辑器工具：画笔 / 填充 / 拖动（单指分工，规格 §6.1）。
  *
  * **填充是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
- * 填充则按整片区域入账，先选工具再点画布（容差随手里拿的东西变，见 `EditorPage.onFill`）。
+ * 填充则按整片区域入账，先选工具再点画布（目标区域与容差随手里拿的东西变，见 `EditorPage.onFill`）。
+ *
+ * **拖动（`pan`）是唯一不动图纸的工具**：单指拖动只改视图（`view`）、不进历史也不置脏，
+ * 与双指手势走同一个 `update:view` 出口。它也是新会话的默认工具（见 `DEFAULT_TOOL`）。
  */
-export type EditorTool = "brush" | "fill";
+export type EditorTool = "brush" | "fill" | "pan";
 
 const DEFAULT_TOOL: EditorTool = "brush";
 
@@ -252,9 +255,9 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "fill") {
+    if (next !== "brush" && next !== "fill" && next !== "pan") {
       throw new Error(
-        `编辑器工具非法：${String(next)}（只允许 "brush" / "fill"）`,
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "fill" / "pan"）`,
       );
     }
     tool.value = next;

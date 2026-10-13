@@ -337,6 +337,12 @@ describe("工具 / 当前色 / 视图 / 显示开关", () => {
     expect(editor.tool).toBe("fill");
   });
 
+  it("pan 是合法工具（拖动）", () => {
+    const { editor } = seedEditor();
+    editor.setTool("pan");
+    expect(editor.tool).toBe("pan");
+  });
+
   it("setCurrentColor 接受 0..colorCount-1 与 EMPTY，拒绝越界 / 非整数 / NaN", () => {
     const { editor } = seedEditor();
 
