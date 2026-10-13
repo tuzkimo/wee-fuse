@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
-import { GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 import css from "../../../style.css?raw";
 
 /**
@@ -22,5 +22,10 @@ describe("深色底画布颜色常量（§9 / Review Focus 3）", () => {
 
   it("格内色号不是 ink（#3D3226 在深色底上看不见）", () => {
     expect(LABEL_ON_DARK.toLowerCase()).not.toBe("#3d3226");
+  });
+
+  it("FRAME_ON_DARK（图纸外框）与 --color-bead-hole 同源", () => {
+    // 外框借的是板孔那一档灰（§6.1 的更正注记）：没有同名 token，同源对象是 bead-hole。
+    expect(css).toContain(`--color-bead-hole: ${FRAME_ON_DARK}`);
   });
 });

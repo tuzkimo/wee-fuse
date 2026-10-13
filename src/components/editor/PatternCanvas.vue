@@ -10,7 +10,7 @@
 import { ref, watch } from "vue";
 import { screenToOriented, type Point, type Size, type ViewTransform } from "@/core/crop/view";
 import type { RGB } from "@/core/color/space";
-import { GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
@@ -499,6 +499,25 @@ function drawLabels(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: num
   }
 }
 
+/**
+ * 图纸外框（§6.1 的更正注记）：黑边图纸（豆色 `#000000`）与板底之间没有它就看不出图纸到哪结束。
+ *
+ * 2 CSS px（`setTransform` 已按 DPR 缩放）、贴图纸边界（中线落在边界上，内外各占 1px）。
+ * **画在网格线之后**：`clampView` 不许视图露出空白，图纸总有一条边与画布边缘平齐，
+ * 那一条边的外侧半个框会被裁掉——再让边界网格线盖住内侧那一半，框就完全看不见了。
+ * 代价是最外侧 1px 豆粒被框色盖住（2px 框贴边界，一半必然落在图纸内）。
+ */
+function drawFrame(ctx: CanvasRenderingContext2D, view: ViewTransform, cellPx: number): void {
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = FRAME_ON_DARK;
+  ctx.strokeRect(
+    view.offsetX,
+    view.offsetY,
+    props.pattern.width * cellPx,
+    props.pattern.height * cellPx,
+  );
+}
+
 /** 本次手势的待涂格子：半透明预览，`pattern.cells` 一个字节都不改（§6.2 第 3 条）。 */
 function drawPending(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: number): void {
   const gesture = toolGesture;
@@ -572,6 +591,7 @@ function draw(): void {
   if (range === null) return; // 没有可见格：画完底色与色块层就够了
 
   if (props.showGrid && cellPx >= GRID_LINE_MIN_CELL_PX) drawGrid(ctx, range, cellPx, pixelRatio);
+  drawFrame(ctx, view, cellPx);
   if (props.showLabels && cellPx >= CELL_LABEL_MIN_CELL_PX) drawLabels(ctx, range, cellPx);
   drawPending(ctx, range, cellPx);
   drawSelected(ctx, range, cellPx);

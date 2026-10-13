@@ -8,7 +8,7 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { maxCellScale, minCellScale } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
-import { GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 
 /**
  * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
@@ -157,6 +157,18 @@ interface RecordedText {
 
 let labelTexts: RecordedText[] = [];
 
+interface RecordedStrokeRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** 调用那一刻的线宽与颜色（图纸外框的判据；`stroke()` 的网格线走 `strokeColors`）。 */
+  readonly lineWidth: number;
+  readonly strokeStyle: string;
+}
+
+let strokeRects: RecordedStrokeRect[] = [];
+
 /** 每次 `stroke()` 调用那一刻的 `strokeStyle`（网格线颜色的唯一判据）。 */
 let strokeColors: string[] = [];
 
@@ -176,6 +188,7 @@ function stubContext(): void {
   ops = [];
   fills = [];
   labelTexts = [];
+  strokeRects = [];
   strokeColors = [];
   const record = (op: string) => (): void => {
     ops.push(op);
@@ -189,6 +202,7 @@ function stubContext(): void {
     const target = { w: this.width, h: this.height };
     let fillStyle = "";
     let strokeStyle = "";
+    let lineWidth = 1;
     const ctx = {
       imageSmoothingEnabled: true,
       // 真实属性（不是普通字段）：`fillRect` / `fillText` 要记下**调用那一刻**的样式，判据靠它。
@@ -204,7 +218,13 @@ function stubContext(): void {
       set strokeStyle(value: string) {
         strokeStyle = value;
       },
-      lineWidth: 1,
+      // 外框的 2px 靠这里捕获（与上面两个样式同一手法：读「调用那一刻」的值）。
+      get lineWidth(): number {
+        return lineWidth;
+      },
+      set lineWidth(value: number) {
+        lineWidth = value;
+      },
       font: "",
       textAlign: "center",
       textBaseline: "middle",
@@ -220,7 +240,10 @@ function stubContext(): void {
         ops.push("stroke");
         strokeColors.push(strokeStyle);
       },
-      strokeRect: record("strokeRect"),
+      strokeRect: (x: number, y: number, w: number, h: number): void => {
+        ops.push("strokeRect");
+        strokeRects.push({ x, y, w, h, lineWidth, strokeStyle });
+      },
       fillRect: (x: number, y: number, w: number, h: number): void => {
         ops.push("fillRect"); // 既有按 `ops` 计数的用例照旧
         fills.push({ x, y, w, h, fillStyle });
@@ -1036,5 +1059,22 @@ describe("深色拼豆板底（Review Focus 3）", () => {
     });
     await dark.vm.$nextTick();
     expect(labelFillColor()).toBe(LABEL_ON_DARK);
+  });
+
+  it("图纸边界描一圈 2px 的 FRAME_ON_DARK 外框（黑边图纸不糊进板底）", async () => {
+    // 8×8 + VIEW_8：图纸在视图里就是 [0,0,192,192]，手算得出「外框贴的是图纸边界」而不只是「画了个矩形」。
+    // 判据是 `strokeRect` 的实参 + **调用那一刻**的 `lineWidth` / `strokeStyle`：画了框但没设 2px
+    // 或用了网格线的色，都会红。
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8 });
+    await wrapper.vm.$nextTick();
+
+    expect(strokeRects.at(-1)).toEqual({
+      x: 0,
+      y: 0,
+      w: 192,
+      h: 192,
+      lineWidth: 2,
+      strokeStyle: FRAME_ON_DARK,
+    });
   });
 });

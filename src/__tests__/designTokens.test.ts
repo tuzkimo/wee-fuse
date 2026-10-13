@@ -195,7 +195,7 @@ describe("style.css 基样式逐字在位（§6.1 / §6.2 / §6.3）", () => {
     go: "#17A398",
     "go-dark": "#0E6E66",
     "card-shadow": "#D8C9AC",
-    board: "#2A2320",
+    board: "#332B26",
     hole: "#463A32",
     grid: "#4A4038",
     "label-on-dark": "#FFF4E4",
