@@ -7,7 +7,7 @@ const routes: RouteRecordRaw[] = [
   // 该页与它的用例已在 B2 任务 14 删除。
   { path: "/new", name: "pick", component: () => import("@/views/PickPage.vue") },
   { path: "/new/setup", name: "setup", component: () => import("@/views/SetupPage.vue") },
-  // /edit/:id 是 B3 的编辑器宿主：载入图纸 → 缩放平移 / 画笔 / 框选 / 吸管 / 撤销 → 显式保存。
+  // /edit/:id 是 B3 的编辑器宿主：载入图纸 → 缩放平移 / 画笔 / 填充 / 撤销 → 显式保存。
   // 有未保存改动时离开会被页面内的确认条拦下（同页重载由 `watch(route.params.id)` 处理，B1-8）。
   { path: "/edit/:id", name: "editor", component: () => import("@/views/EditorPage.vue") },
   // `/edit/:id/result` 是**编辑来源的结果页**（C8 规格 §3.4）：编辑器保存成功后落到这里，

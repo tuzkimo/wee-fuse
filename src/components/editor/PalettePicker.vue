@@ -63,12 +63,13 @@ const usedItems = computed(() =>
 </script>
 
 <template>
-  <section data-testid="picker" class="rounded border border-slate-300 bg-white p-3">
+  <section data-testid="picker" class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 shadow-pop-lg">
     <header class="flex items-center justify-between gap-2">
-      <h2 class="text-base font-semibold text-slate-900">{{ palette.name }}</h2>
+      <h2 class="text-[24px] text-bead-ink">{{ palette.name }}</h2>
       <button
         data-testid="picker-close"
-        class="min-h-11 min-w-11 rounded border border-slate-300 px-3 text-base"
+        aria-label="关闭"
+        class="min-h-14 min-w-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink"
         @click="emit('close')"
       >
         关闭
@@ -78,21 +79,24 @@ const usedItems = computed(() =>
     <button
       v-if="mode === 'recolor'"
       data-testid="picker-eraser"
-      class="mt-3 min-h-11 min-w-11 rounded border border-slate-300 px-3 text-base"
+      class="mt-3 min-h-14 min-w-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink"
       @click="emit('pick', EMPTY)"
     >
       橡皮（空格）
     </button>
 
     <div v-if="usedItems.length > 0" class="mt-3">
-      <h3 class="text-base text-slate-600">已用色</h3>
-      <div class="mt-1 grid grid-cols-6 gap-1">
+      <h3 class="text-[24px] text-bead-ink">已用色</h3>
+      <!-- 平板右栏只有 250px（减卡片 4px 描边与 p-3 后 ≈ 218px 可用）：6×56px + 5×4px gap
+           ≈ 356px 会重叠，§7.4 定的是 3 列（3×56 + 2×4 = 176px）；手机视口更窄、6 列同样放不下，
+           但 3 列在 360px 上太浪费，故窄屏取 5 列（5×56 + 4×4 = 296px）。 -->
+      <div class="mt-1 grid grid-cols-5 gap-1 md:grid-cols-3">
         <button
           v-for="item in usedItems"
           :key="item.index"
           data-testid="picker-used"
           :data-used-code="item.color.code"
-          class="min-h-11 min-w-11 rounded border border-slate-200 text-base text-slate-700"
+          class="min-h-14 min-w-14 rounded-bead-sm border-3 border-bead-ink text-[24px] text-bead-ink"
           :style="{ backgroundColor: `rgb(${item.color.rgb[0]}, ${item.color.rgb[1]}, ${item.color.rgb[2]})` }"
           @click="emit('pick', item.index)"
         >
@@ -108,8 +112,8 @@ const usedItems = computed(() =>
       :data-letter="group.letter"
       class="mt-3"
     >
-      <h3 class="text-base text-slate-600">{{ group.letter }} 色系</h3>
-      <div class="mt-1 grid grid-cols-6 gap-1">
+      <h3 class="text-[24px] text-bead-ink">{{ group.letter }} 色系</h3>
+      <div class="mt-1 grid grid-cols-5 gap-1 md:grid-cols-3">
         <button
           v-for="color in group.colors"
           :key="color.code"
@@ -117,7 +121,7 @@ const usedItems = computed(() =>
           :data-code="color.code"
           :data-rgb="color.rgb.join(',')"
           :data-used="used.has(color.index) ? '1' : undefined"
-          class="min-h-11 min-w-11 rounded border border-slate-200 text-base text-slate-700"
+          class="min-h-14 min-w-14 rounded-bead-sm border-3 border-bead-ink text-[24px] text-bead-ink"
           :style="{ backgroundColor: `rgb(${color.rgb[0]}, ${color.rgb[1]}, ${color.rgb[2]})` }"
           @click="emit('pick', color.index)"
         >

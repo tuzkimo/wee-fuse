@@ -331,20 +331,19 @@ export function visibleCellRange(
 }
 
 /**
- * 两个**屏幕点**围出的框选矩形，单位是**格子**：两点各过 `screenToOriented` 得到连续格子坐标、
+ * 两个**屏幕点**围出的矩形，单位是**格子**：两点各过 `screenToOriented` 得到连续格子坐标、
  * 夹进 `[0, grid.width] × [0, grid.height]`，再取 `floor` 的左上与 `ceil` 的右下。
  * 空矩形（宽或高为 0）返回 `null`。
  *
- * **关键取舍（不复用 `pointToCell`）**：`pointToCell` 落在图纸之外时返回 `null`，而框选拖动
- * **经常**拖出图纸边界（想框到最后一列就会拖过头）；用 `pointToCell` 就得在组件里为「null 时
+ * **关键取舍（不复用 `pointToCell`）**：`pointToCell` 落在图纸之外时返回 `null`，而矩形拖动
+ * **经常**拖出图纸边界（想拖到最后一列就会拖过头）；用 `pointToCell` 就得在调用方为「null 时
  * 取哪条边」再写一份判定——那正是「两端各自正确、错在接线」的温床。连续坐标天然支持越界夹取。
  *
  * **关键取舍（空矩形返回 `null`，不夹成 1×1）**：把退化矩形抬成 1×1 会在图纸外凭空产生一次
- * 「涂一格」的命令（`buildRectPaintCommand` 只看宽高）。1×1 **合法**：起止点落在同一格时
- * `floor` / `ceil` 自然给出 1×1（`ceil(9.2) − floor(9.2) = 1`），这条路径与空矩形可区分。
+ * 「涂一格」的命令。1×1 **合法**：起止点落在同一格时 `floor` / `ceil` 自然给出 1×1
+ * （`ceil(9.2) − floor(9.2) = 1`），这条路径与空矩形可区分。
  *
- * **为何公开**：`PatternCanvas.vue`（任务 5）的框选工具在拖动预览与抬手应用两处都用它，
- * `select` 事件带的就是它的产物（格子坐标的 `Rect`，契约 §5）；组件里不写第二份取整规则。
+ * shortcut: 删框选后只剩测试在用，下次动 core 时一并删或重新接线
  */
 export function cellRectFromScreen(a: Point, b: Point, view: ViewTransform, grid: Size): Rect | null {
   requireGridSize(grid);

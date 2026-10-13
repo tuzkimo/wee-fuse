@@ -138,26 +138,24 @@ describe("长边输入", () => {
 
   // 越界探针取 **117**（上限 116 的紧邻外侧）：旧写法是 `"501"`，改常量前后它都被拒、
   // 没有任何判别力；117 才真的钉住「上限就是 116」这一条。
-  it.each(["0", "117", "2.5", ""])("非法输入 %s 不 emit，给出原因并禁用生成", async (bad) => {
+  it.each(["0", "117", "2.5", ""])("非法输入 %s 不 emit，给出原因", async (bad) => {
     const wrapper = mountPanel();
     await wrapper.get("[data-testid='long-side']").setValue(bad);
 
     expect(wrapper.emitted("update:longSide")).toBeUndefined();
     expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("1–116");
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
   });
 
   // 【修复轮 1】上面那条只断言 0 / 117 **被拒**，1 与 116 这两个边界值从未被断言「**接受**」：
   // 把 `value <= MAX_LONG_SIDE` 改成 `<`（或把 `>= MIN_LONG_SIDE` 改成 `>`）后 20 条用例全绿。
   // 边界是规格 §4.6 / 关键常量「长边豆数范围 1–116」的端点，被拒就是功能缺失。
-  it.each([1, 116])("边界值 %i 被接受（emit、有摘要、可生成）", async (value) => {
+  it.each([1, 116])("边界值 %i 被接受（emit、有摘要、无阻拦原因）", async (value) => {
     const wrapper = mountPanel();
     await wrapper.get("[data-testid='long-side']").setValue(String(value));
 
     expect(wrapper.emitted("update:longSide")?.at(-1)).toEqual([value]);
     expect(wrapper.get("[data-testid='summary']").text()).toContain(`${value} × ${value} 颗`);
     expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeUndefined();
   });
 });
 
@@ -284,44 +282,39 @@ describe("工程名输入（C8 规格 §3.7）", () => {
     expect(wrapper.get("[data-testid='project-name-counter']").text()).toContain("3 / 100");
   });
 
-  it("名字清空 ⇒ 报错、不 emit、禁用生成（空名字印不出标题也写不出文件名）", async () => {
+  it("名字清空 ⇒ 报错、不 emit（空名字印不出标题也写不出文件名）", async () => {
     const wrapper = mountPanel();
     const input = wrapper.get("[data-testid='project-name-input']");
     await input.setValue("   ");
 
     expect(wrapper.emitted("update:name")).toBeUndefined();
     expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("工程名称不能为空");
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
 
-    // 改回合法名字：错误消失、恢复 emit 与可生成（不是单向锁死）。
+    // 改回合法名字：错误消失、恢复 emit（不是单向锁死）。
     await input.setValue("小猫");
     expect(wrapper.emitted("update:name")?.at(-1)).toEqual(["小猫"]);
     expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeUndefined();
   });
 });
 
-describe("生成按钮", () => {
-  it("点按 emit generate", async () => {
+/**
+ * T3（实机反馈 2）：本组件**不再持有**「生成图纸」按钮——它与顶栏主按钮（`setup-primary`）/
+ * 手机底部动作条重复。生成入口只剩页面那两颗，由 `SetupPage.test.ts` 钉住。
+ *
+ * 这里钉两件事：按钮确实不在了（§11.1 删除清单），以及它旁边那段 `generateBlockedReason` 文字
+ * **必须保留**（R51：「选区太小 / 存储不可用」的唯一显示处，顶栏 / 底栏两颗只 `disabled` 不解释）。
+ */
+describe("生成按钮已删除，原因文字保留（T3 / R51 / §11.1）", () => {
+  it("不再渲染 generate 按钮，也不再有可点的生成入口", () => {
     const wrapper = mountPanel();
-    const button = wrapper.get("[data-testid='generate']");
-    expect(button.text()).toContain("生成图纸");
-    await button.trigger("click");
-    expect(wrapper.emitted("generate")).toHaveLength(1);
+    expect(wrapper.find("[data-testid='generate']").exists()).toBe(false);
+    // 没有拦截原因时，连原因文字也不该出现（无按钮、无说明 = 正常的空态）。
+    expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
   });
 
-  it("busy 期间禁用（禁止并发生成）", () => {
-    const wrapper = mountPanel({ busy: true });
-    const button = wrapper.get("[data-testid='generate']");
-    expect(button.attributes("disabled")).toBeDefined();
-    // 长任务期间唯一的进度反馈（点按后的即时回应就是这行字）。
-    expect(button.text()).toContain("正在生成");
-  });
-
-  it("父级给出的阻拦原因会显示出来并禁用生成（选区太小等）", () => {
+  it("父级给出的阻拦原因仍然显示出来（选区太小等；R51）", () => {
     const wrapper = mountPanel({ generateBlockedReason: "选区 50 × 50 像素要拼 58 × 58 颗豆" });
     expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("选区 50 × 50");
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
   });
 
   // 【修复轮 1】`blockedReason` 的注释声明「自己的输入错误优先于父级原因」，但上面的用例
@@ -344,7 +337,6 @@ describe("生成按钮", () => {
     // 这一步把「父级原因真的同时存在」钉死，避免上面的断言靠一个空 props 蒙过去。
     await input.setValue("58");
     expect(reason()).toContain("选区 50 × 50");
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
   });
 });
 
@@ -405,5 +397,93 @@ describe("端到端：摘要 = 流水线产出的图纸尺寸", () => {
 
     expect([pattern.width, pattern.height]).toEqual([44, 58]);
     expect(wrapper.get("[data-testid='summary']").text()).toContain("44 × 58 颗");
+  });
+});
+
+/**
+ * 参数全部图形化（§7.3）：两套档位换成图形按钮、勾选框换成像素开关。
+ *
+ * 两条滑条与数字输入框**一字不动**（档位语义留在 `TierSlider`，见它自己的用例）；图形按钮只是把
+ * 同样的档位值接到同一条既有出口（`update:longSide` / `update:maxColors`）——不是新加一条通路。
+ * 取值与「点了就生效」两件事都钉：只钉形状的话，按钮点了没反应照样全绿。
+ */
+describe("参数全部图形化（§7.3）", () => {
+  it("长边的档位 = 画出来的格子数（1 / 2 / 4 个方块）", () => {
+    const wrapper = mountPanel();
+    const tiers = wrapper.findAll("[data-testid^='long-side-tier-']");
+    expect(tiers.map((tier) => tier.findAll("[data-square]").length)).toEqual([1, 2, 4]);
+  });
+
+  it("点长边档位按钮 ⇒ 走既有 update:longSide，摘要当场跟着变（不等父级回灌）", async () => {
+    const wrapper = mountPanel();
+    await wrapper.findAll("[data-testid^='long-side-tier-']")[2]!.trigger("click");
+    expect(wrapper.emitted("update:longSide")?.at(-1)).toEqual([116]);
+    expect(wrapper.get("[data-testid='summary']").text()).toContain("116 × 116 颗");
+  });
+
+  it("用色的档位 = 色条（段数递增 1 / 2 / 3）", () => {
+    const wrapper = mountPanel();
+    const tiers = wrapper.findAll("[data-testid^='color-tier-']");
+    expect(tiers.map((tier) => tier.findAll("[data-segment]").length)).toEqual([1, 2, 3]);
+  });
+
+  it("点用色档位按钮 ⇒ 走既有 update:maxColors，父级回灌后读数跟着变", async () => {
+    const wrapper = mountPanel();
+    await wrapper.findAll("[data-testid^='color-tier-']")[0]!.trigger("click");
+    expect(wrapper.emitted("update:maxColors")?.at(-1)).toEqual([8]);
+    // 读数读的是 **props**（色数没有本地草稿，与长边不同）：父级写回后才变——
+    // 断言真实流（按钮 → emit → 父级 → props），而不是在组件里另生一个本地状态。
+    expect(wrapper.get("[data-testid='max-colors-value']").text()).toBe("24 种");
+    await wrapper.setProps({ maxColors: 8 });
+    expect(wrapper.get("[data-testid='max-colors-value']").text()).toBe("8 种");
+  });
+
+  it("名字输入框的触控目标也是 56px（R46：min-h-12 = 48px 不够）", () => {
+    const wrapper = mountPanel();
+    const input = wrapper.get("[data-testid='project-name-input']");
+    expect(input.classes()).toContain("min-h-14");
+    expect(input.classes()).not.toContain("min-h-12");
+  });
+
+  it("像素开关：74×38、rounded-full、border-4 border-bead-ink、选中态 bg-bead-go，且仍是真 checkbox", () => {
+    const wrapper = mountPanel({ removeBackground: true });
+    const box = wrapper.get("[data-testid='remove-background']");
+    expect(box.attributes("type")).toBe("checkbox");
+    const classes = box.classes().join(" ");
+    expect(classes).toContain("h-[38px]");
+    expect(classes).toContain("w-[74px]");
+    expect(classes).toContain("rounded-full");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    // 选中态是 go 色（关态是沙色凹槽）；`checked:bg-bead-go` 用子串匹配就够，语义由下面这条 `.checked` 钉住。
+    expect(classes).toContain("bg-bead-go");
+    expect((box.element as HTMLInputElement).checked).toBe(true);
+
+    // 开关本体只有 38px 高，56px 的行是它的触控目标（§6.5）；`busy` 时输入框与滑块一起淡。
+    const label = box.element.closest("label");
+    expect(label?.classList.contains("min-h-14")).toBe(true);
+
+    // 滑块：`<input>` 是替换元素，画不了 `::after`，所以它是兄弟元素，靠 `peer-checked:` 滑到右端。
+    const knob = wrapper.get("[data-knob]");
+    expect(knob.classes()).toContain("pointer-events-none"); // 不吃滑条 / 勾选框的命中
+    expect(knob.classes()).toContain("rounded-full");
+    expect(knob.classes().join(" ")).toContain("peer-checked:translate-x-[36px]");
+    // 禁用态只淡输入框会留下一个亮着的滑块（视觉上像“还能点”）。
+    expect(knob.classes()).toContain("peer-disabled:opacity-50");
+  });
+
+  /**
+   * §7.3 逐字保留的那一处解释性文字（规格写「去掉背景」，仓里 shipped 的文案是「去除背景」，
+   * 四个字都没动）。testid 挂在 `<input>` 上，所以名字只能从它的 `label` 上读。
+   *
+   * R45：括号里那句长解释（纯色 / 渐变背景…）已删——§7.3「全 App 唯一一处允许的解释性文字」
+   * 指的就是这四个字，§2 目标 3 要求「解释性长句全部删除」。下面第二条断言钉住它没回来。
+   */
+  it("「去除背景」的四个字仍在，旁旁的解释性长句已删（§7.3 / R45）", () => {
+    const wrapper = mountPanel();
+    const label = wrapper.get("[data-testid='remove-background']").element.closest("label");
+    const text = label?.textContent ?? "";
+    expect(text).toContain("去除背景");
+    expect(text).not.toContain("纯色");
   });
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { rgbToLab, type Lab } from "@/core/color/space";
 import type { SampledGrid } from "@/core/image/types";
+import mardRaw from "../../palette/builtin/mard221.json";
+import { createPaletteRuntime, loadPalette } from "../../palette/registry";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import {
   BACKGROUND_TOLERANCE,
@@ -195,6 +197,37 @@ describe("patternBackgroundIndices", () => {
     const pattern = makePattern((x) => (x === 1 ? EMPTY : 0));
     const indices = patternBackgroundIndices(pattern, LABS, { x: 0, y: 0 }, BACKGROUND_TOLERANCE);
     expect([...indices].sort((a, b) => a - b)).toEqual([0, 3, 6]);
+  });
+
+  it("容差 0：只吃同色连通片，不吃相邻的相近色", () => {
+    // 3×1 的图纸，三格分别是色卡下标 140 / 141 / 140（F4 `#fb2a40` / F5 `#e10328`，
+    // ΔE76 = 8.60——容差 0 分得开、容差 10 分不开）。这是「拿颜色精确 / 拿橡皮宽容」
+    // 那条规则的地基：容差本身就是入参，这里钉住「0 与 10 真的产生不同结果」，
+    // 否则两者等价、规则是句空话。
+    const pattern: Pattern = {
+      width: 3,
+      height: 1,
+      paletteId: "fake",
+      cells: Uint16Array.from([140, 141, 140]),
+    };
+    const labs = createPaletteRuntime(loadPalette(mardRaw)).labs;
+
+    // 第 2 格与第 0 格同色号，但被第 1 格挡住、四连通不可达——容差 0 停在墙上
+    expect(patternBackgroundIndices(pattern, labs, { x: 0, y: 0 }, 0)).toEqual([0]);
+  });
+
+  it("容差 10：相近色一起被吃（原来的「去背景」行为）", () => {
+    const pattern: Pattern = {
+      width: 3,
+      height: 1,
+      paletteId: "fake",
+      cells: Uint16Array.from([140, 141, 140]),
+    };
+    const labs = createPaletteRuntime(loadPalette(mardRaw)).labs;
+
+    expect(
+      patternBackgroundIndices(pattern, labs, { x: 0, y: 0 }, BACKGROUND_TOLERANCE),
+    ).toEqual([0, 1, 2]);
   });
 
   it("种子落在空格 / 图纸外 / 非整数时返回空数组", () => {

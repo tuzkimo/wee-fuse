@@ -1,6 +1,80 @@
 @import "tailwindcss";
 
 /*
+ * 缝合像素字体：Fusion Pixel Font 12px proportional zh_hans，2026.09.25（OFL-1.1）。
+ * 许可证原文随字体入库（src/assets/fonts/LICENSE-OFL.txt），这是 OFL-1.1 的再分发要求。
+ * `font-display: block` 是刻意的：像素字体闪一下回退字体比空着更难看（§6.2）。
+ */
+@font-face {
+  font-family: "FusionPixel";
+  src: url("./assets/fonts/fusion-pixel-12px-proportional-zh_hans.woff2") format("woff2");
+  font-display: block;
+}
+
+/*
+ * 视觉语言的全部 token（§6.1 调色板 / §6.3 形状与投影阶）。页面只引工具类
+ * （`bg-bead-sand` / `text-bead-ink` / `shadow-pop-md`），不写裸色值。
+ * token 名是任务 6–18 的公共接口，改名等于全线返工。
+ */
+@theme {
+  --color-bead-sand: #F5EDDF;
+  --color-bead-sand-2: #EFE4D0;
+  --color-bead-sand-3: #E9DFC9;
+  --color-bead-card: #FFF9EE;
+  --color-bead-ink: #3D3226;
+  --color-bead-line: #C9B79A;
+  --color-bead-line-2: #B9A585;
+  --color-bead-accent: #E4572E;
+  --color-bead-accent-dark: #A83A18;
+  --color-bead-warm: #FFB56B;
+  --color-bead-warm-dark: #C98A4A;
+  --color-bead-go: #17A398;
+  --color-bead-go-dark: #0E6E66;
+  --color-bead-card-shadow: #D8C9AC;
+  --color-bead-board: #332B26;
+  --color-bead-hole: #463A32;
+  --color-bead-grid: #4A4038;
+  --color-bead-label-on-dark: #FFF4E4;
+  --color-bead-danger: #B3392B;
+  --color-bead-warn-bg: #FCEBC8;
+  --color-bead-warn-ink: #8A5A1A;
+
+  --font-pixel: "FusionPixel", sans-serif;
+
+  --radius-bead-sm: 10px;
+  --radius-bead-md: 16px;
+  --radius-bead-pill: 999px;
+
+  /*
+   * 投影颜色**不写进 token**：token 里留 `var(--bead-pop)` 占位，由组件本地设这一个变量
+   * （主按钮设 accent-dark、保存按钮设 go-dark），这样三档投影各只有一个类名可用，
+   * 颜色与形状就不会在页面里各自漂移。零模糊半径——像素风没有模糊阴影（§6.3）。
+   * 命名必须是 `--shadow-*`：v4 只在这个 namespace 下生成 `shadow-*` 工具类。
+   */
+  --shadow-pop-sm: 0 4px 0 var(--bead-pop, #D8C9AC);
+  --shadow-pop-md: 0 6px 0 var(--bead-pop, #D8C9AC);
+  --shadow-pop-lg: 0 8px 0 var(--bead-pop, #D8C9AC);
+}
+
+/*
+ * 全局基样式：像素字形必须落在整像素栅格上，下面这几条**少一条就糊**（§6.2）。
+ * 字体与后四条都靠继承生效（`font-smooth` / `text-rendering` 也参与字形栅格化），
+ * 所以只需设在 `html` 上；字号（12/24/36，必须是 12 的倍数）由各组件自定。
+ * 投影与圆角不在这里设：它们只在用到的地方出现（§6.3）。
+ */
+@layer base {
+  html {
+    font-family: var(--font-pixel);
+    font-weight: normal;
+    letter-spacing: normal;
+    line-height: 1.5;
+    font-smooth: never;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+}
+
+/*
  * 工程名的展示口径（B6，唯一一份）：最多两行、超出省略，且**允许被压缩到 1 个字符宽**。
  *
  * 为什么不是 Tailwind 的 `truncate`：它是 `white-space: nowrap`，而手机断点下图纸库的 `ul` 没有显式

@@ -1,8 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, markRaw, ref } from "vue";
 import { clampView, type Size, type ViewTransform } from "@/core/crop/view";
-import type { Rect } from "@/core/image/types";
-import { buildPaintCommand, buildRectPaintCommand, cellAt, indicesWithValues } from "@/core/pattern/edit";
+import { buildPaintCommand, indicesWithValues } from "@/core/pattern/edit";
 import { EditHistory } from "@/core/pattern/history";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { defaultCellView } from "@/core/pattern/view";
@@ -30,10 +29,9 @@ import { useProjectSession } from "@/stores/project";
  *
  * 不持有的东西：`Palette` 本体（面板的 props 由页面从 `getBuiltinPalette()` 取；本 store 只要一个
  * 色数上界来守 `currentColor`，否则 `EMPTY` 与越界下标共用 `Uint16` 值域、会静默涂出另一个色号）、
- * `viewport`（只有 `onViewport` 那一刻需要它）、`selection`（框选高亮是拖动期间组件内的预览，
- * 控制者已裁决不落 store）。
+ * `viewport`（只有 `onViewport` 那一刻需要它）。
  *
- * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 17 个动作
+ * **为何公开**（`AGENTS.md`「公开 API ≠ 被使用的 API」）：`useEditor` 的 13 个状态字段与 16 个动作
  * 是任务 5（`PatternCanvas` / `PatternToolbar` / `PalettePanel` / `PalettePicker` 全部经 `EditorPage`
  * 以 props 拿值、以事件回调写值）与任务 6（`EditorPage` 的装配：载入成功 → `beginSession`、
  * 量到尺寸 → `onViewport`、保存 → `session.save()`）的接口面；`EditorTool` 同时是
@@ -42,12 +40,12 @@ import { useProjectSession } from "@/stores/project";
  */
 
 /**
- * 编辑器工具：画笔 / 框选 / 吸管 / 去背景（单指分工，规格 §6.1）。
+ * 编辑器工具：画笔 / 填充（单指分工，规格 §6.1）。
  *
- * **去背景是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
- * 去背景则要按整片区域入账，先选工具再点画布。
+ * **填充是工具，橡皮不是**——橡皮是「当前色 = `EMPTY`」，只改 `currentColor`、不进这个联合；
+ * 填充则按整片区域入账，先选工具再点画布（容差随手里拿的东西变，见 `EditorPage.onFill`）。
  */
-export type EditorTool = "brush" | "select" | "pick" | "background";
+export type EditorTool = "brush" | "fill";
 
 const DEFAULT_TOOL: EditorTool = "brush";
 
@@ -89,25 +87,6 @@ function requireColorCount(next: number): number {
 }
 
 /**
- * 框选矩形：分量必须**有限**、宽高必须 **≥1**。
- *
- * **越界不是错误**——`buildRectPaintCommand` 自己把超界部分裁掉，而框选拖动**经常**拖出图纸边界
- * （想框到最后一列就会拖过头）。这里只拒绝退化与非有限的矩形：`NaN` 会被 `Math.max` / `Math.min`
- * 一路透传成一个空矩形，点击看起来「没反应」，属于不报错、只产出错误结果的路径。
- */
-function requireRect(rect: Rect): Rect {
-  if (!Number.isFinite(rect.x)) throw new Error(`框选矩形 x 必须是有限数字（当前 ${String(rect.x)}）`);
-  if (!Number.isFinite(rect.y)) throw new Error(`框选矩形 y 必须是有限数字（当前 ${String(rect.y)}）`);
-  if (!Number.isFinite(rect.width) || rect.width < 1) {
-    throw new Error(`框选矩形宽度必须是 ≥1 的有限数字（当前 ${String(rect.width)}）`);
-  }
-  if (!Number.isFinite(rect.height) || rect.height < 1) {
-    throw new Error(`框选矩形高度必须是 ≥1 的有限数字（当前 ${String(rect.height)}）`);
-  }
-  return rect;
-}
-
-/**
  * 图纸用到的**第一个色号**：行优先第一个非 `EMPTY` 的值；全为空格时 0。
  *
  * 不用 `patternStats().usages[0]`——那是「用得最多的色」（按用量降序），语义不同：一张图纸里
@@ -133,11 +112,11 @@ export const useEditor = defineStore("editor", () => {
    *
    * **逐字口径**：它是**色卡色数**，不是 `patternStats().colorCount`（图纸实际用到的色数），
    * 也不是 `record.meta.colorCount`（上次保存时的冗余值）。三个同名量传错**不会报错**，只会在
-   * 「图纸用色比色卡少」时让 `setCurrentColor` / `pickFromCell` 抛出难归因的错误。
+   * 「图纸用色比色卡少」时让 `setCurrentColor` 抛出难归因的错误。
    *
    * 这里**不做**「每格值必须 < colorCount 或 = EMPTY」的 O(n) 扫描：`Pattern` 只有 `buildPattern`
    * 与 `fromProjectDocument` 两个来源，两者都已保证值域；在 store 里再扫一遍整张图纸（116×116
-   * 上限下是 1.3 万格）是每次载入的固定开销，而它挡不住任何已知路径（坏数据由 `pickFromCell`
+   * 上限下是 1.3 万格）是每次载入的固定开销，而它挡不住任何已知路径（坏数据由 `setCurrentColor`
    * 那一处的值域守卫响亮拦下）。
    */
   const colorCount = ref(0);
@@ -273,9 +252,9 @@ export const useEditor = defineStore("editor", () => {
 
   /** 切工具。运行期查非法枚举：TS 挡不住 `JSON.parse` + 强转，拼错的工具会静默留在状态机里。 */
   function setTool(next: EditorTool): void {
-    if (next !== "brush" && next !== "select" && next !== "pick" && next !== "background") {
+    if (next !== "brush" && next !== "fill") {
       throw new Error(
-        `编辑器工具非法：${String(next)}（只允许 "brush" / "select" / "pick" / "background"）`,
+        `编辑器工具非法：${String(next)}（只允许 "brush" / "fill"）`,
       );
     }
     tool.value = next;
@@ -339,15 +318,32 @@ export const useEditor = defineStore("editor", () => {
   }
 
   /**
-   * 框选：把矩形区域设成当前色，同样一条命令、一次撤销（规格 §6.4）。
+   * 裸涂色：把 `indices` 里**值不等于 `color`** 的格子写成 `color`，**一条命令 = 一步撤销**。
+   * 填充工具（按下把连通区域涂成当前色）与原来的去背景都走它入账。
    *
-   * 当前色为 `EMPTY` 时等价于「整块抠掉」。**工具与当前色都不变**（用户常要连框几块）。
-   * 起止点落在同一格（1×1）是合法操作，等同于点一格。
+   * 值域比 core 严一档（与 `setCurrentColor` 同一口径）：core 只认 `0..EMPTY`，这里还要求色号落在
+   * 色卡内（`0..colorCount-1`），另允许 `EMPTY`；色卡外的坏值被放行会被 `Uint16Array` 静默截断成
+   * 另一个色号。已经是目标色的格子由 `buildPaintCommand` 天然跳过，于是空命令不提交、不置脏。
+   *
+   * `label` 按目标色区分：`EMPTY` 就是去背景。
    */
-  function applyRect(rect: Rect): void {
+  function paintCells(indices: readonly number[], color: number): void {
     const current = requireLoadedPattern();
-    const next = requireRect(rect);
-    const command = buildRectPaintCommand(current, next, currentColor.value, "框选");
+    if (!Array.isArray(indices)) {
+      throw new Error(`涂色下标必须是数组（当前 ${typeof indices}）`);
+    }
+    const safeIndices: readonly number[] = indices;
+    const limit = colorCount.value;
+    const inPalette = Number.isInteger(color) && color >= 0 && color < limit;
+    if (!inPalette && color !== EMPTY) {
+      throw new Error(`涂色色号非法：${String(color)}（必须是 0–${limit - 1} 的整数，或 ${EMPTY} 表示橡皮）`);
+    }
+    const command = buildPaintCommand(
+      current.cells,
+      safeIndices,
+      color,
+      color === EMPTY ? "去背景" : "涂色",
+    );
     if (command === null) return;
     publishChange(history.value.commit(current.cells, command));
   }
@@ -355,20 +351,11 @@ export const useEditor = defineStore("editor", () => {
   /**
    * 去背景：把一批格子置为空格，**一次点击一条命令**（可一步撤销）。
    *
-   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账——已经是空格的
-   * 格由 `buildPaintCommand` 天然跳过，于是「点空格」既不留空的撤销记录、也不置脏。
-   *
-   * 下标形态自己守（与 `paint` 同一口径）：元素级的非整数 / 越界仍由 `buildPaintCommand` 忽略。
+   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账；写入委托
+   * `paintCells`，所以「点空格」既不留空的撤销记录、也不置脏。
    */
   function eraseCells(indices: readonly number[]): void {
-    const current = requireLoadedPattern();
-    if (!Array.isArray(indices)) {
-      throw new Error(`去背景下标必须是数组（当前 ${typeof indices}）`);
-    }
-    const safeIndices: readonly number[] = indices;
-    const command = buildPaintCommand(current.cells, safeIndices, EMPTY, "去背景");
-    if (command === null) return;
-    publishChange(history.value.commit(current.cells, command));
+    paintCells(indices, EMPTY);
   }
 
   /**
@@ -400,25 +387,6 @@ export const useEditor = defineStore("editor", () => {
     const command = buildPaintCommand(current.cells, indicesWithValues(current.cells, safeSources), to, "换色");
     if (command === null) return;
     publishChange(history.value.commit(current.cells, command));
-  }
-
-  /**
-   * 吸管：取该格色号（含 `EMPTY`）设为当前色，并**自动切回画笔**（吸完就能画）。
-   *
-   * 落在图纸外时**不改当前色、也不切工具**：`cellAt` 对越界返回 `EMPTY`，照搬就会把「点空处」
-   * 变成「选了橡皮」——用户以为自己选中了橡皮，下一次拖动的结果完全不同。所以边界自己先判。
-   *
-   * 写入走 `setCurrentColor` 的同一份值域守卫：格子里躺着越界色号（图纸与色卡不匹配的坏数据）时
-   * 响亮失败，而不是静默把它设成当前色、再涂出另一个色号。
-   */
-  function pickFromCell(x: number, y: number): void {
-    const current = requireLoadedPattern();
-    if (!Number.isInteger(x) || !Number.isInteger(y)) {
-      throw new Error(`吸管的格子坐标必须是整数（当前 ${String(x)}, ${String(y)}）`);
-    }
-    if (x < 0 || y < 0 || x >= current.width || y >= current.height) return;
-    setCurrentColor(cellAt(current, x, y));
-    tool.value = "brush";
   }
 
   /** 撤销一步：返回的脏下标照常刷 `lastDirty` / `revision` / `dirty`；无可撤销时什么都不做。 */
@@ -500,10 +468,9 @@ export const useEditor = defineStore("editor", () => {
     setCurrentColor,
     setView,
     paint,
-    applyRect,
+    paintCells,
     eraseCells,
     recolor,
-    pickFromCell,
     undo,
     redo,
     setShowGrid,

@@ -179,14 +179,38 @@ describe("色值与关闭", () => {
     expect(wrapper.emitted("pick")).toBeUndefined();
   });
 
-  // 主规格 §6.4 / B3 规格 §10：触控目标 ≥44px、字号 ≥16px。happy-dom 无布局，
-  // 只能断言类名（同 PatternToolbar 的代理断言口径）。
-  it("色块触控目标 ≥44px、字号 ≥16px", () => {
+  // 主规格 §6.5：触控目标硬下界 56px。**R35 授权改写**：原来是 44px / `text-base`，与 §6.5 的
+  // 56×56 直接冲突，且 `text-base` 被 R22 禁用（Tailwind 默认字号类）。同一 matcher、同一节点，
+  // 值改严：44→56px、16→24px。happy-dom 无布局，只能断言类名（同 PatternToolbar 的代理断言口径）。
+  it("色块触控目标 ≥56px、字号 ≥24px", () => {
     const classes = mountPicker({ palette: SCRAMBLED })
       .get("[data-testid='picker-color']")
       .classes();
-    expect(classes).toContain("min-h-11"); // 2.75rem = 44px
-    expect(classes).toContain("min-w-11");
-    expect(classes).toContain("text-base"); // 1rem = 16px
+    expect(classes).toContain("min-h-14"); // 3.5rem = 56px
+    expect(classes).toContain("min-w-14");
+    expect(classes).toContain("text-[24px]"); // 1.5rem = 24px
+  });
+
+  // 【修复轮 1】§7.4：选择器是 3 列。平板右栏只有 250px（减卡片 4px 描边与 p-3 后 ≈ 218px 可用），
+  // 6×56px + 5×4px gap ≈ 356px 会**重叠**；3 列（3×56 + 2×4 = 176px）才放得下。
+  // 手机视口更窄、6 列同样放不下，但 250px 的 3 列在 360px 上又太浪费，故窄屏取 5 列。
+  it("平板 3 列、手机 5 列，两个网格都是（§7.4）", () => {
+    const wrapper = mountPicker({ palette: SCRAMBLED, usedIndices: [0, 2] });
+    const grids = wrapper.findAll(".grid");
+    expect(grids.length).toBeGreaterThan(0);
+    for (const grid of grids) {
+      expect(grid.classes()).toContain("grid-cols-5");
+      expect(grid.classes()).toContain("md:grid-cols-3");
+    }
+  });
+
+  // 【任务 14 新增】§7.4：选择器是像素覆盖层卡片（`bead-card` 底 + 4px `bead-ink` 描边 +
+  // 零模糊大投影）。四条缺一不可：只断言背景时，「卡片没有描边/投影」照样绿。
+  it("选择器是像素覆盖层卡片（bg-bead-card + border-4 border-bead-ink + shadow-pop-lg）", () => {
+    const classes = mountPicker({ palette: SCRAMBLED }).get("[data-testid='picker']").classes();
+    expect(classes).toContain("bg-bead-card");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    expect(classes).toContain("shadow-pop-lg");
   });
 });

@@ -8,27 +8,30 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { maxCellScale, minCellScale } from "@/core/pattern/view";
 import type { EditorTool } from "@/stores/editor";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 
 /**
- * 手势用例断言的是**最终发出的事件**（paint / select / pick / update:view / measure）与**平台状态**
+ * 手势用例断言的是**最终发出的事件**（paint / fill / update:view / measure）与**平台状态**
  * （画布尺寸、层的尺寸、`putImageData` 的实参），不是画面：happy-dom 的 canvas 是桩，
  * 像素断言在这里一律恒真，绝不写（B1-2 的教训）。
  *
  * **画法断言的判据是「CI 无法用像素验证 **且** 被变异证明承重」，不是条数**（规格 §11.1 列出的三条是
- * 当时的枚举）。当前四条，每条都附一条能杀死它的变异：
+ * 当时的枚举）。当前五条，每条都附一条能杀死它的变异：
  *   ① 色块层 `drawImage` 的**目标矩形**（= 视图映射的外部可观察量）；
  *   ② 单格刷新时 `putImageData` 的**脏矩形实参**（1×1）——「单格改动只重绘该格」唯一的可观察形式；
  *   ③ `cellPx < GRID_LINE_MIN_CELL_PX` 时**不画网格线**（及其闭区间边界线的条数）；
  *   ④ `visibleCellRange === null`（图纸整块移出视口）时**不画**网格线与色号——删掉那条判空守卫，
  *      `drawGrid` 会在 `range.x0` 上抛 TypeError，该用例恰好 1 红（见用例所在的 describe）。
+ *   ⑤ 深色底上的网格线色 `GRID_ON_DARK` 与格内色号的两档按豆粒明暗取色（浅豆 `LABEL_ON_LIGHT` /
+ *      深豆 `LABEL_ON_DARK`）——写死成任一单色（旧实现是无条件 `LABEL_ON_DARK`）就红（Review Focus 3）。
  * 其余一律走事件与状态断言；**拿不出能证明承重的变异**的画法（`imageSmoothingEnabled`、
- * 色号 `fillText` 的字号 / 亮度取反、棋盘底纹的 `createPattern` 退化分支）仍然**有意不写**。
+ * 色号 `fillText` 的字号）仍然**有意不写**。
  *
  * 场景（全文件共用）：色卡 3 色；两份图纸——
  *   · 32×32 + 视图 `{24, -200, -200}`：图纸（768px）比 400×400 的视口大，平移 / 缩放都可观察；
  *     格坐标 = `floor((屏幕坐标 + 200) / 24)`。
  *   · 8×8 + 视图 `{24, 0, 0}`：图纸只占屏幕左上角 192×192，格坐标 = `floor(屏幕坐标 / 24)`，
- *     手算框选矩形、吸管格、图纸外的一点都用它。
+ *     手算填充格、图纸外的一点都用它。
  * 容器与画布拿到**不同的盒子**（400×300 / 111×222），所以「量的是容器」这件事有判别力。
  */
 
@@ -140,11 +143,34 @@ interface RecordedFill {
   readonly y: number;
   readonly w: number;
   readonly h: number;
-  /** 调用那一刻的 `fillStyle`（高亮判据；底色填的是 pattern 对象、色号是 `fillText`）。 */
+  /** 调用那一刻的 `fillStyle`（高亮 / 待涂矩形的判据；色号走 `fillText`，见 `labelTexts`）。 */
   readonly fillStyle: string;
 }
 
 let fills: RecordedFill[] = [];
+
+interface RecordedText {
+  readonly text: string;
+  /** 调用那一刻的 `fillStyle`（格内色号的颜色判据）。 */
+  readonly fillStyle: string;
+}
+
+let labelTexts: RecordedText[] = [];
+
+interface RecordedStrokeRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** 调用那一刻的线宽与颜色（图纸外框的判据；`stroke()` 的网格线走 `strokeColors`）。 */
+  readonly lineWidth: number;
+  readonly strokeStyle: string;
+}
+
+let strokeRects: RecordedStrokeRect[] = [];
+
+/** 每次 `stroke()` 调用那一刻的 `strokeStyle`（网格线颜色的唯一判据）。 */
+let strokeColors: string[] = [];
 
 /**
  * 桩掉 `HTMLCanvasElement.prototype.getContext`（happy-dom 未注册 canvas adapter，不桩时恒返回 null，
@@ -161,6 +187,9 @@ function stubContext(): void {
   puts = [];
   ops = [];
   fills = [];
+  labelTexts = [];
+  strokeRects = [];
+  strokeColors = [];
   const record = (op: string) => (): void => {
     ops.push(op);
   };
@@ -172,17 +201,30 @@ function stubContext(): void {
     // 在 `getContext` 的当刻读尺寸：层的「1px/格」与主画布的 DPR 尺寸都靠这个 target 断言。
     const target = { w: this.width, h: this.height };
     let fillStyle = "";
+    let strokeStyle = "";
+    let lineWidth = 1;
     const ctx = {
       imageSmoothingEnabled: true,
-      // 真实属性（不是普通字段）：`fillRect` 要记下**调用那一刻**的样式，高亮用例的判据靠它。
+      // 真实属性（不是普通字段）：`fillRect` / `fillText` 要记下**调用那一刻**的样式，判据靠它。
       get fillStyle(): string {
         return fillStyle;
       },
       set fillStyle(value: string) {
         fillStyle = value;
       },
-      strokeStyle: "",
-      lineWidth: 1,
+      get strokeStyle(): string {
+        return strokeStyle;
+      },
+      set strokeStyle(value: string) {
+        strokeStyle = value;
+      },
+      // 外框的 2px 靠这里捕获（与上面两个样式同一手法：读「调用那一刻」的值）。
+      get lineWidth(): number {
+        return lineWidth;
+      },
+      set lineWidth(value: number) {
+        lineWidth = value;
+      },
       font: "",
       textAlign: "center",
       textBaseline: "middle",
@@ -194,13 +236,22 @@ function stubContext(): void {
       beginPath: record("beginPath"),
       moveTo: record("moveTo"),
       lineTo: record("lineTo"),
-      stroke: record("stroke"),
-      strokeRect: record("strokeRect"),
+      stroke: (): void => {
+        ops.push("stroke");
+        strokeColors.push(strokeStyle);
+      },
+      strokeRect: (x: number, y: number, w: number, h: number): void => {
+        ops.push("strokeRect");
+        strokeRects.push({ x, y, w, h, lineWidth, strokeStyle });
+      },
       fillRect: (x: number, y: number, w: number, h: number): void => {
         ops.push("fillRect"); // 既有按 `ops` 计数的用例照旧
         fills.push({ x, y, w, h, fillStyle });
       },
-      fillText: record("fillText"),
+      fillText: (text: string): void => {
+        ops.push("fillText"); // 既有按 `ops` 计数的用例照旧
+        labelTexts.push({ text, fillStyle });
+      },
       createPattern: () => ({ kind: "repeat" }) as unknown as CanvasPattern,
       createImageData: (width: number, height: number) =>
         ({ width, height, data: new Uint8ClampedArray(width * height * 4) }) as unknown as ImageData,
@@ -215,9 +266,23 @@ function stubContext(): void {
   });
 }
 
-/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（框选与吸管用 `strokeRect`，色号用 `fillText`）。 */
+/** 网格线是**唯一**用 `moveTo` / `lineTo` 的绘制（色号用 `fillText`）。 */
 function moveToCount(): number {
   return ops.filter((op) => op === "moveTo").length;
+}
+
+/** 最后一次格内色号 `fillText` 用的 `fillStyle`；一次都没画时抛错，避免写成恒真断言。 */
+function labelFillColor(): string {
+  const last = labelTexts.at(-1);
+  if (last === undefined) throw new Error("没有画任何格内色号");
+  return last.fillStyle;
+}
+
+/** 最后一次 `stroke()` 用的 `strokeStyle`（网格线颜色判据）；一次都没描时抛错。 */
+function lastStrokeColor(): string {
+  const last = strokeColors.at(-1);
+  if (last === undefined) throw new Error("没有描任何线");
+  return last;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +448,7 @@ describe("色块层：图纸尺寸 × 1px/格，单格只重绘该格", () => {
     expect(puts[3]?.args.slice(1)).toEqual([0, 0, 4, 1, 1, 1]);
 
     // 橡皮（当前色 = EMPTY）：那一格必须回到**完全透明**（RGB 也清零）。只写 alpha 的实现在屏幕上
-    // 看不出差别，但空格就再也透不出棋盘底纹（§5.5），而 `patternToRgbaImage` 的既有契约是「RGB 全零」。
+    // 看不出差别，但空格就再也透不出容器那层深色拼豆板，而 `patternToRgbaImage` 的既有契约是「RGB 全零」。
     pattern.cells[35] = EMPTY;
     await wrapper.setProps({ revision: 3, lastDirty: [35] });
     expect(puts).toHaveLength(5);
@@ -445,7 +510,6 @@ describe("画笔：单指涂抹的能力与边界", () => {
 
     expect(wrapper.emitted("paint")).toBeUndefined();
     expect(wrapper.emitted("update:view")).toBeUndefined();
-    expect(wrapper.emitted("select")).toBeUndefined();
   });
 
   it("鼠标右键不开始手势（附左键对照）", async () => {
@@ -466,75 +530,38 @@ describe("画笔：单指涂抹的能力与边界", () => {
   });
 });
 
-describe("框选与吸管：抬手才 emit", () => {
-  it("框选在抬手 emit 一次格子矩形（拖动期间只在组件内部高亮）", async () => {
-    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "select" });
-    await wrapper.vm.$nextTick();
-
-    await pointer(wrapper, "pointerdown", 10, 10); // 格子坐标 (0.42, 0.42)
-    await pointer(wrapper, "pointermove", 75, 50); // (3.13, 2.08)
-    await pointer(wrapper, "pointerup", 75, 50);
-
-    const emitted = wrapper.emitted("select");
-    // floor 左上 / ceil 右下：x 0 → 4、y 0 → 3。
-    expect(emitted?.at(-1)).toEqual([{ x: 0, y: 0, width: 4, height: 3 }]);
-    // **只有一次**：每次 pointermove 都往 store 写一次选区是没必要的反应式 churn（契约 §4 的收窄）。
-    expect(emitted).toHaveLength(1);
-    expect(wrapper.emitted("paint")).toBeUndefined();
-  });
-
-  it("吸管取的是按下时命中的格子，抬手才 emit；图纸外按下不 emit", async () => {
-    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "pick" });
-    await wrapper.vm.$nextTick();
-
-    await pointer(wrapper, "pointerdown", 55, 55); // 格 (2,2)
-    await pointer(wrapper, "pointermove", 150, 150); // 格 (6,6)：拖动**不**改变取色目标
-    await pointer(wrapper, "pointerup", 150, 150);
-    expect(wrapper.emitted("pick")?.at(-1)).toEqual([{ x: 2, y: 2 }]);
-
-    // 图纸外按下：什么也不发（§6.5「落在图纸外时不改当前色」）。
-    await pointer(wrapper, "pointerdown", 300, 300);
-    await pointer(wrapper, "pointermove", 150, 150);
-    await pointer(wrapper, "pointerup", 150, 150);
-    expect(wrapper.emitted("pick")).toHaveLength(1);
-  });
-});
-
-// 去背景：与吸管同形态（只在按下那一刻记格），但走**自己的事件**。emit 落点是最容易写错的地方：
-// `finishToolGesture` 的 `pick` 那一支原本是无条件兜底，去背景如果掉进它就会 emit `pick`。
-describe('去背景 tool = "background"：按下定格、抬手才 emit', () => {
-  it("单指按下并抬起 emit 一次 background（取按下那一格），不带 paint / pick", async () => {
+// 填充：只在按下那一刻记格，走**自己的事件**。emit 落点是最容易写错的地方。
+describe('填充 tool = "fill"：按下定格、抬手才 emit', () => {
+  it("单指按下并抬起 emit 一次 fill（取按下那一格），不带 paint", async () => {
     // 8×8 + VIEW_8 `{24, 0, 0}`：格坐标 = floor(屏幕坐标 / 24)。
-    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "background" });
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "fill" });
     await wrapper.vm.$nextTick();
 
     await pointer(wrapper, "pointerdown", 24, 48); // 格 (1,2)
     await pointer(wrapper, "pointerup", 24, 48);
-    expect(wrapper.emitted("background")).toEqual([[{ x: 1, y: 2 }]]);
-    // 串台守卫：去背景不该冒充画笔 / 吸管。`finishToolGesture` 的 pick 兜底一旦兜住它，
-    // 下面第二条立刻红。
+    expect(wrapper.emitted("fill")).toEqual([[{ x: 1, y: 2 }]]);
+    // 串台守卫：填充不该顺带 emit paint。
     expect(wrapper.emitted("paint")).toBeUndefined();
-    expect(wrapper.emitted("pick")).toBeUndefined();
   });
 
   it("拖动不改结果：取的是按下那一格", async () => {
-    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "background" });
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "fill" });
     await wrapper.vm.$nextTick();
 
     await pointer(wrapper, "pointerdown", 0, 0); // 格 (0,0)
     await pointer(wrapper, "pointermove", 120, 120); // 格 (5,5)：拖动不改取色目标
     await pointer(wrapper, "pointerup", 120, 120);
-    expect(wrapper.emitted("background")).toEqual([[{ x: 0, y: 0 }]]);
+    expect(wrapper.emitted("fill")).toEqual([[{ x: 0, y: 0 }]]);
   });
 
   it("落在图纸外不 emit", async () => {
-    const wrapper = mountCanvas({ pattern: solidPattern(2, 2), view: VIEW_8, tool: "background" });
+    const wrapper = mountCanvas({ pattern: solidPattern(2, 2), view: VIEW_8, tool: "fill" });
     await wrapper.vm.$nextTick();
 
     // 2×2、24px/格 → 图纸只占屏幕左上角 48×48，(300,300) 在图纸外。
     await pointer(wrapper, "pointerdown", 300, 300);
     await pointer(wrapper, "pointerup", 300, 300);
-    expect(wrapper.emitted("background")).toBeUndefined();
+    expect(wrapper.emitted("fill")).toBeUndefined();
   });
 });
 
@@ -1006,5 +1033,50 @@ describe("选中色号高亮：画布自己扫 cells，页面只给色号集合"
     await wrapper.vm.$nextTick();
 
     expect(highlightRects()).toEqual([]);
+  });
+});
+
+describe("深色拼豆板底（Review Focus 3）", () => {
+  it("画布容器是 bead-board 深底，不是默认白", () => {
+    const wrapper = mountCanvas();
+    expect(wrapper.get("[data-testid='editor-surface']").classes().join(" ")).toContain("bg-bead-board");
+  });
+
+  it("网格线用 GRID_ON_DARK；格内色号按豆粒明暗取色：浅豆用 LABEL_ON_LIGHT、深豆用 LABEL_ON_DARK", async () => {
+    // 32px/格 ≥ CELL_LABEL_MIN_CELL_PX（28），色号才真的会画。一浅一深两份图纸是这条的判别力来源：
+    // 浅色豆（A1 #ffffff）上必须写深字，深色豆（A3 #000000）上必须写亮字；
+    // 写死成任一单色（旧实现是无条件 LABEL_ON_DARK）时浅豆那一半会红。
+    const light = mountCanvas({ showLabels: true, view: { scale: 32, offsetX: 0, offsetY: 0 } });
+    await light.vm.$nextTick();
+
+    expect(lastStrokeColor()).toBe(GRID_ON_DARK);
+    expect(labelFillColor()).toBe(LABEL_ON_LIGHT);
+
+    const dark = mountCanvas({
+      pattern: solidPattern(32, 32, 2),
+      showLabels: true,
+      view: { scale: 32, offsetX: 0, offsetY: 0 },
+    });
+    await dark.vm.$nextTick();
+    expect(labelFillColor()).toBe(LABEL_ON_DARK);
+  });
+
+  it("图纸边界描一圈 2px 的 FRAME_ON_DARK 外框（黑边图纸不糊进板底）", async () => {
+    // 8×8 + VIEW_8：图纸在视图里就是 [0,0,192,192]，手算得出「外框贴的是图纸边界」而不只是「画了个矩形」。
+    // 判据是 `strokeRect` 的实参 + **调用那一刻**的 `lineWidth` / `strokeStyle`：画了框但没设 2px
+    // 或用了网格线的色，都会红。
+    const wrapper = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8 });
+    await wrapper.vm.$nextTick();
+
+    expect(strokeRects.at(-1)).toEqual({
+      x: 0,
+      y: 0,
+      w: 192,
+      h: 192,
+      lineWidth: 2,
+      strokeStyle: FRAME_ON_DARK,
+    });
+    // 顺序也承重：网格线后画就会把贴边那一条边的框盖住（§7.4 的更正注记）。
+    expect(ops.indexOf("strokeRect")).toBeGreaterThan(ops.lastIndexOf("stroke"));
   });
 });

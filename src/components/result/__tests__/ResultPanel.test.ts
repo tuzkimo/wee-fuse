@@ -4,6 +4,7 @@ import { planSheet } from "@/core/render/layout";
 import { getBuiltinPalette } from "@/services/palette";
 import type { SheetRenderInput } from "@/services/sheetExport";
 import ResultPanel from "@/components/result/ResultPanel.vue";
+import { ICONS } from "@/components/ui/PixelIcon.vue";
 
 /**
  * 结果卡片（C8 规格 §3.4）：两个宿主共用，纯展示（不 import store）。
@@ -44,33 +45,142 @@ beforeEach(() => {
   }));
 });
 
+/**
+ * 挂载成品页。
+ *
+ * **`stubs: { teleport: true }`**（T1）：查看层从 T1 起 `Teleport to="body"`，而 VTU 的
+ * `wrapper.find` 看不到传送出去的节点（本文件只断言「点开就挂上查看层」，与挂在哪一层无关）。
+ */
 function mountPanel(overrides: Record<string, unknown> = {}) {
   return mount(ResultPanel, {
     props: { pattern, palette, isNew: true, canRerun: true, ...overrides },
+    global: { stubs: { teleport: true } },
   });
 }
 
-describe("ResultPanel（C8：四颗按钮、没有打印）", () => {
-  it("四颗按钮的顺序与文案：重做 / 查看 / 编辑 / OK", () => {
-    const texts = mountPanel().findAll("button").map((button) => button.text());
-    expect(texts).toEqual(["重做", "查看", "编辑", "OK"]);
+describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成，没有打印）", () => {
+  it("四颗动作按钮的 DOM 顺序：继续涂 / 看施工图 / 重做 / 完成", () => {
+    // 图形按钮没有可见文字，「顺序」由 testid 判死（旧版比的是文字，D1 里文字没了）。
+    const ids = mountPanel()
+      .findAll("button")
+      .map((button) => button.attributes("data-testid"));
+    expect(ids).toEqual(["open-editor", "result-view-sheet", "result-rerun", "result-ok"]);
   });
 
-  it("编辑是白底、OK 是黑底（主操作是「结束回家」）", () => {
+  it("成品预览在上半屏的深色板底 + 板孔点阵上居中（§7.5）", () => {
     const wrapper = mountPanel();
-    const edit = wrapper.get("[data-testid='open-editor']");
+    const board = wrapper.get("[data-testid='result-preview']").element.parentElement as HTMLElement;
+    expect(board.classList.contains("bg-bead-board")).toBe(true);
+    expect(board.getAttribute("style") ?? "").toContain("radial-gradient");
+    expect(board.classList.contains("items-center")).toBe(true);
+    expect(board.classList.contains("justify-center")).toBe(true);
+    // 预览盒的高度**跟随宿主**（R41 修复 2）：基准仍是 55vh（全屏宿主不变），但宿主有定高时
+    // 会被压进剩余空间——手机吸顶盒（R42 起 48vh）里就不再有内滚。
+    // 用 `grow` 而不是 `flex-1`：`flex-1` 是 `flex: 1 1 0%` 简写，会按 CSS 生成顺序盖掉
+    // `basis-[55vh]`（基准变 0 ⇒ 全屏宿主的预览直接塌），同 R28 那类工具类先后顺序的坑。
+    expect(board.classList.contains("grow")).toBe(true);
+    expect(board.classList.contains("basis-[55vh]")).toBe(true);
+    expect(board.classList.contains("min-h-0")).toBe(true);
+    // 回退到写死的 `h-[55vh]` 时这一条红（它就是本机制要防的变异）。
+    expect(board.classList.contains("h-[55vh]")).toBe(false);
+    // 根是能撑满宿主高度的 flex 列：宿主高度 auto 时 `h-full` 退化为 auto（全屏宿主不变）。
+    const root = board.parentElement as HTMLElement;
+    expect(root.classList.contains("flex-col")).toBe(true);
+    expect(root.classList.contains("h-full")).toBe(true);
+    expect(root.classList.contains("min-h-0")).toBe(true);
+    // 手机吸顶盒（R42 起 48vh）的预算里这两条是承重的：板上内边距 32px → 16px、行间距 16px → 8px。
+    // 少了任一条，短机窗口下三颗动作按钮就会盖到 chip 上（真窗口实测见任务 15 报告 §F/§G）。
+    expect(board.classList.contains("max-md:p-2!")).toBe(true);
+    expect(root.classList.contains("gap-2")).toBe(true);
+  });
+
+  it("三颗动作按钮是 bead-card 底 64px 图形按钮 + 12px 短中文兜底，完成是通栏 accent 大按钮", () => {
+    const wrapper = mountPanel();
+    for (const [id, label] of [
+      ["open-editor", "继续涂"],
+      ["result-view-sheet", "看施工图"],
+      ["result-rerun", "重做"],
+    ] as const) {
+      const button = wrapper.get(`[data-testid='${id}']`);
+      expect(button.classes()).toContain("bg-bead-card");
+      expect(button.classes()).not.toContain("bg-bead-accent");
+      // 64px 高（§7.5）：比 BeadButton 自己的 56px 下界更高。
+      expect(button.classes()).toContain("h-16");
+      expect(button.find("svg").exists()).toBe(true);
+      // §1 事实 1：图形按钮旁边必须留 2~4 字短中文兜底（纯图标对抽象动作无法消歧）。
+      expect(button.text()).toBe(label);
+      expect(label.length).toBeGreaterThanOrEqual(2);
+      expect(label.length).toBeLessThanOrEqual(4);
+      // 12px 写在文字节点上：`secondary` 变体自带 `text-[24px]`，靠工具类生成顺序盖不住。
+      expect(button.get("span").classes()).toContain("text-[12px]");
+    }
     const ok = wrapper.get("[data-testid='result-ok']");
-    expect(edit.classes()).not.toContain("bg-slate-900");
-    expect(edit.classes()).toContain("border-slate-300");
-    expect(ok.classes()).toContain("bg-slate-900");
+    expect(ok.classes()).toContain("bg-bead-accent");
+    expect(ok.classes().join(" ")).toContain("shadow-pop-lg");
+    expect(ok.classes()).toContain("w-full");
+    expect(ok.get("span").classes()).toContain("text-[36px]");
+  });
+
+  it("文字统计已删除，成品预览与保存状态还在", () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find("[data-testid='result-stats']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-size']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-preview']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-save-state']").exists()).toBe(true);
+  });
+
+  it("四个动作按钮都在，且都带 aria-label", () => {
+    const wrapper = mountPanel();
+    for (const [testid, label] of [
+      ["open-editor", "继续涂"],
+      ["result-view-sheet", "看施工图"],
+      ["result-rerun", "重做"],
+      ["result-ok", "完成"],
+    ] as const) {
+      expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-label")).toBe(label);
+    }
+  });
+
+  it("没有「存到相册」这个动作（§7.5 的裁定）", () => {
+    expect(mountPanel().text()).not.toContain("相册");
   });
 
   it("没有「打印」按钮（打印从查看层里进）", () => {
     expect(mountPanel().find("[data-testid='result-print']").exists()).toBe(false);
   });
 
+  /**
+   * 结果页的「重做」必须用**新的** `rerun` 图形（循环箭头），不是 `undo`（R56）。
+   *
+   * 判据是「渲染出来的 rect 与 `ICONS.rerun` **逐条相同**」，而不是写死某个数字：
+   * 图标表以后微调时写死的数字会误红，而对同一份真源比对只在「用错了图标」时红。
+   * 回到 `name="undo"` 时，`ICONS.undo` 是 5 条 rect 而 `rerun` 是 12 条 ⇒ 这里必红。
+   */
+  it("「重做」用的是 rerun 图形（与顶栏那颗同形），不是 undo", () => {
+    const button = mountPanel().get("[data-testid='result-rerun']");
+    const rendered = button
+      .findAll("rect")
+      .map((rect) => ["x", "y", "width", "height"].map((attr) => Number(rect.attributes(attr))));
+    expect(rendered).toEqual(ICONS.rerun.map((rect) => [...rect]));
+  });
+
   it("canRerun 为假时不渲染「重做」", () => {
     expect(mountPanel({ canRerun: false }).find("[data-testid='result-rerun']").exists()).toBe(false);
+  });
+
+  /**
+   * `showDone`（任务 10 新增，§7.3）：`SetupPage` 的中栏传 `false`——顶栏已经有「完成 ✓」了，
+   * 同页两颗同名按钮会让 8 岁用户分不清哪颗是收尾；全屏宿主 `EditResultPage` 不传，保持默认
+   * `true`（四颗都在）。**任务 15 重写本组件时这个 prop 必须保留**。
+   */
+  it("showDone 默认 true（全屏宿主四颗都在）；传 false 时只剩三颗", () => {
+    expect(mountPanel().find("[data-testid='result-ok']").exists()).toBe(true);
+
+    const wrapper = mountPanel({ showDone: false });
+    expect(wrapper.find("[data-testid='result-ok']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-view-sheet']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='open-editor']").exists()).toBe(true);
   });
 
   it("三颗按钮各 emit 自己那一个事件", async () => {

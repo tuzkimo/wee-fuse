@@ -4,17 +4,18 @@
 // 编辑器宿主页：只做「接线」——载入、播种 store、把四个展示组件的 props/emits 接起来、
 // 保存、未保存离开拦截、B1-8 重载、键盘撤销。**画与手势在 PatternCanvas，状态在 stores/editor.ts，
 // 视图数学在 core/pattern/view.ts**；本文件里不许出现第二份坐标数学或第二个 dirty 标志。
-// **去背景同样只接线**：出口多了一条「点一下去背景」，连通判定在 `core/pattern/background.ts`、
-// 入账在 `editor.eraseCells`，本页只把下标搬过去。
+// **填充同样只接线**：出口多了一条「点一下填充」，连通判定在 `core/pattern/background.ts`、
+// 入账在 `editor.paintCells`，本页只把下标与容差搬过去。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
-import type { Rect } from "@/core/image/types";
 import { createPaletteRuntime } from "@/core/palette/registry";
 import { BACKGROUND_TOLERANCE, patternBackgroundIndices } from "@/core/pattern/background";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { zoomCellView, type CellPoint } from "@/core/pattern/view";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import PalettePanel from "@/components/editor/PalettePanel.vue";
 import PatternCanvas from "@/components/editor/PatternCanvas.vue";
 import PatternToolbar from "@/components/editor/PatternToolbar.vue";
@@ -49,6 +50,21 @@ const router = useRouter();
 const draft = useDraft();
 const session = useProjectSession();
 const editor = useEditor();
+
+/**
+ * 顶栏保存按钮的文案。长任务期间唯一的进度反馈就是这行字（与 `ParamPanel` 的「正在生成…」
+ * 同一口径）；`saving` 期间按钮同时 `disabled`，防并发保存。
+ * `aria-label` 固定是「保存」（§7.4）：读屏用户不需要听到「正在保存…」，那是眼睛看的。
+ */
+const saveLabel = computed(() => (editor.saving ? "正在保存…" : "保存"));
+
+/**
+ * 顶栏「重做」是否可用（= 有没有保存原图）。没有原图就无从「按原图重新生成」。
+ *
+ * 口径与当年的工具条一致，只是位置变了（T5）：那颗按钮现在与「保存」同级，所以这条 computed
+ * 也从模板里的内联表达式提到页面这一层。
+ */
+const canRerun = computed(() => session.record?.source != null);
 
 /**
  * 调色板是**页面**取的（store 不持有 `Palette`，规格 §7 要点 1），以 props 进组件。
@@ -100,7 +116,7 @@ const selectedColors = ref<readonly number[]>([]);
 
 /**
  * 图纸统计。**`void editor.revision` 是承重的，删不得**：`cells` 是 `Uint16Array`，
- * `paint` / `applyRect` / `undo` / `redo` 都是**原地写入**，Vue 的响应式追踪看不到——
+ * `paint` / `paintCells` / `undo` / `redo` 都是**原地写入**，Vue 的响应式追踪看不到——
  * `pattern` 又是 `markRaw`。刷新只有一条显式通道：`revision` 自增。
  *
  * `usages` **由它派生**，所以这一行是尺寸线与色板清单**共用**的失效通道：少了它，涂色之后
@@ -184,32 +200,27 @@ function onPaint(indices: number[]): void {
   editor.paint(indices);
 }
 
-/** 框选：抬手才 emit，一条命令。 */
-function onSelect(rect: Rect): void {
-  editor.applyRect(rect);
-}
-
-/** 吸管：设当前色并切回画笔（切换在 store 里做，页面不重复一遍）。 */
-function onPick(point: CellPoint): void {
-  editor.pickFromCell(point.x, point.y);
-}
-
 /**
- * 去背景：点一下 → 求连通背景下标 → 交给 store 入账。
+ * 填充：点一下 → 求与它连通的目标区域 → 交给 store 入账。
  *
- * **判定在 core、入账在 store**，本页只做两件事之间的搬运：色卡的 Lab 表用页面已经持有的
- * `palette` 生成（store 按设计不持有色卡），单次点击一条命令、一步可撤销。
+ * **容差随手里拿的东西变**（规格 §8）：拿橡皮时用 `BACKGROUND_TOLERANCE`（照片背景有渐变残留，
+ * 容差能一次收干净，这正是原来的「去背景」）；拿颜色时用 `0`（精确同色）——孩子点一块色块期望的是
+ * 「这一整块同色的都变」，容差会误伤旁边看起来相近但色号不同的区域。
+ * 对擦除宽容、对涂色严格，因为吃过头是更坏的失败。
  */
-function onBackground(point: CellPoint): void {
+function onFill(point: CellPoint): void {
   const pattern = editor.pattern;
   if (pattern === null) return;
+  const color = editor.currentColor;
+  // 判定在 core、入账在 store，本页只做两件事之间的搬运：色卡的 Lab 表用页面已经持有的
+  // `palette` 生成（store 按设计不持有色卡），单次点击一条命令、一步可撤销。
   const indices = patternBackgroundIndices(
     pattern,
     createPaletteRuntime(palette).labs,
     point,
-    BACKGROUND_TOLERANCE,
+    color === EMPTY ? BACKGROUND_TOLERANCE : 0,
   );
-  editor.eraseCells(indices);
+  editor.paintCells(indices, color);
 }
 
 /**
@@ -478,8 +489,8 @@ onBeforeUnmount(() => {
 
 /**
  * 橡皮（C8 第 3 项：按钮从调色板搬进工具栏）。
- * **顺带切回画笔**：在框选 / 吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
- * （与「吸管取色后切回画笔」同口径）。
+ * **顺带切回画笔**：在填充工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+ * （工具还停在填充）。
  */
 function onEraser(): void {
   editor.setCurrentColor(EMPTY);
@@ -487,7 +498,8 @@ function onEraser(): void {
 }
 
 /**
- * 「重做」入口（B2 规格 §7 + B3 规格 §8.5 的接缝；C8 第 3 项从页面中部搬进工具栏输出行）。
+ * 「重做」入口（B2 规格 §7 + B3 规格 §8.5 的接缝；C8 第 3 项从页面中部搬进工具条，
+ * T5 起从工具条搬进**顶栏**、与保存同级——实机反馈 6：「重做」与工具按钮放一起不合逻辑）。
  *
  * **草稿播种走共用实现**（`@/services/rerunDraft` 的 `seedRerunDraft`）：本页原来有一份**本地**
  * 副本，它漏传了一个参数 ⇒ 从编辑器点「重做」跑一条记录时，草稿里的用色数还是残留值
@@ -518,44 +530,119 @@ function rerun(): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 p-4 md:p-8">
+  <main class="min-h-screen bg-bead-sand md:flex md:h-screen md:flex-col md:overflow-hidden">
     <p
       v-if="session.error"
       data-testid="editor-error"
-      class="rounded bg-red-50 p-4 text-lg text-red-700"
+      class="mx-4 mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink md:mx-8"
     >
       {{ session.error }}
     </p>
 
     <template v-else-if="session.record">
       <!--
-        返回箭头（C8 第 3 项替换掉原「回图纸库」整块 `RouterLink`）。
+        顶栏（§6.4 / §7.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
+        手机**不显示作品名**（他不认字，作品名是给家长的），平板显示并截断（`.project-name`）：
+        实现是**同一个 h1** 加 `hidden md:block`，不是渲染两份（R3 不允许同名节点复制）。
+        保存按钮（`go` 变体，主操作）、未保存圆点与「重做」（次按钮）都在这里：保存与圆点是
+        C8 第 3 项起从工具条搬来，「重做」是 T5 起从工具条搬来（与保存同级，实机反馈 6）。
 
-        - 为什么不是 `RouterLink`：规格 §3.6.1 要的是「有上一页就退回去、历史为空才回图纸库」——
-          那是一次**判断**，声明式目标做不到（F1 那版只会回图纸库）。
-        - 判据本体只有一份，在 `views/backOrHome.ts`（**不在这里再写一份**）：上一页若是一条已经作废的
-          生图流程页（`/new` 前缀），退回去会被 `SetupPage` 的入口守卫弹到选图页，而选图页没有返回入口
-          ⇒ 实机上是「按返回却回选图页」——所以那一支改回图纸库。Android 硬件返回键走的是**同一个**
-          `backOrHome`（`useShellLifecycle` 的 `canGoBack` 分支），两个入口共用一份口径、不各写一份。
-        - `backOrHome` 内部走 `router.push` / `router.back`，所以离场守卫**照常生效**：有未保存
-          改动时会被同一条页面内确认条拦下（`onBeforeRouteLeave` 那段就是那条守卫）——
-          「改回首页」这一支与 `back()` 一样**不绕过**它（`EditorPageRouterLink.test.ts` 钉这一跳）。
-        - 触控目标 ≥44px（`min-h-11 min-w-11`）、`aria-label` 必给（箭头没有文字，读屏用户否则
-          听到一个没有名字的按钮；主规格 §6.4）。
+        `sticky top-0 z-20`（T4 实机反馈 2）：平板由下面的定高 shell 保证不滚，手机上页面仍然滚，
+        所以顶栏得自己吸顶——否则编辑完想保存得先滑回顶部。层叠必须高于手机吸顶块（那里是 z-10）。
       -->
-      <div class="flex flex-wrap items-center gap-3">
+      <header
+        class="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
+      >
+        <!--
+          返回箭头（C8 第 3 项替换掉原「回图纸库」整块 `RouterLink`）。
+
+          - 为什么不是 `RouterLink`：规格 §3.6.1 要的是「有上一页就退回去、历史为空才回图纸库」——
+            那是一次**判断**，声明式目标做不到（F1 那版只会回图纸库）。
+          - 判据本体只有一份，在 `views/backOrHome.ts`（**不在这里再写一份**）：上一页若是一条已经作废的
+            生图流程页（`/new` 前缀），退回去会被 `SetupPage` 的入口守卫弹到选图页，而选图页没有返回入口
+            ⇒ 实机上是「按返回却回选图页」——所以那一支改回图纸库。Android 硬件返回键走的是**同一个**
+            `backOrHome`（`useShellLifecycle` 的 `canGoBack` 分支），两个入口共用一份口径、不各写一份。
+          - `backOrHome` 内部走 `router.push` / `router.back`，所以离场守卫**照常生效**：有未保存
+            改动时会被同一条页面内确认条拦下（`onBeforeRouteLeave` 那段就是那条守卫）——
+            「改回首页」这一支与 `back()` 一样**不绕过**它（`EditorPageRouterLink.test.ts` 钉这一跳）。
+          - 触控目标 ≥56px（`min-h-14 min-w-14`，规格 §6.5 的硬下界；44px 是 Material 口径，
+            规格逐字否掉了它）、`aria-label` 必给（箭头没有文字，读屏用户否则
+            听到一个没有名字的按钮；主规格 §6.4）。
+        -->
         <button
           data-testid="editor-back"
           aria-label="返回"
-          class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
+          class="inline-flex min-h-14 min-w-14 items-center justify-center rounded-bead-sm border-4 border-bead-ink bg-bead-card text-[24px] text-bead-ink shadow-pop-sm active:translate-y-1 active:shadow-none"
           @click="backOrHome(router)"
         >
           ←
         </button>
-        <h1 class="project-name text-3xl font-bold text-slate-900">{{ session.record.meta.name }}</h1>
-      </div>
+        <!--
+          隐藏写在**宿主** div 上，不是写在 h1 上：`.project-name` 是 `style.css` 末尾的
+          **无层级**全局类（`display:-webkit-box`），按 CSS 层叠规则它压过 `@layer utilities` 里的
+          `hidden` / `md:block`——直接写在 h1 上在真浏览器里根本不生效（jsdom 不解析布局，测不出来）。
+        -->
+        <div class="hidden min-w-0 flex-1 md:block">
+          <h1 class="project-name text-[24px] text-bead-ink md:text-[36px]">
+            {{ session.record.meta.name }}
+          </h1>
+        </div>
+        <!--
+          顶栏右侧：重做（次按钮）与保存（主按钮）同级（实机反馈 6：「重做」与工具按钮放一起不合逻辑，
+          它应该跟保存地位一致）。`gap-2`：360px 手机上「返回 + 重做 + 保存」放得下（实窗实测无横向溢出），
+          而顶栏的 `gap-4` 只用在返回键与这一组之间。
+
+          为什么是两颗按钮而不是三个并列子项：未保存圆点必须继续锚在**保存**的右上角，所以保存
+          自己那一格仍然是它自己的定位祖先（见下面那个 `relative`）。
+        -->
+        <div class="flex items-center gap-2">
+          <!--
+            没有原图（`canRerun` 为假）时不渲染：没有原图就无从「按原图重新生成」。
+            `variant="secondary"`（`bead-card` 底）是硬要求：它会丢掉手工涂改，视觉权重不能压过
+            旁边那颗 `go` 保存。
+            R53：图形旁留短中文；12px 是 360px 手机上放得下的那一档（顶栏比工具条窄）。
+            `px-3!` 只在手机档生效（`secondary` 自带的 `px-6` 会把这一行顶到溢出），
+            `md:px-6!` 把它补回与旁边保存同一套内边距——平板上两颗看起来是一对（R56 复审的整理）。
+          -->
+          <BeadButton
+            v-if="canRerun"
+            data-testid="rerun"
+            variant="secondary"
+            aria-label="重做"
+            class="px-3! md:px-6!"
+            @click="rerun"
+          >
+            <PixelIcon name="rerun" :size="24" />
+            <span class="text-[12px]">重做</span>
+          </BeadButton>
+          <!-- 保存按钮的锚点：圆点要浮在它的右上角，所以两者共用一个定位祖先。 -->
+          <div class="relative">
+            <BeadButton
+              data-testid="editor-save"
+              variant="go"
+              aria-label="保存"
+              :disabled="editor.saving"
+              @click="onCommand('save')"
+            >
+              <PixelIcon name="save" :size="24" />
+              <span>{{ saveLabel }}</span>
+            </BeadButton>
+            <!-- 未保存指示：干净时不渲染；内容从「未保存」三个字换成一颗 `bead-danger` 圆点（§7.4）。 -->
+            <span
+              v-if="session.dirty"
+              data-testid="editor-dirty"
+              aria-hidden="true"
+              class="absolute -right-1 -top-1 size-[22px] rounded-bead-pill border-4 border-bead-ink bg-bead-danger"
+            />
+          </div>
+        </div>
+      </header>
       <!-- 尺寸与用色数读**图纸**（规格 §8.3），不是 `meta` 的冗余字段 -->
-      <p v-if="editor.pattern" data-testid="editor-size" class="mt-2 text-lg text-slate-600">
+      <p
+        v-if="editor.pattern"
+        data-testid="editor-size"
+        class="mx-4 mt-2 text-[24px] text-bead-ink md:mx-8"
+      >
         {{ editor.pattern.width }} × {{ editor.pattern.height }} ·
         {{ stats?.colorCount ?? 0 }} 种颜色
       </p>
@@ -563,12 +650,25 @@ function rerun(): void {
       <!--
         C8 第 3 项：原来这里有三段提示（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」/
         「重新生成会按原图重做整张图纸，手工涂改不会保留。」）与一颗页面中部的大按钮。它们全部删除：
-        「重做」搬进工具栏输出行（没有原图时**不渲染**，所以「提示的对象」不存在了），
-        「会重做整张图纸」这层意思由「重做」这个名字与它旁边的保存按钮承担。
+        「重做」搬进工具条左组（没有原图时**不渲染**，所以「提示的对象」不存在了），
+        「会重做整张图纸」这层意思由「重做」这个名字与它旁边那颗 `undo` 图标承担。
       -->
 
-      <div v-if="editor.pattern" class="mt-6 flex flex-col gap-4 md:flex-row">
-        <div class="h-[60vh] min-h-64 flex-1 rounded bg-white p-3 shadow">
+      <!--
+        主体区（§7.4 T4 更正注记）：**一套 DOM、两种排法**。手机上它是 `flex flex-col` 单列
+        （画布 → 色豆条 → 工具条，页面可滚）；`md` 起变成 2×2 网格，格子位置由 `md:col-start-*`
+        / `md:row-start-*` 决定——画布在左上、工具条在左下（紧贴画布底边）、色板列占右侧两行
+        自己滚。工具条因此必须在**这个容器内部**：实机反馈 3 的根因就是它原来是这一行的兄弟，
+        于是落到两列里较高那列（色板）的下面。
+      -->
+      <div
+        v-if="editor.pattern"
+        class="mx-4 mt-6 flex flex-col gap-4 md:mx-8 md:grid md:min-h-0 md:flex-1 md:grid-cols-[1fr_250px] md:grid-rows-[1fr_auto]"
+      >
+        <!-- `md:h-auto`：手机上的 60vh 在网格里会溢出定高 shell，高度改由格子（1fr）定。 -->
+        <div
+          class="h-[60vh] min-h-64 flex-1 rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 shadow-pop-sm md:col-start-1 md:row-start-1 md:h-auto md:min-h-0"
+        >
           <PatternCanvas
             :pattern="editor.pattern"
             :palette="palette"
@@ -583,41 +683,11 @@ function rerun(): void {
             @measure="onMeasure"
             @update:view="onView"
             @paint="onPaint"
-            @select="onSelect"
-            @pick="onPick"
-            @background="onBackground"
+            @fill="onFill"
           />
         </div>
 
-        <div class="space-y-4 md:w-80">
-          <!--
-            撤销 / 重做状态读 `editor.canUndo` / `editor.canRedo` 这两个 computed，
-            **不许**读 `editor.history.canUndo`：`history` 是 `markRaw` 的类实例，读它的 getter
-            不建立响应式依赖，按钮会永久停在初始状态（控制者裁决 9）。
-          -->
-          <PatternToolbar
-            :can-undo="editor.canUndo"
-            :can-redo="editor.canRedo"
-            :tool="editor.tool"
-            :show-grid="editor.showGrid"
-            :show-labels="editor.showLabels"
-            :saving="editor.saving"
-            :dirty="session.dirty"
-            :can-rerun="session.record?.source != null"
-            :eraser-active="editor.currentColor === EMPTY"
-            @update:tool="editor.setTool($event)"
-            @undo="onCommand('undo')"
-            @redo="onCommand('redo')"
-            @update:show-grid="editor.setShowGrid($event)"
-            @update:show-labels="editor.setShowLabels($event)"
-            @fit="onCommand('fit')"
-            @zoom-in="onCommand('zoom-in')"
-            @zoom-out="onCommand('zoom-out')"
-            @save="onCommand('save')"
-            @rerun="rerun"
-            @eraser="onEraser"
-          />
-
+        <div class="space-y-4 md:col-start-2 md:row-span-2 md:w-[250px] md:min-h-0 md:overflow-y-auto">
           <PalettePanel
             :palette="palette"
             :usages="usages"
@@ -637,6 +707,37 @@ function rerun(): void {
             **C8 第 3 项**：原来的「添加颜色」入口已从面板删除，现在点**当前色槽**开合它。
           -->
         </div>
+
+        <!--
+          工具条（§7.4）：**主体区的第三个孩子**。DOM 顺序就是手机上的可见顺序——
+          「画布 → 底部色豆条 → 工具条」；平板上靠 `md:col-start-1 md:row-start-2` 放进画布
+          下面的格子（它不再是与这一行并列的兄弟，于是真的贴在画布卡片底边）。
+          外边距归零：缩进与间距由主体区提供（它现在在主体区**内部**，自带外边距会双重内缩）。
+        -->
+        <div v-if="editor.pattern" class="mb-6 md:col-start-1 md:row-start-2 md:mx-0 md:mt-0 md:mb-0">
+          <!--
+            撤销 / 重做状态读 `editor.canUndo` / `editor.canRedo` 这两个 computed，
+            **不许**读 `editor.history.canUndo`：`history` 是 `markRaw` 的类实例，读它的 getter
+            不建立响应式依赖，按钮会永久停在初始状态（控制者裁决 9）。
+          -->
+          <PatternToolbar
+            :can-undo="editor.canUndo"
+            :can-redo="editor.canRedo"
+            :tool="editor.tool"
+            :show-grid="editor.showGrid"
+            :show-labels="editor.showLabels"
+            :eraser-active="editor.currentColor === EMPTY"
+            @update:tool="editor.setTool($event)"
+            @undo="onCommand('undo')"
+            @redo="onCommand('redo')"
+            @update:show-grid="editor.setShowGrid($event)"
+            @update:show-labels="editor.setShowLabels($event)"
+            @fit="onCommand('fit')"
+            @zoom-in="onCommand('zoom-in')"
+            @zoom-out="onCommand('zoom-out')"
+            @eraser="onEraser"
+          />
+        </div>
       </div>
     </template>
 
@@ -649,26 +750,26 @@ function rerun(): void {
     <div
       v-if="leaving"
       data-testid="leave-bar"
-      class="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center gap-3 border-t border-slate-300 bg-amber-50 p-4"
+      class="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center gap-3 border-t-4 border-bead-line bg-bead-warn-bg p-4"
     >
-      <p class="text-lg text-amber-900">有未保存的改动，确定要离开吗？</p>
+      <p class="text-[24px] text-bead-warn-ink">有未保存的改动，确定要离开吗？</p>
       <button
         data-testid="leave-save"
-        class="min-h-12 rounded bg-slate-900 px-4 text-base text-white"
+        class="min-h-14 rounded-bead-sm bg-bead-ink px-4 text-[24px] text-bead-card"
         @click="saveAndLeave"
       >
         保存并离开
       </button>
       <button
         data-testid="leave-discard"
-        class="min-h-12 rounded border border-slate-300 px-4 text-base"
+        class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
         @click="discardAndLeave"
       >
         放弃改动
       </button>
       <button
         data-testid="leave-cancel"
-        class="min-h-12 rounded border border-slate-300 px-4 text-base"
+        class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
         @click="cancelLeave"
       >
         继续编辑
@@ -679,14 +780,14 @@ function rerun(): void {
     <div
       v-if="editor.error"
       data-testid="save-error"
-      class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800"
+      class="mx-4 mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink md:mx-8"
     >
       保存失败：{{ editor.error }}
     </div>
     <button
       v-if="editor.error"
       data-testid="retry-save"
-      class="mt-3 min-h-12 rounded border border-slate-300 px-4 text-base"
+      class="ml-4 mt-3 min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink md:ml-8"
       @click="saveThenResult"
     >
       重试保存

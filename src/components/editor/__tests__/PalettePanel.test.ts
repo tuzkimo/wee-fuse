@@ -122,13 +122,18 @@ describe("当前画笔槽（§9.1 第 1 条）", () => {
    * 整行——少了 `w-full`，当前色槽就比下面的色号带窄一截（真机截图里就是这样）。所以这里**逐类**
    * 断言宽度类的每一项：只断言「色槽有 `w-full`」时，把色号带的 `w-full` 删掉（于是两边又不等宽）
    * 照样绿。
+   *
+   * **改写（任务 14，相位 II 规格）**：类名从默认调色板/默认字号（`min-h-11` 44px、`text-base`、
+   * `rounded`）换成像素风 token（`min-h-14` 56px、`text-[12px]`、`rounded-bead-sm`）。判别核心
+   * ——「两项必须带同一组宽度类（含 `w-full`）」——逐字保留；每一项都是**更严**或等价的值
+   * （44→56px、16→12px 是 §7.4 逐字要求的色号字号，且 `text-base` 被 R22 禁用）。
    */
   it("当前色槽与一行色号带同一组宽度类（含 w-full）", () => {
     const wrapper = mountPanel();
     const slot = wrapper.get("[data-testid='palette-current']");
     const row = wrapper.findAll("[data-testid='palette-row']")[0];
     expect(row).toBeDefined();
-    for (const className of ["w-full", "flex", "min-h-11", "items-center", "gap-2", "px-3", "text-base", "rounded"]) {
+    for (const className of ["w-full", "flex", "min-h-14", "items-center", "gap-2", "px-3", "text-[12px]", "rounded-bead-sm"]) {
       expect(slot.classes()).toContain(className);
       expect(row?.classes()).toContain(className);
     }
@@ -334,6 +339,20 @@ describe("选中与操作条", () => {
     expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(false);
   });
 
+  // 【任务 14 新增】§8 末尾：批量换色那套交互一字不改。三个锚点在一次真实点击之后必须都在 DOM 里。
+  // 本组件是**受控**的（props 进 / 事件出）：点行只 emit 新集合，操作条要等父级写回 props 后才出现，
+  // 所以这里显式走一遍父级的回路——这正是 §8 末尾那条「行为不变」的真实路径。
+  it("多选换色的三个锚点仍在且行为不变（§8 末尾）", async () => {
+    const wrapper = mountPanel();
+    await wrapper.findAll("[data-testid='palette-row']")[0].trigger("click");
+    const emitted = wrapper.emitted("update:selected")?.at(-1)?.[0] as readonly number[] | undefined;
+    await wrapper.setProps({ selected: emitted });
+
+    expect(wrapper.find("[data-testid='select-bar']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='select-bar-recolor']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='select-bar-clear']").exists()).toBe(true);
+  });
+
   it("[取消选择] emit 空数组", async () => {
     const wrapper = mountPanel({ selected: [indexOf(palette, "M1")] });
     await wrapper.get("[data-testid='select-bar-clear']").trigger("click");
@@ -450,6 +469,69 @@ describe("端到端：真实 patternStats 的用量 → 面板 → 选择器标�
     // A2 是下标 1：任何「按 usages 位置当下标」的实现都会把 A1 标成下标 0、把 A2 标成下标 1，
     // 并且漏标 M1。这一行是整个用例的判别核心。
     expect(wrapper.get("[data-code='A2']").attributes("data-used")).toBeUndefined();
+  });
+});
+
+/**
+ * §7.4：调色板在平板是右栏、在手机是底部横滑色豆条。
+ *
+ * **两套排法靠类分叉、不靠 `v-if`（R3）**：同一批 testid 在 DOM 里只出现一次（`get` 遇到重复会抛），
+ * 两个断点的类因此都挂在同一个节点上——手机那一套是基础类，平板那一套是 `md:` 类。
+ */
+describe("两套排法（§7.4）", () => {
+  it("手机端色豆条可横滑、色豆不小于 56px", () => {
+    const wrapper = mountPanel();
+    const strip = wrapper.get("[data-testid='palette-strip-mobile']");
+    expect(strip.classes()).toContain("overflow-x-auto");
+    expect(strip.get("[data-testid='palette-bead']").classes()).toContain("h-14");
+  });
+
+  it("平板右栏宽 250px（md:w-[250px]）", () => {
+    expect(mountPanel().classes()).toContain("md:w-[250px]");
+  });
+});
+
+/**
+ * 像素风硬约束：R22（禁 Tailwind 默认字号类）与「只准用 `bead-*` token / `rounded-bead-*` /
+ * `border-4`/`border-3` / `shadow-pop-*`」。默认调色板类（`slate-*`、`white`、`bg-slate-900`）、
+ * 1px/2px 边框、默认字号与模糊投影都属于**会静默回潮**的一类：它们不影响任何行为断言，
+ * 只让画面慢慢变回 Material 风。这里逐个元素按**整词**检查，`border-4` 与 `border` 是两个词，
+ * 所以不会误伤 token 类。
+ */
+const FORBIDDEN_CLASSES = [
+  "bg-white",
+  "bg-slate-900",
+  "text-white",
+  "text-slate-500",
+  "text-slate-700",
+  "border-slate-200",
+  "border-slate-300",
+  "border",
+  "border-2",
+  "rounded",
+  "text-xs",
+  "text-sm",
+  "text-base",
+  "font-semibold",
+  "shadow-sm",
+  "shadow-md",
+  "shadow-lg",
+];
+
+function expectNoDefaultPalette(wrapper: ReturnType<typeof mountPanel>): void {
+  for (const element of wrapper.findAll("*")) {
+    for (const banned of FORBIDDEN_CLASSES) {
+      expect(element.classes()).not.toContain(banned);
+    }
+  }
+}
+
+describe("像素风约束（R22 + token 白名单）", () => {
+  it("面板与展开的选择器都不带默认调色板 / 默认字号 / 1–2px 边框 / 模糊投影", async () => {
+    const wrapper = mountPanel();
+    expectNoDefaultPalette(wrapper);
+    await wrapper.get("[data-testid='palette-current']").trigger("click");
+    expectNoDefaultPalette(wrapper);
   });
 });
 

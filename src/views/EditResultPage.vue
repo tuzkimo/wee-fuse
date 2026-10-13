@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // src/views/EditResultPage.vue
 //
-// `/edit/:id/result`：编辑保存成功后的结果页（C8 规格 §3.4）。标题行「修改成功」+ 共用结果卡片。
+// `/edit/:id/result`：编辑保存成功后的结果页（C8 规格 §3.4）。标题行按 `?new=1` 分「生成成功 /
+// 修改成功」（手机首次生成那条路带标志）+ 共用结果卡片。
 // 正常路径下 `session.pattern` 就是刚保存的那份（内存态，不重新读库）；刷新 / 直链进来时它为空，
 // 这时按 id 补一次 `load`，仍取不到就回首页。
 //
@@ -13,6 +14,8 @@
 import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ResultPanel from "@/components/result/ResultPanel.vue";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import { seedRerunDraft } from "@/services/rerunDraft";
 import { getBuiltinPalette } from "@/services/palette";
 import { useDraft } from "@/stores/draft";
@@ -25,6 +28,9 @@ const session = useProjectSession();
 const palette = getBuiltinPalette();
 
 const pattern = computed(() => session.pattern);
+/** 本轮是新建还是覆盖：只有手机首次生成那条路会带 `?new=1`（`SetupPage` 写入）；编辑器保存
+    成功的直接入口没有 query ⇒ 恒为覆盖。 */
+const isNew = computed(() => route.query.new === "1");
 /** 有没有原图可以「重做」（重跑要拿原图重新走一遍流水线）。 */
 const canRerun = computed(() => session.record?.source != null);
 
@@ -45,17 +51,17 @@ function rerun(): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 p-4 md:p-8">
+  <main class="min-h-screen bg-bead-sand p-4 md:p-8">
     <header class="flex flex-wrap items-center gap-3">
-      <button
+      <BeadButton
         data-testid="result-back"
+        variant="icon"
         aria-label="返回"
-        class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
         @click="router.push({ name: 'home' })"
       >
-        ←
-      </button>
-      <h1 class="text-2xl font-bold text-slate-900">修改成功</h1>
+        <PixelIcon name="back" :size="24" />
+      </BeadButton>
+      <h1 class="text-[24px] text-bead-ink md:text-[36px]">{{ isNew ? "生成成功" : "修改成功" }}</h1>
     </header>
 
     <!--
@@ -69,7 +75,7 @@ function rerun(): void {
       <ResultPanel
         :pattern="pattern"
         :palette="palette"
-        :is-new="false"
+        :is-new="isNew"
         :can-rerun="canRerun"
         :name="session.record?.meta.name ?? '图纸'"
         :thumbnail="session.record?.meta.thumbnail || undefined"

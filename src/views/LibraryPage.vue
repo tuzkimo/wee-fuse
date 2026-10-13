@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import { useOverlayBack } from "@/composables/useOverlayBack";
 import { fromProjectDocument } from "@/core/project/file";
 import type { Palette } from "@/core/palette/types";
@@ -68,6 +70,18 @@ useOverlayBack(
  * 焊死，不必指望「唯一的出口是关闭」。用例：`查看层开着时点另一条工程的「查看」…`。
  */
 const sheetTarget = ref<ProjectMeta | null>(null);
+
+/**
+ * gear 展开的那张卡（§7.1：改名 / 删除 / 看施工图收进 gear）。存整条 `meta` 而不是 id：
+ * 覆盖层里三个动作都要整条 meta，只存 id 就得再回列表查一次。同时只展开一张卡——第二次点
+ * 别的 gear 自然顶掉前一张，不必额外维护一个集合。
+ */
+const menuTarget = ref<ProjectMeta | null>(null);
+
+function toggleMenu(meta: ProjectMeta): void {
+  menuTarget.value = menuTarget.value?.id === meta.id ? null : meta;
+}
+
 /**
  * 查看层要的图纸与色卡：**由本页从记录里读出来**（C7 起 `SheetViewer` 吃 `pattern` 入参，
  * 不再自己回库读——那条路径会让编辑器与结果页的**内存态**图纸进不来）。
@@ -79,6 +93,7 @@ const sheetPattern = ref<Pattern | null>(null);
 const palette: Palette = getBuiltinPalette();
 
 async function openSheet(meta: ProjectMeta): Promise<void> {
+  menuTarget.value = null;
   sheetTarget.value = meta;
   sheetPattern.value = null;
   try {
@@ -124,8 +139,15 @@ async function refresh(): Promise<void> {
 onMounted(refresh);
 
 function startRename(meta: ProjectMeta): void {
+  menuTarget.value = null;
   renamingId.value = meta.id;
   renameDraft.value = meta.name;
+}
+
+/** 删除也先收起 gear 覆盖层：不关的话取消对话框后那张卡的覆盖层还开着。 */
+function askDelete(meta: ProjectMeta): void {
+  menuTarget.value = null;
+  pendingDelete.value = meta;
 }
 
 async function confirmRename(): Promise<void> {
@@ -158,97 +180,131 @@ function open(id: string): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 p-4 md:p-8">
-    <header class="flex flex-wrap items-center justify-between gap-4">
-      <h1 class="text-3xl font-bold text-slate-900">我的图纸</h1>
-      <button
+  <main class="min-h-screen bg-bead-sand">
+    <!-- 顶栏：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边（§7 共用口径） -->
+    <header
+      class="flex h-16 items-center justify-between gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
+    >
+      <h1 class="text-[24px] text-bead-ink md:text-[36px]">我的图纸</h1>
+      <BeadButton
         data-testid="new-project"
-        class="min-h-12 rounded bg-slate-900 px-6 text-lg text-white disabled:opacity-50"
+        variant="go"
+        aria-label="新建图纸"
         :disabled="storeUnavailable"
         @click="router.push({ name: 'pick' })"
       >
-        新建
-      </button>
+        <PixelIcon name="plus" :size="24" />
+      </BeadButton>
     </header>
 
-    <p v-if="storeUnavailable" data-testid="store-unavailable" class="mt-4 rounded bg-red-50 p-4 text-lg text-red-700">
-      {{ storeFailureText }}
-    </p>
-    <p v-if="error && !storeUnavailable" data-testid="error-hint" class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800">
-      {{ error }}
-    </p>
-
-    <p v-if="!error && !storeUnavailable && !hasProjects" data-testid="empty-hint" class="mt-8 text-lg text-slate-500">
-      还没有图纸。点右上角「新建」选一张图片开始吧。
-    </p>
-
-    <ul data-testid="project-list" class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <li
-        v-for="meta in projects"
-        :key="meta.id"
-        data-testid="project-card"
-        class="min-w-0 rounded-lg bg-white p-4 shadow"
+    <div class="p-4 md:p-8">
+      <p
+        v-if="storeUnavailable"
+        data-testid="store-unavailable"
+        class="rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
       >
-        <img
-          v-if="meta.thumbnail"
-          :src="meta.thumbnail"
-          alt=""
-          class="mb-3 h-32 w-full rounded bg-slate-100 object-contain"
-        />
-        <div v-else class="mb-3 flex h-32 w-full items-center justify-center rounded bg-slate-100 text-slate-400">
-          没有封面
-        </div>
+        {{ storeFailureText }}
+      </p>
+      <p
+        v-if="error && !storeUnavailable"
+        data-testid="error-hint"
+        class="mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
+      >
+        {{ error }}
+      </p>
 
-        <template v-if="renamingId === meta.id">
-          <input
-            v-model="renameDraft"
-            data-testid="rename-input"
-            :maxlength="PROJECT_NAME_MAX"
-            class="min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
-          />
-          <div class="mt-2 flex gap-3">
-            <button data-testid="rename-confirm" class="min-h-12 flex-1 rounded bg-slate-900 text-white" @click="confirmRename">
-              好
-            </button>
-            <button class="min-h-12 flex-1 rounded border border-slate-300" @click="renamingId = null">
-              算了
-            </button>
+      <ul data-testid="project-list" class="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <li
+          v-for="meta in projects"
+          :key="meta.id"
+          data-testid="project-card"
+          class="relative min-w-0 rounded-bead-md border-4 border-bead-ink bg-bead-card shadow-pop-sm"
+        >
+          <div v-if="renamingId === meta.id" class="flex flex-col gap-3 p-3">
+            <input
+              v-model="renameDraft"
+              data-testid="rename-input"
+              :maxlength="PROJECT_NAME_MAX"
+              class="min-h-14 w-full min-w-0 rounded-bead-sm border-4 border-bead-line bg-bead-card px-2 text-[24px] text-bead-ink"
+            />
+            <BeadButton data-testid="rename-confirm" variant="primary" @click="confirmRename">好</BeadButton>
+            <BeadButton variant="secondary" @click="renamingId = null">算了</BeadButton>
           </div>
-        </template>
 
-        <template v-else>
-          <p data-testid="project-name" class="project-name text-lg font-semibold text-slate-900">
-            {{ meta.name }}
-          </p>
-          <p class="mt-1 text-base text-slate-500">{{ meta.width }} × {{ meta.height }} · {{ meta.colorCount }} 种颜色</p>
-          <p data-testid="project-updated-at" class="mt-1 text-base text-slate-400">
-            {{ formatRelativeTime(meta.updatedAt, new Date()) }}
-          </p>
-          <div class="mt-3 flex flex-wrap gap-3">
-            <button
-              data-testid="view-sheet"
-              class="min-h-12 flex-1 rounded bg-slate-900 px-4 text-white"
-              @click="openSheet(meta)"
-            >
-              查看
-            </button>
+          <template v-else>
+            <!-- 卡片主体就是「打开工程」（§11.1）：整张卡是唯一的大动作，锚点在 button 上。
+                 里面一律用 span + block，不用 p：button 的内容模型只收 phrasing content。 -->
             <button
               data-testid="open-project"
-              class="min-h-12 rounded border border-slate-300 px-4"
+              type="button"
+              class="block w-full text-left"
               @click="open(meta.id)"
             >
-              编辑
+              <span class="flex h-32 w-full items-center justify-center overflow-hidden rounded-t-bead-sm bg-bead-board">
+                <img v-if="meta.thumbnail" :src="meta.thumbnail" alt="" class="h-full w-full object-contain" />
+                <span v-else class="text-[12px] text-bead-line-2">没有封面</span>
+              </span>
+              <span class="block p-3">
+                <span data-testid="project-name" class="project-name text-[24px] text-bead-ink">
+                  {{ meta.name }}
+                </span>
+                <!-- 尺寸行与相对时间合成一行 12px 辅助信息（§7.1），`project-updated-at` 节点保留 -->
+                <span data-testid="project-updated-at" class="block text-[12px] text-bead-line-2">
+                  {{ meta.width }} × {{ meta.height }} · {{ meta.colorCount }} 色 ·
+                  {{ formatRelativeTime(meta.updatedAt, new Date()) }}
+                </span>
+              </span>
             </button>
-            <button data-testid="rename-project" class="min-h-12 rounded border border-slate-300 px-4" @click="startRename(meta)">
-              改名
-            </button>
-            <button data-testid="delete-project" class="min-h-12 rounded border border-red-300 px-4 text-red-700" @click="pendingDelete = meta">
-              删除
-            </button>
+
+            <BeadButton
+              data-testid="card-menu"
+              variant="icon"
+              class="absolute top-1 right-1"
+              aria-label="图纸操作"
+              @click="toggleMenu(meta)"
+            >
+              <PixelIcon name="gear" :size="24" />
+            </BeadButton>
+          </template>
+
+          <!-- gear 展开的覆盖层（§7.1）：三个 56px 动作 + 关闭。点底片也能收起。 -->
+          <div
+            v-if="menuTarget?.id === meta.id"
+            data-testid="card-menu-panel"
+            class="fixed inset-0 z-10 flex items-center justify-center bg-bead-ink/40 p-4"
+            @click.self="menuTarget = null"
+          >
+            <div
+              class="flex w-full max-w-xs flex-col gap-3 rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 shadow-pop-lg"
+            >
+              <div class="flex justify-end">
+                <BeadButton variant="icon" aria-label="关闭" @click="menuTarget = null">
+                  <PixelIcon name="close" :size="24" />
+                </BeadButton>
+              </div>
+              <BeadButton data-testid="view-sheet" variant="primary" @click="openSheet(meta)">查看</BeadButton>
+              <BeadButton data-testid="rename-project" variant="secondary" @click="startRename(meta)">
+                改名
+              </BeadButton>
+              <BeadButton data-testid="delete-project" variant="danger" @click="askDelete(meta)">删除</BeadButton>
+            </div>
           </div>
-        </template>
-      </li>
-    </ul>
+        </li>
+
+        <!-- 空态：网格末位一张虚线卡片（§7.1），它自己就是新建入口 -->
+        <li v-if="!error && !storeUnavailable && !hasProjects">
+          <button
+            data-testid="empty-hint"
+            type="button"
+            class="flex min-h-14 w-full flex-col items-center justify-center gap-2 rounded-bead-md border-4 border-dashed border-bead-line bg-bead-card p-4 text-bead-ink"
+            @click="router.push({ name: 'pick' })"
+          >
+            <PixelIcon name="plus" :size="24" />
+            <span class="text-[24px]">新图纸</span>
+          </button>
+        </li>
+      </ul>
+    </div>
 
     <SheetViewer
       v-if="sheetTarget !== null && sheetPattern !== null"
@@ -266,17 +322,22 @@ function open(id: string): void {
     <div
       v-if="pendingDelete"
       data-testid="confirm-dialog"
-      class="fixed inset-0 flex items-center justify-center bg-black/40 p-4"
+      class="fixed inset-0 z-20 flex items-center justify-center bg-bead-ink/40 p-4"
     >
-      <div class="w-full max-w-md rounded-lg bg-white p-6">
-        <p class="text-xl text-slate-900">确定删掉「{{ pendingDelete.name }}」吗？删了就找不回来了。</p>
+      <div class="w-full max-w-md rounded-bead-md border-4 border-bead-ink bg-bead-card p-6 shadow-pop-lg">
+        <p class="text-[24px] text-bead-ink">确定删掉「{{ pendingDelete.name }}」吗？删了就找不回来了。</p>
         <div class="mt-6 flex gap-4">
-          <button data-testid="delete-confirm" class="min-h-14 flex-1 rounded bg-red-600 text-lg text-white" @click="confirmDelete">
+          <BeadButton data-testid="delete-confirm" variant="danger" class="flex-1" @click="confirmDelete">
             删掉
-          </button>
-          <button data-testid="delete-cancel" class="min-h-14 flex-1 rounded border border-slate-300 text-lg" @click="pendingDelete = null">
+          </BeadButton>
+          <BeadButton
+            data-testid="delete-cancel"
+            variant="secondary"
+            class="flex-1"
+            @click="pendingDelete = null"
+          >
             不删
-          </button>
+          </BeadButton>
         </div>
       </div>
     </div>

@@ -5,9 +5,12 @@
 // 真机能力（浏览器里无法验证），按 B1 规格 §2 的约定留到引入 Tauri 壳的那一轮。
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import { getPlatform } from "@/services/platform/capabilities";
 import { fileFromInput, loadImageSource } from "@/services/imageSource";
 import { useDraft } from "@/stores/draft";
+import { backOrHome } from "@/views/backOrHome";
 
 const router = useRouter();
 const draft = useDraft();
@@ -101,72 +104,110 @@ async function pickNative(source: "album" | "camera"): Promise<void> {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 p-4 md:p-8">
-    <h1 class="text-3xl font-bold text-slate-900">新建图纸</h1>
-    <p class="mt-2 text-lg text-slate-600">先选一张照片，下一步框出想拼的那块。</p>
-
-    <section class="mt-6 space-y-6">
-      <template v-if="useNativePicker">
-        <!-- 壳里：入口由系统选择器 / 相机提供，页面里不放可见 input（规格 §7.1）。 -->
-        <button
-          data-testid="pick-album"
-          class="block min-h-14 w-full rounded bg-slate-900 px-8 text-lg text-white disabled:opacity-50"
-          :disabled="busy"
-          @click="pickNative('album')"
-        >
-          {{ busy ? "正在读取…" : "从相册选一张" }}
-        </button>
-        <button
-          v-if="canCapture"
-          data-testid="pick-camera"
-          class="mt-3 block min-h-14 w-full rounded border border-slate-300 px-8 text-lg disabled:opacity-50"
-          :disabled="busy"
-          @click="pickNative('camera')"
-        >
-          拍一张
-        </button>
-      </template>
-      <template v-else>
-        <!-- 浏览器那条老路：可见 input + 下一步。**一个字都不改**（既有 8 条用例钉着它）。 -->
-        <label class="block text-lg text-slate-800">
-          选一张图片
-          <input
-            ref="fileInput"
-            data-testid="file-input"
-            type="file"
-            accept="image/*"
-            class="mt-2 block text-base"
-          />
-        </label>
-
-        <button
-          data-testid="pick-file"
-          class="min-h-14 rounded bg-slate-900 px-8 text-lg text-white disabled:opacity-50"
-          :disabled="busy"
-          @click="pick"
-        >
-          {{ busy ? "正在读取…" : "下一步" }}
-        </button>
-      </template>
-
-      <button
-        v-if="canResume"
-        data-testid="resume-draft"
-        class="ml-4 min-h-14 rounded border border-slate-300 px-8 text-lg"
-        @click="resume"
-      >
-        继续上次的选区
-      </button>
-    </section>
-
-    <!-- role="alert"：失败原因要立刻被读屏念出来，而不是等用户摸到那一行才知道。 -->
-    <p
-      v-if="error"
-      data-testid="pick-error"
-      role="alert"
-      class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800"
+  <main class="min-h-screen bg-bead-sand">
+    <!-- 顶栏：与图纸库同一口径（手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边）。
+         返回箭头走 `backOrHome`：选图页是流程第一页，上一页若是一条已作废的流程条目就该回图纸库。 -->
+    <header
+      class="flex h-16 items-center gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
     >
-      {{ error }}
-    </p>
+      <BeadButton data-testid="pick-back" variant="icon" aria-label="返回" @click="backOrHome(router)">
+        <PixelIcon name="back" :size="24" />
+      </BeadButton>
+      <h1 class="text-[24px] text-bead-ink md:text-[36px]">选照片</h1>
+    </header>
+
+    <div class="space-y-6 p-4 md:p-8">
+      <section class="space-y-4">
+        <template v-if="useNativePicker">
+          <!-- 壳里：入口由系统选择器 / 相机提供，页面里不放可见 input（规格 §7.1）。 -->
+          <!-- `shadow-pop-lg!` 的 `!` 是必须的：BeadButton 的 primary 变体自带 `shadow-pop-md`，
+               两个工具类同特异性、`md` 在产物 CSS 里排在 `lg` 之后，不加 `!` 压不过去。 -->
+          <BeadButton
+            data-testid="pick-album"
+            variant="primary"
+            aria-label="从相册选一张"
+            :disabled="busy"
+            class="w-full shadow-pop-lg!"
+            @click="pickNative('album')"
+          >
+            <PixelIcon name="photos" :size="36" />
+            <!-- 36px 写在内层节点上：BeadButton 的 primary 自带 24px，靠同名工具类的生成顺序盖不住。 -->
+            <span class="text-[36px]">{{ busy ? "正在读取…" : "从相册选一张" }}</span>
+          </BeadButton>
+          <BeadButton
+            v-if="canCapture"
+            data-testid="pick-camera"
+            variant="secondary"
+            :disabled="busy"
+            class="w-full"
+            @click="pickNative('camera')"
+          >
+            拍一张
+          </BeadButton>
+        </template>
+        <template v-else>
+          <!-- 浏览器那条老路：可见 input + 下一步。**一个字都不改**（既有 8 条用例钉着它）。 -->
+          <label
+            class="block rounded-bead-sm border-4 border-bead-ink bg-bead-card p-4 text-[24px] text-bead-ink"
+          >
+            选一张图片
+            <input
+              ref="fileInput"
+              data-testid="file-input"
+              type="file"
+              accept="image/*"
+              class="mt-2 block w-full text-[12px] text-bead-ink"
+            />
+          </label>
+
+          <BeadButton
+            data-testid="pick-file"
+            variant="primary"
+            aria-label="下一步"
+            :disabled="busy"
+            class="w-full shadow-pop-lg!"
+            @click="pick"
+          >
+            <PixelIcon name="photos" :size="36" />
+            <span class="text-[36px]">{{ busy ? "正在读取…" : "下一步" }}</span>
+          </BeadButton>
+        </template>
+
+        <BeadButton
+          v-if="canResume"
+          data-testid="resume-draft"
+          variant="secondary"
+          class="w-full"
+          @click="resume"
+        >
+          继续上次的选区
+        </BeadButton>
+      </section>
+
+      <!--
+        下半屏照片网格（§7.2）。**目前恒为空态**：平台接口只有 `pickFromAlbum` / `capturePhoto`，
+        没有枚举最近照片的能力（规格 §4.1），所以没有可 v-for 的数据源——只有那张虚线占位格。
+        将来接上相册枚举时，在这里渲染 <li> 格子（每格 `border-4 border-bead-ink` + `rounded-bead-sm`）。
+      -->
+      <ul data-testid="pick-grid" class="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <li
+          data-testid="pick-empty"
+          class="flex aspect-square flex-col items-center justify-center gap-2 rounded-bead-sm border-4 border-dashed border-bead-ink text-bead-ink"
+        >
+          <PixelIcon name="photos" :size="36" />
+          <span class="text-[12px]">还没有照片</span>
+        </li>
+      </ul>
+
+      <!-- role="alert"：失败原因要立刻被读屏念出来，而不是等用户摸到那一行才知道。 -->
+      <p
+        v-if="error"
+        data-testid="pick-error"
+        role="alert"
+        class="rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
+      >
+        {{ error }}
+      </p>
+    </div>
   </main>
 </template>

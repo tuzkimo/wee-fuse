@@ -394,13 +394,14 @@ describe("EditorPage（B1 只读版 + B3 编辑器宿主）", () => {
   });
 
   /**
-   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具栏输出行）。
+   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具条；**T5（实机反馈 6）搬到顶栏、
+   * 与「保存」同级**）。
    *
    * 两条分支合在一条里断言，理由与旧版相同：**互斥性只有同时看到两侧才有判别力**——
-   * 只有「有原图时渲染」时，把 `:can-rerun` 绑成常量 `true` 也绿。
+   * 只有「有原图时渲染」时，把 `can-rerun` 绑成常量 `true` 也绿。
    *
-   * 原来的两条 `<p>`（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」）随本任务删除：
-   * 提示的对象不存在了（没有原图时工具栏**不渲染**那颗按钮）。留下的这一条覆盖它们真正承重的那半句
+   * 原来的两条 `<p>`（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」）随 C8 删除：
+   * 提示的对象不存在了（没有原图时那颗按钮**不渲染**）。留下的这一条覆盖它们真正承重的那半句
    * ——**没有原图只是「不能改参数重新生成」，不是「打不开」**。
    */
   it("「重做」只在有原图时渲染；没有原图的工程照常打开", async () => {
@@ -476,15 +477,30 @@ describe("改参数重新生成（B2 规格 §7）", () => {
     const wrapper = await mountPage();
 
     // 入口的名字是给用户看的：只有按钮没有标签、或标签写错，用户不知道这一下会发生什么。
-    // **C8 第 3 项改名**：它从页面中部搬进工具栏输出行，文案由「改参数重新生成」收敛成「重做」。
-    expect(wrapper.get("[data-testid='rerun']").text()).toContain("重做");
+    // **T5（实机反馈 6）**：它从工具条搬进顶栏、与「保存」同级，并从纯图标按钮变成
+    // 「图形旁留短中文」（R53）——所以判据从「可见文字必须为空」换成「可见文字逐字是『重做』」。
+    // 这不是放宽：「必须叫重做」这一条仍在，而且现在还多钉了 R53 要求的可见文案。
+    const rerunButton = wrapper.get("[data-testid='rerun']");
+    expect(rerunButton.attributes("aria-label")).toBe("重做");
+    expect(rerunButton.text()).toBe("重做");
+    // 「与保存同级」就是这次查修的判据本体：两颗必须在**同一个** `header` 里。
+    // 写成「rerun 在某个祖先里存在」会被「顶栏里再塞一颗」放过去。
+    const header = rerunButton.element.closest("header");
+    expect(header).not.toBeNull();
+    expect(wrapper.get("[data-testid='editor-save']").element.closest("header")).toBe(header);
+    expect(wrapper.find("header").element).toBe(header);
+    // 次按钮（`bead-card` 底）、绝不是主按钮：它会丢掉手工涂改，视觉权重不能压过保存。
+    // 这一条从 `PatternToolbar.test.ts` 搬来（R2：哪一组件拥有它就由哪一份用例钉）。
+    expect(rerunButton.classes()).toContain("bg-bead-card");
+    expect(rerunButton.classes()).not.toContain("bg-bead-accent");
+    expect(rerunButton.classes()).not.toContain("bg-bead-go");
 
     const draft = useDraft();
     // 点之前草稿必须是干净的：否则下面的断言分不清「这一点点出来的」还是「本来就有的」。
     expect(draft.source).toBeNull();
     expect(draft.rerunOf).toBeNull();
 
-    await wrapper.get("[data-testid='rerun']").trigger("click");
+    await rerunButton.trigger("click");
 
     // 只跳一次、而且只跳选区页（不是 pick，也不是 editor）
     expect(pushMock).toHaveBeenCalledTimes(1);
@@ -685,6 +701,9 @@ describe("保存", () => {
     // 主规格 §8：保存失败 → 提示，保留内存中的编辑态不丢
     expect(wrapper.get("[data-testid='save-error']").text()).toContain("磁盘已满");
     expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(true);
+    // R47：与确认条同口径，重试保存也要够 56px。
+    expect(wrapper.get("[data-testid='retry-save']").classes()).toContain("min-h-14");
+    expect(wrapper.get("[data-testid='retry-save']").classes()).not.toContain("min-h-12");
     expect(session.dirty).toBe(true);
     expect(Array.from(editor.pattern?.cells ?? [])).toEqual(painted);
 
@@ -759,6 +778,11 @@ describe("未保存离开的拦截", () => {
     expect(wrapper.get("[data-testid='leave-save']").text()).toContain("保存并离开");
     expect(wrapper.get("[data-testid='leave-discard']").text()).toContain("放弃改动");
     expect(wrapper.get("[data-testid='leave-cancel']").text()).toContain("继续编辑");
+    // R47：这三个按钮原为 `min-h-12`（48px），低于规格 §6.5 的硬下界（56px）。
+    for (const id of ["leave-save", "leave-discard", "leave-cancel"]) {
+      expect(wrapper.get(`[data-testid='${id}']`).classes()).toContain("min-h-14");
+      expect(wrapper.get(`[data-testid='${id}']`).classes()).not.toContain("min-h-12");
+    }
     // 取消了导航，就没有发生任何跳转
     expect(pushMock).not.toHaveBeenCalled();
   });
@@ -1008,60 +1032,15 @@ describe("键盘与 beforeunload", () => {
 /**
  * 页面这一层的**接线**：组件 emit → store 动作 / core 函数。
  *
- * 为什么单独一组：这五条接线（工具、吸管、框选、视图回写、缩放与适配）在本文件里原本
+ * 为什么单独一组：这两条接线（视图回写、缩放与适配）在本文件里原本
  * **零判别力**——把它们改成空实现或改成错的 store 动作，先前那 26 条用例**全绿**
- * （报告 §6 的 R12 / R19 / R20 / R21，以及补充的 `@update:tool`）。而「两端各自正确、
+ * （报告 §6 的 R12 / R19 / R20 / R21）。而「两端各自正确、
  * 错在接线」正是本项目最贵的缺陷形态（任务 5 / 6 只覆盖了「组件 emit 了什么」，
  * 任务 8 的三条端到端也不覆盖这几条），所以页面这一层必须自己钉住。
  *
  * **断言对象一律是接线接通后的可观察结果**（store 里的值 / 图纸的格），不是「事件被 emit 过」。
  */
-describe("页面接线：工具与吸管 / 框选 / 视图回写 / 缩放与适配", () => {
-  it("工具与吸管：点「吸管」再点一格 → 当前色变成那格的色号、切回画笔，图纸没被涂改", async () => {
-    const wrapper = await mountPage();
-    const editor = useEditor();
-
-    // 先造出「格子里躺着一个既不是 0、也不等于当前色」的局面：把 (1,0) 涂成 2 号色。
-    editor.setCurrentColor(2);
-    await dragPaint(wrapper, [1, 0], [1, 0]);
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
-
-    // 当前色换成一个**与待吸色号不同**的值：否则「吸到了 2」与「什么都没做」不可区分。
-    editor.setCurrentColor(5);
-    await wrapper.get("[data-testid='tool-pick']").trigger("click");
-    // `@update:tool` 这条接线也在这里被真的走到（工具真的切成了 pick）。
-    expect(editor.tool).toBe("pick");
-
-    await pointerAtCell(wrapper, "pointerdown", 1, 0);
-    await pointerAtCell(wrapper, "pointerup", 1, 0);
-
-    // 接线接通后的结果：色号来自**那一格**（2），不是 0、不是 5、也不是橡皮。
-    expect(editor.currentColor).toBe(2);
-    // 吸完自动切回画笔（切换在 store 里做，页面不重复一遍）。
-    expect(editor.tool).toBe("brush");
-    // 吸管**不是画笔**：图纸一个字节都没变（把 onPick 接成 paint 的写法在这里红）。
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, 2]);
-  });
-
-  it("框选：拖框 → 目标格真的被涂成当前色，而且是一条可撤销的命令", async () => {
-    const wrapper = await mountPage();
-    const editor = useEditor();
-
-    editor.setCurrentColor(2);
-    await wrapper.get("[data-testid='tool-select']").trigger("click");
-    expect(editor.tool).toBe("select");
-
-    await dragPaint(wrapper, [0, 0], [1, 0]);
-
-    // `applyRect` 的结果：整块 2×1 都被涂成 2 号色。
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([2, 2]);
-    // **一次框选 = 一条命令**：一次撤销就整块回退
-    // （把 onSelect 接成逐格 `paint` 的写法在这里红——格子值一样，但撤销只退一格）。
-    expect(editor.canUndo).toBe(true);
-    editor.undo();
-    expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
-  });
-
+describe("页面接线：视图回写 / 缩放与适配", () => {
   it("视图回写：双指捏合后 editor.view 等于画布发上来的那个视图", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
@@ -1272,11 +1251,11 @@ describe("页面接线（终）：类型兼容的 props 错接（画布 / 工具
     const wrapper = await mountPage();
     expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("brush"); // 播种值
 
-    useEditor().setTool("pick");
+    useEditor().setTool("fill");
     await nextTick();
 
     // 绑成常量 `'brush'` 的写法在这里红：页面从不读这个 prop，用户只看到按钮高亮永不跟随
-    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("pick");
+    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("fill");
   });
 
   it("面板收到 `currentColor`：`palette-current` 显示的就是笔刷那个色号（绑成 revision 必红）", async () => {
@@ -1545,11 +1524,12 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
   it("返回箭头接的是 backOrHome：历史为空回图纸库、有上一页就退回去", async () => {
     const wrapper = await mountPage();
     const back = wrapper.get("[data-testid='editor-back']");
-    // 触控目标 ≥44px（主规格 §6.4，与工具栏同一口径的类名断言）。箭头本身没有文字标签，
+    // 触控目标 ≥56px（主规格 §6.5 的硬下界，与工具栏同一口径的类名断言）。箭头本身没有文字标签，
     // 所以必须有 `aria-label`，否则读屏用户听到的是一个没有名字的按钮。
+    // 44px（`min-h-11`）是 Material 的口径，规格逐字否掉了它：8 岁的手指精细动作更差。
     expect(back.attributes("aria-label")).toBe("返回");
-    expect(back.classes()).toContain("min-h-11"); // 2.75rem = 44px
-    expect(back.classes()).toContain("min-w-11");
+    expect(back.classes()).toContain("min-h-14"); // 3.5rem = 56px
+    expect(back.classes()).toContain("min-w-14");
 
     await back.trigger("click");
     expect(backMock).not.toHaveBeenCalled();
@@ -1609,8 +1589,8 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
    * 「橡皮」剥掉了它在本页的最后一层皮：按钮在工具栏（`PatternToolbar` 的 `eraser`），
    * 真正要做的两件事在**页面**这一层——设当前色为 `EMPTY`、**并切回画笔**。
    *
-   * 后半句是这条用例的核心：在框选 / 吸管工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
-   * （与「吸管取色后切回画笔」同口径）。所以起点**刻意先切到框选**——否则「切回画笔」与
+   * 后半句是这条用例的核心：在非画笔工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
+   * （用户点完必须看得出自己已经手握橡皮）。所以起点**刻意先切到填充**——否则「切回画笔」与
    * 「本来就是画笔」不可区分。
    */
   it("工具栏「橡皮」：设当前色为 EMPTY 并切回画笔，按下态跟着当前色", async () => {
@@ -1618,8 +1598,8 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
     const editor = useEditor();
 
     expect(editor.currentColor).toBe(0); // 播种色
-    await wrapper.get("[data-testid='tool-select']").trigger("click");
-    expect(editor.tool).toBe("select");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    expect(editor.tool).toBe("fill");
     // `:eraser-active` 接的是「当前色是不是 EMPTY」：此刻不是，所以没有按下态
     expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("false");
 
@@ -1664,7 +1644,243 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 长工程名不撑宽页面（B6 任务 2）。标题在 `flex flex-wrap` 容器里：`h1` 既没有截断也没有断行
+// 顶栏（§7.4 / 任务 12）：保存按钮与未保存圆点从工具条搬到这里。
+//
+// **R2**：`editor-save` 的 aria-label 与 `editor-dirty` 圆点归本文件钉——工具条那一侧只钉它
+// 自己那十颗按钮（`PatternToolbar.test.ts`）；T5 起「重做」（`rerun`）也归本文件钉。**R3**：顶栏的
+// 作品名只有**一个**节点，手机上靠 `hidden md:block` 藏，而不是渲染两份同名节点。
+// ---------------------------------------------------------------------------
+
+describe("顶栏：保存与未保存圆点（§7.4）", () => {
+  it("保存按钮的 aria-label 是「保存」，未保存时右上角出现 bead-danger 圆点", async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.get("[data-testid='editor-save']").attributes("aria-label")).toBe("保存");
+    // 干净时不渲染圆点（CONTRACT §8 的逐字口径）
+    expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
+
+    useEditor().setCurrentColor(2);
+    await dragPaint(wrapper, [1, 0], [1, 0]);
+
+    const dot = wrapper.get("[data-testid='editor-dirty']");
+    // 内容从「未保存」三个字换成一颗圆点：节点里不该再有文字
+    expect(dot.text()).toBe("");
+    expect(dot.classes()).toEqual(
+      expect.arrayContaining(["bg-bead-danger", "size-[22px]", "border-4", "border-bead-ink"]),
+    );
+  });
+
+  it("作品名只有一个 h1 节点，手机上整块不显示（隐藏类在宿主上，不是复制节点）", async () => {
+    const wrapper = await mountPage();
+    const titles = wrapper.findAll("h1");
+    expect(titles).toHaveLength(1);
+    expect(titles[0]?.classes()).toContain("project-name");
+    // 隐藏必须在**宿主**上：`.project-name` 是 `style.css` 末尾的**无层级**全局类
+    // （`display:-webkit-box`），按 CSS 层叠规则它压过 `@layer utilities` 里的 `hidden` /
+    // `md:block`——写在 h1 上真浏览器里不生效，而 jsdom 不解析布局，这类错只能靠类名归属发现。
+    const host = titles[0]?.element.parentElement;
+    expect(host?.classList.contains("hidden")).toBe(true);
+    expect(host?.classList.contains("md:block")).toBe(true);
+    // 反证：隐藏类不在 h1 自己身上（否则上面那条理由是空话）
+    expect(titles[0]?.classes()).not.toContain("hidden");
+  });
+});
+
+/**
+ * 画布宿主（画框那一层）必须是 token 表面：默认调色板（`bg-white` 等）、Tailwind 默认模糊投影
+ * （`shadow` / `shadow-sm|md|lg`）与裸圆角（`rounded` / `rounded-lg`）在本项目一律禁用——像素风要的
+ * 是硬投影（`shadow-pop-*`，零模糊）与 4px / 3px 两档描边。宿主没有 testid，锚点取 `editor-surface`
+ * （画布）的**直接父节点**：那一层是唯一由页面自己画的边框/底色。
+ */
+describe("画布宿主：token 表面", () => {
+  it("宿主用 bead token，且没有默认调色板 / 模糊投影 / 裸圆角", async () => {
+    const wrapper = await mountPage();
+    const host = wrapper.get("[data-testid='editor-surface']").element.parentElement;
+    const classes = host?.className ?? "";
+    expect(classes).toContain("bg-bead-card");
+    expect(classes).toContain("border-4");
+    expect(classes).toContain("border-bead-ink");
+    expect(classes).toContain("rounded-bead-md");
+    expect(classes).toContain("shadow-pop-sm");
+    // 反证：违禁类一个都不许在。两条正则都带边界断言，`shadow-pop-sm` / `rounded-bead-md` 不会误伤
+    // （`shadow` 后面若不是 `-` 或词边界才算默认投影；`rounded` 后接 `-bead-` 同理）。
+    expect(classes).not.toMatch(/(?<![\w-])shadow(?:-(?:sm|md|lg))?(?![\w-])/);
+    expect(classes).not.toMatch(/(?<![\w-])rounded(?:-(?:lg|md|sm|full))?(?![\w-])/);
+    expect(classes).not.toContain("bg-white");
+  });
+});
+
+/**
+ * 调色板右栏宽（§7.4）：面板自己已经设了 `md:w-[250px]`（`PalettePanel.test.ts` 钉住），
+ * 但**列宽由页面这层包裹 div 决定**——两处不一致时右栏会多出 ~70px 死白，
+ * 而面板与页面各自看都正确、谁都不报错（只能靠两张表对读）。
+ *
+ * 宿主同样没有 testid，锚点取法与「画布宿主」那条一致：从 `palette-current` 最近的 `section`
+ * （面板根）取**直接父节点**。反证 `md:w-80` 不在：否则这条只挡「新的宽度类被删」，
+ * 挡不住旧的 320px 回来。
+ */
+describe("调色板右栏宽度与面板同步（§7.4）", () => {
+  it("包裹层是 md:w-[250px]，不是旧的 md:w-80", async () => {
+    const wrapper = await mountPage();
+    const column = wrapper
+      .get("[data-testid='palette-current']")
+      .element.closest("section")?.parentElement;
+    const classes = (column?.className ?? "").split(/\s+/);
+    expect(classes).toContain("md:w-[250px]");
+    expect(classes).not.toContain("md:w-80");
+  });
+});
+
+/**
+ * 平板定高 shell（§7.4 的 T4 更正注记）。实机反馈 3：工具条不是贴着画布底部，而是跑到右边
+ * 「用豆列表」下面去了——色板列一长，每次选工具都要先下拉到底。
+ *
+ * 根因就在 DOM：工具条原本是「画布 + 色板列」那一行的**兄弟**，于是它落在两列里**较高那列**
+ * （色板）的下面。修法是一套 DOM + 两套 CSS 放置：DOM 顺序仍是手机那一套（画布 → 色豆条 →
+ * 工具条），平板把那一行变成 2×2 网格，用 `md:col-start-*` / `md:row-start-*` 摆格子。
+ *
+ * 断言都是类名（happy-dom 不解析布局，也只能断类名）；真实像素在 T4 报告的真窗口实测里。
+ * 工具条宿主与主体区都没有 testid，锚点从既有节点往上取（与「画布宿主 token 表面」同手法）。
+ */
+describe("平板定高 shell（§7.4 T4）：顶栏固定、工具条贴画布底、只有色板列滚", () => {
+  /** 画布卡片（画布宿主的直接父节点，由页面自己画）。 */
+  function canvasCardOf(wrapper: ReturnType<typeof mount>): Element {
+    const card = wrapper.get("[data-testid='editor-surface']").element.parentElement;
+    if (card === null) throw new Error("画布卡片不在 DOM 里");
+    return card;
+  }
+
+  /** 主体区 = 画布卡片的父节点（手机单列 / 平板 2×2 网格都由它决定）。 */
+  function bodyOf(wrapper: ReturnType<typeof mount>): Element {
+    const body = canvasCardOf(wrapper).parentElement;
+    if (body === null) throw new Error("主体区不在 DOM 里");
+    return body;
+  }
+
+  /** 色板列 = 面板根 `section` 的父节点（既有用例也是这么取的）。 */
+  function paletteColumnOf(wrapper: ReturnType<typeof mount>): Element {
+    const column = wrapper
+      .get("[data-testid='palette-current']")
+      .element.closest("section")?.parentElement;
+    if (column === null || column === undefined) throw new Error("色板列不在 DOM 里");
+    return column;
+  }
+
+  /** 工具条宿主：工具条根没有 testid，从任意一颗按钮往上数（按钮 → 按钮组 → 组件根 → 宿主）。 */
+  function toolbarHostOf(wrapper: ReturnType<typeof mount>): Element {
+    const button = wrapper.get("[data-testid='tool-brush']").element;
+    const host = button.parentElement?.parentElement?.parentElement;
+    if (host === null || host === undefined) throw new Error("工具条宿主不在 DOM 里");
+    return host;
+  }
+
+  it("平板：main 定高不滚（`md:h-screen md:overflow-hidden`），顶栏吸顶", async () => {
+    const wrapper = await mountPage();
+    const main = wrapper.get("main");
+    // 定高 shell 是「顶栏始终可见、保存不必先滑回顶部」的机制本身：页面不滚 = 顶栏不会出屏。
+    expect(main.classes()).toContain("md:h-screen");
+    expect(main.classes()).toContain("md:overflow-hidden");
+    // 定高 shell 要求 main 是 flex 列：主体区靠 `md:flex-1 md:min-h-0` 吃掉剩余高度。
+    expect(main.classes()).toContain("md:flex");
+    expect(main.classes()).toContain("md:flex-col");
+
+    const header = wrapper.get("header");
+    expect(header.classes()).toContain("sticky");
+    expect(header.classes()).toContain("top-0");
+    // 手机（<768px）页面仍然可滚，那里真的靠 sticky 把顶栏留住：编辑完想保存不必滑回顶部。
+    expect(header.classes()).toContain("z-20");
+  });
+
+  it("平板：主体区是 2×2 网格——画布与工具条在左列，色板列自己滚", async () => {
+    const wrapper = await mountPage();
+    const body = bodyOf(wrapper);
+    expect(body.className).toContain("md:grid");
+    expect(body.className).toContain("md:grid-cols-[1fr_250px]");
+    expect(body.className).toContain("md:grid-rows-[1fr_auto]");
+    // `min-h-0` + `flex-1`：主体区在定高 main 里吃满剩余高度，且不被内容撑破。
+    expect(body.className).toContain("md:min-h-0");
+    expect(body.className).toContain("md:flex-1");
+
+    expect(canvasCardOf(wrapper).className).toContain("md:col-start-1");
+    expect(canvasCardOf(wrapper).className).toContain("md:row-start-1");
+    // 画布在网格行里靠格子定高，`h-[60vh]`（手机值）不许带过来，否则它会溢出定高 shell。
+    expect(canvasCardOf(wrapper).className).toContain("md:h-auto");
+    expect(canvasCardOf(wrapper).className).toContain("md:min-h-0");
+
+    const palette = paletteColumnOf(wrapper);
+    expect(palette.className).toContain("md:col-start-2");
+    expect(palette.className).toContain("md:row-span-2");
+    // 「只有右边的用豆列表需要滚动」：溢出的唯一容器是色板列。
+    expect(palette.className).toContain("md:min-h-0");
+    expect(palette.className).toContain("md:overflow-y-auto");
+
+    const toolbar = toolbarHostOf(wrapper);
+    // 根因判据：工具条必须是主体区（那一行）的**子节点**，不再是与它并列的兄弟。
+    expect(toolbar.parentElement).toBe(body);
+    // 贴在画布卡片底边 = 左列的第二个格子。
+    expect(toolbar.className).toContain("md:col-start-1");
+    expect(toolbar.className).toContain("md:row-start-2");
+    // 缩进与间距由主体区（`mx-4/mt-6 ... md:mx-8` + `gap-4`）提供：工具条再自带一套
+    // 就会双重内缩、与画布卡片左右不齐（它现在在主体区**内部**，外边距不再与主体区对齐）。
+    expect(toolbar.className).toContain("md:mx-0");
+    expect(toolbar.className).toContain("md:mt-0");
+    expect(toolbar.className).toContain("md:mb-0");
+  });
+
+  it("手机：仍是单列且顺序不回归（画布 → 色豆条 → 工具条），页面能滚", async () => {
+    const wrapper = await mountPage();
+    const body = bodyOf(wrapper);
+    // 手机仍是 flex 单列（`md:` 的网格只在 ≥768px 生效），DOM 顺序就是可见顺序。
+    expect(body.className).toContain("flex");
+    expect(body.className).toContain("flex-col");
+    expect(body.children).toHaveLength(3);
+    expect(body.children[0]?.contains(canvasCardOf(wrapper))).toBe(true);
+    expect(body.children[1]?.contains(paletteColumnOf(wrapper))).toBe(true);
+    expect(body.children[2]?.contains(toolbarHostOf(wrapper))).toBe(true);
+
+    // 手机页面仍然可滚：`min-h-screen` 在，`h-screen` / `overflow-hidden` 只以 `md:` 前缀出现。
+    const main = wrapper.get("main");
+    expect(main.classes()).toContain("min-h-screen");
+    expect(main.classes()).not.toContain("h-screen");
+    expect(main.classes()).not.toContain("overflow-hidden");
+    expect(main.classes()).not.toContain("flex");
+  });
+
+  /**
+   * 硬约束（上一轮修复定的）：**一个 `data-testid` 只能有一个 DOM 节点**。
+   * 两套排法若靠「渲染两份、按断点藏一份」实现，同一个 testid 就会出现两次——
+   * 既有 `wrapper.get(...)` 直接抛 multiple elements，而这里的新用例全是同样的取法。
+   */
+  it("一套 DOM：这些 testid 与顶层节点各只有一个", async () => {
+    const wrapper = await mountPage();
+    const ids = [
+      "undo",
+      "redo",
+      // T5：`rerun` 仍在封闭清单里，只是归属从工具条换成了顶栏——全页仍然只许一个节点。
+      "rerun",
+      "tool-brush",
+      "tool-fill",
+      "eraser",
+      "toggle-grid",
+      "toggle-labels",
+      "zoom-in",
+      "zoom-out",
+      "zoom-fit",
+      "editor-surface",
+      "palette-current",
+      "editor-save",
+      "editor-back",
+    ];
+    const duplicated = ids.filter(
+      (id) => wrapper.findAll(`[data-testid='${id}']`).length !== 1,
+    );
+    expect(duplicated).toEqual([]);
+    // 主体区只有三个孩子（网格不会多出「第二套」节点）。
+    expect(bodyOf(wrapper).children).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 长工程名不撑宽页面（B6 任务 2）。标题在顶栏的 `flex` 容器里：`h1` 既没有截断也没有断行
 // 约束，而文件名派生出的名字是无空格长串 ⇒ 页面被横向撑开、手机上要左右滑。
 //
 // **弱断言**：只挡「类名被删」，挡不住「CSS 写错」（happy-dom 没有布局语义）；真布局判别力在
@@ -1736,7 +1952,7 @@ async function mountGrid(cells: readonly number[], width: number, height: number
   return mountPage();
 }
 
-/** 点一下某格：与既有「吸管」用例同一手法（按下 → 抬起，走真指针事件）。 */
+/** 点一下某格：与既有手势用例同一手法（按下 → 抬起，走真指针事件）。 */
 async function tapCell(wrapper: ReturnType<typeof mount>, x: number, y: number): Promise<void> {
   await pointerAtCell(wrapper, "pointerdown", x, y);
   await pointerAtCell(wrapper, "pointerup", x, y);
@@ -1749,14 +1965,23 @@ function loadedCells(editor: ReturnType<typeof useEditor>): Uint16Array {
   return pattern.cells;
 }
 
-describe("去背景工具", () => {
-  it("点边缘把连通背景整片吃掉，中心主体保留", async () => {
+/**
+ * 3×1 填充夹具：三格是 F4 `#fb2a40`（色号 140）/ F5 `#e10328`（色号 141）/ 140。
+ * 140 与 141 的 ΔE76 是 8.60：容差 0 分得开、容差 10 分不开；第 2 格与第 0 格同色号
+ * 但被第 1 格挡住（四连通不可达），正好验「精确同色不会跨过墙」。
+ */
+const FILL_NEARBY_FIXTURE: readonly number[] = [140, 141, 140];
+
+describe("填充工具（原「去背景」，容差随所持颜色变化）", () => {
+  it("手里拿橡皮、点边缘：连通背景整片吃掉，中心主体保留", async () => {
     // 3×3：四边 8 格是 A1（色号 0），中心是 A3（色号 2）
     const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
-    expect(editor.tool).toBe("background");
+    // 现在的「去背景」= 拿橡皮 + 填充：容差 10 才吃得掉整片背景
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    expect(editor.tool).toBe("fill");
     await tapCell(wrapper, 0, 0);
 
     const cells = loadedCells(editor);
@@ -1769,7 +1994,8 @@ describe("去背景工具", () => {
     const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 1, 1);
 
     const cells = loadedCells(editor);
@@ -1782,7 +2008,8 @@ describe("去背景工具", () => {
     const editor = useEditor();
     const before = Array.from(loadedCells(editor));
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
     // 一次点击 = 一条命令：撤销按钮此刻可用，点一下就整片回退
     expect(editor.canUndo).toBe(true);
@@ -1803,11 +2030,40 @@ describe("去背景工具", () => {
     const editor = useEditor();
     const session = useProjectSession();
 
-    await wrapper.get("[data-testid='tool-background']").trigger("click");
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
 
     expect(session.dirty).toBe(false);
     expect(editor.canUndo).toBe(false);
+  });
+
+  it("填充：手里拿颜色时用精确同色，相邻的相近色格不动", async () => {
+    const wrapper = await mountGrid(FILL_NEARBY_FIXTURE, 3, 1);
+    const editor = useEditor();
+    editor.setCurrentColor(5); // 手里拿颜色 5（不是橡皮）
+
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    await tapCell(wrapper, 0, 0);
+
+    const cells = loadedCells(editor);
+    // 只有与第 0 格同色号且连通的那一片（就是它自己）变成 5；
+    // 第 1 格是相近色（ΔE76 8.60）、第 2 格同色号但不连通，两格都原样保留。
+    expect(cells[0]).toBe(5);
+    expect(cells[1]).toBe(141);
+    expect(cells[2]).toBe(140);
+  });
+
+  it("填充：手里拿橡皮时用容差，整片相近色的背景一次收干净", async () => {
+    const wrapper = await mountGrid(FILL_NEARBY_FIXTURE, 3, 1);
+    const editor = useEditor();
+
+    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    await tapCell(wrapper, 0, 0);
+
+    // 容差 10 把 141 也吃掉——这正是原来的「去背景」行为
+    expect(Array.from(loadedCells(editor))).toEqual([EMPTY, EMPTY, EMPTY]);
   });
 });
 

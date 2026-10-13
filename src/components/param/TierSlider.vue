@@ -8,10 +8,10 @@
 // （与既有 `longSide` 输入框同一套手法：不用 `v-model`，否则指令与处理函数同时写 `draft`，
 // 谁先更新只由挂载顺序保证）。
 //
-// **触控目标**（规格 §6.4）：轨道用 `h-11`（44px，含原生滑条的命中区），数字输入框 `min-h-12`。
-// 拇指高度由浏览器决定，`accent-slate-900` 只是配色；这里不做自绘拇指——原生滑条在
-// Android WebView 上的触控与无障碍（方向键 / 读屏）行为都比自绘的好，而自绘正是「引第三方库」
-// 之外的另一种复杂度来源。
+// **触控目标**（规格 §6.5）：滑条用 `h-14`（56px，§6.5 的硬下界），数字输入框 `min-h-14`（同 56px）。
+// 外观是像素风：12px 高的沙色轨道 + 34px 的 go 圆旋钮（见 `TRACK_SKIN`），二者都画在 56px 的
+// 触控区里；这里不自绘旋钮——原生滑条在 Android WebView 上的触控与无障碍（方向键 / 读屏）行为
+// 都比自绘的好，而自绘正是「引第三方库」之外的另一种复杂度来源。
 //
 // **2026-10-10 起两处变化**（用色条口径简化的 UI 面）：
 // ① `labels: "track" | "below"`（**必填、不给默认值**，两处调用都显式写）：用色那条的
@@ -49,6 +49,34 @@ const emit = defineEmits<{
   /** 每敲一次都会 emit：非法时 `value` 为 `null`、`error` 是中文原因。 */
   input: [{ readonly value: number | null; readonly error: string }];
 }>();
+
+/**
+ * 原生滑条的轨道与旋钮只能在厂商伪元素上画，Tailwind 的任意变体是**唯一不经 `<style>` 块**的
+ * 写法（§7.3：轨道 `h-3` + 3px ink 描边 + 沙色圆条；旋钮 = 34px 的 `bg-bead-go` 圆 + 4px ink 描边）。
+ * `box-border` 是必需的：厂商伪元素不在 Tailwind 的 `box-sizing` 预置名单里，不显式写就变成
+ * content-box（轨 18px / 旋钮 42px，描边尺寸与居中全错）。旋钮靠 `-mt-[11px]` 在 12px 高的轨道上
+ * 居中：(34 − 12) / 2 = 11。
+ *
+ * shortcut: 只写了 WebKit 伪元素（本项跑 Android WebView / Chromium 桌面）；Firefox 下轨道会
+ * 不可见，要支持就补 `::-moz-range-track` / `::-moz-range-thumb`。
+ */
+const TRACK_SKIN = [
+  "[&::-webkit-slider-runnable-track]:box-border",
+  "[&::-webkit-slider-runnable-track]:h-3",
+  "[&::-webkit-slider-runnable-track]:rounded-full",
+  "[&::-webkit-slider-runnable-track]:border-3",
+  "[&::-webkit-slider-runnable-track]:border-bead-ink",
+  "[&::-webkit-slider-runnable-track]:bg-bead-sand-3",
+  "[&::-webkit-slider-thumb]:box-border",
+  "[&::-webkit-slider-thumb]:h-[34px]",
+  "[&::-webkit-slider-thumb]:w-[34px]",
+  "[&::-webkit-slider-thumb]:appearance-none",
+  "[&::-webkit-slider-thumb]:rounded-full",
+  "[&::-webkit-slider-thumb]:border-4",
+  "[&::-webkit-slider-thumb]:border-bead-ink",
+  "[&::-webkit-slider-thumb]:bg-bead-go",
+  "[&::-webkit-slider-thumb]:-mt-[11px]",
+].join(" ");
 
 const draft = ref(String(props.value));
 watch(
@@ -121,7 +149,7 @@ const belowLine = computed(
 </script>
 
 <template>
-  <label class="block text-lg text-slate-800">
+  <label class="block text-[24px] text-bead-ink">
     {{ label }}
     <div class="mt-2 flex items-center gap-3">
       <div class="min-w-0 flex-1">
@@ -132,7 +160,8 @@ const belowLine = computed(
           :max="max"
           :value="value"
           :disabled="disabled"
-          class="h-11 w-full accent-slate-900 disabled:opacity-50"
+          class="h-14 w-full appearance-none bg-transparent disabled:opacity-50"
+          :class="TRACK_SKIN"
           @input="reportSlider($event.target as HTMLInputElement)"
         />
         <!--
@@ -144,7 +173,7 @@ const belowLine = computed(
             v-for="node in nodes"
             :key="node.value"
             data-node
-            class="absolute -translate-x-1/2 whitespace-nowrap text-xs text-slate-500"
+            class="absolute -translate-x-1/2 whitespace-nowrap text-[12px] text-bead-ink"
             :style="{ left: nodeLeft(node.value) }"
           >
             {{ node.label }}
@@ -161,11 +190,11 @@ const belowLine = computed(
               :key="node.value"
               data-tick
               aria-hidden="true"
-              class="pointer-events-none absolute top-0 h-full w-px -translate-x-1/2 bg-slate-300"
+              class="pointer-events-none absolute top-0 h-full w-px -translate-x-1/2 bg-bead-line-2"
               :style="{ left: nodeLeft(node.value) }"
             ></span>
           </div>
-          <p data-node-line class="text-xs text-slate-500">{{ belowLine }}</p>
+          <p data-node-line class="text-[12px] text-bead-ink">{{ belowLine }}</p>
         </template>
       </div>
       <input
@@ -176,7 +205,7 @@ const belowLine = computed(
         :min="min"
         :max="max"
         :disabled="disabled"
-        class="min-h-12 w-24 rounded border border-slate-300 px-3 text-lg disabled:opacity-50"
+        class="min-h-14 w-24 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink disabled:opacity-50"
         @input="report(($event.target as HTMLInputElement).value)"
       />
     </div>

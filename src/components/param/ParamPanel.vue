@@ -1,8 +1,12 @@
 <script setup lang="ts">
 // src/components/param/ParamPanel.vue
 //
-// 参数面板：工程名 / 长边 / 用色档位 / 色卡卡片 / 尺寸摘要 / 生成按钮。props 进、事件出，
+// 参数面板：工程名 / 长边 / 用色档位 / 色卡卡片 / 尺寸摘要。props 进、事件出，
 // 不读 store（本组件是纯展示层）。
+//
+// **T3（实机反馈 2）**：本组件原先还持有一颗「生成图纸」按钮与 `generate` 事件，与顶栏主按钮 /
+// 手机底部动作条重复，已删除（§11.1 删除清单）。它旁边那段阻拦原因文字（`blocked-reason`）
+// 按 R51 **保留**：那是「选区太小 / 存储不可用」唯一的显示处。
 //
 // **唯一的 services 依赖是 `PROJECT_NAME_MAX` 这个纯常量**（`@/services/projectStore`，第 22 行）：
 // 名字长度上限必须与存储层的 `normalizeProjectName` 同源，不能在这里另抄一个 100。
@@ -22,6 +26,10 @@
 // 6.82% / 10.45%，画在 220px 轨道上必然重叠，所以改成刻度线 + 滑条下方一行数字。
 // 长边那条（29 / 58 / 116 落在 24% / 50% / 100%）不重叠，保持 `labels="track"`。
 // 两条滑条都**吸附**（阈值在 `TierSlider` 里：行程的 2%、至少 1）。
+//
+// **2026-10-12（D1 像素风）**：两条滑条各自的档位另给一排**图形按钮**（板数 = 画出来的格子数、
+// 用色数 = 色条，§7.3「参数全部图形化」），点击走**既有**出口（`onLongSideInput` /
+// `onMaxColorsInput`），不新开通路；勾选框换像素开关。档位语义、滑条与数字输入框一字未动。
 import { computed, ref, watch } from "vue";
 import { rotatedSize } from "@/core/image/rotate";
 import type { Rect, Rotation } from "@/core/image/types";
@@ -37,6 +45,12 @@ const LONG_SIDE_NODES: readonly TierNode[] = [
   { value: 58, label: "58" },
   { value: 116, label: "116" },
 ];
+
+/**
+ * 板数档位（§7.3「板数是画出来的格子数」）：格子数 = 1 / 2 / 4（屏稿的「1 / 2 / 4 板」）。
+ * 值与 `LONG_SIDE_NODES` **同源**，不另抄一份数字。
+ */
+const BOARD_TIERS = LONG_SIDE_NODES.map((node, index) => ({ value: node.value, squares: 2 ** index }));
 
 const props = defineProps<{
   /** 工程名（父级持有真相；本组件只回显与上报）。 */
@@ -62,7 +76,6 @@ const emit = defineEmits<{
   "update:longSide": [number];
   "update:maxColors": [number];
   "update:removeBackground": [boolean];
-  generate: [];
 }>();
 
 // ---------------------------------------------------------------------------
@@ -141,6 +154,12 @@ const COLOR_NODES: readonly TierNode[] = [
 ];
 
 /**
+ * 用色档位（§7.3「用色数是色条（颜色段数递增）」）：色条段数 = 1 / 2 / 3。
+ * 值与 `COLOR_NODES` **同源**；「不限」不单列一档，拉满滑条就是它。
+ */
+const COLOR_TIERS = COLOR_NODES.map((node, index) => ({ value: node.value, segments: index + 1 }));
+
+/**
  * 用色数：**滑条/输入框上是什么数字就 emit 什么数字**（不再有 `"all"` / `"custom"` 分支，
  * 也不再往第二个字段里写值）。上界是色卡色数，「拉满」由调用方（父级）与 `buildPattern` 的
  * `maxColors >= palette.colors.length` 同一判据解释成「不限」，组件不需要知道这件事。
@@ -198,40 +217,63 @@ const blockedReason = computed(
     nameError.value ||
     props.generateBlockedReason,
 );
-const disabled = computed(() => props.busy || blockedReason.value !== "");
 </script>
 
 <template>
   <section class="space-y-6">
-    <div class="block text-lg text-slate-800">
+    <div class="block text-[24px] text-bead-ink">
       图纸名字
       <input
         :value="nameDraft"
         data-testid="project-name-input"
         type="text"
         :maxlength="PROJECT_NAME_MAX"
-        class="mt-2 block min-h-12 w-full rounded border border-slate-300 px-3 text-lg"
+        class="mt-2 block min-h-14 w-full rounded-bead-sm border-4 border-bead-ink bg-bead-card px-3 text-[24px] text-bead-ink"
         @input="onNameInput"
       />
-      <p data-testid="project-name-counter" class="mt-1 text-base text-slate-500">
+      <p data-testid="project-name-counter" class="mt-1 text-[12px] text-bead-ink">
         {{ nameDraft.trim().length }} / {{ PROJECT_NAME_MAX }} · 这个名字会印在图纸标题与文件名上
       </p>
     </div>
 
-    <TierSlider
-      label="长边豆数"
-      :min="MIN_LONG_SIDE"
-      :max="MAX_LONG_SIDE"
-      :value="longSide"
-      :nodes="LONG_SIDE_NODES"
-      labels="track"
-      :disabled="busy"
-      input-test-id="long-side"
-      slider-test-id="long-side-slider"
-      @input="onLongSideInput"
-    />
+    <div class="block">
+      <TierSlider
+        label="长边豆数"
+        :min="MIN_LONG_SIDE"
+        :max="MAX_LONG_SIDE"
+        :value="longSide"
+        :nodes="LONG_SIDE_NODES"
+        labels="track"
+        :disabled="busy"
+        input-test-id="long-side"
+        slider-test-id="long-side-slider"
+        @input="onLongSideInput"
+      />
+      <!--
+        图形档位（§7.3）：板数 = 画出来的格子数。与滑条**并存**——滑条管 1–116 的任意值，
+        这三颗按钮只是把三个常见档位一点到位；点击走同一条既有出口（`onLongSideInput`）。
+      -->
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button
+          v-for="tier in BOARD_TIERS"
+          :key="tier.value"
+          type="button"
+          :data-testid="`long-side-tier-${tier.value}`"
+          :aria-pressed="longSide === tier.value"
+          :aria-label="`长边 ${tier.value} 颗（${tier.squares} 块板）`"
+          :disabled="busy"
+          class="flex min-h-14 min-w-14 items-center justify-center rounded-bead-sm border-4 border-bead-ink px-2 disabled:opacity-50"
+          :class="longSide === tier.value ? 'bg-bead-accent' : 'bg-bead-card'"
+          @click="onLongSideInput({ value: tier.value, error: '' })"
+        >
+          <span class="grid grid-cols-2 gap-[2px]">
+            <span v-for="n in tier.squares" :key="n" data-square class="h-[10px] w-[10px] bg-bead-ink"></span>
+          </span>
+        </button>
+      </div>
+    </div>
 
-    <div class="block text-lg text-slate-800">
+    <div class="block text-[24px] text-bead-ink">
       <TierSlider
         label="用几种颜色"
         :min="1"
@@ -244,47 +286,81 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
         slider-test-id="max-colors-slider"
         @input="onMaxColorsInput"
       />
+      <!-- 图形档位（§7.3）：用色数 = 色条（段数 1 / 2 / 3 递增）。同样走既有出口。 -->
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button
+          v-for="tier in COLOR_TIERS"
+          :key="tier.value"
+          type="button"
+          :data-testid="`color-tier-${tier.value}`"
+          :aria-pressed="maxColors === tier.value"
+          :aria-label="`用色 ${tier.value} 种`"
+          :disabled="busy"
+          class="flex min-h-14 min-w-14 items-center justify-center rounded-bead-sm border-4 border-bead-ink px-2 disabled:opacity-50"
+          :class="maxColors === tier.value ? 'bg-bead-accent' : 'bg-bead-card'"
+          @click="onMaxColorsInput({ value: tier.value, error: '' })"
+        >
+          <span class="flex h-[22px] w-[26px] items-stretch gap-[2px]">
+            <span v-for="n in tier.segments" :key="n" data-segment class="flex-1 bg-bead-warm"></span>
+          </span>
+        </button>
+      </div>
       <!--
         读数**只有一行**：`max-colors-value` 写「N 种」或「不限」。
         `max-colors-tier`（档位文字）已随「档位」这个概念一起删除——它承载的东西不存在了。
       -->
-      <p class="text-base text-slate-500">
+      <p class="text-[24px] text-bead-ink">
         生成时用色上限：<span data-testid="max-colors-value">{{ colorReadout }}</span>
       </p>
     </div>
 
-    <label class="flex min-h-12 items-center text-lg text-slate-800">
+    <!--
+      §7.3：这四个字是全 App **唯一**一处允许保留的解释性文字（「背景」画不出一个 8 岁能认的图标），
+      括号里的长解释已按 R45 删掉（§2 目标 3「解释性长句全部删除」）。
+      开关是像素开关：input 本体 = 74×38 的圆角槽（appearance-none），滑块是它的兄弟元素
+      （`<input>` 是替换元素，画不了 `::after`），`pointer-events-none` 不吃命中；禁用时两者一起淡。
+    -->
+    <label class="relative flex min-h-14 items-center gap-3 text-[24px] text-bead-ink">
       <input
         type="checkbox"
         data-testid="remove-background"
-        class="mr-2 h-5 w-5 align-middle"
+        class="peer h-[38px] w-[74px] shrink-0 appearance-none rounded-full border-4 border-bead-ink bg-bead-sand-3 checked:bg-bead-go disabled:opacity-50"
         :checked="removeBackground"
         :disabled="busy"
         @change="emit('update:removeBackground', ($event.target as HTMLInputElement).checked)"
       />
-      去除背景（纯色 / 渐变背景会被当作不拼豆，用色名额留给主体）
+      <span
+        data-knob
+        aria-hidden="true"
+        class="pointer-events-none absolute left-[4px] top-1/2 h-[30px] w-[30px] -translate-y-1/2 rounded-full border-4 border-bead-ink bg-bead-card peer-checked:translate-x-[36px] peer-disabled:opacity-50"
+      ></span>
+      去除背景
     </label>
 
-    <div data-testid="palette-card" class="rounded border border-slate-200 bg-white p-4">
-      <p class="text-lg font-semibold text-slate-900">{{ paletteName }}</p>
+    <div data-testid="palette-card" class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4">
+      <p class="text-[24px] text-bead-ink">{{ paletteName }}</p>
     </div>
 
-    <dl v-if="summary" data-testid="summary" class="space-y-1 rounded bg-slate-100 p-4 text-lg text-slate-800">
+    <dl
+      v-if="summary"
+      data-testid="summary"
+      class="space-y-1 rounded-bead-md border-3 border-bead-ink bg-bead-sand-3 p-4 text-[24px] text-bead-ink"
+    >
       <div>{{ summary.size }}</div>
       <div>{{ summary.cm }}</div>
       <div>{{ summary.boards }}</div>
     </dl>
 
-    <button
-      data-testid="generate"
-      class="min-h-14 w-full rounded bg-slate-900 px-8 text-lg text-white disabled:opacity-50"
-      :disabled="disabled"
-      @click="emit('generate')"
+    <!--
+      T3（实机反馈 2）：本组件自己的「生成图纸」按钮已删除——它与顶栏主按钮（`setup-primary`）/
+      手机底部动作条重复（§6.1「一件东西只有一个角色」）。生成入口只剩页面那两颗。
+      下面那段阻拦原因是按 R51 保留的（它是唯一的原因显示处）。
+    -->
+    <p
+      v-if="blockedReason"
+      data-testid="blocked-reason"
+      class="rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-3 text-[24px] text-bead-warn-ink"
     >
-      {{ busy ? "正在生成…" : "生成图纸" }}
-    </button>
-
-    <p v-if="blockedReason" data-testid="blocked-reason" class="rounded bg-amber-50 p-3 text-base text-amber-800">
       {{ blockedReason }}
     </p>
   </section>

@@ -3,18 +3,27 @@
 //
 // `/new/setup`：**编辑 → 结果**两个阶段一个页面（C8 第 4 项把手机的三步分页取消：`crop` 与
 // `params` 渲染出的是同一屏，两个取值没有区别，于是 `Stage` 收敛成 `"edit" | "result"`）。
-// 断点**只决定布局**（平板左右分栏 / 手机单栏上下排），行为不分叉。
+// 断点**只决定布局**（平板三栏 / 手机单栏上下排），行为不分叉。
+//
+// **D1/§7.3 起两个阶段不再互斥**：生成之后左栏（裁剪）与右栏（参数）仍然可见可改，中栏
+// （`preview-pane`）换成上一次的结果——这正是「一屏做完」的意思。中栏三态：未生成 = 放大裁剪
+// 预览（复用 `draft.preview`，不新算）；已生成 = 结果卡片；生成后又改参数 = 一成不变。
+// **T2 更正注记**：结果卡片只平板、或手机保存失败那一支渲染（`paneShowsResult`）；手机成功那一支
+// 已 `push` 到独立结果页，中栏只留裁剪预览。
 //
 // 生成即落盘，重跑覆盖同一条记录：走 `useProjectSession().adopt()` + `save()`，
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter, type RouteLocationRaw } from "vue-router";
 import { centerSquare, isCropResolvable, type AspectLock } from "@/core/crop/rect";
 import type { ZoomLevel } from "@/core/crop/view";
 import { rotatedSize } from "@/core/image/rotate";
+import { boardCount, beadsToCm, formatCm } from "@/core/pattern/board";
 import { computeGridSize } from "@/core/pattern/build";
 import { EMPTY } from "@/core/pattern/types";
 import { toProjectDocument } from "@/core/project/file";
+import BeadButton from "@/components/ui/BeadButton.vue";
+import PixelIcon from "@/components/ui/PixelIcon.vue";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 import ParamPanel from "@/components/param/ParamPanel.vue";
 import ResultPanel from "@/components/result/ResultPanel.vue";
@@ -34,6 +43,8 @@ const session = useProjectSession();
 
 const storeError = ref("");
 const preparing = ref(false);
+// 断点由 `md:` 前缀（列宽）与这个 JS 旗标（排法：平板横向三栏 / 手机单栏纵向）共同承担；
+// 保留 JS 这一路是因为它已有两条用例钉着（视口跨断点时类名当场换、查询串就是 768px）。
 const isWide = ref(false);
 let media: MediaQueryList | null = null;
 
@@ -79,9 +90,74 @@ const resultIsNew = ref(true);
  */
 const lastSaveFailed = ref(false);
 
-/** 结果阶段才换成结果卡片；其余时候**一页里同时有选区画布与参数**（手机也不再分页，C8 第 4 项）。 */
+/**
+ * 中栏是不是「上一次的结果」（§7.3）。**不再与编辑两栏互斥**：生成之后 `crop-pane` /
+ * `param-pane` 照旧渲染，中栏从裁剪预览换成结果卡片。改完参数不自动重算（一成不变）；
+ * 想再看一次走中栏的 `result-rerun`（把阶段切回 `edit`，与「重做」的既有语义一致）。
+ */
 const showResult = computed(() => draft.stage === "result" && session.pattern !== null);
-const showEditor = computed(() => draft.stage !== "result");
+
+/**
+ * 中栏是否渲染结果卡片（§7.3 + T2 更正注记）：平板恒渲染（`isWide && showResult`）；手机只在
+ * **保存失败**那一支渲染一份——成功时已经 `push` 到独立结果页（`/edit/:id/result`），中栏留给裁剪预览；
+ * 失败时那条记录不在库里、没有可跳的 id，结果必须原位看得到才能重试。
+ */
+const paneShowsResult = computed(() => showResult.value && (isWide.value || lastSaveFailed.value));
+
+/** 顶栏主按钮两态（§7.3）：未生成 = 「开始拼 ▶」；已生成 = 「完成 ✓」（现有 `result-ok` 那条路）。 */
+const primaryLabel = computed(() => {
+  if (showResult.value) return "完成 ✓";
+  return draft.busy ? "正在拼…" : "开始拼 ▶";
+});
+
+function onPrimary(): void {
+  if (showResult.value) {
+    void router.push({ name: "home" });
+    return;
+  }
+  void generate();
+}
+
+/**
+ * 中栏的尺寸 chip（§7.3）：读**产物自身**（§6.3），厘米换算排在最后（那是给家长看的）。
+ * 与 `ResultPanel` 的尺寸三行同一组 core 换算，不写第二份。
+ */
+const sizeChip = computed(() => {
+  const pattern = session.pattern;
+  if (pattern === null) return "";
+  const boards = boardCount(pattern.width, pattern.height);
+  return `${pattern.width} × ${pattern.height} · ${boards.total} 块板 · 约 ${formatCm(beadsToCm(pattern.width))} 厘米`;
+});
+
+/**
+ * 未生成时中栏那份放大的裁剪预览。
+ *
+ * **复用左栏同一份 `draft.preview`，不新算**（§7.3）：只是把它再叠画到中栏这块画布上，
+ * 没有解码、没有重采样。画布内尺寸取预览原尺寸，缩放交给 CSS（`max-*` 保持宽高比）。
+ */
+const previewCanvas = ref<HTMLCanvasElement | null>(null);
+
+function drawPreview(): void {
+  const element = previewCanvas.value;
+  const source = draft.preview;
+  if (element === null || source === null) return;
+  element.width = source.width;
+  element.height = source.height;
+  const ctx = element.getContext("2d");
+  if (ctx === null) return;
+  // 像素风不重采样（§6.2）。
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, 0, 0);
+}
+
+// 中栏画布是 `v-if` 建的：元素挂上 / 拆下、或预览换了一份，都要重画。
+watch([previewCanvas, () => draft.preview], drawPreview, { flush: "post" });
+
+/** 中栏深色底的板孔点阵（§7.3：`radial-gradient`，间距 22px）。 */
+const boardDots = {
+  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
+  backgroundSize: "22px 22px",
+};
 
 /**
  * 页头的返回箭头（C8 规格 §3.6.1，Ruling 21 的分叉口径）。
@@ -145,7 +221,6 @@ onMounted(async () => {
   media = window.matchMedia("(min-width: 768px)");
   isWide.value = media.matches;
   media.addEventListener("change", onMediaChange);
-
   /*
    * 入口守卫：草稿被作废了（`/new/setup` 直接进来、或从编辑器的返回箭头退到一条**已经被
    * `onLeaveSetup()` 作废**的历史条目上）⇒ 这一页现在不成立，回选图页。
@@ -195,6 +270,17 @@ function createId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 手机跳独立结果页的载荷（T2 修复 A）：`new=1` 只在本轮是**新建**时带上。结果页据此在
+ * 「生成成功 / 修改成功」之间选，并把该态交给 `ResultPanel` 的保存文案。就地重跑（覆盖）不带；
+ * 编辑器保存成功那条 `/edit/:id/result` 入口也不带（无 query ⇒ 覆盖）。
+ */
+function resultPush(id: string): RouteLocationRaw {
+  return resultIsNew.value
+    ? { name: "edit-result", params: { id }, query: { new: "1" } }
+    : { name: "edit-result", params: { id } };
 }
 
 async function generate(): Promise<void> {
@@ -299,6 +385,11 @@ async function generate(): Promise<void> {
       // 不一致；失败后的续存由 `retrySave()` 成功时补写。
       draft.setRerunOf({ id: meta.id, createdAt: meta.createdAt });
       lastSaveFailed.value = false;
+      // 手机（<768px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
+      // （`meta.id` 此刻一定存在）——保存失败那一支没有可跳的 id，留在本页显示结果 + 重试。
+      if (!isWide.value) {
+        await router.push(resultPush(meta.id));
+      }
     } else {
       // 保存失败不丢态：图纸还在内存里，结果照常显示，给用户一条重试的路（主规格 §8）。
       // 同时记住「这次没进库」，离开页面时才不会按 §9 把草稿一起作废。
@@ -324,6 +415,12 @@ async function retrySave(): Promise<void> {
     }
     lastSaveFailed.value = false;
     draft.setError("");
+    // 手机（<768px）与 `generate()` 成功支同口径：补存成功也跳独立结果页。否则 `lastSaveFailed`
+    // 置假 ⇒ `paneShowsResult` 翻假 ⇒ 结果卡片消失，而这里又不跳，用户留在本页、主按钮还写着
+    // 「完成 ✓」（T2 审查发现 1）。
+    if (!isWide.value && meta !== undefined) {
+      await router.push(resultPush(meta.id));
+    }
   }
 }
 
@@ -342,38 +439,127 @@ function resetCrop(): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 p-4 md:p-6">
-    <header class="flex flex-wrap items-center gap-3">
+  <!-- 手机上底部那颗 `fixed` 动作条会盖住内容：主体留出它的高度把最后一张卡片顶出来。 -->
+  <main class="min-h-screen bg-bead-sand pb-20 md:pb-0">
+    <!--
+      顶栏（§6.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
+      主按钮两态（§7.3）：未生成「开始拼 ▶」（走现有生成）、已生成「完成 ✓」（走现有回家那条路）。
+
+      `sticky top-0 z-20`（T4 实机反馈 2）：先前它是普通流内元素，页面一滚就出屏——「编辑完想保存
+      还得滑回顶部」。层叠高于手机吸顶块（`preview-pane`，`relative z-10`）——**R55 之后这只是
+      纵深防御**：中栏的吸顶偏移已改成 `top-16`（= 顶栏的 64px），两者不再重叠，「顶栏最上」不再
+      靠层叠顺序兜底。
+    -->
+    <header
+      class="sticky top-0 z-20 flex h-16 items-center gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
+    >
       <!--
-        返回箭头（C8 第 4 项替换掉原「回图纸库」整块按钮）。触控目标 ≥44px、`aria-label` 必给
-        （箭头没有文字，读屏用户否则听到一个没有名字的按钮；主规格 §6.4）。
-        分叉口径见 `goBack()`：编辑阶段按历史退，结果阶段恒回图纸库。
+        返回箭头（图标按钮，与选图页同一口径）：触控目标 56×56（§6.5）、`aria-label` 必给
+        （箭头没有文字，读屏用户否则听到一个没有名字的按钮）。分叉口径见 `goBack()`。
       -->
-      <button
-        data-testid="setup-back"
-        aria-label="返回"
-        class="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-xl text-slate-700"
-        @click="goBack"
+      <BeadButton data-testid="setup-back" variant="icon" aria-label="返回" @click="goBack">
+        <PixelIcon name="back" :size="24" />
+      </BeadButton>
+      <h1 class="project-name flex-1 text-[24px] text-bead-ink md:text-[36px]">{{ draft.name }}</h1>
+      <!--
+        页头这颗只在平板上出现：手机上主按钮固定在底部安全区之上（下面那条动作条），
+        同屏两颗同名主按钮会让用户分不清哪颗是收尾。
+      -->
+      <BeadButton
+        data-testid="setup-primary"
+        variant="primary"
+        class="max-md:hidden"
+        :disabled="!showResult && (draft.busy || blockedReason !== '')"
+        @click="onPrimary"
       >
-        ←
-      </button>
-      <h1 class="text-2xl font-bold text-slate-900">
-        {{ draft.stage === "result" ? "生成结果" : "框出想拼的那块" }}
-      </h1>
+        {{ primaryLabel }}
+      </BeadButton>
     </header>
 
-    <p v-if="storeError" class="mt-4 rounded bg-red-50 p-4 text-lg text-red-700">
+    <p
+      v-if="storeError"
+      class="mx-4 mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink md:mx-8"
+    >
       工程存储不可用：{{ storeError }}
     </p>
-    <p v-if="preparing" class="mt-4 text-lg text-slate-500">正在准备预览…</p>
+    <p v-if="preparing" class="mx-4 mt-4 text-[24px] text-bead-ink md:mx-8">正在准备预览…</p>
 
     <!--
-      两栏只在「编辑阶段 + 平板」成立（**`showEditor` 也是这个判据的一部分**）：结果阶段一页里
-      只剩结果卡片，若容器照样切成 `2fr 1fr`，卡片会只占左边 2/3、右侧留一条空白。
+      三栏（§7.3）：左 = 选区（`crop-pane`）、中 = 上一次的结果（`preview-pane`）、右 = 参数
+      （`param-pane`）。**阶段不再互斥**：生成之后左右两栏仍在，这是「一屏做完」。
+      侧栏在 `md` 区间收窄、`lg` 才加宽：768~900px 三栏同屏时中栏不会被左右挤死（R30）。
+
+      手机（<768px）单列，顺序 **中栏 → 选范围 → 参数**：`preview-pane` 因而排在 DOM 首位
+      （单列下没有 `order`，DOM 顺序就是看到的顺序）；平板用 `md:order-*` 把它挪回中间。
+      顺序不能倒——先裁剪后参数会让他调完参数还要往回滚才能看到结果。
     -->
-    <div :class="isWide && showEditor ? 'mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]' : 'mt-6 space-y-6'">
-      <section v-if="showEditor" data-testid="crop-pane" class="rounded bg-white p-3 shadow">
-        <div class="h-[55vh] min-h-64">
+    <div
+      data-testid="setup-body"
+      :class="isWide ? 'mt-6 flex gap-4 p-4' : 'mt-6 space-y-6 p-4'"
+    >
+      <!--
+        中栏（§7.3）：未生成 = 放大的裁剪预览（复用 `draft.preview`，不新算）+ 一行提示；
+        已生成 = 共用组件 `ResultPanel` + 尺寸 chip。背景是四处允许的深色看图底的其中一处。
+        `preview-pane` 是本任务新加的容器 testid；`result-pane` 仍挂在宿主这个 `<section>` 上。
+        手机吸顶且固定高 48vh（§7.3 的「高约 40vh」给了这个余地；R42：40vh 下固定的 chip +
+        保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外），`md` 下两者都取消
+        （平板上它是并排的中间一栏，不跟着页面滚）。
+        **T4 修复（R55）**：吸顶偏移是 `top-16`（= 手机顶栏的 64px）而不是 `top-0`——顶栏自己也
+        吸顶（`sticky top-0 z-20 h-16`），`top-0` 会让本块的顶部 64px 永远被顶栏盖住。
+      -->
+      <section
+        data-testid="preview-pane"
+        class="relative z-10 sticky top-16 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        :style="boardDots"
+      >
+        <template v-if="paneShowsResult">
+          <!-- `max-md:flex-1` + `max-md:min-h-0`（R41 修复 2）：手机上这个吸顶盒是定高的 flex
+               列，结果卡片因此吃掉 chip 之外的全部高度；`ResultPanel` 里的预览盒有着明确的百分比
+               高度可依，才能被压进剩余空间（否则 55vh 的预览会把三颗动作按钮顶进内滚区）。
+               平板上盒高 auto，这几个类不生效（`max-md:`），仍由 `md:min-h-[60vh]` 主导。
+               `min-h-0`（而不是 `min-h-min`）：卡片的 min-content 会被预览盒的 `basis-[55vh]`
+               污染成 55vh，用 `min-h-min` 就等于取消变矮，真窗口实测卡片会撑到 555px。 -->
+          <section
+            data-testid="result-pane"
+            class="max-md:flex-1 max-md:min-h-0 rounded-bead-md bg-bead-card p-4 md:p-6"
+          >
+            <ResultPanel
+              v-if="session.pattern !== null"
+              :pattern="session.pattern"
+              :palette="palette"
+              :is-new="resultIsNew"
+              :can-rerun="true"
+              :name="session.record?.meta.name ?? '图纸'"
+              :show-done="false"
+              @rerun="draft.setStage('edit')"
+              @edit="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
+              @ok="router.push({ name: 'home' })"
+            />
+          </section>
+          <p
+            v-if="sizeChip !== ''"
+            data-testid="size-chip"
+            class="mt-3 shrink-0 rounded-bead-sm border-3 border-bead-line-2 bg-bead-sand-3 px-4 py-2 text-[24px] text-bead-ink"
+          >
+            {{ sizeChip }}
+          </p>
+        </template>
+
+        <div v-else class="flex h-full flex-col items-center justify-center gap-4">
+          <canvas
+            ref="previewCanvas"
+            data-testid="preview-canvas"
+            class="max-h-full max-w-full rounded-bead-sm md:max-h-[45vh]"
+          ></canvas>
+          <p v-if="draft.preview !== null" class="text-[24px] text-bead-sand-2">点开始拼看看</p>
+        </div>
+      </section>
+
+      <section
+        data-testid="crop-pane"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:w-[200px] md:shrink-0 lg:w-[236px]"
+      >
+        <div class="h-[40vh] min-h-[240px] md:h-[46vh]">
           <CropCanvas
             v-if="draft.preview !== null && draft.crop !== null && draft.sourceSize !== null"
             :preview="draft.preview"
@@ -393,51 +579,43 @@ function resetCrop(): void {
             v-for="option in ASPECT_OPTIONS"
             :key="option.value"
             :data-testid="`aspect-${option.value}`"
-            class="min-h-12 rounded border px-4 text-base"
-            :class="draft.aspect === option.value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300'"
+            class="min-h-14 rounded-bead-sm border-4 border-bead-ink px-4 text-[24px]"
+            :class="draft.aspect === option.value ? 'bg-bead-accent text-bead-card' : 'bg-bead-card text-bead-ink'"
             @click="draft.setAspect(option.value)"
           >
             {{ option.label }}
           </button>
-          <button data-testid="rotate" class="min-h-12 rounded border border-slate-300 px-4 text-base" @click="rotate">
+          <button
+            data-testid="rotate"
+            class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
+            @click="rotate"
+          >
             旋转 90°
           </button>
           <button
             v-for="level in ZOOM_OPTIONS"
             :key="String(level)"
             :data-testid="`zoom-${String(level)}`"
-            class="min-h-12 rounded border px-4 text-base"
-            :class="draft.zoom === level ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300'"
+            class="min-h-14 rounded-bead-sm border-4 border-bead-ink px-4 text-[24px]"
+            :class="draft.zoom === level ? 'bg-bead-accent text-bead-card' : 'bg-bead-card text-bead-ink'"
             @click="draft.setZoom(level)"
           >
             {{ level === "fit" ? "适配" : `${level}×` }}
           </button>
-          <button data-testid="reset-crop" class="min-h-12 rounded border border-slate-300 px-4 text-base" @click="resetCrop">
+          <button
+            data-testid="reset-crop"
+            class="min-h-14 rounded-bead-sm border-4 border-bead-ink bg-bead-card px-4 text-[24px] text-bead-ink"
+            @click="resetCrop"
+          >
             重置选区
           </button>
         </div>
       </section>
 
-      <!--
-        结果阶段：卡片本体是共用组件 `ResultPanel`（C8 规格 §3.4，与编辑来源的结果页同一份）。
-        宿主只负责接线：图纸 / 色卡 / 文案分叉 / 重跑动作 / 跳转。
-        `result-pane` 这个 testid 留在宿主的 `<section>` 上（组件根节点是单根 section，不抢这个 id）。
-      -->
-      <section v-if="showResult" data-testid="result-pane" class="rounded bg-white p-4 shadow">
-        <ResultPanel
-          v-if="session.pattern !== null"
-          :pattern="session.pattern"
-          :palette="palette"
-          :is-new="resultIsNew"
-          :can-rerun="true"
-          :name="session.record?.meta.name ?? '图纸'"
-          @rerun="draft.setStage('edit')"
-          @edit="router.push({ name: 'editor', params: { id: session.record?.meta.id ?? '' } })"
-          @ok="router.push({ name: 'home' })"
-        />
-      </section>
-
-      <section v-if="showEditor" data-testid="param-pane" class="rounded bg-white p-4 shadow">
+      <section
+        data-testid="param-pane"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:w-[220px] md:shrink-0 lg:w-[262px]"
+      >
         <ParamPanel
           v-if="draft.crop !== null"
           :name="draft.name"
@@ -454,21 +632,46 @@ function resetCrop(): void {
           @update:long-side="draft.setLongSide($event)"
           @update:max-colors="draft.setMaxColors($event)"
           @update:remove-background="draft.setRemoveBackground"
-          @generate="generate"
         />
       </section>
     </div>
 
-    <p v-if="draft.error" data-testid="setup-error" class="mt-4 rounded bg-amber-50 p-4 text-lg text-amber-800">
+    <!--
+      手机底部动作条（§7.3）：`fixed` 之上是安全区。
+      `env(safe-area-inset-bottom)` **只在 `viewport-fit=cover` 下才非零**（`index.html` 的 meta），
+      所以它必须真的写成行内 `style`——写成类名不会被任何工具验证，写错了也看不出来（Review Focus 1）。
+    -->
+    <div
+      data-testid="setup-action-bar"
+      class="fixed inset-x-0 bottom-0 z-10 border-t-4 border-bead-ink bg-bead-sand-2 px-4 pt-3 md:hidden"
+      :style="{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }"
+    >
+      <BeadButton
+        data-testid="setup-action-primary"
+        variant="primary"
+        class="h-14 w-full"
+        :disabled="!showResult && (draft.busy || blockedReason !== '')"
+        @click="onPrimary"
+      >
+        {{ primaryLabel }}
+      </BeadButton>
+    </div>
+
+    <p
+      v-if="draft.error"
+      data-testid="setup-error"
+      class="mx-4 mt-4 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink md:mx-8"
+    >
       {{ draft.error }}
     </p>
-    <button
+    <BeadButton
       v-if="draft.error.includes('保存失败')"
       data-testid="retry-save"
-      class="mt-3 min-h-12 rounded border border-slate-300 px-4 text-base"
+      variant="secondary"
+      class="ml-4 mt-3 md:ml-8"
       @click="retrySave"
     >
       重试保存
-    </button>
+    </BeadButton>
   </main>
 </template>

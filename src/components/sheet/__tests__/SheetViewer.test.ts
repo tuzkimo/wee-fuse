@@ -1,7 +1,8 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { closeTopOverlay } from "@/composables/useOverlayBack";
+import { unlockBodyScroll } from "@/composables/useBodyScrollLock";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
 import type { Pattern } from "@/core/pattern/types";
@@ -103,7 +104,14 @@ beforeEach(() => {
   URL.revokeObjectURL = revokeObjectUrl as unknown as typeof URL.revokeObjectURL;
 });
 
-/** 现算入参：一次挂载 + 结算。 */
+/**
+ * 挂载查看层。
+ *
+ * **`stubs: { teleport: true }` 是必需的**（T1 起查看层与打印面板都 `Teleport to="body"`）：
+ * VTU 的 `wrapper.find` 只在自己这棵子树里找（`vm.$el.querySelectorAll`），传送到 body 的节点它
+ * 看不见——本文件绝大多数用例钉的是查看层**内部**的行为，与「挂在哪一层」无关。不 stub 它们全红。
+ * 「真的被传送到 body 顶层」由本文件末尾那条**不 stub** 的用例单独钉。
+ */
 function mountViewer(overrides: Partial<{ name: string; thumbnail: string }> = {}) {
   return mount(SheetViewer, {
     props: {
@@ -112,6 +120,7 @@ function mountViewer(overrides: Partial<{ name: string; thumbnail: string }> = {
       name: overrides.name ?? "测试工程",
       thumbnail: overrides.thumbnail ?? "",
     },
+    global: { stubs: { teleport: true } },
   });
 }
 
@@ -246,11 +255,14 @@ describe("SheetViewer（C7：吃 pattern 入参 + 可缩放）", () => {
     await first;
 
     expect(albumSave).toHaveBeenCalledTimes(1);
-    expect((button.element as HTMLButtonElement).disabled).toBe(true);
+    // **两条 `disabled` 断言都现查按钮**（T1）：teleport 的桩在重渲染时会重建被传送的节点，
+    // 上面缓存的 `button.element` 已成游离节点（`disabled` 永远停在旧值）。现查读的是文档里那一颗，
+    // 判据与改动前逐字相同；上面那次 `dispatchEvent`（在重渲染之前、同一 tick 内）打的是活节点，不变。
+    expect((wrapper.get("[data-testid='sheet-save']").element as HTMLButtonElement).disabled).toBe(true);
     release();
     await flushPromises();
     expect(albumSave).toHaveBeenCalledTimes(1);
-    expect((button.element as HTMLButtonElement).disabled).toBe(false);
+    expect((wrapper.get("[data-testid='sheet-save']").element as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("重试保存时会先清掉上一轮的结果（飞行中不挂着旧的「保存失败」）", async () => {
@@ -432,6 +444,7 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     // 100×100 的整图适配比例远小于 64（整张画布在 800×600 里），连点 12 次放大后横向 / 纵向都远大于视口。
     const wrapper = mount(SheetViewer, {
       props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+      global: { stubs: { teleport: true } },
     });
     await flushPromises();
     await withViewport(wrapper);
@@ -459,6 +472,7 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     // **判别力**：把捏合分支删掉、只留单指平移，这里的比例会停在默认值 ⇒ 三条断言全红。
     const wrapper = mount(SheetViewer, {
       props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+      global: { stubs: { teleport: true } },
     });
     await flushPromises();
     await withViewport(wrapper);
@@ -488,6 +502,7 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     // 复现这条路径（body 是舞台的**祖先**，所以这个事件不会落到舞台的处理器上）。
     const wrapper = mount(SheetViewer, {
       props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+      global: { stubs: { teleport: true } },
     });
     await flushPromises();
     await withViewport(wrapper);
@@ -557,6 +572,7 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     };
     const wrapper = mount(SheetViewer, {
       props: { pattern: sheet, palette, name: "另一个名字", thumbnail: "" },
+      global: { stubs: { teleport: true } },
     });
     await flushPromises();
     await wrapper.get("[data-testid='sheet-print']").trigger("click");
@@ -675,5 +691,193 @@ describe("SheetViewer 的画布像素 → 格 映射（C8 修复 ②）", () => 
     expect(shrunk).toBeCloseTo(scale, 6);
     expect(shrunk * plan.canvasWidth).toBeLessThanOrEqual(VIEWPORT.width + 0.5);
     expect(shrunk * plan.canvasHeight).toBeLessThanOrEqual(VIEWPORT.height + 0.5);
+  });
+});
+
+/**
+ * 任务 16：像素风换皮（§7.6）。这一组只钉「换皮没有动到既有锚点」与「新外观真的落地」——
+ * 缩放数学、手势、保存路径的判别力在文件前面的各组里，这里一条都不重复。
+ *
+ * **testid 是封闭清单（§11.1）**：施工图是单张图，分页在 `ExportPanel`。这里同时钉住
+ * `page-prev` / `page-next` **不存在**——防止后来者照着已被推翻的头脑风暴屏稿加回多页模型。
+ */
+describe("SheetViewer 的像素风换皮（任务 16）", () => {
+  it("12 个既有 testid 一个不少（条件分支的三个也各挂一次）", async () => {
+    const ok = mountViewer();
+    // `sheet-loading` 只在现算结算前出现，先钉它；结算后它必须消失（不受本次换皮影响）
+    expect(ok.find("[data-testid='sheet-loading']").exists()).toBe(true);
+    await flushPromises();
+    for (const id of [
+      "sheet-viewer", "sheet-close", "sheet-title", "sheet-stage", "sheet-preview",
+      "sheet-zoom-in", "sheet-zoom-out", "sheet-print", "sheet-save",
+    ]) {
+      expect(ok.find(`[data-testid='${id}']`).exists(), id).toBe(true);
+    }
+    expect(ok.find("[data-testid='sheet-loading']").exists()).toBe(false);
+
+    // 剩下两个是条件分支：失败支的 `sheet-error`、保存后的 `sheet-save-state`
+    renderSheetBlob.mockRejectedValueOnce(new Error("渲染失败"));
+    const bad = mountViewer();
+    await flushPromises();
+    expect(bad.find("[data-testid='sheet-error']").exists()).toBe(true);
+
+    await ok.get("[data-testid='sheet-save']").trigger("click");
+    await flushPromises();
+    expect(ok.find("[data-testid='sheet-save-state']").exists()).toBe(true);
+  });
+
+  it("没有分页元素（施工图是单张，分页在打印面板）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='page-prev']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='page-next']").exists()).toBe(false);
+    // 不新增「适配窗口」（现在没有，规格 §7.6 明说不要）
+    expect(wrapper.find("[data-testid='sheet-zoom-fit']").exists()).toBe(false);
+  });
+
+  it("五颗图标按钮都带中文 aria-label（图标是它们唯一的可见内容）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-close']").attributes("aria-label")).toBe("关闭");
+    expect(wrapper.get("[data-testid='sheet-print']").attributes("aria-label")).toBe("打印");
+    expect(wrapper.get("[data-testid='sheet-save']").attributes("aria-label")).toBe("保存");
+    expect(wrapper.get("[data-testid='sheet-zoom-in']").attributes("aria-label")).toBe("放大");
+    expect(wrapper.get("[data-testid='sheet-zoom-out']").attributes("aria-label")).toBe("缩小");
+  });
+
+  it("深色底用的是 bead-board，且点阵真的落在行内样式上（Review Focus 3）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+    expect(stage.classes().join(" ")).toContain("bg-bead-board");
+    expect(stage.attributes("style")).toContain("radial-gradient");
+  });
+
+  it("五颗按钮都满足 56px 硬下界（R35：旧的 44px 已作废）", async () => {
+    const wrapper = mountViewer();
+    await flushPromises();
+    // 顶栏三颗圆按钮走 `BeadButton` 的 icon 变体（min-h-14 / min-w-14）
+    for (const id of ["sheet-close", "sheet-print", "sheet-save"]) {
+      const classes = wrapper.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(classes, id).toContain("min-h-14");
+      expect(classes, id).toContain("min-w-14");
+    }
+    // 底栏两颗方按钮是手写的原生 button（R9：不为 BeadButton 加 size/square 开关）
+    for (const id of ["sheet-zoom-in", "sheet-zoom-out"]) {
+      const classes = wrapper.get(`[data-testid='${id}']`).classes().join(" ");
+      expect(classes, id).toContain("h-14");
+      expect(classes, id).toContain("w-14");
+      expect(classes, id).toContain("border-4");
+    }
+  });
+
+  it("loading / error 换成本文提示条样式，文案一字未动", async () => {
+    const wrapper = mountViewer();
+    const loading = wrapper.get("[data-testid='sheet-loading']");
+    expect(loading.text()).toBe("正在生成施工图…");
+    const loadingClasses = loading.classes().join(" ");
+    expect(loadingClasses).toContain("bg-bead-warn-bg");
+    expect(loadingClasses).toContain("text-bead-warn-ink");
+    expect(loadingClasses).toContain("border-bead-ink");
+
+    renderSheetBlob.mockRejectedValueOnce(new Error("画布尺寸被浏览器钳制"));
+    const bad = mountViewer();
+    await flushPromises();
+    const error = bad.get("[data-testid='sheet-error']");
+    expect(error.text()).toBe("图纸生成失败：画布尺寸被浏览器钳制");
+    const errorClasses = error.classes().join(" ");
+    expect(errorClasses).toContain("bg-bead-warn-bg");
+    expect(errorClasses).toContain("text-bead-warn-ink");
+    expect(errorClasses).toContain("border-bead-ink");
+  });
+});
+
+/**
+ * T1：覆盖层挂到 **body 顶层** + 打开时锁页面滚动（实机反馈 4 的两个根因）。
+ *
+ * **本组刻意不 stub `Teleport`**：它们钉的正是「真的被传送到 body 去了」，stub 掉等于把被测对象
+ * 删掉（而这正是前面每一条都必须 stub 的原因——VTU 的 `wrapper.find` 看不到传送出去的节点）。
+ * 代价：这里的查询自己从 `document.body` 来。
+ *
+ * **为什么开头要把残留的锁放干净**：锁是**模块级计数**，而本文件早先很多用例挂了就不卸载
+ * （历史如此，不在本次改动范围）⇒ 计数已被它们留在非 0。用公开 API 放干净之后再把基线钉住，
+ * 否则「卸载后滚动还原」那句会读到别人留下的计数（假红）。
+ */
+describe("SheetViewer 的覆盖层层级与滚动锁（T1）", () => {
+  beforeEach(() => {
+    while (true) {
+      try {
+        unlockBodyScroll();
+      } catch {
+        break;
+      }
+    }
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  /** 传送出去的节点要从 `document.body` 查（`wrapper.find` 看不到它们）。 */
+  const inBody = (): DOMWrapper<Element> => new DOMWrapper(document.body);
+
+  it("查看层是 body 的直接子节点（z-50），打开时锁住 body 滚动，卸载后节点收走、滚动还原", async () => {
+    // 基线：没有残留的覆盖层与锁
+    expect(document.body.querySelector("[data-testid='sheet-viewer']")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(), palette, name: "测试工程", thumbnail: "" },
+    });
+    await flushPromises();
+    const node = document.body.querySelector("[data-testid='sheet-viewer']");
+
+    // ① **传送到 body**：它是 `document.body` 的**直接子节点**。挂在中栏（`position: sticky` +
+    //    `overflow-y-auto`）里时，祖先建不出让后代的 z-index 参与根层级比较的上下文 ⇒ 生图页那条
+    //    `z-10` 底栏会画在覆盖层之上（实机反馈 4）。这一条断言在「没传送」时直接红（节点为 null）。
+    expect(node).not.toBeNull();
+    expect(node?.parentElement).toBe(document.body);
+    // ② `z-50`：高于生图页底栏 `z-10`、离开确认条 `z-40`；`overscroll-contain` 挡住滚动链。
+    expect(node?.classList.contains("z-50"), "施工图应为 z-50").toBe(true);
+    expect(node?.classList.contains("overscroll-contain")).toBe(true);
+    // ③ 开着时页面锁住（实机反馈 4：滑动覆盖层外部能感到生图页上下滑）
+    expect(document.body.style.overflow).toBe("hidden");
+
+    // ④ 卸载 = 关闭：节点被收走、滚动还原
+    wrapper.unmount();
+    expect(document.body.querySelector("[data-testid='sheet-viewer']")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("打印面板也是 body 的直接子节点且 z 序更高；先关打印不解锁，关掉查看层才解锁", async () => {
+    expect(document.body.querySelector("[data-testid='sheet-viewer']")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(), palette, name: "测试工程", thumbnail: "" },
+    });
+    await flushPromises();
+    // 查看层的按钮也挂在 body 里，所以这里同样要从 body 上点。
+    await inBody().get("[data-testid='sheet-print']").trigger("click");
+
+    const sheet = document.body.querySelector("[data-testid='sheet-viewer']");
+    const panel = document.body.querySelector("[data-testid='export-panel']");
+    // ① 打印面板**不在**查看层section 里（否则它仍会被查看层那个层叠上下文 / 裁剪框住），
+    //    而是 body 的另一个直接子节点 ⇒ 「面板压在查看层之上」由 z 序决定，不靠「是最后一个子元素」。
+    expect(panel?.parentElement).toBe(document.body);
+    expect(sheet?.parentElement).toBe(document.body);
+    expect(sheet?.contains(panel ?? null)).toBe(false);
+    expect(sheet?.classList.contains("z-50")).toBe(true);
+    expect(panel?.classList.contains("z-60"), "打印面板应为 z-60").toBe(true);
+
+    // ② **先关打印**（嵌套锁的那一半）：面板收走，但查看层还开着 ⇒ body **仍被锁着**。
+    //    这正是「各写各的 `document.body.style.overflow`」会错的地方：打印先关时若直接写回空串，
+    //    还开着的查看层就漏了（实机反馈 4 的穿透）。
+    await inBody().get("[data-testid='export-close']").trigger("click");
+    expect(document.body.querySelector("[data-testid='export-panel']")).toBeNull();
+    expect(document.body.querySelector("[data-testid='sheet-viewer']")).not.toBeNull();
+    expect(document.body.style.overflow).toBe("hidden");
+
+    // ③ 再关查看层：计数归零，滚动还原
+    wrapper.unmount();
+    expect(document.body.querySelector("[data-testid='sheet-viewer']")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
   });
 });

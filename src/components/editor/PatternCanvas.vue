@@ -10,7 +10,7 @@
 import { ref, watch } from "vue";
 import { screenToOriented, type Point, type Size, type ViewTransform } from "@/core/crop/view";
 import type { RGB } from "@/core/color/space";
-import type { Rect } from "@/core/image/types";
+import { FRAME_ON_DARK, GRID_ON_DARK, LABEL_ON_DARK, LABEL_ON_LIGHT } from "@/components/ui/beadColors";
 import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
@@ -18,7 +18,6 @@ import { EMPTY, type Pattern } from "@/core/pattern/types";
 import {
   CELL_LABEL_MIN_CELL_PX,
   GRID_LINE_MIN_CELL_PX,
-  cellRectFromScreen,
   cellsAlongLine,
   panCellView,
   visibleCellRange,
@@ -29,14 +28,14 @@ import { useCanvasSurface } from "@/composables/useCanvasSurface";
 // 只引**类型**：`import type` 在编译期被抹掉，组件运行时不 import store（契约 §5「props 进、事件出」）。
 import type { EditorTool } from "@/stores/editor";
 
-/** 空格底纹的格子边长（CSS px）。 */
-const TILE_SIZE = 16;
-const TILE_LIGHT = "#f8fafc";
-const TILE_DARK = "#eef2f7";
-/** `createPattern` 不可用时的纯浅灰底（规格 §5.5 的退化分支）。 */
-const EMPTY_BACKDROP = "#f1f5f9";
-/** 选中色号的高亮填充（与框选高亮同族）。 */
+/** 选中色号的高亮填充。 */
 const SELECT_HIGHLIGHT = "rgba(37, 99, 235, 0.45)";
+
+/** 深色拼豆板的板孔点阵（§9：画布深色板底 + 板孔点阵，间距 22px）。 */
+const boardDots = {
+  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
+  backgroundSize: "22px 22px",
+};
 
 /** `visibleCellRange` 的非空返回值：闭区间，两端都含。 */
 type CellRange = { readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number };
@@ -59,9 +58,7 @@ const emit = defineEmits<{
   measure: [Size];
   "update:view": [ViewTransform];
   paint: [number[]];
-  select: [Rect];
-  pick: [CellPoint];
-  background: [CellPoint];
+  fill: [CellPoint];
 }>();
 
 const container = ref<HTMLDivElement | null>(null);
@@ -186,9 +183,7 @@ function syncLayer(): void {
 
 type ToolGesture =
   | { kind: "brush"; pointerId: number; last: CellPoint; preview: Set<number> }
-  | { kind: "select"; pointerId: number; start: Point; rect: Rect | null }
-  | { kind: "pick"; pointerId: number; cell: CellPoint }
-  | { kind: "background"; pointerId: number; cell: CellPoint };
+  | { kind: "fill"; pointerId: number; cell: CellPoint };
 
 interface ViewGesture {
   readonly ids: [number, number];
@@ -268,21 +263,10 @@ function startToolGesture(pointerId: number, point: Point): void {
     };
     return;
   }
-  if (props.tool === "select") {
-    toolGesture = {
-      kind: "select",
-      pointerId,
-      start: point,
-      rect: cellRectFromScreen(point, point, props.view, gridSize()),
-    };
-    return;
+  if (props.tool === "fill") {
+    // 只在按下那一刻记格，拖动不改（见 finishToolGesture）。
+    toolGesture = { kind: "fill", pointerId, cell };
   }
-  if (props.tool === "background") {
-    // 与 `pick` 同形态：只在按下那一刻记格，拖动不改（见 finishToolGesture）。
-    toolGesture = { kind: "background", pointerId, cell };
-    return;
-  }
-  toolGesture = { kind: "pick", pointerId, cell };
 }
 
 function onPointerDown(event: PointerEvent): void {
@@ -355,15 +339,11 @@ function onPointerMove(event: PointerEvent): void {
     draw();
     return;
   }
-  if (gesture.kind === "select") {
-    gesture.rect = cellRectFromScreen(gesture.start, point, props.view, gridSize());
-    draw();
-  }
-  // 吸管 / 去背景：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
+  // 填充：拖动不改任何东西（取的是按下那一格，见 finishToolGesture）。
 }
 
 /** 工具手势的唯一出口：抬手（或捕获被无声丢失）才提交，一次手势 = 一条命令（§6.2）。 */
-function finishToolGesture(gesture: ToolGesture, point: Point): void {
+function finishToolGesture(gesture: ToolGesture): void {
   if (gesture.kind === "brush") {
     const indices = [...gesture.preview];
     // 不可达，**无判别力用例**（有意不写）：`startToolGesture` 建的画笔手势 `preview` 必然 ≥1 格，
@@ -372,16 +352,7 @@ function finishToolGesture(gesture: ToolGesture, point: Point): void {
     if (indices.length > 0) emit("paint", indices);
     return;
   }
-  if (gesture.kind === "select") {
-    const rect = cellRectFromScreen(gesture.start, point, props.view, gridSize());
-    if (rect !== null) emit("select", rect);
-    return;
-  }
-  if (gesture.kind === "background") {
-    emit("background", gesture.cell);
-    return;
-  }
-  emit("pick", gesture.cell);
+  emit("fill", gesture.cell);
 }
 
 function onPointerUp(event: PointerEvent): void {
@@ -400,7 +371,7 @@ function onPointerUp(event: PointerEvent): void {
   const gesture = toolGesture;
   if (gesture === null || gesture.pointerId !== event.pointerId) return;
   toolGesture = null;
-  finishToolGesture(gesture, localPoint(event));
+  finishToolGesture(gesture);
   draw();
 }
 
@@ -460,29 +431,7 @@ function onWheel(event: WheelEvent): void {
 // 绘制
 // ---------------------------------------------------------------------------
 
-let tile: HTMLCanvasElement | null = null;
-
-/** 空格底纹：16×16 的棋盘格 tile，只建一次（§5.5 的观感取舍，数据语义仍是「空格透明」）。 */
-function emptyTile(): HTMLCanvasElement {
-  if (tile !== null) return tile;
-  const element = document.createElement("canvas");
-  element.width = TILE_SIZE;
-  element.height = TILE_SIZE;
-  const ctx = element.getContext("2d");
-  // 取不到 2D 上下文（本仓的 happy-dom 就是这种情况）时留一张空白 tile：主画布的 createPattern
-  // 会照常平铺，空格就是纯白——不为此多造一条分支。
-  if (ctx !== null) {
-    ctx.fillStyle = TILE_LIGHT;
-    ctx.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
-    ctx.fillStyle = TILE_DARK;
-    ctx.fillRect(0, 0, TILE_SIZE / 2, TILE_SIZE / 2);
-    ctx.fillRect(TILE_SIZE / 2, TILE_SIZE / 2, TILE_SIZE / 2, TILE_SIZE / 2);
-  }
-  tile = element;
-  return element;
-}
-
-/** 亮度（Rec.601）：格内色号在白底上写深字、在深底上写白字。 */
+/** 亮度（Rec.601）：格内色号写在**豆粒自身的颜色**上，浅豆写深字、深豆写亮字。 */
 function isLight(rgb: RGB): boolean {
   return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 >= 0.5;
 }
@@ -508,7 +457,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: numbe
   // 再画整数坐标（§5.6）。
   ctx.translate(0.5 / pixelRatio, 0.5 / pixelRatio);
   ctx.lineWidth = 1 / pixelRatio;
-  ctx.strokeStyle = "rgba(15, 23, 42, 0.25)";
+  ctx.strokeStyle = GRID_ON_DARK;
   ctx.beginPath();
   // **闭区间**：`x0 … x1` 每一格都要有左右两条边，所以竖线从 x0 画到 x1 + 1（横线同理）。
   for (let x = range.x0; x <= range.x1 + 1; x += 1) {
@@ -544,10 +493,29 @@ function drawLabels(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: num
       const color = props.palette.colors[value];
       if (color === undefined) continue;
       if (color.code.length > maxChars) continue;
-      ctx.fillStyle = isLight(color.rgb) ? "#0f172a" : "#ffffff";
+      ctx.fillStyle = isLight(color.rgb) ? LABEL_ON_LIGHT : LABEL_ON_DARK;
       ctx.fillText(color.code, view.offsetX + (x + 0.5) * cellPx, view.offsetY + (y + 0.5) * cellPx);
     }
   }
+}
+
+/**
+ * 图纸外框（§6.1 的更正注记）：黑边图纸（豆色 `#000000`）与板底之间没有它就看不出图纸到哪结束。
+ *
+ * 2 CSS px（`setTransform` 已按 DPR 缩放）、贴图纸边界（中线落在边界上，内外各占 1px）。
+ * **画在网格线之后**：`clampView` 不许视图露出空白，图纸总有一条边与画布边缘平齐，
+ * 那一条边的外侧半个框会被裁掉——再让边界网格线盖住内侧那一半，框就完全看不见了。
+ * 代价是最外侧 1px 豆粒被框色盖住（2px 框贴边界，一半必然落在图纸内）。
+ */
+function drawFrame(ctx: CanvasRenderingContext2D, view: ViewTransform, cellPx: number): void {
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = FRAME_ON_DARK;
+  ctx.strokeRect(
+    view.offsetX,
+    view.offsetY,
+    props.pattern.width * cellPx,
+    props.pattern.height * cellPx,
+  );
 }
 
 /** 本次手势的待涂格子：半透明预览，`pattern.cells` 一个字节都不改（§6.2 第 3 条）。 */
@@ -589,35 +557,6 @@ function drawSelected(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: n
   }
 }
 
-/** 框选高亮：一个矩形，不逐格遍历（越出视口的部分由画布自己裁掉）。 */
-function drawSelection(ctx: CanvasRenderingContext2D, cellPx: number): void {
-  const gesture = toolGesture;
-  if (gesture === null || gesture.kind !== "select" || gesture.rect === null) return;
-  ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(
-    props.view.offsetX + gesture.rect.x * cellPx,
-    props.view.offsetY + gesture.rect.y * cellPx,
-    gesture.rect.width * cellPx,
-    gesture.rect.height * cellPx,
-  );
-}
-
-/** 吸管命中格的描边（§5.4）。**有意不写用例**（探针 P8）：`strokeRect` 在本文件里没有被任何断言
- * 读过（框选高亮与它是同一族的纯观感绘制），删掉它拿不出能证明它承重的变异。 */
-function drawPick(ctx: CanvasRenderingContext2D, cellPx: number): void {
-  const gesture = toolGesture;
-  if (gesture === null || gesture.kind !== "pick") return;
-  ctx.strokeStyle = "#0ea5e9";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(
-    props.view.offsetX + gesture.cell.x * cellPx + 1,
-    props.view.offsetY + gesture.cell.y * cellPx + 1,
-    cellPx - 2,
-    cellPx - 2,
-  );
-}
-
 function draw(): void {
   const element = canvas.value;
   if (element === null) return;
@@ -636,10 +575,7 @@ function draw(): void {
   ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ctx.clearRect(0, 0, size.width, size.height);
 
-  // 空格底纹：实色格不透出，空格透出棋盘格（§5.5——空格与「近乎白色的豆」在屏幕上必须能分开）。
-  const backdrop = typeof ctx.createPattern === "function" ? ctx.createPattern(emptyTile(), "repeat") : null;
-  ctx.fillStyle = backdrop ?? EMPTY_BACKDROP;
-  ctx.fillRect(0, 0, size.width, size.height);
+  // 空格不铺底：透明格透出容器那层深色拼豆板（`bg-bead-board` + 板孔点阵，§6.1「看图一律深色衬底」）。
 
   // 无插值放大：图纸是色块，插值会产生图纸里不存在的中间色（与 patternThumbnail 同口径，§5.7）。
   ctx.imageSmoothingEnabled = false;
@@ -655,11 +591,10 @@ function draw(): void {
   if (range === null) return; // 没有可见格：画完底色与色块层就够了
 
   if (props.showGrid && cellPx >= GRID_LINE_MIN_CELL_PX) drawGrid(ctx, range, cellPx, pixelRatio);
+  drawFrame(ctx, view, cellPx);
   if (props.showLabels && cellPx >= CELL_LABEL_MIN_CELL_PX) drawLabels(ctx, range, cellPx);
   drawPending(ctx, range, cellPx);
   drawSelected(ctx, range, cellPx);
-  drawSelection(ctx, cellPx);
-  drawPick(ctx, cellPx);
 }
 
 // 两个 watch 的源都是**浅引用 / 标量**：`pattern` 在 store 里是 `markRaw` 的同一个对象（身份变 = 换图纸）、
@@ -676,7 +611,7 @@ watch(
 </script>
 
 <template>
-  <div ref="container" data-testid="editor-surface" class="h-full w-full">
+  <div ref="container" data-testid="editor-surface" class="h-full w-full bg-bead-board" :style="boardDots">
     <canvas
       ref="canvas"
       data-testid="editor-canvas"

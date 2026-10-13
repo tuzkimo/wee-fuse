@@ -273,6 +273,14 @@ canvas 尺寸 = 容器 CSS 尺寸 × `devicePixelRatio`，`ctx.setTransform(dpr,
 
 ## 6. 手势与工具
 
+> **更正注记（2026-10-12，D1 像素风 UI 重设计）**：本节描述的工具集（画笔 / 框选 / 吸管）已被 D1 推翻。
+> 现行工具集是 `EditorTool = "brush" | "fill"` 两个工具 + 独立的橡皮入口（`data-testid="eraser"`）：
+> 框选与吸管被删除，原「去掉背景」的位置由「填充」接替（两者都是「把一块区域换成某个颜色」），
+> 橡皮从调色板搬进工具条，仍是「把当前色设为 `EMPTY`」那个入口。
+> 本节其余内容（手指分配、平移 / 缩放、撤销 / 重做的契约）仍然有效。
+> 真源：D1 规格 `docs/superpowers/specs/2026-10-12-pixel-ui-design.md` §8 与计划
+> `docs/superpowers/plans/2026-10-12-pixel-ui.md`。
+
 ### 6.1 手指分配（与选区页**有意不同**）
 
 | 手势 | 行为 |

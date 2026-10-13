@@ -7,6 +7,10 @@
 >
 > **本期的做法是「先改规格、再改实践」**（`AGENTS.md`「约束先行」）：本文先落地，随后本文 §8
 > 推翻的既有规格（B3 §6 的工具集）加更正注记，再动代码。
+>
+> 本文的**实机修复轮更正注记**（T1–T7）全部出自
+> [`plans/2026-10-12-pixel-ui-realdevice-fixes.md`](plans/2026-10-12-pixel-ui-realdevice-fixes.md)，
+> 构建记录见 [`notes/2026-10-12-pixel-ui-realdevice-fixes-build-log.md`](notes/2026-10-12-pixel-ui-realdevice-fixes-build-log.md)。
 
 ## 1. 意图与 why
 
@@ -94,12 +98,23 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `--color-bead-go` | `#17A398` | 保存 / 完成（正向收尾） |
 | `--color-bead-go-dark` | `#0E6E66` | 保存 / 完成的硬投影 |
 | `--color-bead-card-shadow` | `#D8C9AC` | 卡片 / 次级按钮的硬投影 |
-| `--color-bead-board` | `#2A2320` | **看图的深色衬底**（画布 / 预览 / 施工图，全 App 只有这一处深色） |
+| `--color-bead-board` | `#332B26` | **看图的深色衬底**（画布 / 预览 / 施工图，全 App 只有这一处深色） |
 | `--color-bead-hole` | `#463A32` | 深色底上的板孔点阵 |
 | `--color-bead-grid` | `#4A4038` | 深色底上的图纸网格线 |
+| `--color-bead-label-on-dark` | `#FFF4E4` | 深色底上的色号 / 标签文字（任务 13 补，§7.5） |
 | `--color-bead-danger` | `#B3392B` | 删除 / 错误（比 accent 更深更暗，**不许当主操作色用**） |
 | `--color-bead-warn-bg` | `#FCEBC8` | 提示条底 |
 | `--color-bead-warn-ink` | `#8A5A1A` | 提示条文字 |
+
+> **更正注记（2026-10-12，实机修复轮 T6）**：`--color-bead-board` 的值**就地**由 `#2A2320` 改为
+> **`#332B26`**。原因（实机反馈 7）：`#2A2320` 与黑色豆（`#000000`）几乎相邻无边界，黑边图纸
+> 看上去「糊进板底」。同时补一条**图纸外框**规则：深色底上的图纸一律在**图纸边界**画一圈 **2px**
+> 外框，颜色取 `bead-line`（`#C9B79A`）——本表里「容器外框」那一档，语义正好对上。取值靠对比度定
+> （WCAG 相对亮度）：`bead-line` 对新板底约 **7.1:1**、对黑色豆约 **10.7:1**；而先试的 `bead-hole`
+> （`#463A32`）对新板底只有 **1.26:1**（比旧板底还低）、对 `bead-grid` 只有 **1.09:1**——看上去就是
+> 「又多了一条网格线」，加粗线条并不弥补颜色本身的对比不足（R57）。**两件事都保留**（R54）：
+> 外框负责「图纸到哪里结束」，调亮板底负责黑豆不再与板底等深。除 `bead-board` 外一个 token 都没动：
+> 外框借的是既有 `bead-line`，不新增 token。
 
 **分工规则（本文最容易被违反的一条）：**
 
@@ -211,6 +226,18 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `page-prev` / `page-next` | 翻页 | **只在打印面板 `ExportPanel`**（施工图没有分页，见 §7.6） |
 | `close` | 关闭面板 | 打印面板、施工图查看、覆盖层 |
 
+> **更正注记（2026-10-12，实机修复轮 T5）**：实机反馈「撤销与重做长得一样，框线与色号也分不开」。
+> 图标表里有三条据此更正（`grid` 与其余图标不动，表格不再逐行修改，以本条为准）：
+>
+> 1. **新增 `rerun`**：循环箭头（3/4 圆环 + 右向箭头尖），用于「重做 / 改参数重新生成」。
+>    此前 `ICON_NAMES` 里没有它，编辑页与结果页两处入口都复用 `undo` 图形 ⇒「重做」与「撤销」
+>    在屏幕上完全同形。`ICON_NAMES` 里插在 `redo` 之后。
+> 2. **`undo` / `redo` 的剪影必须不同，不许只是镜像**：`undo` 的弧（尾部钩子）开口朝下、
+>    `redo` 的开口朝上。互为镜像的两组 rect 在 24px 下只靠方向区分，实机上分不出来。
+> 3. **`labels` 改为「格（一圈外框）+ 格内一个『A』字」**：原来那份「`grid` 的四条井字线 +
+>    `[1,1,2,2]` 小方块」里，小方块与竖线共边，剪影就是「带个角的格子」，与 `grid` 分不开；
+>    现在它有一圈 `grid` 没有的外框，外加格内的 3×5 细笔画字母。
+
 ### 6.5 触控目标与间距
 
 - **最小触控目标 `56×56px`**（不是 Material 的 48：8 岁的手指和精细动作都更差）。
@@ -298,6 +325,36 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
   顺序倒过来（先裁剪后参数）会让他调完参数还要往回滚才能看到结果。
 - 主操作按钮固定（`fixed`）在底部安全区之上，`56px` 高。
 
+> **更正注记（2026-10-12，实现时）**：这行原先写「高约 `40vh`」，实现发现三个约束凑不齐
+> （`48vh` 预览 + 参数 + 底部固定按钮在手机上把按钮顶出吸顶盒），已改为 `h-[48vh]`。
+> 数字以代码为准（`SetupPage.vue` 的中栏块）。
+
+> **更正注记（2026-10-12，实机修复轮 T2/T3）**：手机生成流程与中栏内容如下更正，平板路径一字不动。
+>
+> 1. **吸顶块层级**（实机反馈 1）：手机中栏块（`preview-pane`）原先没有 `z-index`，后面的兄弟
+>    （`TierSlider` 的刻度用 `absolute`、去背景开关）按 DOM 顺序画在它上面。现加 `relative z-10`
+>    （背景 `bg-bead-board` 本就不透明）；**参数区不加 `z-index`**。手机底部动作条是
+>    `fixed ... z-10`，与吸顶块不重叠，保持不变。
+> 2. **手机跳独立结果页**（实机反馈 3）：`generate()` 成功**且落盘成功**（`saved === true`）时
+>    `router.push({ name: "edit-result", params: { id } })`，跳到 §7.5 的 `/edit/:id/result`
+>    （生成成功时 `meta.id` 一定存在，`session.adopt` 已写）。**保存失败那一支不跳**——那条记录
+>    不在库里、没有可跳的 id——仍在本页原位显示结果 + 重试保存；**重试补存成功后**与成功支同口径
+>    跳独立结果页（`retrySave()` 在手机宽度下也 `push`）。顶栏主按钮的两态语义不变，**不新增第三个
+>    入口或状态**。
+> 3. **手机中栏不再承载 `ResultPanel`**：中栏卡片由
+>    `paneShowsResult = showResult && (isWide || lastSaveFailed)` 决定——平板恒渲染；手机只在
+>    **保存失败**那一支原位渲染一份（成功那一支已跳走，包括重试补存成功也跳）；其余情况无论是否
+>    已生成都只显示裁剪预览。
+> 4. **`ParamPanel` 的「生成图纸」按钮删除**（手机反馈 2：与底部「开始拼」重复；§11.1 删除清单
+>    加 `generate`）。顶栏主按钮（`setup-primary`）与手机底部动作条那两颗仍是生成入口；它旁边那段
+>    `generateBlockedReason` 文字**保留**（R51：那是「选区太小 / 存储不可用」唯一的显示处，顶栏 /
+>    底栏两颗只 `disabled` 不解释）。
+
+> **更正注记（2026-10-12，实机修复轮 T4）**：上面两条都只写了中栏块的吸顶，**顶栏本身没有吸顶**
+> ——实机反馈 2 是「顶栏没固定在顶部，编辑完想保存还得滑回顶部」。现补：`SetupPage` 的 `header` 加
+> `sticky top-0 z-20`；手机吸顶块（`preview-pane`，`relative z-10`）同步改 `sticky top-16`，让开顶栏的
+> 64px——两者不再重叠，`z-20` 只是「顶栏必须压在最上层」的保底（R55）。
+
 ### 7.4 编辑器 `EditorPage`（`/edit/:id`）
 
 **平板横屏：**
@@ -337,6 +394,41 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 - 工具条右侧五个「看的方式」用小一号（52px）的方按钮，与左侧 64px 的主工具**在尺寸上分主次**。
 - 画布网格线与格内色号沿用现有 `showGrid` / `showLabels` 两个开关，只换按钮外观
   （`showLabels` 用新增的 `labels` 图标）。
+
+> **更正注记（2026-10-12，实机修复轮 T4）**：上面的平板示意图把工具条画成**横贯整页**的一条，
+> 实现时它与「画布 + 色板列」那一行是**兄弟节点**，于是工具条落在两列里较高那列的下面——
+> 实机反馈 3：色板列一长，工具条就被推到很远，「每次都要下拉到底部选工具」。现更正为**定高 shell**，
+> `md` 及以上：
+>
+> 1. **`main` 定高不滚**：`md:flex md:flex-col md:h-screen md:overflow-hidden`（页头与尺寸行是固定
+>    高度的子项）。平板页面因此根本不滚，「顶栏始终可见」与「点保存不必先滑回顶部」由定高保证，
+>    不靠 `position: sticky`。
+> 2. **主体区是 2×2 网格**：`md:grid md:grid-cols-[1fr_250px] md:grid-rows-[1fr_auto] md:min-h-0
+>    md:flex-1`。画布卡片占 `col-start-1 / row-start-1`，工具条占 `col-start-1 / row-start-2`
+>    （**紧贴画布卡片底边**，不再挂在页面最底部），色板列占 `col-start-2 / row-span-2` 且
+>    `md:min-h-0 md:overflow-y-auto`——**只有色板列自己滚**。
+> 3. **一套 DOM**：DOM 顺序仍是手机那一套（画布 → 色豆条 → 工具条），平板的格子位置靠上面的
+>    `md:` 放置类决定。工具条因此从「那一行的兄弟」搬进那一行内部——**不许为两种排法复制元素**
+>    （同一个 `data-testid` 出现两次会让既有用例的 `wrapper.get` 抛 multiple elements）。
+> 4. **手机排法一字不变**：单列、页面可滚，画布 → 色豆条 → 工具条（本节上文）。
+
+> **更正注记（2026-10-12，实机修复轮 T5）**：实机反馈「重做按钮和工具按钮放一起有点奇怪，
+> 逻辑上应该跟保存的地位一致」。据此更正上文两处（本节正文不再逐条修改，以本条为准）：
+>
+> 1. **顶栏右并列**：`rerun` 从工具条搬到 `editor-save` **左侧**，与保存同级——同一条
+>    `flex items-center gap-2` 里，中间没有分组容器。口径照旧：`variant="secondary"`（**绝不用
+>    `primary`/`go`**：它会丢掉手工涂改，视觉权重不能压过保存）、`aria-label="重做"`、
+>    `canRerun` 为假时**不渲染**、点击走既有那条 `rerun()`（不新开路径）。R53：可见内容是
+>    `rerun` 图标（24px）加「重做」二字，与结果页三颗动作同口径（图形旁留短中文）。
+> 2. **工具条只剩十颗**：`undo` `redo` \| `brush` `fill` `eraser` \| `grid` `labels` `zoom-in`
+>    `zoom-out` `fit`。`PatternToolbar` 随之删掉 `rerun` 按钮、`rerun` emit 与变成死代码的
+>    `canRerun` prop；`rerun` 的 testid 仍在封闭清单里，归属改由 `EditorPage.test.ts` 钉。
+
+> **更正注记（2026-10-12，实机修复轮 T6）**：实机反馈 7「编辑页编辑区域的黑色背景，如果图纸是黑边，
+> 很难区分」。板底已按 §6.1 的更正注记调亮为 `#332B26`，这里补上正文没写的**图纸外框**：
+> `PatternCanvas` 在 `view` 映射出来的那块图纸矩形上描一圈 **2px** `bead-line`
+> （JS 侧常量 `FRAME_ON_DARK`），画在网格线**之上**（图纸总有一条边与画布边缘平齐，外侧半个框会被裁掉，
+> 再让边界网格线盖住内侧那一半就完全看不见了）；图纸滑出视口时外框自然被 canvas 裁掉，不单独判空。
 
 ### 7.5 结果页 `ResultPanel` + `EditResultPage`（`/edit/:id/result`）
 
@@ -378,6 +470,15 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 - **已定（§12 第 3 条）：原地不动。** `sheet-print` 与 `sheet-save` 留在顶栏，不收入 `gear`。
   理由：现状已符合“孩子主路径上只有看看”的要求，收起来反而多一次点击且动到 3 个 testid。
 
+> **更正注记（T1，实机反馈 4）**：查看层必须**挂在 body 顶层**（根节点用 `<Teleport to="body">` 包起来）、
+> `z-50`，并在打开期间**锁住页面滚动**；自己的滚动容器加 `overscroll-contain`。
+> **根因**：它原先的 DOM 祖先是 `SetupPage` 的 `preview-pane`（`position: sticky` + `overflow-y-auto`），
+> 祖先建不出让后代的 z-index 参与**根层级**比较的层叠上下文 ⇒ 生图页那条 `fixed inset-x-0 bottom-0 z-10`
+> 的底栏画在覆盖层**之上**（施工图底栏被「完成」按钮遮盖），且覆盖层没占满时触摸滑动会落到下层页面的
+> 滚动容器上。图库那条路径本来就把查看层挂在页面顶层、没有这些症状——正好反证根因是**挂载位置**，
+> 而不是覆盖层自身的样式。打印面板（§7.7）同理：它是查看层的子树，也必须自己 `Teleport to="body"`（`z-60`），
+> 否则仍被查看层那个层叠上下文 / 裁剪框住。
+
 ### 7.7 打印面板 `ExportPanel`
 
 - **只换皮，不动结构。** 它是家长用的工具面板（分页预览 + 保存全部 + A3 等纸型），本期只做：字体、
@@ -391,6 +492,12 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 - 卡片式：`bead-card` 底 + `4px bead-ink` 描边 + `shadow-pop-lg`。
 - 确认类的两个按钮尺寸对称（各 `56px` 高），危险动作用 `bead-danger`，取消用 `bead-card`。
 - 分享提示条（`share-banner`）改为底部卡片，保留 `role="status"` 与两个现有按钮的 testid。
+
+> **更正注记（T1，实机反馈 4）**：覆盖层（施工图查看 `z-50`、打印面板 `z-60`）一律**挂在 body 顶层**，
+> 并**在打开期间锁住页面滚动**——锁必须是**计数式**的（`composables/useBodyScrollLock.ts`）：两层会
+> **嵌套打开**（打印开在施工图之上），各写各的 `document.body.style.overflow` 时，先关的那一层会把
+> 还开着的那一层的锁一起还原掉。覆盖层自己的滚动容器加 `overscroll-contain`，不把滚动链传给 body。
+> 底栏（生图页 `z-10`）、离开确认条（`z-40`）仍在其下。根因见 §7.6 的更正注记。
 
 ## 8. 规格变更：编辑器工具集（**推翻既有规格，需先改那份文档**）
 
@@ -463,10 +570,10 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `src/views/PickPage.vue` | §7.2 |
 | `src/views/SetupPage.vue` | §7.3，`md:` 分叉两套排法；**阶段不再互斥**（生成后左右栏仍可编辑） |
 | `src/components/crop/CropCanvas.vue` | 裁剪框与手柄改像素风（`bead-accent` 虚线 + 方块手柄）；**交互逻辑不动** |
-| `src/components/param/ParamPanel.vue` | 两个滑条换图形档位按钮；开关换像素开关；「生成」按钮移到顶栏后本组件不再持有它 |
+| `src/components/param/ParamPanel.vue` | 两个滑条换图形档位按钮；开关换像素开关；「生成」按钮移到顶栏后本组件不再持有它（**D1 实机修复轮 T3 已删**，见 §11.1） |
 | `src/components/param/TierSlider.vue` | 保留滑条本体，换轨道 / 旋钮外观（12px 整数倍栅格） |
 | `src/views/EditorPage.vue` | §7.4 + §8 的 `onBackground` → `onFill`；顶栏 / 工具条的 props 与事件接线随按钮位置搬移 |
-| `src/components/editor/PatternToolbar.vue` | 5 行 15 个文字按钮 → **11 个图标按钮**（`undo` `redo` `rerun` \| `brush` `fill` `eraser` \| `grid` `labels` `zoom-in` `zoom-out` `fit`），两种屏幕两种排法（§7.4） |
+| `src/components/editor/PatternToolbar.vue` | 5 行 15 个文字按钮 → **10 个图标按钮**（`undo` `redo` \| `brush` `fill` `eraser` \| `grid` `labels` `zoom-in` `zoom-out` `fit`），两种屏幕两种排法（§7.4） |
 | `src/components/editor/PatternCanvas.vue` | 深色板底 + 板孔点阵；删 select / pick 手势 |
 | `src/components/editor/PalettePanel.vue` | 平板右栏 / 手机横滑条两套；**多选换色交互原样保留**（§8） |
 | `src/components/editor/PalettePicker.vue` | 覆盖层改像素卡片；色号字改 12px；**不删**（它是目标色选择器） |
@@ -476,6 +583,9 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `src/views/EditResultPage.vue` | 只换标题与容器（复用 `ResultPanel`） |
 | `src/App.vue` | 分享提示条改卡片（§7.8） |
 | `src/router/index.ts` | **不动** |
+
+> **更正注记（2026-10-13，终审修复波）**：上表 `PatternToolbar` 一行原写「11 个图标按钮」含
+> `rerun`，已改写为 **10 个**——`rerun` 已搬到顶栏、与保存同级，详见 §7.4 的更正注记。
 
 **`src/core/**` 只有一处改动**（`edit.ts` 删 `buildRectPaintCommand`），其余一律不碰——
 本次是 UI 改造，`coreBoundary.test.ts` 这条闸门必须保持绿。
@@ -492,6 +602,8 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
    `scale(`。
 6. **深色底滥用**：`bead-board` 只允许出现在 `PatternCanvas` / `ResultPanel` / `SheetViewer` /
    `SetupPage` 的预览区这四处。
+   > **更正（2026-10-13，控制者裁定）**：实现里是**五处**——`LibraryPage.vue` 的卡片缩略图是第五处，
+   > 因为 §7.1 逐字要求缩略图是深色底。守卫 `designTokens.test.ts` 的 `BOARD_ALLOWED` 已按五处放行。
 7. **旧的 `slate-*` / `amber-*` 残留**：实现完成时用 grep 清零（§6.1），残留会让新旧两套语言同屏。
 8. **平板横屏下 `SetupPage` 三栏挤压**：中栏预览是 `flex: 1`，左右两栏定宽。窄到 `768px` 时左栏
    236px + 右栏 262px + 间距已占 520px，中栏只剩 248px ⇒ 在 `768~900px` 区间把左右栏宽度降到
@@ -500,7 +612,10 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 
 ## 11. 测试要求
 
-**总原则：现有 148 个 `data-testid` 里只删/改 8 个，其余全部原样保留，所以绝大多数用例不需要改。**
+**总原则：现有 148 个 `data-testid` 里只删/改 11 个，其余全部原样保留，所以绝大多数用例不需要改。**
+
+> **更正注记（2026-10-13，终审修复波）**：上句计数按 §11.1 的权威清单更正为 **11**（原写 8）；
+> §11.2 的「上表那 10 行」一并更正为 **11 行**。两处都只是旧计数没跟上清单，清单本身未变。
 
 ### 11.1 `data-testid` 权威清单（**封闭清单**）
 
@@ -519,6 +634,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `toolbar-row-output` | `PatternToolbar` | **删** | 同上 |
 | `result-stats` | `ResultPanel` | **删** | 文字统计不给孩子看（§7.5） |
 | `result-size` | `ResultPanel` | **删** | 同上 |
+| `generate` | `ParamPanel` | **删** | 与顶栏主按钮 / 手机底部动作条重复（实机反馈 2，T3） |
 
 **容易被误删、但必须保留的（逐个点名）：**
 
@@ -534,12 +650,14 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 - `select-bar` / `select-bar-recolor` / `select-bar-clear` / `palette-row` / `palette-current` /
   `picker-*`：批量换色那套**原样保留**（§8）。
 - `editor-dirty`：节点保留，内容从「未保存」三个字换成一颗圆点。
+- `blocked-reason`：T3 删掉 `ParamPanel` 的「生成图纸」按钮后，它是「选区太小 / 存储不可用」
+  **唯一**的显示处（顶栏主按钮与手机底部动作条只 `disabled` 不解释），**必须保留**（R51）。
 - `undo` / `redo` / `rerun` / `eraser` / `toggle-grid` / `toggle-labels` / `zoom-fit` /
   `zoom-in` / `zoom-out` / `editor-save`：全部保留，只换外观与位置。
 
 ### 11.2 必须改的用例
 
-（“规格直接冲突、经人工确认”的范围就是上表那 10 行；其余改动只是多一步展开。）
+（“规格直接冲突、经人工确认”的范围就是上表那 11 行；其余改动只是多一步展开。）
 
 - `components/editor/__tests__/PatternToolbar.test.ts`：`TOOL_BUTTONS` 从四条减到两条
   （`tool-brush` / `tool-fill`），删 `tool-select` / `tool-pick` 两行与相应用例；删 5 处
@@ -566,6 +684,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
   (c) 不出现 `scale(`；
   (d) 不出现 `1px solid` / `2px solid`；
   (e) `bead-board` 只出现在 §10.6 的四个文件里。
+      > **更正（2026-10-13）**：是**五个**文件，外加 `LibraryPage.vue` 的缩略图（§10.6 的更正注记）。
   **必须排除三个探针页** `src/views/{CanvasLabPage,DecodeLabPage,ShellProbePage}.vue`——
   §5 明确说了它们不改，而它们实打实在用 `slate-*` / `amber-*`，按字面扫这条守卫**必然红**。
   排除名单写在测试里并附一句理由（它们是 DEV-only 探针页）。
@@ -602,6 +721,8 @@ npm run build        # vue-tsc 类型检查 + Vite 构建，必须过
 | 6 | 填充的容差规则（拿橡皮 10 / 拿颜色 0） | **按文档的设计**（不改成两者都精确）。§8 |
 | 7 | 结果页要不要「存到相册 / 分享」 | **不做**（屏稿上那颗是我的发明），进 §13。 |
 | 8 | `data-testid` 删除清单（含 5 个 `toolbar-row-*`） | **全部同意**。§11.1 |
+
+以上裁定已全部实现，见 `docs/superpowers/plans/2026-10-12-pixel-ui.md`。
 
 其余细节（图标画法、圆角具体值、控件间距、覆盖层文案、工具条在手机上的具体折行）**留给实现者对**。
 

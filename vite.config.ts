@@ -34,6 +34,11 @@ export default defineConfig({
     // 打开后行为不变。`tsconfig.json` 的 `types` 保持不动——它是拦住 `src/core/**`
     // 误用 Node 全局（process/Buffer）的那道闸门。
     globals: true,
+    // Vitest 默认把 .css 的 import 掏空（`css-disable` / `css-empty-post` 两个插件把
+    // 代码替换成 ""），连 `?raw` 也一起吃：id 只要匹配 `\.css(?:$|\?)` 就被置空。
+    // 设计 token 闸门（`src/__tests__/designTokens.test.ts`）必须读到 `src/style.css`
+    // 的原文，所以只把这一个文件放行；其余 CSS 保持既有「掏空」行为。
+    css: { include: [/style\.css/] },
     environment: "happy-dom",
     testTimeout: 20000,
   },
