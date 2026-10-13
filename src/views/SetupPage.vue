@@ -44,7 +44,8 @@ const session = useProjectSession();
 const storeError = ref("");
 const preparing = ref(false);
 // 断点由 `md:` 前缀（列宽）与这个 JS 旗标（排法：平板横向三栏 / 手机单栏纵向）共同承担；
-// 保留 JS 这一路是因为它已有两条用例钉着（视口跨断点时类名当场换、查询串就是 768px）。
+// 保留 JS 这一路是因为它已有两条用例钉着（视口跨断点时类名当场换、查询串就是 1024px）。
+// **阈值与 CSS 必须逐字一致**：`md` 是 `--breakpoint-md: 64rem`（`style.css` 的 `@theme`）。
 const isWide = ref(false);
 let media: MediaQueryList | null = null;
 
@@ -218,7 +219,7 @@ onMounted(async () => {
     storeError.value = e instanceof Error ? e.message : String(e);
   }
 
-  media = window.matchMedia("(min-width: 768px)");
+  media = window.matchMedia("(min-width: 1024px)");
   isWide.value = media.matches;
   media.addEventListener("change", onMediaChange);
   /*
@@ -385,7 +386,7 @@ async function generate(): Promise<void> {
       // 不一致；失败后的续存由 `retrySave()` 成功时补写。
       draft.setRerunOf({ id: meta.id, createdAt: meta.createdAt });
       lastSaveFailed.value = false;
-      // 手机（<768px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
+      // 手机（<1024px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
       // （`meta.id` 此刻一定存在）——保存失败那一支没有可跳的 id，留在本页显示结果 + 重试。
       if (!isWide.value) {
         await router.push(resultPush(meta.id));
@@ -415,7 +416,7 @@ async function retrySave(): Promise<void> {
     }
     lastSaveFailed.value = false;
     draft.setError("");
-    // 手机（<768px）与 `generate()` 成功支同口径：补存成功也跳独立结果页。否则 `lastSaveFailed`
+    // 手机（<1024px）与 `generate()` 成功支同口径：补存成功也跳独立结果页。否则 `lastSaveFailed`
     // 置假 ⇒ `paneShowsResult` 翻假 ⇒ 结果卡片消失，而这里又不跳，用户留在本页、主按钮还写着
     // 「完成 ✓」（T2 审查发现 1）。
     if (!isWide.value && meta !== undefined) {
@@ -487,9 +488,10 @@ function resetCrop(): void {
     <!--
       三栏（§7.3）：左 = 选区（`crop-pane`）、中 = 上一次的结果（`preview-pane`）、右 = 参数
       （`param-pane`）。**阶段不再互斥**：生成之后左右两栏仍在，这是「一屏做完」。
-      侧栏在 `md` 区间收窄、`lg` 才加宽：768~900px 三栏同屏时中栏不会被左右挤死（R30）。
+      侧栏列宽只有一档：阈值上移到 1024px 之后，768~900px 那段挤压区（R30 那两档窄宽度
+      就是为它设的）现在走单列，不需要窄档。
 
-      手机（<768px）单列，顺序 **中栏 → 选范围 → 参数**：`preview-pane` 因而排在 DOM 首位
+      手机（<1024px）单列，顺序 **中栏 → 选范围 → 参数**：`preview-pane` 因而排在 DOM 首位
       （单列下没有 `order`，DOM 顺序就是看到的顺序）；平板用 `md:order-*` 把它挪回中间。
       顺序不能倒——先裁剪后参数会让他调完参数还要往回滚才能看到结果。
     -->
@@ -557,7 +559,7 @@ function resetCrop(): void {
 
       <section
         data-testid="crop-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:w-[200px] md:shrink-0 lg:w-[236px]"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:w-[236px] md:shrink-0"
       >
         <div class="h-[40vh] min-h-[240px] md:h-[46vh]">
           <CropCanvas
@@ -614,7 +616,7 @@ function resetCrop(): void {
 
       <section
         data-testid="param-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:w-[220px] md:shrink-0 lg:w-[262px]"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:w-[262px] md:shrink-0"
       >
         <ParamPanel
           v-if="draft.crop !== null"

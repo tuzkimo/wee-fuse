@@ -130,25 +130,25 @@ function makeCtx(pixels: Uint8ClampedArray) {
  * 断点可测」——实测不成立）：happy-dom 20.14.5 的 `matchMedia` 对着它自己的默认视口求值，
  * 把 `window.innerWidth` 设成 500 或 2000 都一样——`(min-width: 768px)` 与
  * `(min-width: 1024px)` 恒 true、`(min-width: 2000px)` 恒 false（原始输出见报告 §测试侧更正 T2）。
- * 于是「手机 <768px」这一支在真实环境里根本走不到，用它当判据的用例会假绿。
+ * 于是「手机 <1024px」这一支在真实环境里根本走不到，用它当判据的用例会假绿。
  *
  * 这个桩按浏览器的契约实现两件事：`matches` 读 `window.innerWidth`（测试能控的那个值），
  * 跨过断点时派发 `change`。用例测的因此仍是**组件的行为**（读 `matches`、听 `change`），
  * 而不是 happy-dom 那个解析器。
  *
- * 桩还**记录收到的查询串**（返回值里的 `queries`）。桩的 `matches` 只认 768 这一个阈值，
- * 于是组件把 `"(min-width: 768px)"` 写成别的串（例如 `"(min-width: 700px)"`）时，所有布局
+ * 桩还**记录收到的查询串**（返回值里的 `queries`）。桩的 `matches` 只认 1024 这一个阈值，
+ * 于是组件把 `"(min-width: 1024px)"` 写成别的串（例如 `"(min-width: 700px)"`）时，所有布局
  * 用例照样全绿——而写错这个串就等于平板布局静默失效。`queries` 是唯一能判死这类变异的输出。
  */
 function stubBreakpoint(): { resizeTo(width: number): void; queries: string[] } {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
-  const query = "(min-width: 768px)";
+  const query = "(min-width: 1024px)";
   const queries: string[] = [];
   const mql = {
     media: query,
     onchange: null,
     get matches(): boolean {
-      return window.innerWidth >= 768;
+      return window.innerWidth >= 1024;
     },
     addEventListener(type: string, listener: (event: MediaQueryListEvent) => void): void {
       if (type === "change") listeners.add(listener);
@@ -305,7 +305,7 @@ function submitGenerate(wrapper: VueWrapper): void {
 beforeEach(async () => {
   setActivePinia(createPinia());
   setProjectStore(await createMemoryProjectStore());
-  window.innerWidth = 1024;
+  window.innerWidth = 1280;
 });
 
 afterEach(() => {
@@ -362,10 +362,10 @@ describe("入口守卫与准备阶段", () => {
 });
 
 describe("断点布局", () => {
-  it("平板（≥768px）同时显示选区与参数两栏", async () => {
+  it("平板（≥1024px）同时显示选区与参数两栏", async () => {
     stubPlatform();
     seedDraft();
-    window.innerWidth = 1024;
+    window.innerWidth = 1280;
 
     const wrapper = mount(SetupPage);
     await flushPromises();
@@ -382,7 +382,7 @@ describe("断点布局", () => {
    * 判别力：把 `showEditor` 改回「按 stage 挑一屏」（例如 `stage === "edit" && isWide`），
    * 手机上 `param-pane` 就不在了，本用例立刻红。
    */
-  it("手机（<768px）单页：选区与参数同时在，分页按钮已删除（C8 第 4 项）", async () => {
+  it("手机（<1024px）单页：选区与参数同时在，分页按钮已删除（C8 第 4 项）", async () => {
     stubPlatform();
     seedDraft();
     window.innerWidth = 500;
@@ -413,7 +413,7 @@ describe("断点布局", () => {
     expect(layout.classes()).toContain("space-y-6");
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
 
-    breakpoint.resizeTo(1024);
+    breakpoint.resizeTo(1280);
     await flushPromises();
 
     // 平板改成横向三栏（`flex` 默认行向）——类名从 D1 起就是这套，判据不变：**跨断点时容器类当场换掉**。
@@ -434,13 +434,13 @@ describe("断点布局", () => {
   it("生成后裁剪与参数两栏仍然渲染（阶段不再互斥，§7.3）", async () => {
     const { breakpoint } = stubPlatform();
     seedDraft();
-    window.innerWidth = 1024;
+    window.innerWidth = 1280;
 
     const wrapper = mount(SetupPage);
     await flushPromises();
 
-    // 前提：≥768px 确实是平板布局，否则下面的断言可能靠「断点没生效」蒙过去。
-    expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
+    // 前提：≥1024px 确实是平板布局，否则下面的断言可能靠「断点没生效」蒙过去。
+    expect(breakpoint.queries).toEqual(["(min-width: 1024px)"]);
 
     await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
@@ -452,17 +452,17 @@ describe("断点布局", () => {
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
   });
 
-  it("断点查询串就是 768px（写错这个串 = 平板布局静默失效）", async () => {
+  it("断点查询串就是 1024px（写错这个串 = 平板布局静默失效）", async () => {
     const { breakpoint } = stubPlatform();
     seedDraft();
 
     mount(SetupPage);
     await flushPromises();
 
-    // 桩的 `matches` 只认 768 这一个阈值：组件把串写成别的（例如 `"(min-width: 700px)"`）时，
+    // 桩的 `matches` 只认 1024 这一个阈值：组件把串写成别的（例如 `"(min-width: 700px)"`）时，
     // 上面那三条布局用例照样全绿——只有这里读得到真正问出去的串。而串写错就等于平板两栏
     // 布局在真机上静默失效（组件在 `onMounted` 只问一次，问错就永远拿不到正确布局）。
-    expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
+    expect(breakpoint.queries).toEqual(["(min-width: 1024px)"]);
   });
 });
 
@@ -1835,7 +1835,7 @@ describe("结果阶段", () => {
   it("结果页的「重做」把中栏换回裁剪预览（左右两栏不跳路由）", async () => {
     stubPlatform();
     const draft = seedDraft();
-    window.innerWidth = 1024;
+    window.innerWidth = 1280;
 
     const wrapper = mount(SetupPage);
     await flushPromises();

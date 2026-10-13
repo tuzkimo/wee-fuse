@@ -17,6 +17,20 @@
  * token 名是任务 6–18 的公共接口，改名等于全线返工。
  */
 @theme {
+  /*
+   * 断点阶梯：**本仓的「平板档」是 md = 64rem**（1024px），不是 Tailwind 默认的 48rem。
+   *
+   * 理由（2026-10-13 真机）：默认的 768px 与横竖屏无关 ⇒ 一台 768×1024 的**竖屏平板**会进三栏，
+   * 中栏只剩约 240px。人类伙伴裁定：竖屏平板跟手机一样走单列，横屏平板才用三栏。
+   *
+   * 整条阶梯跟着上移一档是为了**严格递增**：只改 md 的话 lg（64rem）会与它同值，
+   * 后人写 lg: 时两个断点同时生效、谁赢取决于产物顺序。
+   */
+  --breakpoint-md: 64rem;
+  --breakpoint-lg: 80rem;
+  --breakpoint-xl: 96rem;
+  --breakpoint-2xl: 112rem;
+
   --color-bead-sand: #F5EDDF;
   --color-bead-sand-2: #EFE4D0;
   --color-bead-sand-3: #E9DFC9;
