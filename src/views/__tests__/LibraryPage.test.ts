@@ -457,7 +457,9 @@ describe("LibraryPage", () => {
       source: null,
     });
     setProjectStore(store);
-    const wrapper = mount(LibraryPage);
+    // `stubs: { teleport: true }`（T1）：查看层现在 `Teleport to="body"`，而 VTU 的 `wrapper.find`
+    // 看不到传送出去的节点——这两条钉的是「本页的入口 + `:key` 重新挂载」，真传送由 `SheetViewer.test.ts` 钉。
+    const wrapper = mount(LibraryPage, { global: { stubs: { teleport: true } } });
     await flushPromises();
 
     expect(wrapper.find("[data-testid='sheet-viewer']").exists()).toBe(false);
@@ -497,7 +499,7 @@ describe("LibraryPage", () => {
       });
     }
     setProjectStore(store);
-    const wrapper = mount(LibraryPage);
+    const wrapper = mount(LibraryPage, { global: { stubs: { teleport: true } } });
     await flushPromises();
 
     // 列表按 updatedAt 倒序 ⇒ [0] 是「小猫」（05:00），[1] 是「小狗」（01:00）

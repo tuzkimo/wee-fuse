@@ -52,6 +52,7 @@ import type { SheetPlan } from "@/core/render/layout";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
 import BeadButton from "@/components/ui/BeadButton.vue";
 import PixelIcon from "@/components/ui/PixelIcon.vue";
+import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
 import { useOverlayBack } from "@/composables/useOverlayBack";
 import { getPlatform } from "@/services/platform/capabilities";
 import { exportFilename } from "@/services/exporter";
@@ -75,8 +76,15 @@ const boardDots = {
 /** 覆盖层返回栈（C8 规格 §3.6.2）：Android 返回键先关查看层，而不是离开页面。 */
 useOverlayBack(() => emit("close"));
 
-/** 打印面板是否打开。**在查看层内部打开**（它是根 `section` 的最后一个子元素，且自身 `z-40` 在
- *  同一层叠上下文里高于查看层其余各块），于是宿主页面都不必知道打印页存在（C8 规格 §4.3）。 */
+/**
+ * 页面滚动锁（R52）：查看层开着时底层页面不许跟着滑（实机反馈 4 的穿透）。计数式——打印面板
+ * 也持一次锁（见 `useBodyScrollLock` 的 JSDoc：嵌套覆盖层各写各的 `overflow` 会互相还原）。
+ */
+useBodyScrollLock();
+
+/** 打印面板是否打开。**在查看层内部打开**（宿主页面都不必知道打印页存在，C8 规格 §4.3），
+ *  但它自己也 `Teleport to="body"` 且 `z-60`：层级比较发生在 body 的子节点之间，不再依赖
+ *  「它是查看层根节点的最后一个子元素」（T1）。 */
 const printing = ref(false);
 /** 喂给打印页的用量与喂给渲染通道的是**同一份**（不重算第二遍 O(格数) 的统计）。 */
 const usages = ref<readonly ColorUsage[]>([]);
@@ -476,7 +484,16 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <section data-testid="sheet-viewer" class="fixed inset-0 z-30 flex flex-col bg-bead-sand p-4">
+  <!--
+    覆盖层挂到 **body 顶层**（T1 承重改动）：`fixed inset-0` + `z-50` 只有作为 body 的子节点，
+    才与底层页面的各个覆盖块处在**同一个层叠上下文**里比 z 序。挂在 `SetupPage` 的 `preview-pane`
+    （`position: sticky` + `overflow-y-auto`）里时，祖先建不出让后代的 z-index 参与根层级比较的
+    上下文 ⇒ 生图页那条 `fixed inset-x-0 bottom-0 z-10` 的底栏画在覆盖层**之上**（实机反馈 4）。
+    图库路径本来就把查看层挂在页面顶层、没有这个症状，正是「根因是挂载位置」的反证。
+    `overscroll-contain`：覆盖层内部滚到底时不许把滚动链传给 body。
+  -->
+  <Teleport to="body">
+  <section data-testid="sheet-viewer" class="fixed inset-0 z-50 flex flex-col overscroll-contain bg-bead-sand p-4">
     <!--
       顶栏（§7.6）：圆 `close` + 作品名 + 右侧圆 `print` / `save`。**三颗图标按钮都留在原地**
       （§12 第 3 条：不收入 gear）。`sheet-save-state` 是按钮旁的一行 12px 小字。
@@ -593,7 +610,8 @@ async function save(): Promise<void> {
     <!--
       打印页（C8 规格 §4.3）：**查看层自己渲染**它，宿主页面都不必知道打印页存在。它拿到的
       `pattern` / `palette` / `usages` / `project-name` 与喂渲染通道的是同一份。
-      作为根 section 里的**最后一个元素**：单根不变，`@close` 由这里收掉面板（查看层本身不动）。
+      面板自己 `Teleport to="body"` 且 `z-60`（T1）：它**不再是**靠「作为根 section 的最后一个
+      子元素」压住查看层，而是与查看层在 body 顶层比 z 序。`@close` 由这里收掉面板（查看层不动）。
     -->
     <ExportPanel
       v-if="printing"
@@ -604,4 +622,5 @@ async function save(): Promise<void> {
       @close="printing = false"
     />
   </section>
+  </Teleport>
 </template>

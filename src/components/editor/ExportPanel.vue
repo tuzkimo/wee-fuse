@@ -29,6 +29,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { pageFromScroll, scrollLeftForPage } from "@/components/editor/printPreviewScroll";
 import BeadButton from "@/components/ui/BeadButton.vue";
 import PixelIcon from "@/components/ui/PixelIcon.vue";
+import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
 import { useOverlayBack } from "@/composables/useOverlayBack";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
@@ -62,6 +63,13 @@ const emit = defineEmits<{ close: [] }>();
  * `emit("close")` 由宿主（`SheetViewer` 的 `@close="printing = false"`）收掉，两者共存。
  */
 useOverlayBack(() => emit("close"));
+
+/**
+ * 页面滚动锁（R52）：面板自己也是一层覆盖层，它与查看层**嵌套**（打印开在施工图之上），
+ * 所以两层的锁必须计数（见 `useBodyScrollLock` 的 JSDoc）——各写各的 `overflow` 时，
+ * 先关的打印会把还开着的查看层的锁一起还原掉。
+ */
+useBodyScrollLock();
 
 /* ------------------------------------------------------------------ 计划 */
 
@@ -489,12 +497,15 @@ onUnmounted(() => {
     **C7 起只剩打印这一种形态**：单张施工图走「查看施工图」（`SheetViewer`），不再有
     `export-summary-sheet` 与 sheet 模式的清单。
 
-    **`z-40` 是规格 §4.3 点名的值**（不是随手挑的）：查看层根 `section` 建了一个 `z-30` 的层叠
-    上下文，面板在它内部必须**靠自己的 z 序**高于其余各块。**不许退回 `z-30`**：那样「面板压住查看
-    层」就只剩「它是最后一个子元素」这一条隐式依赖，再多一个同层宿主（或多一个后置的覆盖块）就会
-    静默藏到它后面。
+    **`z-60` 是 T1 裁定后的值**（不再是 `z-40`）：面板与查看层现在都 `Teleport to="body"`，
+    层级比较发生在 body 的子节点之间 ⇒ 查看层 `z-50`、面板 `z-60`。「面板压住查看层」不再依赖
+    「它是查看层根节点的最后一个子元素」这条隐式依赖（再多一个同层宿主就会静默藏到它后面）。
+
+    `overscroll-contain`：面板自己就是滚动容器（`overflow-y-auto`），滚到底时不许把滚动链
+    传给 body（实机反馈 4：滑动外部区域能感到底层页面跟着动）。
   -->
-  <section data-testid="export-panel" class="fixed inset-0 z-40 flex flex-col overflow-y-auto bg-bead-sand p-4">
+  <Teleport to="body">
+  <section data-testid="export-panel" class="fixed inset-0 z-60 flex flex-col overscroll-contain overflow-y-auto bg-bead-sand p-4">
     <!-- 标题行 = 返回箭头 + 标题。**`export-close` 这个 id 沿用**：按钮的形态从「关闭」变成返回箭头。 -->
     <header class="mx-auto flex w-full max-w-3xl items-center gap-3">
       <BeadButton
@@ -579,4 +590,5 @@ onUnmounted(() => {
       <span v-if="saveStateText !== ''" data-testid="print-save-state" class="text-[12px] text-bead-ink">{{ saveStateText }}</span>
     </div>
   </section>
+  </Teleport>
 </template>

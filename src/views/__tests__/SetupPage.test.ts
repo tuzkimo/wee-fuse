@@ -1602,7 +1602,9 @@ describe("结果阶段", () => {
     // 流水线在第一步就抛，`result-pane` 根本不出现。本文件其余跑到结果阶段的用例都先调它。
     stubPlatform();
     seedDraft();
-    const wrapper = mount(SetupPage);
+    // `stubs: { teleport: true }`（T1）：查看层现在 `Teleport to="body"`，而 VTU 的 `wrapper.find`
+    // 看不到传送出去的节点；本用例钉的是「本页的就地打开与接线」，真传送由 `SheetViewer.test.ts` 钉。
+    const wrapper = mount(SetupPage, { global: { stubs: { teleport: true } } });
     await flushPromises();
     await wrapper.get("[data-testid='generate']").trigger("click");
     await flushPromises();

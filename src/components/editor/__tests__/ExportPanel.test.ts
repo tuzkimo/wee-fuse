@@ -1,6 +1,7 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeTopOverlay } from "@/composables/useOverlayBack";
+import { unlockBodyScroll } from "@/composables/useBodyScrollLock";
 import type { Palette } from "@/core/palette/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
@@ -166,7 +167,30 @@ const BASE_PROPS = {
   revision: 0,
 };
 
+/**
+ * 挂载面板。
+ *
+ * **`stubs: { teleport: true }` 是必需的**（T1 起面板 `Teleport to="body"`）：VTU 的 `wrapper.find`
+ * 只在自己那棵树里找，传送到 body 的节点它看不见——本文件钉的是面板**内部**行为，不 stub 就全红。
+ * 「真的被传送到 body 顶层且压在查看层之上」由 `SheetViewer.test.ts` 里那条不 stub 的用例钉。
+ */
 function mountPanel(overrides: Record<string, unknown> = {}) {
+  return mount(ExportPanel, {
+    props: {
+      ...BASE_PROPS,
+      pattern: makePattern(6, 6, CELLS_6X6),
+      ...overrides,
+    },
+    global: { stubs: { teleport: true } },
+  });
+}
+
+/**
+ * **不 stub `Teleport`** 的挂载：给「必顷看真实节点」的用例用（目前只有测滚条那条）——
+ * 桩会在每次重渲染时重建被传送的节点，凡是要「写进去再读回来」的断言都会被它架空。
+ * 这类用例得自己从 `document.body` 查（`wrapper.find` 看不到传送出去的节点）。
+ */
+function mountPanelReal(overrides: Record<string, unknown> = {}) {
   return mount(ExportPanel, {
     props: {
       ...BASE_PROPS,
@@ -338,6 +362,7 @@ describe("打印页摘要与选项（C7 起本面板只剩打印这一种形态�
     // 结果页只有 `pattern` 这一条失效通道，所以 `revision` 必须是可选 prop。
     const wrapper = mount(ExportPanel, {
       props: { pattern: makePattern(6, 6, CELLS_6X6), palette, usages, projectName: "测试工程" },
+      global: { stubs: { teleport: true } },
     });
     await flushPromises();
     expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(1);
@@ -406,31 +431,40 @@ describe("C8：多页预览与一键保存", () => {
     // 判的是「点 ▶ 之后 `scrollLeft` 有没有被写到 `scrollLeftForPage(1, 800) = 800`」这条接线。
     // 宽度 ↔ 页号那条算式本身由 `printPreviewScroll.test.ts` 的纯函数判据钉着；
     // **真机 / 浏览器上的实际滑动（snap 对齐、惯性）仍属人工清单**。
-    const wrapper = mountPanel(printOverrides());
+    const wrapper = mountPanelReal(printOverrides());
     await flushPromises();
-    const strip = wrapper.get("[data-testid='print-preview-strip']").element as HTMLElement;
-    Object.defineProperty(strip, "clientWidth", { value: 800, configurable: true });
+    // **本用例不能用 teleport 的桩**（所以走 `mountPanelReal`）：桩会在每次重渲染时**重建**被传送
+    // 的节点，而这里要看的正是「组件把 `scrollLeft` 写到了它当时持有的那根条上」——「当前那一根」
+    // 在真传送下是稳定的（`probe4` 实测：真传　在重渲染后仍是同一个 DOM 节点）。
+    // happy-dom 的 `clientWidth` 恒为 0（一屏一格的真实几何量不出来），所以这里**显式**给条一个屏宽：
+    // 判的是「点 ▶ 之后 `scrollLeft` 有没有被写到 `scrollLeftForPage(1, 800) = 800`」这条接线。
+    // 宽度 ↔ 页号那条算式本身由 `printPreviewScroll.test.ts` 的纯函数判据钉着；
+    // **真机 / 浏览器上的实际滑动（snap 对齐、惯性）仍属人工清单**。
+    const body = (): DOMWrapper<Element> => new DOMWrapper(document.body);
+    const strip = (): HTMLElement =>
+      body().get("[data-testid='print-preview-strip']").element as HTMLElement;
+    Object.defineProperty(strip(), "clientWidth", { value: 800, configurable: true });
 
-    await wrapper.get("[data-testid='print-page-next']").trigger("click");
+    await body().get("[data-testid='print-page-next']").trigger("click");
     await flushPromises();
-    expect(strip.scrollLeft).toBe(800);
+    expect(strip().scrollLeft).toBe(800);
 
     // 再翻一页 ⇒ 1600（第 2 页 = `index × 屏宽` = 2 × 800，不是「在上一次的基础上加一次」）
-    await wrapper.get("[data-testid='print-page-next']").trigger("click");
+    await body().get("[data-testid='print-page-next']").trigger("click");
     await flushPromises();
-    expect(strip.scrollLeft).toBe(1600);
+    expect(strip().scrollLeft).toBe(1600);
 
     // 回到上一页 ⇒ 滚动条跟着退回去
-    await wrapper.get("[data-testid='print-page-prev']").trigger("click");
+    await body().get("[data-testid='print-page-prev']").trigger("click");
     await flushPromises();
-    expect(strip.scrollLeft).toBe(800);
+    expect(strip().scrollLeft).toBe(800);
 
     // 滑到某一格（`@scroll` 那条路）不会把滚动条改写成别处：`goToPage` 读到同一个页号就早退
-    strip.scrollLeft = 3200;
-    await wrapper.get("[data-testid='print-preview-strip']").trigger("scroll");
+    strip().scrollLeft = 3200;
+    await body().get("[data-testid='print-preview-strip']").trigger("scroll");
     await flushPromises();
-    expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 5 / 16 页");
-    expect(strip.scrollLeft).toBe(3200);
+    expect(body().get("[data-testid='print-page-indicator']").text()).toContain("第 5 / 16 页");
+    expect(strip().scrollLeft).toBe(3200);
     wrapper.unmount();
   });
 
@@ -627,7 +661,9 @@ describe("C8：多页预览与一键保存", () => {
     release();
     await flushPromises();
     // 一轮跑完就是 16 次，不是 32 次
-    while ((button.element as HTMLButtonElement).disabled) {
+    // **循环判据现查按钮**（T1）：teleport 的桩在重渲染时会重建被传送的节点，缓存的 `button.element`
+    // 会变成游离节点、`disabled` 永远停在 false ⇒ 循环会立刻退出而少放几次 `release`（假绿）。
+    while ((wrapper.get("[data-testid='print-save-all']").element as HTMLButtonElement).disabled) {
       release();
       await flushPromises();
     }
@@ -1195,5 +1231,45 @@ describe("任务 18：打印面板只换皮（§7.7）", () => {
       expect(classes, id).toContain("min-h-14");
     }
     wrapper.unmount();
+  });
+});
+
+/**
+ * T1：面板挂到 **body 顶层** + 打开时锁页面滚动。
+ *
+ * **本组刻意不 stub `Teleport`**（用 `mountPanelReal`）：它钉的正是「真的被传送出去了」。
+ * 顶部那句 `unlockBodyScroll` 排空是因为锁是**模块级计数**，而本文件早先有少数用例挂了不卸载
+ * （历史如此，不在本次改动范围）⇒ 不排空的话基线会已经是 `hidden`，「卸载后还原」就假绿了。
+ */
+describe("ExportPanel 的覆盖层层级与滚动锁（T1）", () => {
+  beforeEach(() => {
+    while (true) {
+      try {
+        unlockBodyScroll();
+      } catch {
+        break;
+      }
+    }
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("面板是 body 的直接子节点（z-60），打开时锁住 body 滚动，卸载后节点收走、滚动还原", async () => {
+    expect(document.body.querySelector("[data-testid='export-panel']")).toBeNull();
+
+    const wrapper = mountPanelReal(printOverrides());
+    await flushPromises();
+    const node = document.body.querySelector("[data-testid='export-panel']");
+
+    // ① 传送到 body：面板必须是 body 的**直接子节点**（查看层也是），两者才能比 z 序
+    expect(node).not.toBeNull();
+    expect(node?.parentElement).toBe(document.body);
+    // ② `z-60` 高于查看层 `z-50`；`overscroll-contain` 挡住滚动链（面板自己是滚动容器）
+    expect(node?.classList.contains("z-60"), "打印面板应为 z-60").toBe(true);
+    expect(node?.classList.contains("overscroll-contain")).toBe(true);
+    // ③ 开着时页面锁住；卸载即解锁
+    expect(document.body.style.overflow).toBe("hidden");
+    wrapper.unmount();
+    expect(document.body.querySelector("[data-testid='export-panel']")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
   });
 });

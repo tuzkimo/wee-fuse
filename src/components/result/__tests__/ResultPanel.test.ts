@@ -44,9 +44,16 @@ beforeEach(() => {
   }));
 });
 
+/**
+ * 挂载成品页。
+ *
+ * **`stubs: { teleport: true }`**（T1）：查看层从 T1 起 `Teleport to="body"`，而 VTU 的
+ * `wrapper.find` 看不到传送出去的节点（本文件只断言「点开就挂上查看层」，与挂在哪一层无关）。
+ */
 function mountPanel(overrides: Record<string, unknown> = {}) {
   return mount(ResultPanel, {
     props: { pattern, palette, isNew: true, canRerun: true, ...overrides },
+    global: { stubs: { teleport: true } },
   });
 }
 
