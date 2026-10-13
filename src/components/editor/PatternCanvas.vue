@@ -474,7 +474,7 @@ function rgbaOf(index: number, alpha: number): string {
  * 空格斜线底纹（规格 §5.4 的更正注记）：每个**可见空格**一条左上 → 右下的细线。
  *
  * 来历（2026-10-13 真机反馈）：「那层浅纸底因为是纯色的，容易混淆」——浅纸底与奶油白系的豆粒
- * 都是一块平色，分不出来。改法是照拄施工图对空格的处理（`core/render/sheet.ts` 的
+ * 都是一块平色，分不出来。改法是照抄施工图对空格的处理（`core/render/sheet.ts` 的
  * `EMPTY_STROKE` 与其方向），于是编辑器看到的空格就是纸上印出来的空格。
  *
  * 先收集坐标再共用一次 `beginPath` / `stroke`（与 `sheet.ts` 的 `paintCells` 同构）：
