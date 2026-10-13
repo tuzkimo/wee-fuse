@@ -404,6 +404,12 @@ async function retrySave(): Promise<void> {
     }
     lastSaveFailed.value = false;
     draft.setError("");
+    // 手机（<768px）与 `generate()` 成功支同口径：补存成功也跳独立结果页。否则 `lastSaveFailed`
+    // 置假 ⇒ `paneShowsResult` 翻假 ⇒ 结果卡片消失，而这里又不跳，用户留在本页、主按钮还写着
+    // 「完成 ✓」（T2 审查发现 1）。
+    if (!isWide.value && meta !== undefined) {
+      await router.push({ name: "edit-result", params: { id: meta.id } });
+    }
   }
 }
 

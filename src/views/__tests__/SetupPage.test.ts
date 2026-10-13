@@ -562,6 +562,17 @@ describe("手机竖屏排法（§7.3）", () => {
 
     // chip 不参与压缩（否则它会被压成看不见的一条），它是吸顶盒里除结果卡片之外的第二项。
     expect(wrapper.get("[data-testid='size-chip']").classes()).toContain("shrink-0");
+
+    // 失败那一支结果卡片是**可用**的：`result-rerun` 在，点了把阶段切回 `edit`、中栏换回
+    // 裁剪预览（旧「手机结果阶段四颗按钮与平板完全一致」的成功支已被 T2 的跳转取代，
+    // 这几条断言在失败支上复活）。
+    expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='back-to-params']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(true);
+    await wrapper.get("[data-testid='result-rerun']").trigger("click");
+    expect(useDraft().stage).toBe("edit");
+    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
   });
 
   /**
@@ -612,6 +623,47 @@ describe("手机竖屏排法（§7.3）", () => {
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("保存失败");
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(true);
+  });
+
+  /**
+   * T2 审查发现 1：手机补存成功（`retry-save`）必须与 `generate()` 成功支同口径——跳独立结果页。
+   * 否则 `retrySave()` 把 `lastSaveFailed` 置假 ⇒ `paneShowsResult` 翻假 ⇒ 结果卡片消失，而
+   * `retrySave()` 又不 `push`，用户留在本页、主按钮还写着「完成 ✓」。平板宽（默认 1024）下
+   * 三条重试用例都测不到这一支。
+   */
+  it("手机保存失败后重试成功：同样跳独立结果页（edit-result + id）", async () => {
+    stubPlatform();
+    const real = await createMemoryProjectStore();
+    let failNext = true;
+    setProjectStore({
+      ...real,
+      async put(record): Promise<void> {
+        if (failNext) {
+          failNext = false;
+          throw new Error("磁盘已满");
+        }
+        await real.put(record);
+      },
+    });
+    seedDraft();
+    window.innerWidth = 500;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='setup-action-primary']").trigger("click");
+    await flushPromises();
+    // 前提：第一支保存失败，结果留在本页、有重试入口，没有跳转。
+    expect(await real.list()).toHaveLength(0);
+    expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(true);
+    expect(push).not.toHaveBeenCalled();
+
+    await wrapper.get("[data-testid='retry-save']").trigger("click");
+    await flushPromises();
+
+    // 补存确实进库了，并且跳的是刚落盘的那条 id。
+    const id = (await real.list())[0]!.id;
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id } });
   });
 });
 
@@ -675,6 +727,23 @@ describe("中栏三态与顶栏主按钮（§7.3）", () => {
     expect(chip.classes()).toContain("bg-bead-sand-3");
     expect(chip.classes()).toContain("border-bead-line-2");
     expect(chip.classes()).toContain("text-[24px]");
+  });
+
+  /**
+   * `busy` 期间顶栏主按钮禁用 + 文案「正在拼…」（原 `ParamPanel.test.ts` 的 `busy 期间禁用`
+   * 随那颗按钮一起删除；那是当时唯一断言主按钮 `disabled` 的用例，本任务补回页面级这一条）。
+   */
+  it("生成中（busy）顶栏主按钮禁用且文案是「正在拼…」", async () => {
+    stubPlatform();
+    const draft = seedDraft();
+    draft.setBusy(true);
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+
+    const primary = wrapper.get("[data-testid='setup-primary']");
+    expect((primary.element as HTMLButtonElement).disabled).toBe(true);
+    expect(primary.text()).toContain("正在拼…");
   });
 });
 
