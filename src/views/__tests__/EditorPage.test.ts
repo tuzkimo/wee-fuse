@@ -310,6 +310,9 @@ async function dragPaint(
   from: readonly [number, number],
   to: readonly [number, number],
 ): Promise<void> {
+  // 默认工具从本批起是「拖动」（规格 §5.3），而本夹具的名字就是「拖出一笔」——先显式握住画笔。
+  // 默认值本身由 `stores/__tests__/editor.test.ts` 钉，这里只管「拿画笔时能涂」。
+  await wrapper.get("[data-testid='tool-brush']").trigger("click");
   await pointerAtCell(wrapper, "pointerdown", from[0], from[1]);
   await pointerAtCell(wrapper, "pointermove", to[0], to[1]);
   await pointerAtCell(wrapper, "pointerup", to[0], to[1]);
@@ -1249,7 +1252,7 @@ describe("页面接线（终）：类型兼容的 props 错接（画布 / 工具
 
   it("工具栏收到 `tool`：跟着 store 走（绑常量必红）", async () => {
     const wrapper = await mountPage();
-    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("brush"); // 播种值
+    expect(wrapper.findComponent(PatternToolbar).props("tool")).toBe("pan"); // 默认工具是拖动（规格 §5.3）
 
     useEditor().setTool("fill");
     await nextTick();

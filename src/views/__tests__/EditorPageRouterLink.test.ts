@@ -173,7 +173,9 @@ describe("返回箭头（C8 第 3 项）＋真路由器：点击真的经路由�
     const wrapper = await mountAtEditor();
 
     // 真涂一格（走 pointer 事件 → 画布 emit → 页面接线 → store），让 `dirty` 为真。
+    // 默认工具是拖动（规格 §5.3），先显式握住画笔再落笔。
     useEditor().setCurrentColor(2);
+    await wrapper.get("[data-testid='tool-brush']").trigger("click");
     await pointerAtCell(wrapper, "pointerdown", 1, 0);
     await pointerAtCell(wrapper, "pointerup", 1, 0);
     expect(Array.from(useEditor().pattern?.cells ?? [])).toEqual([0, 2]);

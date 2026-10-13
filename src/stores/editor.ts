@@ -50,7 +50,13 @@ import { useProjectSession } from "@/stores/project";
  */
 export type EditorTool = "brush" | "fill" | "pan";
 
-const DEFAULT_TOOL: EditorTool = "brush";
+/**
+ * 新会话的默认工具。**是拖动，不是画笔**（2026-10-13 规格 §5.3，人类伙伴的原话：双指拖动很难用）。
+ *
+ * 代价说清楚：进编辑页后**第一下拖动是平移、不会涂色**，要涂色得先点一次「画笔」。真机上觉得
+ * 别扭时，改这一个字符串就能回去，不需要动其它任何东西。
+ */
+const DEFAULT_TOOL: EditorTool = "pan";
 
 // ---------------------------------------------------------------------------
 // 入口校验（规格 §12）
