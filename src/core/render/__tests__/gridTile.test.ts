@@ -4,19 +4,19 @@ import { EMPTY, type Pattern } from "../../pattern/types";
 import {
   SHEET_LINE_WIDTHS,
   SHEET_MAJOR_GUIDE_STROKE,
-  SHEET_MIN_LABEL_FONT_PX,
   SHEET_RULER_BG,
   planGridTile,
-  planSheet,
   type GridTilePlan,
 } from "../layout";
-import { drawGridTile } from "../sheet";
+import { drawGridTile, EMPTY_STROKE, TILE_PAPER } from "../sheet";
 import { createMockTarget } from "./helpers";
 
 /**
- * 网格块预览（2026-10-13，规格 §5.3）：**只画施工图里网格那一组层**，按预览盒子的短边定格像素、
- * 网格在盒子里居中。渲染器的像素观感在真机清单（规格 §8）里，这里断言的是**计划给的几何**与
- * **渲染器调了哪些层**——happy-dom 的 canvas 没有像素语义，画布用例里像素断言一律恒真。
+ * 网格块预览（规格 §5.3）：**只画「拼出来长什么样」**——纸底 + 逐格真色 + 空格斜线 + 整图外框。
+ * 不画格内色号、每格细线、板边界、每 5 格虚线（那是施工信息，不是成品信息；2026-10-13 真机反馈）。
+ *
+ * 渲染器的像素观感在真机清单（规格 §8）里，这里断言的是**计划给的几何**与**渲染器画了哪几层**——
+ * happy-dom 的 canvas 没有像素语义，画布用例里像素断言一律恒真。
  */
 
 const PALETTE: Palette = {
@@ -30,17 +30,15 @@ const PALETTE: Palette = {
   ],
 };
 
-function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
-  const cells = new Uint16Array(width * height);
-  if (values !== undefined) cells.set(values);
-  return { width, height, paletteId: "test-palette", cells };
+function makePattern(width: number, height: number): Pattern {
+  return { width, height, paletteId: "test-palette", cells: new Uint16Array(width * height) };
 }
 
 describe("planGridTile", () => {
   it("格像素取盒子的短边，网格在盒子里居中，画布就是盒子", () => {
     const tile = planGridTile(makePattern(10, 10), PALETTE, { width: 100, height: 50 });
     expect(tile.cellPx).toBe(5); // min(100/10, 50/10) = 5，取短边
-    // 画布是**盒子**，不是 `豆数 × 格像素`：绘制仍在画布坐标系里做，所以五个网格层函数一行都不用改。
+    // 画布是**盒子**，不是 `豆数 × 格像素`：绘制仍在画布坐标系里做，网格层函数一行都不用改。
     expect(tile.canvasWidth).toBe(100);
     expect(tile.canvasHeight).toBe(50);
     expect(tile.grid).toEqual({ x: 25, y: 0, width: 50, height: 50 });
@@ -52,27 +50,6 @@ describe("planGridTile", () => {
     expect(tile.grid).toEqual({ x: 10, y: 0, width: 40, height: 40 });
   });
 
-  it("色号只剩「画 / 不画」两档：下限之下 labelFontPx = 0 而**不抛错**", () => {
-    const at = (cell: number) => planGridTile(makePattern(1, 1), PALETTE, { width: cell, height: cell });
-    // 判据是**字号**（规格 §5.3 的原话），字号口径就是施工图的 `labelFontAt`（round(cellPx × 0.36)）：
-    // 28 × 0.36 = 10.08 ⇒ 10（≥ 下限）；27 × 0.36 = 9.72 ⇒ round 也是 10，**同样画**。
-    // 真正的分界在 26（round(9.36) = 9 < 10）。计划原文把分界写成 27/28，那是漏算了 round——
-    // 这里按同一个 `labelFontAt` 断，不另立一套「28 才画」的口径。
-    expect(at(28).labelFontPx).toBeGreaterThanOrEqual(SHEET_MIN_LABEL_FONT_PX);
-    expect(at(27).labelFontPx).toBe(SHEET_MIN_LABEL_FONT_PX);
-    expect(at(26).labelFontPx).toBe(0);
-    // **对照**：同一份图纸在施工图计划里是响亮失败（放不下就抛），预览这里只降级——
-    // 这条对照就是「降级是刻意决定、不是漏了守卫」的判别力。
-    expect(() => planSheet(makePattern(116, 116), PALETTE, [], "测试工程", { maxEdge: 100 })).toThrow();
-  });
-
-  it("网格线的两档：6 画、5 不画（线距小于线宽时网格会糊成一层灰）", () => {
-    const at = (cell: number) => planGridTile(makePattern(1, 1), PALETTE, { width: cell, height: cell });
-    expect(at(6).showGridLines).toBe(true);
-    expect(at(5).showGridLines).toBe(false);
-    expect(at(5).labelFontPx).toBe(0);
-  });
-
   it("盒子有一边为 0 / 非有限时响亮失败（不是除零算出 Infinity）", () => {
     expect(() => planGridTile(makePattern(4, 4), PALETTE, { width: 0, height: 50 })).toThrow(/盒子/);
     expect(() => planGridTile(makePattern(4, 4), PALETTE, { width: 100, height: Number.NaN })).toThrow(
@@ -82,57 +59,64 @@ describe("planGridTile", () => {
 });
 
 describe("drawGridTile", () => {
-  it("画网格那一组层，且不画标题 / 刻度带 / 用料条", () => {
-    // 10×10 ⇒ 每 5 格有虚线；留一个空格（空格只进斜线路径，不填充）。
+  /** 10×10、三个空格——空格才是「纸底 + 斜线」那条链的观测点。 */
+  function mixedPattern(): Pattern {
     const pattern = makePattern(10, 10);
     pattern.cells[0] = EMPTY;
     pattern.cells[5] = 1;
-    pattern.cells[99] = 1;
-    const tile = planGridTile(pattern, PALETTE, { width: 400, height: 400 });
-    expect(tile.cellPx).toBe(40); // 六层全画的尺寸前提
-    const { target, calls } = createMockTarget();
-    drawGridTile(target, pattern, PALETTE, tile);
+    pattern.cells[99] = EMPTY;
+    return pattern;
+  }
 
-    // 逐格真色：99 个实心格各一次 `fillRect`。
-    expect(calls.fills).toHaveLength(99);
-    // 格内色号：每颗实心格一条，且**只有色号**（没有标题 / 刻度数字）。
-    expect(calls.texts).toHaveLength(99);
-    for (const text of calls.texts) expect(text.text).toMatch(/^A[12]$/);
-    expect(calls.texts.map((text) => text.text).join("")).not.toContain("测试工程");
-    // 没有用料条：色块外框走 `strokeRect`，一次都没有。
-    expect(calls.strokeRects).toEqual([]);
-    // 没有刻度带：带底色一次都不出现。
-    expect(calls.fills.some((fill) => fill.fillStyle === SHEET_RULER_BG)).toBe(false);
-    // 没有整张画布填白（施工图的第一步）：留白留给宿主组件的深色板底。
-    expect(
-      calls.fills.some(
-        (fill) => fill.x === 0 && fill.y === 0 && fill.w === tile.canvasWidth && fill.h === tile.canvasHeight,
-      ),
-    ).toBe(false);
+  /**
+   * 画布上真正出现的层：**纸底（第一条 `fillRect` 就是网格矩形）→ 逐格真色 → 空格斜线 → 外框**。
+   * 盒子的尺寸取两个量级，因为「不画那两层」这条不该随格像素变化（旧实现是按格像素决定画不画的）。
+   */
+  for (const [label, box] of [
+    ["大格子（40px/格）", 400],
+    ["小格子（5px/格）", 50],
+  ] as const) {
+    it(`${label}：画纸底 + 真色 + 空格斜线 + 外框，不画网格线、不画色号`, () => {
+      const pattern = mixedPattern();
+      const tile = planGridTile(pattern, PALETTE, { width: box, height: box });
+      const { target, calls } = createMockTarget();
+      drawGridTile(target, pattern, PALETTE, tile);
 
-    // 细线与板边界各一组；每 5 格橙色虚线四条（10 格的两轴各 index 5 与 10）。
-    const widths = calls.paths.map((path) => path.lineWidth);
-    expect(widths).toContain(SHEET_LINE_WIDTHS.thin);
-    expect(widths).toContain(SHEET_LINE_WIDTHS.board);
-    expect(calls.paths.filter((path) => path.strokeStyle === SHEET_MAJOR_GUIDE_STROKE)).toHaveLength(4);
-    // 外框是最后一组：闭合的网格矩形（moveTo + 四条 lineTo）。
-    const frame = calls.paths[calls.paths.length - 1];
-    expect(frame?.ops.filter((op) => op.op === "lineTo")).toHaveLength(4);
-    expect(calls.strayOps).toEqual([]);
-  });
+      // 纸底：第一条填充就是网格矩形，色取 `TILE_PAPER`——**没有它空格就是一块黑格子**
+      // （空格只描一条 `EMPTY_STROKE` 斜线，底下透出的就是宿主的深色板底）。
+      expect(calls.fills[0]).toMatchObject({
+        x: tile.grid.x,
+        y: tile.grid.y,
+        w: tile.grid.width,
+        h: tile.grid.height,
+        fillStyle: TILE_PAPER,
+      });
+      // 纸底 + 每个实心格一次填充（10×10 减两个空格）。
+      expect(calls.fills).toHaveLength(99);
 
-  it("盒子小到阈值以下：不画线、不画色号，但真色与外框照画（降级不是不画图）", () => {
-    const pattern = makePattern(10, 10);
-    const tile = planGridTile(pattern, PALETTE, { width: 50, height: 50 }); // 5px/格
-    expect(tile.showGridLines).toBe(false);
-    expect(tile.labelFontPx).toBe(0);
-    const { target, calls } = createMockTarget();
-    drawGridTile(target, pattern, PALETTE, tile);
+      // 空格斜线：三个空格收集在**一条**路径里（`EMPTY_STROKE`），一次 `stroke`。
+      const hatch = calls.paths[0];
+      expect(hatch?.strokeStyle).toBe(EMPTY_STROKE);
+      expect(hatch?.ops.filter((op) => op.op === "lineTo")).toHaveLength(2);
 
-    expect(calls.fills).toHaveLength(100); // 逐格真色照画
-    expect(calls.texts).toEqual([]); // 色号不画
-    expect(calls.paths).toHaveLength(1); // 只剩外框：把网格边界从深色底上标出来
-  });
+      // **只有两条路径**：空格斜线 + 整图外框。没有每格细线 / 板边界 / 每 5 格虚线。
+      expect(calls.paths).toHaveLength(2);
+      expect(calls.paths.some((path) => path.strokeStyle === SHEET_MAJOR_GUIDE_STROKE)).toBe(false);
+      // 板边界（3px）一条都没有。**不拿 `thin`（1px）当判据**：空格斜线的线宽也是 1，
+      // 两者相撞——「细线没画」由上面那条路径条数断言管。
+      expect(calls.paths.map((path) => path.lineWidth)).not.toContain(SHEET_LINE_WIDTHS.board);
+      // 外框是最后一组：闭合的网格矩形（moveTo + 四条 lineTo）。
+      const frame = calls.paths[calls.paths.length - 1];
+      expect(frame?.ops.filter((op) => op.op === "lineTo")).toHaveLength(4);
+
+      // 没有色号：`fillText` 一次都没有（施工图的标题 / 刻度数字也一并不存在）。
+      expect(calls.texts).toEqual([]);
+      // 没有刻度带底色，也没有用料条（色块外框走 `strokeRect`）。
+      expect(calls.fills.some((fill) => fill.fillStyle === SHEET_RULER_BG)).toBe(false);
+      expect(calls.strokeRects).toEqual([]);
+      expect(calls.strayOps).toEqual([]);
+    });
+  }
 
   it("入口守卫：kind 不对 / 色卡不一致 / 图纸数据与尺寸不同源，都在任何写操作之前抛", () => {
     const pattern = makePattern(4, 4);
