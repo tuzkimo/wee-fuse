@@ -433,8 +433,14 @@ function resetCrop(): void {
     <!--
       顶栏（§6.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
       主按钮两态（§7.3）：未生成「开始拼 ▶」（走现有生成）、已生成「完成 ✓」（走现有回家那条路）。
+
+      `sticky top-0 z-20`（T4 实机反馈 2）：先前它是普通流内元素，页面一滚就出屏——「编辑完想保存
+      还得滑回顶部」。层叠必须高于手机吸顶块（`preview-pane`，`relative z-10`）：两者都贴视口顶，
+      顶栏在下时中栏块会盖掉返回箭头与主按钮。
     -->
-    <header class="flex h-16 items-center gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8">
+    <header
+      class="sticky top-0 z-20 flex h-16 items-center gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
+    >
       <!--
         返回箭头（图标按钮，与选图页同一口径）：触控目标 56×56（§6.5）、`aria-label` 必给
         （箭头没有文字，读屏用户否则听到一个没有名字的按钮）。分叉口径见 `goBack()`。

@@ -523,6 +523,26 @@ describe("手机竖屏排法（§7.3）", () => {
   });
 
   /**
+   * T4（实机反馈 2）：「顶栏没有固定在顶部，编辑完想保存还得滑回顶部」。
+   *
+   * 顶栏是普通流内元素时，页面一滚就出屏（主按钮也跟着走）。修法是 `sticky top-0 z-20`。
+   * **`z-20` 与吸顶块的 `z-10` 是一对**：两者都贴视口顶，谁在上一层决定谁被盖住——
+   * 顶栏在下时，中栏块会盖掉顶栏的返回箭头与主按钮（返回入口看不见 = 用户出不去）。
+   * 判别力：只加 `sticky` 忘了 `z-20`，`preview-pane`（后面出现的兄弟、z-10）会画在它上面。
+   */
+  it("顶栏吸顶并压在吸顶块之上（T4：主按钮与返回箭头不随页面滚走）", async () => {
+    window.innerWidth = 500;
+    const wrapper = await mountSetupBeforeGenerate();
+
+    const header = wrapper.get("header");
+    expect(header.classes()).toContain("sticky");
+    expect(header.classes()).toContain("top-0");
+    // 必须**高于**中栏块的 `z-10`（不是并列，也不是更低）。
+    expect(header.classes()).toContain("z-20");
+    expect(wrapper.get("[data-testid='preview-pane']").classes()).toContain("z-10");
+  });
+
+  /**
    * 生成态的手机排法（R41 修复 2 / R42 / T2）：结果卡片在手机上只于**保存失败**那一支渲染
    * （成功那一支已 `push` 到独立结果页）。此时吸顶盒仍是定高的 flex 列（R42 起 48vh）⇒ 结果卡片
    * `max-md:flex-1` 吃掉 chip 之外的高度 ⇒ `ResultPanel` 根 `h-full` 在这个定高里成立 ⇒ 预览盒

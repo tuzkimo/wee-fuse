@@ -522,7 +522,7 @@ function rerun(): void {
 </script>
 
 <template>
-  <main class="min-h-screen bg-bead-sand">
+  <main class="min-h-screen bg-bead-sand md:flex md:h-screen md:flex-col md:overflow-hidden">
     <p
       v-if="session.error"
       data-testid="editor-error"
@@ -537,9 +537,12 @@ function rerun(): void {
         手机**不显示作品名**（他不认字，作品名是给家长的），平板显示并截断（`.project-name`）：
         实现是**同一个 h1** 加 `hidden md:block`，不是渲染两份（R3 不允许同名节点复制）。
         保存按钮（`go` 变体，主操作）与它右上角的未保存圆点都在这里（C8 第 3 项起从工具条搬来）。
+
+        `sticky top-0 z-20`（T4 实机反馈 2）：平板由下面的定高 shell 保证不滚，手机上页面仍然滚，
+        所以顶栏得自己吸顶——否则编辑完想保存得先滑回顶部。层叠必须高于手机吸顶块（那里是 z-10）。
       -->
       <header
-        class="flex h-16 items-center justify-between gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
+        class="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"
       >
         <!--
           返回箭头（C8 第 3 项替换掉原「回图纸库」整块 `RouterLink`）。
@@ -613,8 +616,21 @@ function rerun(): void {
         「会重做整张图纸」这层意思由「重做」这个名字与它旁边那颗 `undo` 图标承担。
       -->
 
-      <div v-if="editor.pattern" class="mx-4 mt-6 flex flex-col gap-4 md:mx-8 md:flex-row">
-        <div class="h-[60vh] min-h-64 flex-1 rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 shadow-pop-sm">
+      <!--
+        主体区（§7.4 T4 更正注记）：**一套 DOM、两种排法**。手机上它是 `flex flex-col` 单列
+        （画布 → 色豆条 → 工具条，页面可滚）；`md` 起变成 2×2 网格，格子位置由 `md:col-start-*`
+        / `md:row-start-*` 决定——画布在左上、工具条在左下（紧贴画布底边）、色板列占右侧两行
+        自己滚。工具条因此必须在**这个容器内部**：实机反馈 3 的根因就是它原来是这一行的兄弟，
+        于是落到两列里较高那列（色板）的下面。
+      -->
+      <div
+        v-if="editor.pattern"
+        class="mx-4 mt-6 flex flex-col gap-4 md:mx-8 md:grid md:min-h-0 md:flex-1 md:grid-cols-[1fr_250px] md:grid-rows-[1fr_auto]"
+      >
+        <!-- `md:h-auto`：手机上的 60vh 在网格里会溢出定高 shell，高度改由格子（1fr）定。 -->
+        <div
+          class="h-[60vh] min-h-64 flex-1 rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 shadow-pop-sm md:col-start-1 md:row-start-1 md:h-auto md:min-h-0"
+        >
           <PatternCanvas
             :pattern="editor.pattern"
             :palette="palette"
@@ -633,7 +649,7 @@ function rerun(): void {
           />
         </div>
 
-        <div class="space-y-4 md:w-[250px]">
+        <div class="space-y-4 md:col-start-2 md:row-span-2 md:w-[250px] md:min-h-0 md:overflow-y-auto">
           <PalettePanel
             :palette="palette"
             :usages="usages"
@@ -653,39 +669,39 @@ function rerun(): void {
             **C8 第 3 项**：原来的「添加颜色」入口已从面板删除，现在点**当前色槽**开合它。
           -->
         </div>
-      </div>
 
-      <!--
-        工具条（§7.4）：排在画布与色板**之后**，所以它在这一层、不在右栏里。两条理由：
-        ① 顺序：DOM 顺序就是手机上的可见顺序——「画布 → 底部色豆条 → 工具条」，塞在右栏里
-           手机上会变成「画布 → 工具条 → 色豆条」；
-        ② 宽度：平板要十一颗**一条**排完（约 700px），塞进 320px 的右栏里必然折成三行。
-      -->
-      <div v-if="editor.pattern" class="mx-4 mb-6 mt-4 md:mx-8">
         <!--
-          撤销 / 重做状态读 `editor.canUndo` / `editor.canRedo` 这两个 computed，
-          **不许**读 `editor.history.canUndo`：`history` 是 `markRaw` 的类实例，读它的 getter
-          不建立响应式依赖，按钮会永久停在初始状态（控制者裁决 9）。
+          工具条（§7.4）：**主体区的第三个孩子**。DOM 顺序就是手机上的可见顺序——
+          「画布 → 底部色豆条 → 工具条」；平板上靠 `md:col-start-1 md:row-start-2` 放进画布
+          下面的格子（它不再是与这一行并列的兄弟，于是真的贴在画布卡片底边）。
+          外边距归零：缩进与间距由主体区提供（它现在在主体区**内部**，自带外边距会双重内缩）。
         -->
-        <PatternToolbar
-          :can-undo="editor.canUndo"
-          :can-redo="editor.canRedo"
-          :tool="editor.tool"
-          :show-grid="editor.showGrid"
-          :show-labels="editor.showLabels"
-          :can-rerun="session.record?.source != null"
-          :eraser-active="editor.currentColor === EMPTY"
-          @update:tool="editor.setTool($event)"
-          @undo="onCommand('undo')"
-          @redo="onCommand('redo')"
-          @update:show-grid="editor.setShowGrid($event)"
-          @update:show-labels="editor.setShowLabels($event)"
-          @fit="onCommand('fit')"
-          @zoom-in="onCommand('zoom-in')"
-          @zoom-out="onCommand('zoom-out')"
-          @rerun="rerun"
-          @eraser="onEraser"
-        />
+        <div v-if="editor.pattern" class="mb-6 md:col-start-1 md:row-start-2 md:mx-0 md:mt-0 md:mb-0">
+          <!--
+            撤销 / 重做状态读 `editor.canUndo` / `editor.canRedo` 这两个 computed，
+            **不许**读 `editor.history.canUndo`：`history` 是 `markRaw` 的类实例，读它的 getter
+            不建立响应式依赖，按钮会永久停在初始状态（控制者裁决 9）。
+          -->
+          <PatternToolbar
+            :can-undo="editor.canUndo"
+            :can-redo="editor.canRedo"
+            :tool="editor.tool"
+            :show-grid="editor.showGrid"
+            :show-labels="editor.showLabels"
+            :can-rerun="session.record?.source != null"
+            :eraser-active="editor.currentColor === EMPTY"
+            @update:tool="editor.setTool($event)"
+            @undo="onCommand('undo')"
+            @redo="onCommand('redo')"
+            @update:show-grid="editor.setShowGrid($event)"
+            @update:show-labels="editor.setShowLabels($event)"
+            @fit="onCommand('fit')"
+            @zoom-in="onCommand('zoom-in')"
+            @zoom-out="onCommand('zoom-out')"
+            @rerun="rerun"
+            @eraser="onEraser"
+          />
+        </div>
       </div>
     </template>
 

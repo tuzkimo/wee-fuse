@@ -1719,6 +1719,154 @@ describe("调色板右栏宽度与面板同步（§7.4）", () => {
   });
 });
 
+/**
+ * 平板定高 shell（§7.4 的 T4 更正注记）。实机反馈 3：工具条不是贴着画布底部，而是跑到右边
+ * 「用豆列表」下面去了——色板列一长，每次选工具都要先下拉到底。
+ *
+ * 根因就在 DOM：工具条原本是「画布 + 色板列」那一行的**兄弟**，于是它落在两列里**较高那列**
+ * （色板）的下面。修法是一套 DOM + 两套 CSS 放置：DOM 顺序仍是手机那一套（画布 → 色豆条 →
+ * 工具条），平板把那一行变成 2×2 网格，用 `md:col-start-*` / `md:row-start-*` 摆格子。
+ *
+ * 断言都是类名（happy-dom 不解析布局，也只能断类名）；真实像素在 T4 报告的真窗口实测里。
+ * 工具条宿主与主体区都没有 testid，锚点从既有节点往上取（与「画布宿主 token 表面」同手法）。
+ */
+describe("平板定高 shell（§7.4 T4）：顶栏固定、工具条贴画布底、只有色板列滚", () => {
+  /** 画布卡片（画布宿主的直接父节点，由页面自己画）。 */
+  function canvasCardOf(wrapper: ReturnType<typeof mount>): Element {
+    const card = wrapper.get("[data-testid='editor-surface']").element.parentElement;
+    if (card === null) throw new Error("画布卡片不在 DOM 里");
+    return card;
+  }
+
+  /** 主体区 = 画布卡片的父节点（手机单列 / 平板 2×2 网格都由它决定）。 */
+  function bodyOf(wrapper: ReturnType<typeof mount>): Element {
+    const body = canvasCardOf(wrapper).parentElement;
+    if (body === null) throw new Error("主体区不在 DOM 里");
+    return body;
+  }
+
+  /** 色板列 = 面板根 `section` 的父节点（既有用例也是这么取的）。 */
+  function paletteColumnOf(wrapper: ReturnType<typeof mount>): Element {
+    const column = wrapper
+      .get("[data-testid='palette-current']")
+      .element.closest("section")?.parentElement;
+    if (column === null || column === undefined) throw new Error("色板列不在 DOM 里");
+    return column;
+  }
+
+  /** 工具条宿主：工具条根没有 testid，从任意一颗按钮往上数（按钮 → 按钮组 → 组件根 → 宿主）。 */
+  function toolbarHostOf(wrapper: ReturnType<typeof mount>): Element {
+    const button = wrapper.get("[data-testid='tool-brush']").element;
+    const host = button.parentElement?.parentElement?.parentElement;
+    if (host === null || host === undefined) throw new Error("工具条宿主不在 DOM 里");
+    return host;
+  }
+
+  it("平板：main 定高不滚（`md:h-screen md:overflow-hidden`），顶栏吸顶", async () => {
+    const wrapper = await mountPage();
+    const main = wrapper.get("main");
+    // 定高 shell 是「顶栏始终可见、保存不必先滑回顶部」的机制本身：页面不滚 = 顶栏不会出屏。
+    expect(main.classes()).toContain("md:h-screen");
+    expect(main.classes()).toContain("md:overflow-hidden");
+    // 定高 shell 要求 main 是 flex 列：主体区靠 `md:flex-1 md:min-h-0` 吃掉剩余高度。
+    expect(main.classes()).toContain("md:flex");
+    expect(main.classes()).toContain("md:flex-col");
+
+    const header = wrapper.get("header");
+    expect(header.classes()).toContain("sticky");
+    expect(header.classes()).toContain("top-0");
+    // 手机（<768px）页面仍然可滚，那里真的靠 sticky 把顶栏留住：编辑完想保存不必滑回顶部。
+    expect(header.classes()).toContain("z-20");
+  });
+
+  it("平板：主体区是 2×2 网格——画布与工具条在左列，色板列自己滚", async () => {
+    const wrapper = await mountPage();
+    const body = bodyOf(wrapper);
+    expect(body.className).toContain("md:grid");
+    expect(body.className).toContain("md:grid-cols-[1fr_250px]");
+    expect(body.className).toContain("md:grid-rows-[1fr_auto]");
+    // `min-h-0` + `flex-1`：主体区在定高 main 里吃满剩余高度，且不被内容撑破。
+    expect(body.className).toContain("md:min-h-0");
+    expect(body.className).toContain("md:flex-1");
+
+    expect(canvasCardOf(wrapper).className).toContain("md:col-start-1");
+    expect(canvasCardOf(wrapper).className).toContain("md:row-start-1");
+    // 画布在网格行里靠格子定高，`h-[60vh]`（手机值）不许带过来，否则它会溢出定高 shell。
+    expect(canvasCardOf(wrapper).className).toContain("md:h-auto");
+    expect(canvasCardOf(wrapper).className).toContain("md:min-h-0");
+
+    const palette = paletteColumnOf(wrapper);
+    expect(palette.className).toContain("md:col-start-2");
+    expect(palette.className).toContain("md:row-span-2");
+    // 「只有右边的用豆列表需要滚动」：溢出的唯一容器是色板列。
+    expect(palette.className).toContain("md:min-h-0");
+    expect(palette.className).toContain("md:overflow-y-auto");
+
+    const toolbar = toolbarHostOf(wrapper);
+    // 根因判据：工具条必须是主体区（那一行）的**子节点**，不再是与它并列的兄弟。
+    expect(toolbar.parentElement).toBe(body);
+    // 贴在画布卡片底边 = 左列的第二个格子。
+    expect(toolbar.className).toContain("md:col-start-1");
+    expect(toolbar.className).toContain("md:row-start-2");
+    // 缩进与间距由主体区（`mx-4/mt-6 ... md:mx-8` + `gap-4`）提供：工具条再自带一套
+    // 就会双重内缩、与画布卡片左右不齐（它现在在主体区**内部**，外边距不再与主体区对齐）。
+    expect(toolbar.className).toContain("md:mx-0");
+    expect(toolbar.className).toContain("md:mt-0");
+    expect(toolbar.className).toContain("md:mb-0");
+  });
+
+  it("手机：仍是单列且顺序不回归（画布 → 色豆条 → 工具条），页面能滚", async () => {
+    const wrapper = await mountPage();
+    const body = bodyOf(wrapper);
+    // 手机仍是 flex 单列（`md:` 的网格只在 ≥768px 生效），DOM 顺序就是可见顺序。
+    expect(body.className).toContain("flex");
+    expect(body.className).toContain("flex-col");
+    expect(body.children).toHaveLength(3);
+    expect(body.children[0]?.contains(canvasCardOf(wrapper))).toBe(true);
+    expect(body.children[1]?.contains(paletteColumnOf(wrapper))).toBe(true);
+    expect(body.children[2]?.contains(toolbarHostOf(wrapper))).toBe(true);
+
+    // 手机页面仍然可滚：`min-h-screen` 在，`h-screen` / `overflow-hidden` 只以 `md:` 前缀出现。
+    const main = wrapper.get("main");
+    expect(main.classes()).toContain("min-h-screen");
+    expect(main.classes()).not.toContain("h-screen");
+    expect(main.classes()).not.toContain("overflow-hidden");
+    expect(main.classes()).not.toContain("flex");
+  });
+
+  /**
+   * 硬约束（上一轮修复定的）：**一个 `data-testid` 只能有一个 DOM 节点**。
+   * 两套排法若靠「渲染两份、按断点藏一份」实现，同一个 testid 就会出现两次——
+   * 既有 `wrapper.get(...)` 直接抛 multiple elements，而这里的新用例全是同样的取法。
+   */
+  it("一套 DOM：工具栏的十一个 testid 与顶层节点各只有一个", async () => {
+    const wrapper = await mountPage();
+    const ids = [
+      "undo",
+      "redo",
+      "rerun",
+      "tool-brush",
+      "tool-fill",
+      "eraser",
+      "toggle-grid",
+      "toggle-labels",
+      "zoom-in",
+      "zoom-out",
+      "zoom-fit",
+      "editor-surface",
+      "palette-current",
+      "editor-save",
+      "editor-back",
+    ];
+    const duplicated = ids.filter(
+      (id) => wrapper.findAll(`[data-testid='${id}']`).length !== 1,
+    );
+    expect(duplicated).toEqual([]);
+    // 主体区只有三个孩子（网格不会多出「第二套」节点）。
+    expect(bodyOf(wrapper).children).toHaveLength(3);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 长工程名不撑宽页面（B6 任务 2）。标题在顶栏的 `flex` 容器里：`h1` 既没有截断也没有断行
 // 约束，而文件名派生出的名字是无空格长串 ⇒ 页面被横向撑开、手机上要左右滑。
