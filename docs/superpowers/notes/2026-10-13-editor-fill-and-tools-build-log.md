@@ -4,7 +4,7 @@
 - 规格：[2026-10-13-editor-fill-and-tools-design.md](../specs/2026-10-13-editor-fill-and-tools-design.md)
 - 计划：[2026-10-13-editor-fill-and-tools.md](../plans/2026-10-13-editor-fill-and-tools.md)
 - 交付区间：`ae896c3..c9c69d2`（分支 `feat/editor-fill-and-tools`；docs 1 + 任务 9 + 审查修复 1 = 11 个提交；另有本次文档收口提交）
-- 版本号：未动（`0.15.0`，本批单独合并）
+- 版本号：0.15.0 → **0.16.0**（tag `v0.16.0` 触发 release-android；本批是本轮唯一的发行内容）
 
 ## 1. 逐条对照
 
