@@ -1076,5 +1076,7 @@ describe("深色拼豆板底（Review Focus 3）", () => {
       lineWidth: 2,
       strokeStyle: FRAME_ON_DARK,
     });
+    // 顺序也承重：网格线后画就会把贴边那一条边的框盖住（§7.4 的更正注记）。
+    expect(ops.indexOf("strokeRect")).toBeGreaterThan(ops.lastIndexOf("stroke"));
   });
 });

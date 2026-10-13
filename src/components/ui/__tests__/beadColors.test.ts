@@ -24,8 +24,8 @@ describe("深色底画布颜色常量（§9 / Review Focus 3）", () => {
     expect(LABEL_ON_DARK.toLowerCase()).not.toBe("#3d3226");
   });
 
-  it("FRAME_ON_DARK（图纸外框）与 --color-bead-hole 同源", () => {
-    // 外框借的是板孔那一档灰（§6.1 的更正注记）：没有同名 token，同源对象是 bead-hole。
-    expect(css).toContain(`--color-bead-hole: ${FRAME_ON_DARK}`);
+  it("FRAME_ON_DARK（图纸外框）与 --color-bead-line 同源", () => {
+    // 外框借的是「容器外框」那一档（§6.1 的更正注记 / R57）：没有同名 token，同源对象是 bead-line。
+    expect(css).toContain(`--color-bead-line: ${FRAME_ON_DARK}`);
   });
 });
