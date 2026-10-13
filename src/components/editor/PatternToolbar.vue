@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // src/components/editor/PatternToolbar.vue
 //
-// 编辑器工具条（§7.4）：**十一颗图标按钮**（撤销/恢复/重做 + 三个主工具 + 五个「看的方式」）。
+// 编辑器工具条（§7.4）：**十颗图标按钮**（撤销/恢复 + 三个主工具 + 五个「看的方式」）。
 // props 进、事件出，**不读 store**；保存按钮与未保存圆点已搬进 `EditorPage` 的顶栏，不在本组件。
 //
 // 三个开关类按钮 emit 的是**翻转后的值**而不是当前值：本组件不持有开关状态，
@@ -17,8 +17,9 @@
 //
 // 橡皮从调色板搬进工具条；`eraser` 的接收方（`EditorPage.onEraser`）除了把当前色设成橡皮，
 // 还要顺手切回画笔——那是页面的事，不在这里替它决定。
-// 「重做」（改参数重新生成）留在左组、与撤销/恢复同族（都是「把这张图变回某个更早的状态」），
-// 但**绝不用主按钮样式**（`primary`/`accent`）：它会丢掉手工涂改，视觉权重不能压过顶栏的保存。
+// 「重做」（改参数重新生成）**不在这里**：T5 起它搬进了 `EditorPage` 的顶栏、与「保存」同级
+// （实机反馈 6：「重做」与工具按钮放一起不合逻辑）。本组件因此也不再声明 `rerun` emit 与
+// `canRerun` prop——那两颗只会在页面里接线，多一份接口就是多一份可能漂移的真相。
 //
 // `aria-pressed` 仍直接绑**布尔值**而不是 `String(...)`：这个属性的类型是 `Booleanish`
 // (`boolean | "true" | "false"`)，`String()` 返回的宽 `string` 过不了 `vue-tsc` 的严格检查，
@@ -33,8 +34,6 @@ defineProps<{
   tool: EditorTool;
   showGrid: boolean;
   showLabels: boolean;
-  /** 「重做」（改参数重新生成）是否可用：没有保存原图的工程没有这一项。 */
-  canRerun: boolean;
   /** 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。 */
   eraserActive: boolean;
 }>();
@@ -48,8 +47,6 @@ const emit = defineEmits<{
   fit: [];
   "zoom-in": [];
   "zoom-out": [];
-  /** 改参数重新生成。 */
-  rerun: [];
   /** 把当前色槽设为橡皮（`EMPTY`）**并切回画笔**——见 `EditorPage.onEraser`。 */
   eraser: [];
 }>();
@@ -61,7 +58,7 @@ const TOOLS: readonly { readonly tool: EditorTool; readonly label: string }[] = 
 ];
 
 /**
- * 十一颗图标按钮共用的尺寸类。
+ * 十颗图标按钮共用的尺寸类。
  *
  * `p-0!`：主/次按钮变体自带 `px-6`（给文字按钮的），图标按钮必须显式清掉——否则 64px 的方框里
  * 左右各 24px 内边距把内容挤成 0 宽，图标会偏出中心。
@@ -78,8 +75,8 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
 
 <template>
   <div class="max-md:space-y-3 md:flex md:flex-wrap md:items-center md:gap-2">
-    <!-- 平板上十一颗（≈700px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
-    <!-- 左组：撤销 / 恢复 / 重做 + 三个主工具（手机上占第一行，可横滑）。 -->
+    <!-- 平板上十颗（≈640px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
+    <!-- 左组：撤销 / 恢复 + 三个主工具（手机上占第一行，可横滑）。 -->
     <div
       class="max-md:flex max-md:flex-nowrap max-md:items-center max-md:gap-3 max-md:overflow-x-auto md:contents"
     >
@@ -103,19 +100,6 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
       >
         <PixelIcon name="redo" :size="24" />
       </BeadButton>
-      <!-- 没有原图（`canRerun` 为假）时不渲染：没有原图就无从「按原图重新生成」。 -->
-      <BeadButton
-        v-if="canRerun"
-        data-testid="rerun"
-        variant="secondary"
-        aria-label="重做"
-        :class="HISTORY_SIZE"
-        @click="emit('rerun')"
-      >
-        <!-- R10：`ICON_NAMES` 里没有 `rerun`，用 `undo` 图标（与结果页的 `result-rerun` 同一口径）。 -->
-        <PixelIcon name="undo" :size="24" />
-      </BeadButton>
-
       <!-- 三个主工具 64×64（§6.5）：按下态读 `tool === item.tool`；橡皮读 `eraserActive`。 -->
       <BeadButton
         v-for="item in TOOLS"

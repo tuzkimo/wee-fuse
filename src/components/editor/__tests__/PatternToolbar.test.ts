@@ -8,7 +8,9 @@ import type { EditorTool } from "@/stores/editor";
  * 每一项都在用例里被显式改过至少一次——默认值只是省掉重复（CONTRACT §5 的逐字清单）。
  *
  * **任务 12 起 `saving` / `dirty` / `save` 不再是本组件的接口**：保存按钮连同未保存圆点搬进
- * `EditorPage` 的顶栏（§7.4），本组件只剩「报告点了什么」的十一个动作。
+ * `EditorPage` 的顶栏（§7.4），本组件只剩「报告点了什么」的十个动作；
+ * **T5 起「重做」也搬去顶栏**（与保存同级，实机反馈 6），原属它的 `rerun` emit 与 `canRerun`
+ * prop 一并删除。
  */
 function mountToolbar(overrides: Record<string, unknown> = {}) {
   return mount(PatternToolbar, {
@@ -18,8 +20,7 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
       tool: "brush",
       showGrid: true,
       showLabels: true,
-      // C8 第 3 项新增的两个 prop：默认「有原图（可以重做）」「当前色不是橡皮」。
-      canRerun: true,
+      // 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。
       eraserActive: false,
       ...overrides,
     },
@@ -33,13 +34,13 @@ const TOOL_BUTTONS: readonly (readonly [string, EditorTool])[] = [
 ];
 
 /**
- * 工具栏自己的十一颗按钮：testid → 它必须逐字带上的中文 `aria-label`（§7.4 的表 / R2）。
- * `editor-save` **不在**这份清单里——它在 `EditorPage` 的顶栏，由 `EditorPage.test.ts` 钉。
+ * 工具栏自己的十颗按钮：testid → 它必须逐字带上的中文 `aria-label`（§7.4 的表 / R2）。
+ * `editor-save` **不在**这份清单里——它在 `EditorPage` 的顶栏，由 `EditorPage.test.ts` 钉；
+ * **T5 起 `rerun` 也在那份清单里**（与保存同级，实机反馈 6）。
  */
 const ICON_BUTTONS: readonly (readonly [string, string])[] = [
   ["undo", "撤销"],
   ["redo", "恢复"],
-  ["rerun", "重做"],
   ["tool-brush", "画笔"],
   ["tool-fill", "填充"],
   ["eraser", "橡皮"],
@@ -197,16 +198,16 @@ describe("视图按钮", () => {
  * 二是手机与平板两套排法若用「各渲染一份」实现，同名 testid 会在 DOM 里出现两次。
  */
 describe("图标按钮：锚点与唯一性", () => {
-  it("工具栏自己那十一颗按钮的 aria-label 逐字是中文原词", () => {
+  it("工具栏自己那十颗按钮的 aria-label 逐字是中文原词", () => {
     const wrapper = mountToolbar();
     for (const [testid, label] of ICON_BUTTONS) {
       expect(wrapper.get(`[data-testid='${testid}']`).attributes("aria-label")).toBe(label);
     }
   });
 
-  // 十一颗按钮都没有可见文字（aria-label 因此是承重的，不是装饰）；
+  // 十颗按钮都没有可见文字（aria-label 因此是承重的，不是装饰）；
   // 这一条同时把「偷偷留了个文字按钮」也判红。
-  it("十一颗按钮都没有可见文字（全靠 aria-label 定锚点）", () => {
+  it("十颗按钮都没有可见文字（全靠 aria-label 定锚点）", () => {
     const wrapper = mountToolbar();
     for (const [testid] of ICON_BUTTONS) {
       expect(wrapper.get(`[data-testid='${testid}']`).text()).toBe("");
@@ -230,13 +231,15 @@ describe("图标按钮：锚点与唯一性", () => {
     }
   });
 
-  it("canRerun 为假时只剩十颗（不渲染「重做」，其余照常在 DOM 里）", () => {
-    const wrapper = mountToolbar({ canRerun: false });
-    expect(wrapper.find("[data-testid='rerun']").exists()).toBe(false);
-    for (const [testid] of ICON_BUTTONS) {
-      if (testid === "rerun") continue;
-      expect(wrapper.findAll(`[data-testid='${testid}']`)).toHaveLength(1);
-    }
+  // **T5 的全集合断言**：工具条上的 testid 必须**恰好**是这十颗。
+  // 旧版是「十一颗 + 一条 `canRerun` 为假时不渲染」——`canRerun` prop 已删，换成整集合相等：
+  // 少了任何一颗（或「重做」又跑回工具条）都红，比逐颗 `toContain` 强。
+  it("工具条上的 testid 恰好是这十颗，没有「重做」（它已搬去顶栏）", () => {
+    const wrapper = mountToolbar();
+    const ids = wrapper
+      .findAll("[data-testid]")
+      .map((node) => node.attributes("data-testid"));
+    expect(new Set(ids)).toEqual(new Set(ICON_BUTTONS.map(([testid]) => testid)));
   });
 });
 
@@ -244,14 +247,14 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
   // happy-dom 没有布局（`getBoundingClientRect()` 恒 0，CONTRACT §9.5），屏幕尺寸在 CI 里
   // 不可观察；尺寸的唯一可观察形式就是类名。这是**代理断言**、不是像素断言：
   // 它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
-  it("3 个主工具 64×64、3 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
+  it("3 个主工具 64×64、2 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
     const wrapper = mountToolbar();
     for (const testid of ["tool-brush", "tool-fill", "eraser"]) {
       expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
         expect.arrayContaining(["h-16", "w-16"]), // 4rem = 64px
       );
     }
-    for (const testid of ["undo", "redo", "rerun"]) {
+    for (const testid of ["undo", "redo"]) {
       expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
         expect.arrayContaining(["h-14", "w-14"]), // 3.5rem = 56px
       );
@@ -266,7 +269,7 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
 
   // 规格 §7.4 逐字要求「不许缩按钮尺寸」：flex 子项默认 `flex-shrink: 1`，窄屏会把 64px 的主工具
   // 压成 min-width（56px）。溢出必须交给横滑，所以每颗按钮都要 `shrink-0`。
-  it("十一颗按钮都带 shrink-0（溢出靠横滑，不靠压缩）", () => {
+  it("十颗按钮都带 shrink-0（溢出靠横滑，不靠压缩）", () => {
     const wrapper = mountToolbar();
     for (const [testid] of ICON_BUTTONS) {
       expect(wrapper.get(`[data-testid='${testid}']`).classes()).toContain("shrink-0");
@@ -289,7 +292,7 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
 
   // R22：字号只认任意值（12 / 24 / 36px 的 12 倍数）。Tailwind 的默认字号阶在像素风下会
   // 让字形落在非整像素栅格上，字体文件只有 12px 一套点阵。
-  it("十一颗按钮不带任何 Tailwind 默认字号类（R22）", () => {
+  it("十颗按钮不带任何 Tailwind 默认字号类（R22）", () => {
     const wrapper = mountToolbar();
     const forbidden = /\btext-(xs|sm|base|lg|xl|2xl|3xl|4xl)\b/;
     for (const [testid] of ICON_BUTTONS) {
@@ -302,13 +305,17 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
  * C8 第 3 项：出口收敛。
  *
  * 这一组替换掉原来那组「导出与打印入口」的用例（`view-sheet` / `print` 两颗按钮已按规格删除）：
- * 唯一的外部出口是「保存」→ 结果页（C8 第 3 项起保存按钮在**顶栏**），改参数重新生成从页面中部
- * 搬进工具条并改名「重做」，橡皮从调色板搬进工具条，历史第二颗按钮改叫「恢复」（它仍是 `redo`）。
+ * 唯一的外部出口是「保存」→ 结果页（C8 第 3 项起保存按钮在**顶栏**），橡皮从调色板搬进工具条，
+ * 历史第二颗按钮改叫「恢复」（它仍是 `redo`）。
  *
- * **任务 12（§7.4 / R4）**：五行行容器与其中的「重做 + 保存同行」断言取消——保存搬去了顶栏，
- * 这条断言拆成两处独立的：本文件钉「重做」的存在与样式，`EditorPage.test.ts` 钉「保存」。
+ * **任务 12**：五行行容器与其中的「重做 + 保存同行」断言取消——保存搬去了顶栏，这条断言拆成两处
+ * 独立的：本文件钉工具条自己那十颗，`EditorPage.test.ts` 钉「保存」。
+ *
+ * **T5**：「重做」也从工具条搬去顶栏，与保存同级（实机反馈 6）。它在本文件里的三条断言
+ * （存在性、`canRerun` 为假时不渲染、次按钮样式）属于**授权改写**：全部改到 `EditorPage.test.ts`
+ * 去钉顶栏那一颗（R2 的口径——哪个组件拥有它就由哪个组件的用例钉）。
  */
-describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
+describe("C8 第 3 项：橡皮与历史两颗（重做已搬去顶栏）", () => {
   it("工具条里有「橡皮」，它带按下态、点它 emit eraser", async () => {
     const wrapper = mountToolbar({ eraserActive: true });
     const eraser = wrapper.get("[data-testid='eraser']");
@@ -326,20 +333,11 @@ describe("C8 第 3 项：橡皮 / 重做 / 恢复", () => {
     expect(wrapper.find("[data-testid='editor-dirty']").exists()).toBe(false);
   });
 
-  // 「重做」是**次按钮**（`bead-card` 底），视觉权重不能压过顶栏那颗 `go` 保存：它会丢掉手工涂改。
-  // 判据是「带上 `bg-bead-card`、且绝不带 `bg-bead-accent`」——规格 §7.4 逐字要求 `rerun` 不能是
-  // 主按钮。点它 emit rerun。
-  it("「重做」是次按钮（bead-card，绝不是 bead-accent），点它 emit rerun", async () => {
+  // T5：这条是改写后的落点——「重做」不在工具条里，连 `rerun` 事件也不可能从本组件发出。
+  it("工具条里没有「重做」，也不会 emit rerun", () => {
     const wrapper = mountToolbar();
-    const rerun = wrapper.get("[data-testid='rerun']");
-    expect(rerun.classes()).toContain("bg-bead-card");
-    expect(rerun.classes()).not.toContain("bg-bead-accent");
-    await rerun.trigger("click");
-    expect(wrapper.emitted("rerun")).toHaveLength(1);
-  });
-
-  it("canRerun 为假时不渲染「重做」（没有原图的工程改不了参数）", () => {
-    expect(mountToolbar({ canRerun: false }).find("[data-testid='rerun']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='rerun']").exists()).toBe(false);
+    expect(wrapper.emitted("rerun")).toBeUndefined();
   });
 
   it("历史的两颗按钮是「撤销」与「恢复」（后者仍是 redo 事件）", async () => {

@@ -394,13 +394,14 @@ describe("EditorPage（B1 只读版 + B3 编辑器宿主）", () => {
   });
 
   /**
-   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具条；任务 12 起在左组）。
+   * 「重做」的存在性判据（C8 第 3 项：它从页面中部搬进工具条；**T5（实机反馈 6）搬到顶栏、
+   * 与「保存」同级**）。
    *
    * 两条分支合在一条里断言，理由与旧版相同：**互斥性只有同时看到两侧才有判别力**——
-   * 只有「有原图时渲染」时，把 `:can-rerun` 绑成常量 `true` 也绿。
+   * 只有「有原图时渲染」时，把 `can-rerun` 绑成常量 `true` 也绿。
    *
-   * 原来的两条 `<p>`（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」）随本任务删除：
-   * 提示的对象不存在了（没有原图时工具栏**不渲染**那颗按钮）。留下的这一条覆盖它们真正承重的那半句
+   * 原来的两条 `<p>`（「原图已保存，可以改参数重新生成」/「这个工程没有保存原图…」）随 C8 删除：
+   * 提示的对象不存在了（没有原图时那颗按钮**不渲染**）。留下的这一条覆盖它们真正承重的那半句
    * ——**没有原图只是「不能改参数重新生成」，不是「打不开」**。
    */
   it("「重做」只在有原图时渲染；没有原图的工程照常打开", async () => {
@@ -476,13 +477,23 @@ describe("改参数重新生成（B2 规格 §7）", () => {
     const wrapper = await mountPage();
 
     // 入口的名字是给用户看的：只有按钮没有标签、或标签写错，用户不知道这一下会发生什么。
-    // **C8 第 3 项改名**：它从页面中部搬进工具条，文案由「改参数重新生成」收敛成「重做」。
-    // **任务 12（§7.4）**：它成了图标按钮（没有可见文字），名字从 `text()` 搬到 `aria-label`——
-    // 两条判据等价（都钉「这个名字必须存在」），而且「可见文字必须为空」由
-    // `PatternToolbar.test.ts` 单独钉住，所以这句不是放宽。
+    // **T5（实机反馈 6）**：它从工具条搬进顶栏、与「保存」同级，并从纯图标按钮变成
+    // 「图形旁留短中文」（R53）——所以判据从「可见文字必须为空」换成「可见文字逐字是『重做』」。
+    // 这不是放宽：「必须叫重做」这一条仍在，而且现在还多钉了 R53 要求的可见文案。
     const rerunButton = wrapper.get("[data-testid='rerun']");
     expect(rerunButton.attributes("aria-label")).toBe("重做");
-    expect(rerunButton.text()).toBe("");
+    expect(rerunButton.text()).toBe("重做");
+    // 「与保存同级」就是这次查修的判据本体：两颗必须在**同一个** `header` 里。
+    // 写成「rerun 在某个祖先里存在」会被「顶栏里再塞一颗」放过去。
+    const header = rerunButton.element.closest("header");
+    expect(header).not.toBeNull();
+    expect(wrapper.get("[data-testid='editor-save']").element.closest("header")).toBe(header);
+    expect(wrapper.find("header").element).toBe(header);
+    // 次按钮（`bead-card` 底）、绝不是主按钮：它会丢掉手工涂改，视觉权重不能压过保存。
+    // 这一条从 `PatternToolbar.test.ts` 搬来（R2：哪一组件拥有它就由哪一份用例钉）。
+    expect(rerunButton.classes()).toContain("bg-bead-card");
+    expect(rerunButton.classes()).not.toContain("bg-bead-accent");
+    expect(rerunButton.classes()).not.toContain("bg-bead-go");
 
     const draft = useDraft();
     // 点之前草稿必须是干净的：否则下面的断言分不清「这一点点出来的」还是「本来就有的」。
@@ -1636,8 +1647,8 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
 // 顶栏（§7.4 / 任务 12）：保存按钮与未保存圆点从工具条搬到这里。
 //
 // **R2**：`editor-save` 的 aria-label 与 `editor-dirty` 圆点归本文件钉——工具条那一侧只钉它
-// 自己那十一颗按钮（`PatternToolbar.test.ts`）。**R3**：顶栏的作品名只有**一个**节点，手机上
-// 靠 `hidden md:block` 藏，而不是渲染两份同名节点。
+// 自己那十颗按钮（`PatternToolbar.test.ts`）；T5 起「重做」（`rerun`）也归本文件钉。**R3**：顶栏的
+// 作品名只有**一个**节点，手机上靠 `hidden md:block` 藏，而不是渲染两份同名节点。
 // ---------------------------------------------------------------------------
 
 describe("顶栏：保存与未保存圆点（§7.4）", () => {
@@ -1839,11 +1850,12 @@ describe("平板定高 shell（§7.4 T4）：顶栏固定、工具条贴画布�
    * 两套排法若靠「渲染两份、按断点藏一份」实现，同一个 testid 就会出现两次——
    * 既有 `wrapper.get(...)` 直接抛 multiple elements，而这里的新用例全是同样的取法。
    */
-  it("一套 DOM：工具栏的十一个 testid 与顶层节点各只有一个", async () => {
+  it("一套 DOM：这些 testid 与顶层节点各只有一个", async () => {
     const wrapper = await mountPage();
     const ids = [
       "undo",
       "redo",
+      // T5：`rerun` 仍在封闭清单里，只是归属从工具条换成了顶栏——全页仍然只许一个节点。
       "rerun",
       "tool-brush",
       "tool-fill",

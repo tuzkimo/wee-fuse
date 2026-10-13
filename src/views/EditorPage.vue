@@ -59,6 +59,14 @@ const editor = useEditor();
 const saveLabel = computed(() => (editor.saving ? "正在保存…" : "保存"));
 
 /**
+ * 顶栏「重做」是否可用（= 有没有保存原图）。没有原图就无从「按原图重新生成」。
+ *
+ * 口径与当年的工具条一致，只是位置变了（T5）：那颗按钮现在与「保存」同级，所以这条 computed
+ * 也从模板里的内联表达式提到页面这一层。
+ */
+const canRerun = computed(() => session.record?.source != null);
+
+/**
  * 调色板是**页面**取的（store 不持有 `Palette`，规格 §7 要点 1），以 props 进组件。
  *
  * **它必须是同一次取值的唯一一份**：`PalettePanel` 的 `currentColor` 越界守卫（任务 6）拿它当
@@ -491,7 +499,7 @@ function onEraser(): void {
 
 /**
  * 「重做」入口（B2 规格 §7 + B3 规格 §8.5 的接缝；C8 第 3 项从页面中部搬进工具条，
- * 任务 12 起在左组、与撤销/恢复同族）。
+ * T5 起从工具条搬进**顶栏**、与保存同级——实机反馈 6：「重做」与工具按钮放一起不合逻辑）。
  *
  * **草稿播种走共用实现**（`@/services/rerunDraft` 的 `seedRerunDraft`）：本页原来有一份**本地**
  * 副本，它漏传了一个参数 ⇒ 从编辑器点「重做」跑一条记录时，草稿里的用色数还是残留值
@@ -536,7 +544,8 @@ function rerun(): void {
         顶栏（§6.4 / §7.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
         手机**不显示作品名**（他不认字，作品名是给家长的），平板显示并截断（`.project-name`）：
         实现是**同一个 h1** 加 `hidden md:block`，不是渲染两份（R3 不允许同名节点复制）。
-        保存按钮（`go` 变体，主操作）与它右上角的未保存圆点都在这里（C8 第 3 项起从工具条搬来）。
+        保存按钮（`go` 变体，主操作）、未保存圆点与「重做」（次按钮）都在这里：保存与圆点是
+        C8 第 3 项起从工具条搬来，「重做」是 T5 起从工具条搬来（与保存同级，实机反馈 6）。
 
         `sticky top-0 z-20`（T4 实机反馈 2）：平板由下面的定高 shell 保证不滚，手机上页面仍然滚，
         所以顶栏得自己吸顶——否则编辑完想保存得先滑回顶部。层叠必须高于手机吸顶块（那里是 z-10）。
@@ -578,25 +587,53 @@ function rerun(): void {
             {{ session.record.meta.name }}
           </h1>
         </div>
-        <!-- 保存按钮的锚点：圆点要浮在它的右上角，所以两者共用一个定位祖先。 -->
-        <div class="relative">
+        <!--
+          顶栏右侧：重做（次按钮）与保存（主按钮）同级（实机反馈 6：「重做」与工具按钮放一起不合逻辑，
+          它应该跟保存地位一致）。`gap-2`：360px 手机上「返回 + 重做 + 保存」放得下（实窗实测无横向溢出），
+          而顶栏的 `gap-4` 只用在返回键与这一组之间。
+
+          为什么是两颗按钮而不是三个并列子项：未保存圆点必须继续锚在**保存**的右上角，所以保存
+          自己那一格仍然是它自己的定位祖先（见下面那个 `relative`）。
+        -->
+        <div class="flex items-center gap-2">
+          <!--
+            没有原图（`canRerun` 为假）时不渲染：没有原图就无从「按原图重新生成」。
+            `variant="secondary"`（`bead-card` 底）是硬要求：它会丢掉手工涂改，视觉权重不能压过
+            旁边那颗 `go` 保存。
+            R53：图形旁留短中文；12px 与 `px-3!` 是 360px 手机上放得下的那一档（顶栏比工具条窄，
+            `secondary` 自带的 `px-6` 会把这一行顶到溢出）。
+          -->
           <BeadButton
-            data-testid="editor-save"
-            variant="go"
-            aria-label="保存"
-            :disabled="editor.saving"
-            @click="onCommand('save')"
+            v-if="canRerun"
+            data-testid="rerun"
+            variant="secondary"
+            aria-label="重做"
+            class="px-3!"
+            @click="rerun"
           >
-            <PixelIcon name="save" :size="24" />
-            <span>{{ saveLabel }}</span>
+            <PixelIcon name="rerun" :size="24" />
+            <span class="text-[12px]">重做</span>
           </BeadButton>
-          <!-- 未保存指示：干净时不渲染；内容从「未保存」三个字换成一颗 `bead-danger` 圆点（§7.4）。 -->
-          <span
-            v-if="session.dirty"
-            data-testid="editor-dirty"
-            aria-hidden="true"
-            class="absolute -right-1 -top-1 size-[22px] rounded-bead-pill border-4 border-bead-ink bg-bead-danger"
-          />
+          <!-- 保存按钮的锚点：圆点要浮在它的右上角，所以两者共用一个定位祖先。 -->
+          <div class="relative">
+            <BeadButton
+              data-testid="editor-save"
+              variant="go"
+              aria-label="保存"
+              :disabled="editor.saving"
+              @click="onCommand('save')"
+            >
+              <PixelIcon name="save" :size="24" />
+              <span>{{ saveLabel }}</span>
+            </BeadButton>
+            <!-- 未保存指示：干净时不渲染；内容从「未保存」三个字换成一颗 `bead-danger` 圆点（§7.4）。 -->
+            <span
+              v-if="session.dirty"
+              data-testid="editor-dirty"
+              aria-hidden="true"
+              class="absolute -right-1 -top-1 size-[22px] rounded-bead-pill border-4 border-bead-ink bg-bead-danger"
+            />
+          </div>
         </div>
       </header>
       <!-- 尺寸与用色数读**图纸**（规格 §8.3），不是 `meta` 的冗余字段 -->
@@ -688,7 +725,6 @@ function rerun(): void {
             :tool="editor.tool"
             :show-grid="editor.showGrid"
             :show-labels="editor.showLabels"
-            :can-rerun="session.record?.source != null"
             :eraser-active="editor.currentColor === EMPTY"
             @update:tool="editor.setTool($event)"
             @undo="onCommand('undo')"
@@ -698,7 +734,6 @@ function rerun(): void {
             @fit="onCommand('fit')"
             @zoom-in="onCommand('zoom-in')"
             @zoom-out="onCommand('zoom-out')"
-            @rerun="rerun"
             @eraser="onEraser"
           />
         </div>
