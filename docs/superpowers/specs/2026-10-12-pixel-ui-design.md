@@ -303,6 +303,25 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 > （`48vh` 预览 + 参数 + 底部固定按钮在手机上把按钮顶出吸顶盒），已改为 `h-[48vh]`。
 > 数字以代码为准（`SetupPage.vue` 的中栏块）。
 
+> **更正注记（2026-10-12，实机修复轮 T2/T3）**：手机生成流程与中栏内容如下更正，平板路径一字不动。
+>
+> 1. **吸顶块层级**（实机反馈 1）：手机中栏块（`preview-pane`）原先没有 `z-index`，后面的兄弟
+>    （`TierSlider` 的刻度用 `absolute`、去背景开关）按 DOM 顺序画在它上面。现加 `relative z-10`
+>    （背景 `bg-bead-board` 本就不透明）；**参数区不加 `z-index`**。手机底部动作条是
+>    `fixed ... z-10`，与吸顶块不重叠，保持不变。
+> 2. **手机跳独立结果页**（实机反馈 3）：`generate()` 成功**且落盘成功**（`saved === true`）时
+>    `router.push({ name: "edit-result", params: { id } })`，跳到 §7.5 的 `/edit/:id/result`
+>    （生成成功时 `meta.id` 一定存在，`session.adopt` 已写）。**保存失败那一支不跳**——那条记录
+>    不在库里、没有可跳的 id——仍在本页原位显示结果 + 重试保存（`lastSaveFailed` / `retrySave()`
+>    不动）。顶栏主按钮的两态语义不变，**不新增第三个入口或状态**。
+> 3. **手机中栏不再承载 `ResultPanel`**：中栏卡片改为只有**平板**渲染（`isWide && showResult`）；
+>    手机在成功那一支已跳走，只在**保存失败**那一支原位渲染一份（`isWide || lastSaveFailed`），
+>    其余情况手机无论是否已生成都只显示裁剪预览。
+> 4. **`ParamPanel` 的「生成图纸」按钮删除**（手机反馈 2：与底部「开始拼」重复；§11.1 删除清单
+>    加 `generate`）。顶栏主按钮（`setup-primary`）与手机底部动作条那两颗仍是生成入口；它旁边那段
+>    `generateBlockedReason` 文字**保留**（R51：那是「选区太小 / 存储不可用」唯一的显示处，顶栏 /
+>    底栏两颗只 `disabled` 不解释）。
+
 ### 7.4 编辑器 `EditorPage`（`/edit/:id`）
 
 **平板横屏：**
@@ -483,7 +502,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `src/views/PickPage.vue` | §7.2 |
 | `src/views/SetupPage.vue` | §7.3，`md:` 分叉两套排法；**阶段不再互斥**（生成后左右栏仍可编辑） |
 | `src/components/crop/CropCanvas.vue` | 裁剪框与手柄改像素风（`bead-accent` 虚线 + 方块手柄）；**交互逻辑不动** |
-| `src/components/param/ParamPanel.vue` | 两个滑条换图形档位按钮；开关换像素开关；「生成」按钮移到顶栏后本组件不再持有它 |
+| `src/components/param/ParamPanel.vue` | 两个滑条换图形档位按钮；开关换像素开关；「生成」按钮移到顶栏后本组件不再持有它（**D1 实机修复轮 T3 已删**，见 §11.1） |
 | `src/components/param/TierSlider.vue` | 保留滑条本体，换轨道 / 旋钮外观（12px 整数倍栅格） |
 | `src/views/EditorPage.vue` | §7.4 + §8 的 `onBackground` → `onFill`；顶栏 / 工具条的 props 与事件接线随按钮位置搬移 |
 | `src/components/editor/PatternToolbar.vue` | 5 行 15 个文字按钮 → **11 个图标按钮**（`undo` `redo` `rerun` \| `brush` `fill` `eraser` \| `grid` `labels` `zoom-in` `zoom-out` `fit`），两种屏幕两种排法（§7.4） |
@@ -541,6 +560,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `toolbar-row-output` | `PatternToolbar` | **删** | 同上 |
 | `result-stats` | `ResultPanel` | **删** | 文字统计不给孩子看（§7.5） |
 | `result-size` | `ResultPanel` | **删** | 同上 |
+| `generate` | `ParamPanel` | **删** | 与顶栏主按钮 / 手机底部动作条重复（实机反馈 2，T3） |
 
 **容易被误删、但必须保留的（逐个点名）：**
 
@@ -556,6 +576,8 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 - `select-bar` / `select-bar-recolor` / `select-bar-clear` / `palette-row` / `palette-current` /
   `picker-*`：批量换色那套**原样保留**（§8）。
 - `editor-dirty`：节点保留，内容从「未保存」三个字换成一颗圆点。
+- `blocked-reason`：T3 删掉 `ParamPanel` 的「生成图纸」按钮后，它是「选区太小 / 存储不可用」
+  **唯一**的显示处（顶栏主按钮与手机底部动作条只 `disabled` 不解释），**必须保留**（R51）。
 - `undo` / `redo` / `rerun` / `eraser` / `toggle-grid` / `toggle-labels` / `zoom-fit` /
   `zoom-in` / `zoom-out` / `editor-save`：全部保留，只换外观与位置。
 

@@ -1,8 +1,12 @@
 <script setup lang="ts">
 // src/components/param/ParamPanel.vue
 //
-// 参数面板：工程名 / 长边 / 用色档位 / 色卡卡片 / 尺寸摘要 / 生成按钮。props 进、事件出，
+// 参数面板：工程名 / 长边 / 用色档位 / 色卡卡片 / 尺寸摘要。props 进、事件出，
 // 不读 store（本组件是纯展示层）。
+//
+// **T3（实机反馈 2）**：本组件原先还持有一颗「生成图纸」按钮与 `generate` 事件，与顶栏主按钮 /
+// 手机底部动作条重复，已删除（§11.1 删除清单）。它旁边那段阻拦原因文字（`blocked-reason`）
+// 按 R51 **保留**：那是「选区太小 / 存储不可用」唯一的显示处。
 //
 // **唯一的 services 依赖是 `PROJECT_NAME_MAX` 这个纯常量**（`@/services/projectStore`，第 22 行）：
 // 名字长度上限必须与存储层的 `normalizeProjectName` 同源，不能在这里另抄一个 100。
@@ -72,7 +76,6 @@ const emit = defineEmits<{
   "update:longSide": [number];
   "update:maxColors": [number];
   "update:removeBackground": [boolean];
-  generate: [];
 }>();
 
 // ---------------------------------------------------------------------------
@@ -214,7 +217,6 @@ const blockedReason = computed(
     nameError.value ||
     props.generateBlockedReason,
 );
-const disabled = computed(() => props.busy || blockedReason.value !== "");
 </script>
 
 <template>
@@ -350,18 +352,10 @@ const disabled = computed(() => props.busy || blockedReason.value !== "");
     </dl>
 
     <!--
-      本面板自己的「生成」（顶栏 / 手机底部动作条各已有一颗主按钮，见 `SetupPage`）：
-      §6.1「一件东西只有一个角色」——accent 只给“当前该点的那一个”，所以这里是**次级**投影按钮。
+      T3（实机反馈 2）：本组件自己的「生成图纸」按钮已删除——它与顶栏主按钮（`setup-primary`）/
+      手机底部动作条重复（§6.1「一件东西只有一个角色」）。生成入口只剩页面那两颗。
+      下面那段阻拦原因是按 R51 保留的（它是唯一的原因显示处）。
     -->
-    <button
-      data-testid="generate"
-      class="min-h-14 w-full rounded-bead-md border-4 border-bead-ink bg-bead-sand-3 px-8 text-[24px] text-bead-ink shadow-pop-md active:translate-y-1 active:shadow-none disabled:opacity-50"
-      :disabled="disabled"
-      @click="emit('generate')"
-    >
-      {{ busy ? "正在生成…" : "生成图纸" }}
-    </button>
-
     <p
       v-if="blockedReason"
       data-testid="blocked-reason"

@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
@@ -6,7 +6,6 @@ import { defaultProjectName, setProjectStore } from "@/services/projectStore";
 import { useDraft } from "@/stores/draft";
 import CropCanvas from "@/components/crop/CropCanvas.vue";
 import SheetViewer from "@/components/sheet/SheetViewer.vue";
-import ParamPanel from "@/components/param/ParamPanel.vue";
 import ResultPanel from "@/components/result/ResultPanel.vue";
 import SetupPage from "@/views/SetupPage.vue";
 import { getBuiltinPalette } from "@/services/palette";
@@ -290,9 +289,17 @@ async function mountSetupBeforeGenerate() {
 /** 生成一次之后（中栏是结果卡片）、左右两栏仍在的状态。 */
 async function mountSetupGenerated() {
   const wrapper = await mountSetupBeforeGenerate();
-  await wrapper.get("[data-testid='generate']").trigger("click");
+  await wrapper.get("[data-testid='setup-primary']").trigger("click");
   await flushPromises();
   return wrapper;
+}
+
+/**
+ * 假时钟下 `@vue/test-utils` 的 `trigger("click")` 到不了处理器（见端到端 2 的注释），
+ * 用原生 `.click()` 派发事件；被驱动的仍是同一个 `onPrimary`。
+ */
+function submitGenerate(wrapper: VueWrapper): void {
+  (wrapper.get("[data-testid='setup-primary']").element as HTMLButtonElement).click();
 }
 
 beforeEach(async () => {
@@ -437,9 +444,11 @@ describe("断点布局", () => {
     // 前提：≥768px 确实是平板布局，否则下面的断言可能靠「断点没生效」蒙过去。
     expect(breakpoint.queries).toEqual(["(min-width: 768px)"]);
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
+    // T2：平板不跳转（手机才会 push 到独立结果页），三栏与结果仍在一屏。
+    expect(push).not.toHaveBeenCalled();
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
@@ -507,19 +516,38 @@ describe("手机竖屏排法（§7.3）", () => {
     // `md` 下取消吸顶与固定高（平板上中栏是并排的中间一栏，不跟着页面滚）。
     expect(preview.classes()).toContain("md:static");
     expect(preview.classes()).toContain("md:h-auto");
+    // T2（实机反馈 1）：吸顶块必须自己起层叠（`relative z-10`）——否则后面的兄弟
+    // （`TierSlider` 的 `absolute` 刻度、去背景开关）按 DOM 顺序画在它上面。
+    expect(preview.classes()).toContain("relative");
+    expect(preview.classes()).toContain("z-10");
   });
 
   /**
-   * 生成态的手机排法（R41 修复 2 / R42）：预览盒的高度不能写死成视口比例，否则 55vh 的盒子装进
-   * 吸顶盒里，下面三颗动作按钮就被推进内滚区（要滚一下才看得到）。
-   *
-   * 机制：吸顶盒是定高的 flex 列（R42 起 48vh）⇒ 结果卡片 `max-md:flex-1` 吃掉 chip 之外的高度 ⇒
-   * `ResultPanel` 根 `h-full` 在这个定高里成立 ⇒ 预览盒 `grow basis-[55vh] min-h-0` 被压缩到
-   * 剩余空间。断言只钉类名（happy-dom 没有布局）；真实数值在报告 §F/§G 的 Chromium 实测里。
+   * 生成态的手机排法（R41 修复 2 / R42 / T2）：结果卡片在手机上只于**保存失败**那一支渲染
+   * （成功那一支已 `push` 到独立结果页）。此时吸顶盒仍是定高的 flex 列（R42 起 48vh）⇒ 结果卡片
+   * `max-md:flex-1` 吃掉 chip 之外的高度 ⇒ `ResultPanel` 根 `h-full` 在这个定高里成立 ⇒ 预览盒
+   * `grow basis-[55vh] min-h-0` 被压缩到剩余空间。断言只钉类名（happy-dom 没有布局）；
+   * 真实数值在报告 §F/§G 的 Chromium 实测里。
    */
-  it("生成态：预览盒在吸顶盒里让位，三颗动作按钮不用内滚就露出来（§7.5 / R41）", async () => {
+  it("保存失败时手机中栏仍渲染结果卡片，预览盒在吸顶盒里让位（§7.5 / R41 / T2）", async () => {
+    stubPlatform();
+    const real = await createMemoryProjectStore();
+    setProjectStore({
+      ...real,
+      async put(): Promise<void> {
+        throw new Error("磁盘已满");
+      },
+    });
+    seedDraft();
     window.innerWidth = 500;
-    const wrapper = await mountSetupGenerated();
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='setup-action-primary']").trigger("click");
+    await flushPromises();
+
+    // 前提：保存失败 ⇒ 没有可跳的 id，结果卡片留在本页（成功那一支见下面两条新用例）。
+    expect(wrapper.get("[data-testid='setup-error']").text()).toContain("保存失败");
 
     const pane = wrapper.get("[data-testid='preview-pane']");
     expect(pane.classes()).toContain("flex");
@@ -534,6 +562,56 @@ describe("手机竖屏排法（§7.3）", () => {
 
     // chip 不参与压缩（否则它会被压成看不见的一条），它是吸顶盒里除结果卡片之外的第二项。
     expect(wrapper.get("[data-testid='size-chip']").classes()).toContain("shrink-0");
+  });
+
+  /**
+   * T2（实机反馈 3）：手机生成并**保存成功**后跳到独立结果页 `/edit/:id/result`——结果不再挤在
+   * 48vh 的吸顶盒里。断言 `push` 的目标与落盘 id（只断言「跳了」不够：跳错页面同样算跳）。
+   */
+  it("生成并保存成功后跳独立结果页（edit-result + 落盘 id，T2）", async () => {
+    stubPlatform();
+    seedDraft();
+    window.innerWidth = 500;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    expect(push).not.toHaveBeenCalled();
+
+    await wrapper.get("[data-testid='setup-action-primary']").trigger("click");
+    await flushPromises();
+
+    const store = (await import("@/services/projectStore")).getProjectStore();
+    const id = (await store.list())[0]!.id;
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id } });
+  });
+
+  /**
+   * T2：保存失败那一支**不跳**——那条记录不在库里，没有可跳的 id。结果留在本页，重试保存仍在。
+   * 与上一条互为对照组：同一个断点、同一次生成，只有 `saved` 一个变量不同。
+   */
+  it("保存失败那一支不跳转，留在本页显示结果与重试（T2）", async () => {
+    stubPlatform();
+    const real = await createMemoryProjectStore();
+    setProjectStore({
+      ...real,
+      async put(): Promise<void> {
+        throw new Error("磁盘已满");
+      },
+    });
+    seedDraft();
+    window.innerWidth = 500;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='setup-action-primary']").trigger("click");
+    await flushPromises();
+
+    expect(push).not.toHaveBeenCalled();
+    expect(await real.list()).toHaveLength(0);
+    expect(wrapper.get("[data-testid='setup-error']").text()).toContain("保存失败");
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='retry-save']").exists()).toBe(true);
   });
 });
 
@@ -569,7 +647,7 @@ describe("中栏三态与顶栏主按钮（§7.3）", () => {
     const wrapper = await mountSetupBeforeGenerate();
     expect(wrapper.get("[data-testid='setup-primary']").text()).toContain("开始拼");
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     const primary = wrapper.get("[data-testid='setup-primary']");
@@ -586,7 +664,7 @@ describe("中栏三态与顶栏主按钮（§7.3）", () => {
     const wrapper = await mountSetupBeforeGenerate();
     expect(wrapper.find("[data-testid='size-chip']").exists()).toBe(false);
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // 选区 400×300 + 长边 58 → 58 × 44 颗，需 2 × 2 = 4 块板（`boardCount` 的真换算）。
@@ -692,7 +770,7 @@ describe("页头返回箭头（按阶段分叉）", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
 
@@ -760,7 +838,7 @@ describe("参数面板的父级接线（子端 emit → store）", () => {
     await wrapper.get("[data-testid='remove-background']").setValue(true);
     expect(draft.removeBackground).toBe(true);
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // 三个拷贝点逐个钉死：任一处写死 false，下面三条里对应的那条立刻红。
@@ -789,7 +867,7 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     // ——摘要（预测）与落盘 doc（产物）读的是同两个数字，改任一端这条都红。
     expect(wrapper.get("[data-testid='summary']").text()).toContain("44 × 58 颗");
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // ① 交给平台的源矩形 = 用户选的选框（旋转**不**改动 crop）
@@ -824,7 +902,7 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     const store = (await import("@/services/projectStore")).getProjectStore();
@@ -863,7 +941,7 @@ describe("端到端 1：屏幕 → 原图 → 落盘（承重）", () => {  it("
     await wrapper.get("[data-testid='project-name-input']").setValue("我的小猫");
     expect(draft.name).toBe("我的小猫");
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     const store = (await import("@/services/projectStore")).getProjectStore();
@@ -889,24 +967,19 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     // `flushPromises` 走 `setImmediate`，把计时器一起冻住会让每一次 `await flushPromises()`
     // 永远挂住——那是测试基础设施的坑，不是被测行为。
     //
-    // 本用例的两处「生成」**一律走 `$emit("generate")` 而不是点按钮**，这是刻意的环境处置：
-    // 在这个用例的时序下（`mount` 已完成 → 装 `Date` 假时钟 → 才驱动界面），
-    // `wrapper.get("[data-testid='generate']").trigger("click")` 派发的 click **到不了 Vue 的
-    // 处理器**（实测：`emitted("generate")` 为 0、库里 0 条、`blocked-reason` 不存在、按钮
-    // `disabled=false`、草稿的 source/几何/参数全在——即守卫没拦，纯粹是事件没送到）。
-    // 这是 vitest + happy-dom + `@vue/test-utils` 的**测试基础设施交互**，与产品行为无关；
-    // 同一次改动下 `ParamPanel` 的 `$emit("generate")` 完全正常（正是本条用的路径）。
-    // `$emit` 与点击的差别在于：`$emit` 直接调用组件对外的事件通道，跳过 DOM 事件派发；
-    // 被驱动的仍是 `SetupPage` 上那**同一个** `@generate` 处理器，本用例要钉的落盘语义
-    // （id/名称/createdAt 不变、`updatedAt` 严格变大、参数是新的）因此一字未改。
-    // **点击路径本身没有被放弃**：同文件其它用例在真时钟下点同一个按钮（例如「用户选的选框
-    // 就是交给解码器的源矩形」与「档位三档落盘」），这条按钮→处理器的接线由它们覆盖。
+    // 本用例的两处「生成」走**顶栏主按钮**（`setup-primary`）点击，与同文件其它用例同一条接线；
+    // 第二处之前先用 `result-rerun` 把阶段切回 `edit`（平板顶栏按钮在 `showResult` 时是「完成」，点它
+    // 回家），这也正是生产里「改参数再生成」的真实路径。
+    //
+    // 假时钟下 `@vue/test-utils` 的 `trigger("click")` 派发的 click **到不了 Vue 的处理器**（实测：
+    // 库里 0 条、`blocked-reason` 不存在、按钮 `disabled=false`，即守卫没拦，纯粹是事件没送到）；
+    // `submitGenerate` 改用原生 `.click()` 走浏览器事件派发，被驱动的仍是**同一个** `onPrimary`。
     const t1 = new Date("2026-10-03T10:00:00.000Z");
     const t2 = new Date("2026-10-03T10:05:00.000Z");
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       vi.setSystemTime(t1);
-      wrapper.findComponent(ParamPanel).vm.$emit("generate");
+      submitGenerate(wrapper);
       await flushPromises();
 
       const store = (await import("@/services/projectStore")).getProjectStore();
@@ -914,14 +987,12 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       expect(first.updatedAt).toBe(t1.toISOString());
 
       vi.setSystemTime(t2);
-      // 改参数前先把阶段切回编辑（`@rerun` → `setStage("edit")`）：§7.3 起参数面板不再
-      // 随阶段隐藏，这一步不是必需，但它是生产里「改参数再生成」的真实路径。仍走 `$emit`：
-      // 与上面同一处假时钟时序的处置。
+      // 改参数前先把阶段切回编辑（`@rerun` → `setStage("edit")`）：平板顶栏按钮在结果阶段是
+      // 「完成」（点它回家），必须先回编辑阶段才能再生成。
       wrapper.findComponent(ResultPanel).vm.$emit("rerun");
       await flushPromises();
       draft.setLongSide(116);
-      // 同上：假时钟仍在装，仍走 `$emit`，语义与「再点一次生成」等价。
-      wrapper.findComponent(ParamPanel).vm.$emit("generate");
+      submitGenerate(wrapper);
       await flushPromises();
 
       const metas = await store.list();
@@ -956,7 +1027,7 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
 
     for (const value of [8, 16, 24, 220, 221] as const) {
       await wrapper.get("[data-testid='max-colors-slider']").setValue(String(value));
-      await wrapper.get("[data-testid='generate']").trigger("click");
+      await wrapper.get("[data-testid='setup-primary']").trigger("click");
       await flushPromises();
       const id = (await store.list())[0]!.id;
       expect((await store.get(id))?.doc.params.maxColors).toBe(value);
@@ -982,7 +1053,7 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     await flushPromises();
 
     await wrapper.get("[data-testid='max-colors']").setValue("9");
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     expect(pipelineSpy.maxColors.at(-1)).toBe(9);
@@ -1016,14 +1087,14 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
     };
 
     await wrapper.get("[data-testid='max-colors-slider']").setValue("8");
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     const limited = await usedColors();
 
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='max-colors-slider']").setValue("221");
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     const unlimited = await usedColors();
 
@@ -1056,7 +1127,7 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       vi.setSystemTime(t1);
       const first = mount(SetupPage);
       await flushPromises();
-      await first.get("[data-testid='generate']").trigger("click");
+      await first.get("[data-testid='setup-primary']").trigger("click");
       await flushPromises();
 
       const store = (await import("@/services/projectStore")).getProjectStore();
@@ -1084,7 +1155,7 @@ describe("端到端 2：就地重跑覆盖同一条记录", () => {
       second.findComponent(ResultPanel).vm.$emit("rerun");
       await flushPromises();
 
-      await second.get("[data-testid='generate']").trigger("click");
+      await second.get("[data-testid='setup-primary']").trigger("click");
       await flushPromises();
 
       const metas = await store.list();
@@ -1116,14 +1187,15 @@ describe("生成前的门槛与失败路径", () => {
     await flushPromises();
 
     expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("选区 50 × 50 像素");
-    // 阻拦的第一道是禁用按钮（`ParamPanel` 的 `disabled`）
-    expect((wrapper.get("[data-testid='generate']").element as HTMLButtonElement).disabled).toBe(true);
+    // 阻拦的第一道是页面主按钮的 `disabled`（`setup-primary`）
+    expect((wrapper.get("[data-testid='setup-primary']").element as HTMLButtonElement).disabled).toBe(true);
 
-    // 第二道是 `generate()` 自己的 `blockedReason` 复检：**直接触发处理函数**（`ParamPanel` 的
-    // `generate` 事件），而不是去点那个 disabled 按钮——本环境不给 disabled 按钮派发 click，
-    // 点它「什么都没发生」既可能是守卫拦下了，也可能只是 DOM 没派发，两者分不开。走事件则只经过
-    // 被复检的那一条路径（将来出现第二个入口——快捷键、别的按钮——正是这一条要挡的）。
-    wrapper.findComponent(ParamPanel).vm.$emit("generate");
+    // 第二道是 `generate()` 自己的 `blockedReason` 复检。第一道（按钮 `disabled`）在上面钉住；
+    // 这里要驱动的是**被复检的那一条路径**——将来出现第二个入口（快捷键、别的按钮）正是它要挡的。
+    // 本环境不给 `disabled` 按钮派发 click，所以临时摘掉 DOM 上的禁用属性，模拟「绕过 UI 闸门」。
+    const primary = wrapper.get("[data-testid='setup-primary']").element as HTMLButtonElement;
+    primary.disabled = false;
+    primary.click();
     await flushPromises();
 
     expect(createBitmap).not.toHaveBeenCalled();
@@ -1147,9 +1219,9 @@ describe("生成前的门槛与失败路径", () => {
     //   ③ 可解析 = 100 >= 58 且 20 >= 12 → true
     // 忽略 rotation（只看源坐标 20 × 100 与网格 58 × 12）则 20 >= 58 为假 → 误拦一条真能拼的选区。
     expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
-    expect((wrapper.get("[data-testid='generate']").element as HTMLButtonElement).disabled).toBe(false);
+    expect((wrapper.get("[data-testid='setup-primary']").element as HTMLButtonElement).disabled).toBe(false);
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // 产物尺寸与显示空间口径一致：旋转后的图纸就是 58 × 12（`rotateGrid` 的最终尺寸 = ② 的网格）
@@ -1187,9 +1259,9 @@ describe("生成前的门槛与失败路径", () => {
     await flushPromises();
 
     expect(wrapper.find("[data-testid='blocked-reason']").exists()).toBe(false);
-    expect((wrapper.get("[data-testid='generate']").element as HTMLButtonElement).disabled).toBe(false);
+    expect((wrapper.get("[data-testid='setup-primary']").element as HTMLButtonElement).disabled).toBe(false);
 
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     const store = (await import("@/services/projectStore")).getProjectStore();
@@ -1205,7 +1277,7 @@ describe("生成前的门槛与失败路径", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("没有可拼的像素");
@@ -1227,7 +1299,7 @@ describe("生成前的门槛与失败路径", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("超出原图范围");
@@ -1252,7 +1324,7 @@ describe("生成前的门槛与失败路径", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     expect(wrapper.get("[data-testid='setup-error']").text()).toContain("当前环境不支持 createImageBitmap");
@@ -1287,7 +1359,7 @@ describe("生成前的门槛与失败路径", () => {
     expect(wrapper.text()).toContain("工程存储不可用");
     // ② 不允许开工：原因经 `blockedReason` 进参数面板，按钮禁用（与上面「选区太小」那条对称）
     expect(wrapper.get("[data-testid='blocked-reason']").text()).toContain("工程存储尚未初始化");
-    expect(wrapper.get("[data-testid='generate']").attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-testid='setup-primary']").attributes("disabled")).toBeDefined();
   });
 });
 
@@ -1308,7 +1380,7 @@ describe("生成按钮的重入闸门", () => {
     await flushPromises();
 
     // 两次派发之间没有 await：此刻 `:disabled` 还没被 patch 进 DOM，第二次点击照样进处理器。
-    const button = wrapper.get("[data-testid='generate']").element as HTMLButtonElement;
+    const button = wrapper.get("[data-testid='setup-primary']").element as HTMLButtonElement;
     button.click();
     button.click();
 
@@ -1340,7 +1412,7 @@ describe("保存失败与重试", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // ① 图纸还在内存里：`markGenerated()` 在 `save()` 之后无条件调用，结果阶段照常进
@@ -1382,7 +1454,7 @@ describe("保存失败与重试", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // 前提：结果确实生成了（照常进结果阶段）、只是没能落盘（库里条数 0）。
@@ -1421,7 +1493,7 @@ describe("保存失败与重试", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     // ① 第一次生成没进库（`put` 抛错 → 库里 0 条）
     expect(await real.list()).toHaveLength(0);
@@ -1437,7 +1509,7 @@ describe("保存失败与重试", () => {
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='long-side']").setValue("116");
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // 判别力：删掉 `retrySave()` 里的 `draft.setRerunOf(...)`，这里就是 2 条同名记录。
@@ -1465,7 +1537,7 @@ describe("保存失败与重试", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='retry-save']").trigger("click");
     await flushPromises();
@@ -1487,7 +1559,7 @@ describe("结果阶段", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // **语义变更（B1 的「已更新这张图纸」→ B2 的两分支）**：首次生成是**新建**一条记录，
@@ -1504,7 +1576,7 @@ describe("结果阶段", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已保存到图纸库");
 
@@ -1513,7 +1585,7 @@ describe("结果阶段", () => {
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-testid='long-side']").setValue("116");
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已更新这张图纸");
@@ -1544,7 +1616,7 @@ describe("结果阶段", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     // 产物：400×300 的选区 + 长边 58 → 58 × 44 颗（`computeGridSize(400,300,58)`，真流水线算的）
@@ -1573,7 +1645,7 @@ describe("结果阶段", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     const store = (await import("@/services/projectStore")).getProjectStore();
@@ -1606,7 +1678,7 @@ describe("结果阶段", () => {
     // 看不到传送出去的节点；本用例钉的是「本页的就地打开与接线」，真传送由 `SheetViewer.test.ts` 钉。
     const wrapper = mount(SetupPage, { global: { stubs: { teleport: true } } });
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
 
@@ -1657,7 +1729,7 @@ describe("结果阶段", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
 
     expect(draft.stage).toBe("result");
@@ -1691,7 +1763,7 @@ describe("结果阶段", () => {
     expect(push).toHaveBeenCalledWith({ name: "home" });
   });
 
-  it("手机结果阶段四颗按钮与平板完全一致（「重做」不再按断点分叉）", async () => {
+  it("手机生成成功后的中栏只显示裁剪预览（结果在独立结果页，T2）", async () => {
     stubPlatform();
     seedDraft();
     window.innerWidth = 500;
@@ -1700,20 +1772,19 @@ describe("结果阶段", () => {
     await flushPromises();
     // 手机也不再分三步（C8 第 4 项）：生成按钮与参数面板同屏，没有 `to-params` 这一步。
     expect(wrapper.find("[data-testid='to-params']").exists()).toBe(false);
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-action-primary']").trigger("click");
     await flushPromises();
 
-    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(true);
-    // **语义变更登记**：旧实现按断点分叉（平板「改选区」/ 手机「改参数」），而 768px 这道判据
-    // 在结果阶段只决定按钮摆在哪一栏、用户想要的是同一件事——回到编辑重来。C8 规格 §3.4 把它
-    // 收敛成一颗「重做」（`result-rerun`），两档断点下都渲染。
+    // 阶段确实进了 result，但手机中栏不再承载结果卡片（成功那一支已跳独立结果页）。
+    expect(useDraft().stage).toBe("result");
+    expect(wrapper.find("[data-testid='result-pane']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(false);
+    expect(
+      wrapper.get("[data-testid='preview-pane']").find("[data-testid='preview-canvas']").exists(),
+    ).toBe(true);
+    // 分页按钮一个都不该留（C8 第 4 项；旧实现按断点分叉的 `back-to-crop` / `back-to-params` 也没有）。
     expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='back-to-params']").exists()).toBe(false);
-    await wrapper.get("[data-testid='result-rerun']").trigger("click");
-    // 取值从 `"crop"` 收敛成 `"edit"`（C8 第 4 项）。
-    expect(useDraft().stage).toBe("edit");
-    // 手机这一步与平板同样**当场**换回画布（不是只改了 store 里的 stage）
-    expect(wrapper.find("[data-testid='crop-pane']").exists()).toBe(true);
   });
 
   it("离开页面时草稿按 §9 的规则处理（已生成且保存成功 → 清空）", async () => {
@@ -1722,7 +1793,7 @@ describe("结果阶段", () => {
 
     const wrapper = mount(SetupPage);
     await flushPromises();
-    await wrapper.get("[data-testid='generate']").trigger("click");
+    await wrapper.get("[data-testid='setup-primary']").trigger("click");
     await flushPromises();
     wrapper.unmount();
 

@@ -8,6 +8,8 @@
 // **D1/§7.3 起两个阶段不再互斥**：生成之后左栏（裁剪）与右栏（参数）仍然可见可改，中栏
 // （`preview-pane`）换成上一次的结果——这正是「一屏做完」的意思。中栏三态：未生成 = 放大裁剪
 // 预览（复用 `draft.preview`，不新算）；已生成 = 结果卡片；生成后又改参数 = 一成不变。
+// **T2 更正注记**：结果卡片只平板、或手机保存失败那一支渲染（`paneShowsResult`）；手机成功那一支
+// 已 `push` 到独立结果页，中栏只留裁剪预览。
 //
 // 生成即落盘，重跑覆盖同一条记录：走 `useProjectSession().adopt()` + `save()`，
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
@@ -94,6 +96,13 @@ const lastSaveFailed = ref(false);
  * 想再看一次走中栏的 `result-rerun`（把阶段切回 `edit`，与「重做」的既有语义一致）。
  */
 const showResult = computed(() => draft.stage === "result" && session.pattern !== null);
+
+/**
+ * 中栏是否渲染结果卡片（§7.3 + T2 更正注记）：平板恒渲染（`isWide && showResult`）；手机只在
+ * **保存失败**那一支渲染一份——成功时已经 `push` 到独立结果页（`/edit/:id/result`），中栏留给裁剪预览；
+ * 失败时那条记录不在库里、没有可跳的 id，结果必须原位看得到才能重试。
+ */
+const paneShowsResult = computed(() => showResult.value && (isWide.value || lastSaveFailed.value));
 
 /** 顶栏主按钮两态（§7.3）：未生成 = 「开始拼 ▶」；已生成 = 「完成 ✓」（现有 `result-ok` 那条路）。 */
 const primaryLabel = computed(() => {
@@ -365,6 +374,11 @@ async function generate(): Promise<void> {
       // 不一致；失败后的续存由 `retrySave()` 成功时补写。
       draft.setRerunOf({ id: meta.id, createdAt: meta.createdAt });
       lastSaveFailed.value = false;
+      // 手机（<768px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
+      // （`meta.id` 此刻一定存在）——保存失败那一支没有可跳的 id，留在本页显示结果 + 重试。
+      if (!isWide.value) {
+        await router.push({ name: "edit-result", params: { id: meta.id } });
+      }
     } else {
       // 保存失败不丢态：图纸还在内存里，结果照常显示，给用户一条重试的路（主规格 §8）。
       // 同时记住「这次没进库」，离开页面时才不会按 §9 把草稿一起作废。
@@ -469,10 +483,10 @@ function resetCrop(): void {
       -->
       <section
         data-testid="preview-pane"
-        class="sticky top-0 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="relative z-10 sticky top-0 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
         :style="boardDots"
       >
-        <template v-if="showResult">
+        <template v-if="paneShowsResult">
           <!-- `max-md:flex-1` + `max-md:min-h-0`（R41 修复 2）：手机上这个吸顶盒是定高的 flex
                列，结果卡片因此吃掉 chip 之外的全部高度；`ResultPanel` 里的预览盒有着明确的百分比
                高度可依，才能被压进剩余空间（否则 55vh 的预览会把三颗动作按钮顶进内滚区）。
@@ -592,7 +606,6 @@ function resetCrop(): void {
           @update:long-side="draft.setLongSide($event)"
           @update:max-colors="draft.setMaxColors($event)"
           @update:remove-background="draft.setRemoveBackground"
-          @generate="generate"
         />
       </section>
     </div>
