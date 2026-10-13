@@ -14,7 +14,7 @@
 // 生成即落盘，重跑覆盖同一条记录：走 `useProjectSession().adopt()` + `save()`，
 // 它是 B1 规格 §4.4 那个会话模型的第一个生产消费者。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, type RouteLocationRaw } from "vue-router";
 import { centerSquare, isCropResolvable, type AspectLock } from "@/core/crop/rect";
 import type { ZoomLevel } from "@/core/crop/view";
 import { rotatedSize } from "@/core/image/rotate";
@@ -272,6 +272,17 @@ function createId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * 手机跳独立结果页的载荷（T2 修复 A）：`new=1` 只在本轮是**新建**时带上。结果页据此在
+ * 「生成成功 / 修改成功」之间选，并把该态交给 `ResultPanel` 的保存文案。就地重跑（覆盖）不带；
+ * 编辑器保存成功那条 `/edit/:id/result` 入口也不带（无 query ⇒ 覆盖）。
+ */
+function resultPush(id: string): RouteLocationRaw {
+  return resultIsNew.value
+    ? { name: "edit-result", params: { id }, query: { new: "1" } }
+    : { name: "edit-result", params: { id } };
+}
+
 async function generate(): Promise<void> {
   // 重入闸门：`disabled` 要等 Vue patch 完 DOM（微任务）才生效，同一 tick 内的第二次派发看到的
   // 按钮仍是可用的，没有这道闸门就会跑两遍流水线、`put` 两条记录（任务 10 的 `PickPage` 同一处置）。
@@ -377,7 +388,7 @@ async function generate(): Promise<void> {
       // 手机（<768px）跳独立结果页（T2）：结果不再挤在 48vh 的吸顶盒里。只有落盘成功才跳
       // （`meta.id` 此刻一定存在）——保存失败那一支没有可跳的 id，留在本页显示结果 + 重试。
       if (!isWide.value) {
-        await router.push({ name: "edit-result", params: { id: meta.id } });
+        await router.push(resultPush(meta.id));
       }
     } else {
       // 保存失败不丢态：图纸还在内存里，结果照常显示，给用户一条重试的路（主规格 §8）。
@@ -408,7 +419,7 @@ async function retrySave(): Promise<void> {
     // 置假 ⇒ `paneShowsResult` 翻假 ⇒ 结果卡片消失，而这里又不跳，用户留在本页、主按钮还写着
     // 「完成 ✓」（T2 审查发现 1）。
     if (!isWide.value && meta !== undefined) {
-      await router.push({ name: "edit-result", params: { id: meta.id } });
+      await router.push(resultPush(meta.id));
     }
   }
 }
@@ -435,8 +446,9 @@ function resetCrop(): void {
       主按钮两态（§7.3）：未生成「开始拼 ▶」（走现有生成）、已生成「完成 ✓」（走现有回家那条路）。
 
       `sticky top-0 z-20`（T4 实机反馈 2）：先前它是普通流内元素，页面一滚就出屏——「编辑完想保存
-      还得滑回顶部」。层叠必须高于手机吸顶块（`preview-pane`，`relative z-10`）：两者都贴视口顶，
-      顶栏在下时中栏块会盖掉返回箭头与主按钮。
+      还得滑回顶部」。层叠高于手机吸顶块（`preview-pane`，`relative z-10`）——**R55 之后这只是
+      纵深防御**：中栏的吸顶偏移已改成 `top-16`（= 顶栏的 64px），两者不再重叠，「顶栏最上」不再
+      靠层叠顺序兜底。
     -->
     <header
       class="sticky top-0 z-20 flex h-16 items-center gap-4 border-b-4 border-bead-line bg-bead-sand-2 px-4 md:h-20 md:px-8"

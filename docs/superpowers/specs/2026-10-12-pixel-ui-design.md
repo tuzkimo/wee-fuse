@@ -573,7 +573,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `src/components/param/ParamPanel.vue` | 两个滑条换图形档位按钮；开关换像素开关；「生成」按钮移到顶栏后本组件不再持有它（**D1 实机修复轮 T3 已删**，见 §11.1） |
 | `src/components/param/TierSlider.vue` | 保留滑条本体，换轨道 / 旋钮外观（12px 整数倍栅格） |
 | `src/views/EditorPage.vue` | §7.4 + §8 的 `onBackground` → `onFill`；顶栏 / 工具条的 props 与事件接线随按钮位置搬移 |
-| `src/components/editor/PatternToolbar.vue` | 5 行 15 个文字按钮 → **11 个图标按钮**（`undo` `redo` `rerun` \| `brush` `fill` `eraser` \| `grid` `labels` `zoom-in` `zoom-out` `fit`），两种屏幕两种排法（§7.4） |
+| `src/components/editor/PatternToolbar.vue` | 5 行 15 个文字按钮 → **10 个图标按钮**（`undo` `redo` \| `brush` `fill` `eraser` \| `grid` `labels` `zoom-in` `zoom-out` `fit`），两种屏幕两种排法（§7.4） |
 | `src/components/editor/PatternCanvas.vue` | 深色板底 + 板孔点阵；删 select / pick 手势 |
 | `src/components/editor/PalettePanel.vue` | 平板右栏 / 手机横滑条两套；**多选换色交互原样保留**（§8） |
 | `src/components/editor/PalettePicker.vue` | 覆盖层改像素卡片；色号字改 12px；**不删**（它是目标色选择器） |
@@ -583,6 +583,9 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 | `src/views/EditResultPage.vue` | 只换标题与容器（复用 `ResultPanel`） |
 | `src/App.vue` | 分享提示条改卡片（§7.8） |
 | `src/router/index.ts` | **不动** |
+
+> **更正注记（2026-10-13，终审修复波）**：上表 `PatternToolbar` 一行原写「11 个图标按钮」含
+> `rerun`，已改写为 **10 个**——`rerun` 已搬到顶栏、与保存同级，详见 §7.4 的更正注记。
 
 **`src/core/**` 只有一处改动**（`edit.ts` 删 `buildRectPaintCommand`），其余一律不碰——
 本次是 UI 改造，`coreBoundary.test.ts` 这条闸门必须保持绿。
@@ -609,7 +612,10 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 
 ## 11. 测试要求
 
-**总原则：现有 148 个 `data-testid` 里只删/改 8 个，其余全部原样保留，所以绝大多数用例不需要改。**
+**总原则：现有 148 个 `data-testid` 里只删/改 11 个，其余全部原样保留，所以绝大多数用例不需要改。**
+
+> **更正注记（2026-10-13，终审修复波）**：上句计数按 §11.1 的权威清单更正为 **11**（原写 8）；
+> §11.2 的「上表那 10 行」一并更正为 **11 行**。两处都只是旧计数没跟上清单，清单本身未变。
 
 ### 11.1 `data-testid` 权威清单（**封闭清单**）
 
@@ -651,7 +657,7 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 
 ### 11.2 必须改的用例
 
-（“规格直接冲突、经人工确认”的范围就是上表那 10 行；其余改动只是多一步展开。）
+（“规格直接冲突、经人工确认”的范围就是上表那 11 行；其余改动只是多一步展开。）
 
 - `components/editor/__tests__/PatternToolbar.test.ts`：`TOOL_BUTTONS` 从四条减到两条
   （`tool-brush` / `tool-fill`），删 `tool-select` / `tool-pick` 两行与相应用例；删 5 处

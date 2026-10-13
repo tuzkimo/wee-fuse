@@ -1139,6 +1139,10 @@ describe("App.vue 的分享装配", () => {
     expect(classes).toContain("text-bead-warn-ink");
     expect(classes).toContain("border-4");
     expect(classes).toContain("border-bead-ink");
+    // T1 裁定 R58：提示条是全局层，必须高于打印面板 `z-60` 与查看层 `z-50`（两者都
+    // `Teleport to="body"`，层级比较发生在 body 的子节点之间）。`z-50` 与查看层并列 ⇒ 被盖住。
+    expect(classes).toContain("z-70");
+    expect(classes).not.toContain("z-50");
     // 默认调色板（`amber-*`）清掉了
     expect(classes).not.toContain("amber");
     // 两个按钮都在，且各自是可点的 56px 触控目标（R35）

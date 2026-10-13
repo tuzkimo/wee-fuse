@@ -27,7 +27,7 @@ import EditResultPage from "@/views/EditResultPage.vue";
 const { pushMock, backMock, routeState, historyState } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   backMock: vi.fn(),
-  routeState: { params: { id: "a" } as Record<string, string> },
+  routeState: { params: { id: "a" } as Record<string, string>, query: {} as Record<string, string> },
   /**
    * 替身路由器的历史状态。**`back` 刻意是 `"/edit/a"`（非空）而不是 `null`**：本页的正常入口
    * 就是「编辑器保存成功」，真实历史**必然非空**。写 `null` 只能覆盖 push 分支，于是「顺手把返回
@@ -118,6 +118,7 @@ function adoptSavedRecord(options: { withSource?: boolean } = {}): void {
 beforeEach(() => {
   setActivePinia(createPinia());
   routeState.params.id = "a";
+  routeState.query = {};
   pushMock.mockClear();
   URL.createObjectURL = vi.fn(() => "blob:edit-result") as unknown as typeof URL.createObjectURL;
   URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL;
@@ -146,6 +147,23 @@ describe("EditResultPage（/edit/:id/result）", () => {
     // 而屏幕上看起来一模一样——只有这一条能判死它。
     expect(load).not.toHaveBeenCalled();
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * T2 修复 A：手机首次生成跳进来时带 `?new=1`，标题必须是「生成成功」、文案「已保存到图纸库」。
+   *
+   * 判别力：把 `EditResultPage` 里的 `route.query.new` 判读去掉（标题恒「修改成功」、`is-new` 恒假），
+   * 本用例立刻红。**只有带 `new=1` 的那一支**会在新工程上露出「修改成功」这句假陈述。
+   */
+  it("首次生成（?new=1）：标题「生成成功」且文案「已保存到图纸库」", async () => {
+    adoptSavedRecord();
+    routeState.query = { new: "1" };
+
+    const wrapper = mount(EditResultPage);
+    await flushPromises();
+
+    expect(wrapper.get("h1").text()).toBe("生成成功");
+    expect(wrapper.get("[data-testid='result-save-state']").text()).toBe("已保存到图纸库");
   });
 
   it("刷新 / 直链：内存里没有图纸 ⇒ 按 route.params.id 补一次 load，成功后渲染结果", async () => {

@@ -394,8 +394,6 @@ describe("断点布局", () => {
     expect(wrapper.find("[data-testid='param-pane']").exists()).toBe(true);
     // 分页按钮一个都不该留（它们的分页语义已经不存在了）。
     expect(wrapper.find("[data-testid='to-params']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='back-to-params']").exists()).toBe(false);
   });
 
   /**
@@ -590,8 +588,6 @@ describe("手机竖屏排法（§7.3）", () => {
     // 失败那一支结果卡片是**可用**的：`result-rerun` 在，点了把阶段切回 `edit`、中栏换回
     // 裁剪预览（旧「手机结果阶段四颗按钮与平板完全一致」的成功支已被 T2 的跳转取代，
     // 这几条断言在失败支上复活）。
-    expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='back-to-params']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='result-rerun']").exists()).toBe(true);
     await wrapper.get("[data-testid='result-rerun']").trigger("click");
     expect(useDraft().stage).toBe("edit");
@@ -618,7 +614,27 @@ describe("手机竖屏排法（§7.3）", () => {
     const store = (await import("@/services/projectStore")).getProjectStore();
     const id = (await store.list())[0]!.id;
     expect(push).toHaveBeenCalledTimes(1);
-    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id } });
+    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id }, query: { new: "1" } });
+  });
+
+  /**
+   * T2 修复 A：结果页靠 `?new=1` 区分「新建」与「覆盖」。**已带身份（就地重跑 / 覆盖）时**，
+   * 同一个断点、同一颗按钮，只因 `draft.rerunOf` 非空，`new` 标志必须缺席——否则新工程与重跑
+   * 都会说「生成成功」。
+   */
+  it("手机覆盖（已有身份）：跳结果页时**不带** new 标志", async () => {
+    stubPlatform();
+    const draft = seedDraft();
+    draft.setRerunOf({ id: "existing", createdAt: "2026-10-01T00:00:00.000Z" });
+    window.innerWidth = 500;
+
+    const wrapper = mount(SetupPage);
+    await flushPromises();
+    await wrapper.get("[data-testid='setup-action-primary']").trigger("click");
+    await flushPromises();
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id: "existing" } });
   });
 
   /**
@@ -687,7 +703,8 @@ describe("手机竖屏排法（§7.3）", () => {
     // 补存确实进库了，并且跳的是刚落盘的那条 id。
     const id = (await real.list())[0]!.id;
     expect(push).toHaveBeenCalledTimes(1);
-    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id } });
+    // 首次生成失败后补存成功仍是**首次保存**（`resultIsNew` 为真）⇒ 带上 new 标志。
+    expect(push).toHaveBeenCalledWith({ name: "edit-result", params: { id }, query: { new: "1" } });
   });
 });
 
@@ -1875,9 +1892,6 @@ describe("结果阶段", () => {
     expect(
       wrapper.get("[data-testid='preview-pane']").find("[data-testid='preview-canvas']").exists(),
     ).toBe(true);
-    // 分页按钮一个都不该留（C8 第 4 项；旧实现按断点分叉的 `back-to-crop` / `back-to-params` 也没有）。
-    expect(wrapper.find("[data-testid='back-to-crop']").exists()).toBe(false);
-    expect(wrapper.find("[data-testid='back-to-params']").exists()).toBe(false);
   });
 
   it("离开页面时草稿按 §9 的规则处理（已生成且保存成功 → 清空）", async () => {

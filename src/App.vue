@@ -18,13 +18,14 @@ useShellLifecycle();
 
   <!-- 分享摄入的提示条：**不打断用户**（不是弹窗），且不进任何 store。
        `role="status"` 而不是 `alert`：它是「说明」，不是「必须立刻处理的错误」。
-       `z-50` 高于查看层（`z-30`，打印面板在它内部）与未保存确认条的 `z-40`：它是全局的，
-       不该被任何面板盖住。 -->
+       `z-70` 是全局层，高于打印面板 `z-60` 与查看层 `z-50`（两者都 `Teleport to="body"`，
+       层级比较发生在 body 的子节点之间）。原先写 `z-50`，与查看层并列 ⇒ 被查看层盖住（R58）。
+       层叠不变式：`z-70` > 打印 `z-60` > 施工图 `z-50`。 -->
   <p
     v-if="share.message.value !== ''"
     data-testid="share-banner"
     role="status"
-    class="fixed inset-x-0 bottom-0 z-50 flex flex-wrap items-center gap-3 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
+    class="fixed inset-x-0 bottom-0 z-70 flex flex-wrap items-center gap-3 rounded-bead-sm border-4 border-bead-ink bg-bead-warn-bg p-4 text-[24px] text-bead-warn-ink"
   >
     {{ share.message.value }}
     <BeadButton
