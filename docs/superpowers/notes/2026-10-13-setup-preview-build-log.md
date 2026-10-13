@@ -5,7 +5,7 @@
 - 计划：[2026-10-13-setup-preview-and-layout.md](../plans/2026-10-13-setup-preview-and-layout.md)
 - 交付区间：`8ed7c2c..HEAD`（分支 `feat/setup-preview-and-layout`；任务 1–8 共 8 个提交，
   另有本次文档收口提交）
-- 版本号：不动（本轮不是发行内容；上一个提交 `8ed7c2c` 已把版本定到 0.16.0）
+- 版本号：0.16.0 → **0.17.0**（tag `v0.17.0` 触发 release-android；本批是本轮唯一的发行内容）
 - 验证：`npm run test` → **1683 passed / 92 files**；`npm run build`（`vue-tsc --noEmit` + Vite）通过
 
 ## 1. 逐条对照
