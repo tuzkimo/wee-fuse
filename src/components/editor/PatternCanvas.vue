@@ -15,6 +15,7 @@ import type { Palette } from "@/core/palette/types";
 import { pointToCell } from "@/core/pattern/edit";
 import { patternToRgbaImage } from "@/core/pattern/raster";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
+import { EMPTY_STROKE } from "@/core/render/sheet";
 import {
   CELL_LABEL_MIN_CELL_PX,
   GRID_LINE_MIN_CELL_PX,
@@ -469,6 +470,46 @@ function rgbaOf(index: number, alpha: number): string {
   return `rgba(${color.rgb[0]}, ${color.rgb[1]}, ${color.rgb[2]}, ${alpha})`;
 }
 
+/**
+ * 空格斜线底纹（规格 §5.4 的更正注记）：每个**可见空格**一条左上 → 右下的细线。
+ *
+ * 来历（2026-10-13 真机反馈）：「那层浅纸底因为是纯色的，容易混淆」——浅纸底与奶油白系的豆粒
+ * 都是一块平色，分不出来。改法是照抄施工图对空格的处理（`core/render/sheet.ts` 的
+ * `EMPTY_STROKE` 与其方向），于是编辑器看到的空格就是纸上印出来的空格。
+ *
+ * 先收集坐标再共用一次 `beginPath` / `stroke`（与 `sheet.ts` 的 `paintCells` 同构）：
+ * 一个 116×116 的空图有上万条线，逐条 stroke 会白烧掉一次方级别的调用开销。
+ *
+ * 线宽取**一个设备像素**（与 `drawGrid` 同一口径）。对角线不需要那半像素平移，
+ * 所以这里不复制 `drawGrid` 的 `translate`。
+ */
+function drawEmptyHatch(
+  ctx: CanvasRenderingContext2D,
+  range: CellRange,
+  cellPx: number,
+  pixelRatio: number,
+): void {
+  const view = props.view;
+  const width = props.pattern.width;
+  const starts: number[] = [];
+  for (let y = range.y0; y <= range.y1; y += 1) {
+    for (let x = range.x0; x <= range.x1; x += 1) {
+      if ((props.pattern.cells[y * width + x] as number) !== EMPTY) continue;
+      starts.push(view.offsetX + x * cellPx, view.offsetY + y * cellPx);
+    }
+  }
+  if (starts.length === 0) return; // 图纸上全是实色：一条线也不描（不留下一次空的 stroke）
+
+  ctx.beginPath();
+  ctx.lineWidth = 1 / pixelRatio;
+  ctx.strokeStyle = EMPTY_STROKE;
+  for (let i = 0; i < starts.length; i += 2) {
+    ctx.moveTo(starts[i], starts[i + 1]);
+    ctx.lineTo(starts[i] + cellPx, starts[i + 1] + cellPx);
+  }
+  ctx.stroke();
+}
+
 function drawGrid(ctx: CanvasRenderingContext2D, range: CellRange, cellPx: number, pixelRatio: number): void {
   const view = props.view;
   const left = Math.round(view.offsetX + range.x0 * cellPx);
@@ -602,6 +643,7 @@ function draw(): void {
   // 纸底：铺满**图纸矩形**（不是整块画布）。色块层里的空格是透明的，透出这层纸而不是深板底
   // （§5.4）——没有它，一张去了背景、边线是黑的图会与板底糊在一起。画布外那一圈仍是深色板底 +
   // 板孔点阵（§6.1 对那一圈仍逐字成立）。必须画在 `drawImage` **之前**，否则会把豆粒盖住。
+  // 空格在这层纸上还要加斜线（`drawEmptyHatch`）——纯色浅纸底本身与浅色豆分不开。
   ctx.fillStyle = PAPER_ON_DARK;
   ctx.fillRect(
     view.offsetX,
@@ -623,6 +665,8 @@ function draw(): void {
   const range = visibleCellRange(view, size, gridSize());
   if (range === null) return; // 没有可见格：画完底色与色块层就够了
 
+  // 斜线在网格线**之前**（与施工图同一层序）：空格斜线先铺，再压上格线。
+  drawEmptyHatch(ctx, range, cellPx, pixelRatio);
   if (props.showGrid && cellPx >= GRID_LINE_MIN_CELL_PX) drawGrid(ctx, range, cellPx, pixelRatio);
   drawFrame(ctx, view, cellPx);
   if (props.showLabels && cellPx >= CELL_LABEL_MIN_CELL_PX) drawLabels(ctx, range, cellPx);
