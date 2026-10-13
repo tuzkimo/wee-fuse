@@ -467,6 +467,44 @@ describe("断点布局", () => {
 });
 
 /**
+ * 平板定高 shell（§5.2）：整页不滚、中栏固定、**只有左右两栏各自上下滚**（人类伙伴在真机上
+ * 跑完流程后的原话）。断言全是类名（happy-dom 不解析布局），真实观感在规格 §8 的真机清单里。
+ *
+ * 写法照拄 `EditorPage.test.ts` 的「平板定高 shell（§7.4 T4）」那一组：那里坐实了同一条机制。
+ */
+describe("平板定高 shell（§5.2）", () => {
+  it("main 是定高 flex 列，只有左右两栏能滚", async () => {
+    const wrapper = await mountSetupBeforeGenerate();
+
+    const main = wrapper.get("main");
+    // 四个类缺一不可：只加 h-screen 而不加 flex/flex-col 时三栏容器会在 header 下面**再占一个
+    // 视口高**、底部被 overflow-hidden 裁掉——那是「底部内容消失」而不是「只有左右两栏滚」，
+    // 所以断言必须把 md:flex / md:flex-col 一起钉住，只查 h-screen 抓不到那种失败。
+    for (const cls of ["md:flex", "md:flex-col", "md:h-screen", "md:overflow-hidden"]) {
+      expect(main.classes()).toContain(cls);
+    }
+    expect(main.classes()).toContain("min-h-screen"); // 手机仍可滚
+
+    const body = wrapper.get("[data-testid='setup-body']");
+    // 三栏容器的类由 `isWide` 当场换（不是 `md:` 前缀），这是本页既有机制、`断点布局` 那组用例
+    // 已经钉着（跨断点时容器类当场换掉）⇒ 这里断的是**当前生效的那一支**，不是前缀。
+    expect(body.classes()).toEqual(expect.arrayContaining(["flex-1", "min-h-0"]));
+
+    expect(wrapper.get("[data-testid='crop-pane']").classes()).toEqual(
+      expect.arrayContaining(["md:min-h-0", "md:overflow-y-auto"]),
+    );
+    expect(wrapper.get("[data-testid='param-pane']").classes()).toEqual(
+      expect.arrayContaining(["md:min-h-0", "md:overflow-y-auto"]),
+    );
+    // 中栏**不滚**：它按短边把内容缩进盒子（Task 5/8）。
+    const previewPane = wrapper.get("[data-testid='preview-pane']");
+    expect(previewPane.classes()).toContain("md:overflow-hidden");
+    expect(previewPane.classes()).not.toContain("md:overflow-y-auto");
+    expect(previewPane.classes()).not.toContain("md:min-h-[60vh]");
+  });
+});
+
+/**
  * 手机竖屏的单列排法（§7.3）：中栏块吸顶 → 选范围 → 参数，主按钮固定在底部安全区之上。
  *
  * 顺序**不能倒**：先裁剪后参数会让他调完参数还要往回滚才能看到结果。这里断言的是**DOM 顺序**
@@ -513,11 +551,16 @@ describe("手机竖屏排法（§7.3）", () => {
     // 旧的 40vh 不再允许出现在这个节点上（回退到旧值这一条会红）。
     expect(preview.classes()).toContain("h-[48vh]");
     expect(preview.classes()).not.toContain("h-[40vh]");
-    // 平板上高度是 auto，溢出处理该还回去（不把中栏变成一个内部滚动容器）。
-    expect(preview.classes()).toContain("md:overflow-visible");
+    // 平板上高度跟着定高 shell 走（§5.2）——**不再是 auto**：中栏要吃掉父容器的高度，
+    // 才能把「整页不滚、只有左右两栏滚」这件事交给左右两栏。溢出处理从 `visible` 改成
+    // `hidden`：两者都是同一个属性的工具类，同时留着谁赢取决于产物顺序；而「不把中栏变成
+    // 一个内部滚动容器」这条本意由 `hidden` 同样满足（内容按短边缩进盒子，本就不该溢出）。
+    expect(preview.classes()).toContain("md:overflow-hidden");
+    expect(preview.classes()).not.toContain("md:overflow-visible");
     // `md` 下取消吸顶与固定高（平板上中栏是并排的中间一栏，不跟着页面滚）。
     expect(preview.classes()).toContain("md:static");
-    expect(preview.classes()).toContain("md:h-auto");
+    expect(preview.classes()).toContain("md:h-full");
+    expect(preview.classes()).not.toContain("md:h-auto");
     // T2（实机反馈 1）：吸顶块必须自己起层叠（`relative z-10`）——否则后面的兄弟
     // （`TierSlider` 的 `absolute` 刻度、去背景开关）按 DOM 顺序画在它上面。
     expect(preview.classes()).toContain("relative");

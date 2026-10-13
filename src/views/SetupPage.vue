@@ -441,7 +441,13 @@ function resetCrop(): void {
 
 <template>
   <!-- 手机上底部那颗 `fixed` 动作条会盖住内容：主体留出它的高度把最后一张卡片顶出来。 -->
-  <main class="min-h-screen bg-bead-sand pb-20 md:pb-0">
+  <!--
+    平板（≥1024px）下是**定高 shell**（§5.2）：整页不滚、中栏固定、只有左右两栏各自滚。
+    `md:flex md:flex-col` **不能省**：main 不是 flex 容器时，只加 h-screen 会让三栏容器从 header
+    下面开始再占一个视口高，底部被 overflow-hidden 裁掉——那是「底部内容消失」而不是「只有左右两栏
+    滚」。同款做法的先例是 `EditorPage.vue`（那个页面也是这四类）。
+  -->
+  <main class="min-h-screen bg-bead-sand pb-20 md:flex md:h-screen md:flex-col md:overflow-hidden md:pb-0">
     <!--
       顶栏（§6.4）：手机 64px / 平板 80px，`bead-sand-2` 底 + 4px `bead-line` 底边。
       主按钮两态（§7.3）：未生成「开始拼 ▶」（走现有生成）、已生成「完成 ✓」（走现有回家那条路）。
@@ -497,33 +503,36 @@ function resetCrop(): void {
     -->
     <div
       data-testid="setup-body"
-      :class="isWide ? 'mt-6 flex gap-4 p-4' : 'mt-6 space-y-6 p-4'"
+      :class="isWide ? 'mt-6 flex min-h-0 flex-1 gap-4 p-4' : 'mt-6 space-y-6 p-4'"
     >
       <!--
         中栏（§7.3）：未生成 = 放大的裁剪预览（复用 `draft.preview`，不新算）+ 一行提示；
         已生成 = 共用组件 `ResultPanel` + 尺寸 chip。背景是四处允许的深色看图底的其中一处。
         `preview-pane` 是本任务新加的容器 testid；`result-pane` 仍挂在宿主这个 `<section>` 上。
         手机吸顶且固定高 48vh（§7.3 的「高约 40vh」给了这个余地；R42：40vh 下固定的 chip +
-        保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外），`md` 下两者都取消
-        （平板上它是并排的中间一栏，不跟着页面滚）。
+        保存文案 + 三颗动作已超过盒子，48vh 才不让动作按钮被顶出盒外）。
+        **平板（§5.2）**：`md:h-full md:overflow-hidden`——它是定高 flex 列里的中栏，高度吃掉父容器、
+        自己的内容（预览画布 / 结果卡）不滚；原来那对 `md:h-auto md:overflow-visible` 与 `md:min-h-[60vh]`
+        必须删掉，否则中栏会把定高 shell 顶出去（两个同属性工具类谁赢取决于产物顺序）。
         **T4 修复（R55）**：吸顶偏移是 `top-16`（= 手机顶栏的 64px）而不是 `top-0`——顶栏自己也
         吸顶（`sticky top-0 z-20 h-16`），`top-0` 会让本块的顶部 64px 永远被顶栏盖住。
       -->
       <section
         data-testid="preview-pane"
-        class="relative z-10 sticky top-16 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-auto md:overflow-visible md:min-h-[60vh] md:flex-1 md:min-w-0"
+        class="relative z-10 sticky top-16 flex h-[48vh] flex-col overflow-y-auto rounded-bead-md border-4 border-bead-ink bg-bead-board p-3 md:static md:order-2 md:h-full md:overflow-hidden md:flex-1 md:min-w-0"
         :style="boardDots"
       >
         <template v-if="paneShowsResult">
           <!-- `max-md:flex-1` + `max-md:min-h-0`（R41 修复 2）：手机上这个吸顶盒是定高的 flex
                列，结果卡片因此吃掉 chip 之外的全部高度；`ResultPanel` 里的预览盒有着明确的百分比
                高度可依，才能被压进剩余空间（否则 55vh 的预览会把三颗动作按钮顶进内滚区）。
-               平板上盒高 auto，这几个类不生效（`max-md:`），仍由 `md:min-h-[60vh]` 主导。
+               **平板**（§5.2）：定高 shell 里它同样必须能缩（`md:flex-1 md:min-h-0`），否则
+               `ResultPanel` 的 `basis-[55vh]` 会把三颗动作按钮顶出可视区。
                `min-h-0`（而不是 `min-h-min`）：卡片的 min-content 会被预览盒的 `basis-[55vh]`
                污染成 55vh，用 `min-h-min` 就等于取消变矮，真窗口实测卡片会撑到 555px。 -->
           <section
             data-testid="result-pane"
-            class="max-md:flex-1 max-md:min-h-0 rounded-bead-md bg-bead-card p-4 md:p-6"
+            class="max-md:flex-1 max-md:min-h-0 rounded-bead-md bg-bead-card p-4 md:flex-1 md:min-h-0 md:p-6"
           >
             <ResultPanel
               v-if="session.pattern !== null"
@@ -559,7 +568,7 @@ function resetCrop(): void {
 
       <section
         data-testid="crop-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:w-[236px] md:shrink-0"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-3 md:order-first md:min-h-0 md:w-[236px] md:shrink-0 md:overflow-y-auto"
       >
         <div class="h-[40vh] min-h-[240px] md:h-[46vh]">
           <CropCanvas
@@ -616,7 +625,7 @@ function resetCrop(): void {
 
       <section
         data-testid="param-pane"
-        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:w-[262px] md:shrink-0"
+        class="rounded-bead-md border-4 border-bead-ink bg-bead-card p-4 md:order-last md:min-h-0 md:w-[262px] md:shrink-0 md:overflow-y-auto"
       >
         <ParamPanel
           v-if="draft.crop !== null"
