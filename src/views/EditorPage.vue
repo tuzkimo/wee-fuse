@@ -10,7 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { fitTransform, type Size, type ViewTransform } from "@/core/crop/view";
 import { createPaletteRuntime } from "@/core/palette/registry";
-import { BACKGROUND_TOLERANCE, patternBackgroundIndices } from "@/core/pattern/background";
+import { BACKGROUND_TOLERANCE, patternRegionIndices } from "@/core/pattern/background";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
 import { EMPTY, type Pattern } from "@/core/pattern/types";
 import { zoomCellView, type CellPoint } from "@/core/pattern/view";
@@ -203,10 +203,16 @@ function onPaint(indices: number[]): void {
 /**
  * 填充：点一下 → 求与它连通的目标区域 → 交给 store 入账。
  *
- * **容差随手里拿的东西变**（规格 §8）：拿橡皮时用 `BACKGROUND_TOLERANCE`（照片背景有渐变残留，
- * 容差能一次收干净，这正是原来的「去背景」）；拿颜色时用 `0`（精确同色）——孩子点一块色块期望的是
- * 「这一整块同色的都变」，容差会误伤旁边看起来相近但色号不同的区域。
- * 对擦除宽容、对涂色严格，因为吃过头是更坏的失败。
+ * **目标区域的口径随手里拿的东西变**（规格 §5.1，同一条规则的两个轴）：
+ * - 点到的格是**空格** ⇒ 收掉**连通的整片空格**（手里拿什么颜色就涂什么颜色）——先画轮廓、
+ *   再灌内部走这条路。拿橡皮点空格是恒等操作（擦空格没有意义）。
+ * - 点到的格**有颜色** ⇒ 收掉同色 / 近色的连通片，**容差随手里拿的东西变**：拿橡皮时用
+ *   `BACKGROUND_TOLERANCE`（照片背景有渐变残留，容差能一次收干净，这正是原来的「去背景」）；
+ *   拿颜色时用 `0`（精确同色）——孩子点一块色块期望的是「这一整块同色的都变」，容差会误伤旁边
+ *   看起来相近但色号不同的区域。
+ *
+ * 对擦除宽容、对涂色严格，因为吃过头是更坏的失败。轮廓有缺口时会漏到外面那整片背景——
+ * 这是油漆桶的标准行为，一步撤销接得住。
  */
 function onFill(point: CellPoint): void {
   const pattern = editor.pattern;
@@ -214,7 +220,8 @@ function onFill(point: CellPoint): void {
   const color = editor.currentColor;
   // 判定在 core、入账在 store，本页只做两件事之间的搬运：色卡的 Lab 表用页面已经持有的
   // `palette` 生成（store 按设计不持有色卡），单次点击一条命令、一步可撤销。
-  const indices = patternBackgroundIndices(
+  // 种子是空格时下面这个容差用不上（所有空格的 Lab 都是 0,0,0），保持一个表达式更省一行分支。
+  const indices = patternRegionIndices(
     pattern,
     createPaletteRuntime(palette).labs,
     point,

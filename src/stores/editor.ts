@@ -351,7 +351,7 @@ export const useEditor = defineStore("editor", () => {
   /**
    * 去背景：把一批格子置为空格，**一次点击一条命令**（可一步撤销）。
    *
-   * 判定「哪些格子是背景」在 core（`patternBackgroundIndices`），这里只负责入账；写入委托
+   * 判定「哪些格子是背景」在 core（`patternRegionIndices`），这里只负责入账；写入委托
    * `paintCells`，所以「点空格」既不留空的撤销记录、也不置脏。
    */
   function eraseCells(indices: readonly number[]): void {
