@@ -600,15 +600,16 @@ function rerun(): void {
             没有原图（`canRerun` 为假）时不渲染：没有原图就无从「按原图重新生成」。
             `variant="secondary"`（`bead-card` 底）是硬要求：它会丢掉手工涂改，视觉权重不能压过
             旁边那颗 `go` 保存。
-            R53：图形旁留短中文；12px 与 `px-3!` 是 360px 手机上放得下的那一档（顶栏比工具条窄，
-            `secondary` 自带的 `px-6` 会把这一行顶到溢出）。
+            R53：图形旁留短中文；12px 是 360px 手机上放得下的那一档（顶栏比工具条窄）。
+            `px-3!` 只在手机档生效（`secondary` 自带的 `px-6` 会把这一行顶到溢出），
+            `md:px-6!` 把它补回与旁边保存同一套内边距——平板上两颗看起来是一对（R56 复审的整理）。
           -->
           <BeadButton
             v-if="canRerun"
             data-testid="rerun"
             variant="secondary"
             aria-label="重做"
-            class="px-3!"
+            class="px-3! md:px-6!"
             @click="rerun"
           >
             <PixelIcon name="rerun" :size="24" />

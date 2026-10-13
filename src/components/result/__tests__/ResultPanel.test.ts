@@ -4,6 +4,7 @@ import { planSheet } from "@/core/render/layout";
 import { getBuiltinPalette } from "@/services/palette";
 import type { SheetRenderInput } from "@/services/sheetExport";
 import ResultPanel from "@/components/result/ResultPanel.vue";
+import { ICONS } from "@/components/ui/PixelIcon.vue";
 
 /**
  * 结果卡片（C8 规格 §3.4）：两个宿主共用，纯展示（不 import store）。
@@ -146,6 +147,21 @@ describe("ResultPanel（D1：上半屏成品、三颗图形动作 + 通栏完成
 
   it("没有「打印」按钮（打印从查看层里进）", () => {
     expect(mountPanel().find("[data-testid='result-print']").exists()).toBe(false);
+  });
+
+  /**
+   * 结果页的「重做」必须用**新的** `rerun` 图形（循环箭头），不是 `undo`（R56）。
+   *
+   * 判据是「渲染出来的 rect 与 `ICONS.rerun` **逐条相同**」，而不是写死某个数字：
+   * 图标表以后微调时写死的数字会误红，而对同一份真源比对只在「用错了图标」时红。
+   * 回到 `name="undo"` 时，`ICONS.undo` 是 5 条 rect 而 `rerun` 是 12 条 ⇒ 这里必红。
+   */
+  it("「重做」用的是 rerun 图形（与顶栏那颗同形），不是 undo", () => {
+    const button = mountPanel().get("[data-testid='result-rerun']");
+    const rendered = button
+      .findAll("rect")
+      .map((rect) => ["x", "y", "width", "height"].map((attr) => Number(rect.attributes(attr))));
+    expect(rendered).toEqual(ICONS.rerun.map((rect) => [...rect]));
   });
 
   it("canRerun 为假时不渲染「重做」", () => {

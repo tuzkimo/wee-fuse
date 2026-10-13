@@ -97,7 +97,7 @@ const boardDots = {
     <!--
       三颗并列动作按钮（§7.5：`bead-card` 底、64px 高）：全部映射到现有动作（继续涂 / 看施工图 /
       重做），不新增功能。图形按钮**必须配 2~4 字短中文兜底**（§1 事实 1：纯图标对抽象动作无法
-      消歧；`undo` 在编辑器里是「撤销」，同一图标指两件事时靠文字分开），文字 12px、图标降为 24px。
+      消歧），文字 12px、图标降为 24px。
       `aria-label` 同时保留：可见文字与无障碍名字同字〔WCAG 2.5.3〕。
     -->
     <div class="flex gap-3">
@@ -129,8 +129,9 @@ const boardDots = {
         class="h-16 flex-1 flex-col p-0!"
         @click="emit('rerun')"
       >
-        <!-- R10：`ICON_NAMES` 里没有 `rerun`，复用 `undo`。 -->
-        <PixelIcon name="undo" :size="24" />
+        <!-- R56：用真正的 `rerun` 图形（循环箭头），与编辑页顶栏那颗同形——同一件事在两个入口
+             不能是两个图形。 -->
+        <PixelIcon name="rerun" :size="24" />
         <span class="text-[12px]">重做</span>
       </BeadButton>
     </div>
