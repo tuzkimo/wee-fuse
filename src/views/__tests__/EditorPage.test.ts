@@ -2075,6 +2075,39 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     // 容差 10 把 141 也吃掉——这正是原来的「去背景」行为
     expect(Array.from(loadedCells(editor))).toEqual([EMPTY, EMPTY, EMPTY]);
   });
+
+  /**
+   * **本批的头号用户故事**（规格 §5.1）：「我用画笔在空白区域画了个图案，然后想在中间填色」。
+   *
+   * 上面那些用例走的是「种子有颜色」那一支；这一条走「种子是空格」那一支——两支在 core 里
+   * 分岔，而页面这一层的接线（`onFill` → `patternRegionIndices` → `paintCells`）是同一条。
+   * 跨组件、一次点击一条命令、一步撤销，全在这里钉住。
+   */
+  it("[空格可填] 手里拿颜色、点被围住的空白：连通的整片空格被涂成该色，且一步可撤销", async () => {
+    // 5×3：外圈是 A1（色号 0），中间一整条空白（下标 6/7/8）被四边完全围住。
+    const wrapper = await mountGrid(
+      [0, 0, 0, 0, 0,
+       0, EMPTY, EMPTY, EMPTY, 0,
+       0, 0, 0, 0, 0],
+      5,
+      3,
+    );
+    const editor = useEditor();
+    const before = Array.from(loadedCells(editor));
+    editor.setCurrentColor(5); // 手里拿颜色 5（不是橡皮）
+
+    await wrapper.get("[data-testid='tool-fill']").trigger("click");
+    await tapCell(wrapper, 2, 1); // 点中间那个空格
+
+    const cells = loadedCells(editor);
+    // 整片（不只是种子那一格）、也没有漏到外面
+    expect([cells[6], cells[7], cells[8]]).toEqual([5, 5, 5]);
+    expect([cells[0], cells[1], cells[4]]).toEqual([0, 0, 0]);
+    // 一次点击 = 一条命令：撤销一次整片回退
+    expect(editor.canUndo).toBe(true);
+    await wrapper.get("[data-testid='undo']").trigger("click");
+    expect(Array.from(loadedCells(editor))).toEqual(before);
+  });
 });
 
 // ---------------------------------------------------------------------------

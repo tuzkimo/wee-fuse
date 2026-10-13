@@ -235,9 +235,10 @@ describe("当前色槽即入口（§9.1 第 3 条）", () => {
     expect(follows).toBeTruthy();
   });
 
-  // 两颗按钮都不许留个壳：`palette-add` 的入口功能已并入当前色槽，
-  // `palette-eraser` 搬到了工具栏（`PatternToolbar` 的 `eraser`）。
-  it("没有「添加颜色」按钮，也没有橡皮按钮（橡皮搬到工具栏）", () => {
+  // 两颗按钮都不许留个壳：`palette-add` 的入口功能已并入当前色槽；
+  // `palette-eraser` 先搬去工具栏、**2026-10-13 又搬回了选色区**——它现在是 `picker-eraser`
+  // （规格 §5.2），而不是这个槽位上的第二颗按钮。
+  it("没有「添加颜色」按钮，也没有独立的橡皮按钮（橡皮是选择器里的一个条目）", () => {
     const wrapper = mountPanel();
     expect(wrapper.find("[data-testid='palette-add']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='palette-eraser']").exists()).toBe(false);

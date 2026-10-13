@@ -75,8 +75,10 @@ describe("图标剪影（实机反馈 5）", () => {
     expect(ICON_NAMES).toContain("rerun");
   });
 
-  it("undo / redo / rerun / grid / labels / pan 的 12×12 占位两两不同", () => {
-    const names: readonly IconName[] = ["undo", "redo", "rerun", "grid", "labels", "pan"];
+  it("工具条上并排的这些图标 12×12 占位两两不同", () => {
+    // 比最初的五个多出 `pan` / `brush` / `fill` / `eraser`：这四枚现在真的在同一排上并排
+    // （2026-10-13 加的拖动工具），24px 下分不开就是点错工具。
+    const names: readonly IconName[] = ["undo", "redo", "rerun", "grid", "labels", "pan", "brush", "fill", "eraser"];
     // helper 自证：helper 只铺了第一个 rect、或干脆铺出空集合时，下面所有 pairwise 都会「相等」
     // 或「都为空」，这条先把它判红——否则「两两不同」可以在一只坏 helper 上全绿。
     for (const name of names) {

@@ -581,15 +581,17 @@ describe("拖动工具：单指平移视图（不改图纸）", () => {
     expect(wrapper.emitted("fill")).toBeUndefined();
   });
 
-  it("落在图纸外按下时全程什么都不做", async () => {
-    // 8×8、24px/格、偏移 0 → 图纸只占屏幕左上角 192×192，(300,300) 在图纸外。
-    // 这条守卫是刻意的：按下那一刻就决定本次手势不成立，不能中途换成平移。
+  it("落在图纸外按下时全程什么都不做，不会因为后来移进图内而变成平移", async () => {
+    // 8×8、24px/格、偏移 0 → 图纸只占屏幕左上角 192×192，(300,300) 在图纸外、(100,100) 在图内（格 4,4）。
+    //
+    // **第二个点必须在图内**：这条要钉的不变式是「按下那一刻就决定本次手势不成立」，
+    // 若把「在不在图内」的判定挪到 pointermove 里，写成两个点都在图外会让这条用例照绿。
     const outside = mountCanvas({ pattern: solidPattern(8, 8), view: VIEW_8, tool: "pan" });
     await outside.vm.$nextTick();
 
     await pointer(outside, "pointerdown", 300, 300);
-    await pointer(outside, "pointermove", 320, 320);
-    await pointer(outside, "pointerup", 320, 320);
+    await pointer(outside, "pointermove", 100, 100); // 图内也不接管
+    await pointer(outside, "pointerup", 100, 100);
 
     expect(outside.emitted("update:view")).toBeUndefined();
     expect(outside.emitted("paint")).toBeUndefined();

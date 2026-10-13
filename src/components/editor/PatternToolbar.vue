@@ -10,7 +10,7 @@
 // `disabled` **逐字**读 `canUndo` / `canRedo`（规格 §6.6）：能不能撤只有 `EditHistory` 知道，
 // 组件里再算一次「有没有东西可撤」就是第二份真相，漂移的那天没有任何信号。
 //
-// **两套排法靠类分叉、不靠 `v-if`（R3）**：十一颗按钮各自只有一个 DOM 节点，手机与平板的分歧
+// **两套排法靠类分叉、不靠 `v-if`（R3）**：十颗按钮各自只有一个 DOM 节点，手机与平板的分歧
 // 全在 `max-md:` / `md:` 类上。用 `v-if` 按断点删按钮会让手机端真缺功能，jsdom（宽 1024）里
 // 也根本验不到手机那一套。手机上左组一行、右组一行（两组都可横滑，`overflow-x-auto`），
 // 平板上两组用 `md:contents` 摊平进同一条 flex 行。
@@ -74,7 +74,7 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
 
 <template>
   <div class="max-md:space-y-3 md:flex md:flex-wrap md:items-center md:gap-2">
-    <!-- 平板上十颗（≈700px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
+    <!-- 平板上十颗（≈640px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
     <!-- 左组：撤销 / 恢复 + 三个主工具（手机上占第一行，可横滑）。 -->
     <div
       class="max-md:flex max-md:flex-nowrap max-md:items-center max-md:gap-3 max-md:overflow-x-auto md:contents"
