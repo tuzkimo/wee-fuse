@@ -1,5 +1,5 @@
 // 画布绘制用的 JS 侧颜色常量：Canvas 2D 不解析 CSS 的 `var()`，只能写字面量。
-// 值与 `src/style.css` 的 token 同源（多数同名，`FRAME_ON_DARK` 借的是 `--color-bead-hole`），
+// 值与 `src/style.css` 的 token 同源（多数同名，`FRAME_ON_DARK` 借的是 `--color-bead-line`），
 // 同源关系由 `__tests__/beadColors.test.ts` 钉住，改一处必须一起改。
 // 唯一的消费方是 `components/editor/PatternCanvas.vue`；施工图（`SheetViewer`）用不上这份——
 // 它是一张由 `core/render` 预渲染的白纸位图，不逐格上色。

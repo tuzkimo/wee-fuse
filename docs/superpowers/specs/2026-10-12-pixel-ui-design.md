@@ -7,6 +7,10 @@
 >
 > **本期的做法是「先改规格、再改实践」**（`AGENTS.md`「约束先行」）：本文先落地，随后本文 §8
 > 推翻的既有规格（B3 §6 的工具集）加更正注记，再动代码。
+>
+> 本文的**实机修复轮更正注记**（T1–T7）全部出自
+> [`plans/2026-10-12-pixel-ui-realdevice-fixes.md`](plans/2026-10-12-pixel-ui-realdevice-fixes.md)，
+> 构建记录见 [`notes/2026-10-12-pixel-ui-realdevice-fixes-build-log.md`](notes/2026-10-12-pixel-ui-realdevice-fixes-build-log.md)。
 
 ## 1. 意图与 why
 
@@ -348,8 +352,8 @@ App 已经能跑通全流程，但**从未交付给真实用户**。目标是把
 
 > **更正注记（2026-10-12，实机修复轮 T4）**：上面两条都只写了中栏块的吸顶，**顶栏本身没有吸顶**
 > ——实机反馈 2 是「顶栏没固定在顶部，编辑完想保存还得滑回顶部」。现补：`SetupPage` 的 `header` 加
-> `sticky top-0 z-20`，压在手机吸顶块（`preview-pane`，`relative z-10`）**之上**——两者都贴视口
-> 顶，层叠顺序决定谁被盖住；顶栏在下时中栏块会盖掉顶栏的返回箭头与主按钮。
+> `sticky top-0 z-20`；手机吸顶块（`preview-pane`，`relative z-10`）同步改 `sticky top-16`，让开顶栏的
+> 64px——两者不再重叠，`z-20` 只是「顶栏必须压在最上层」的保底（R55）。
 
 ### 7.4 编辑器 `EditorPage`（`/edit/:id`）
 
