@@ -1589,29 +1589,26 @@ describe("C8 第 3 项：编辑页出口收敛", () => {
   });
 
   /**
-   * 「橡皮」剥掉了它在本页的最后一层皮：按钮在工具栏（`PatternToolbar` 的 `eraser`），
-   * 真正要做的两件事在**页面**这一层——设当前色为 `EMPTY`、**并切回画笔**。
+   * 入口搬家（规格 §5.2，2026-10-13）：工具栏那颗橡皮删了，橡皮只能从选色区拿到。
    *
-   * 后半句是这条用例的核心：在非画笔工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
-   * （用户点完必须看得出自己已经手握橡皮）。所以起点**刻意先切到填充**——否则「切回画笔」与
-   * 「本来就是画笔」不可区分。
+   * 旧版这条用例考的是 `EditorPage.onEraser`（设当前色为 `EMPTY` **并切回画笔**）。两件事现在都
+   * 没了：入口在 `PalettePanel` → `PalettePicker`（已由 `PalettePanel.test.ts` 钉），而「不切画笔」
+   * 是本批**刻意**要的——橡皮 + 填充 = 大片擦除（就是原来的去背景），切回画笔反而把那条路子堵了。
    */
-  it("工具栏「橡皮」：设当前色为 EMPTY 并切回画笔，按下态跟着当前色", async () => {
+  it("[入口搬家] 从选色区选橡皮：当前色变 EMPTY，工具不变，不碰图纸", async () => {
     const wrapper = await mountPage();
     const editor = useEditor();
 
     expect(editor.currentColor).toBe(0); // 播种色
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     expect(editor.tool).toBe("fill");
-    // `:eraser-active` 接的是「当前色是不是 EMPTY」：此刻不是，所以没有按下态
-    expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("false");
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
 
     expect(editor.currentColor).toBe(EMPTY);
-    expect(editor.tool).toBe("brush");
-    expect(wrapper.get("[data-testid='eraser']").attributes("aria-pressed")).toBe("true");
-    // 只改当前色与工具，不碰图纸
+    // 旧 `onEraser` 会顺手切回画笔——那条现在**必须**不存在。
+    expect(editor.tool).toBe("fill");
+    // 只改当前色，不碰图纸。
     expect(Array.from(editor.pattern?.cells ?? [])).toEqual([0, EMPTY]);
   });
 
@@ -1863,7 +1860,6 @@ describe("平板定高 shell（§7.4 T4）：顶栏固定、工具条贴画布�
       "tool-brush",
       "tool-fill",
       "tool-pan",
-      "eraser",
       "toggle-grid",
       "toggle-labels",
       "zoom-in",
@@ -1962,6 +1958,16 @@ async function tapCell(wrapper: ReturnType<typeof mount>, x: number, y: number):
   await pointerAtCell(wrapper, "pointerup", x, y);
 }
 
+/**
+ * 从选色区拿到橡皮（规格 §5.2）：点当前色槽开选择器 → 点橡皮项。
+ *
+ * 这是编辑器里**唯一**的橡皮入口（工具栏那颗已删），所以填充/擦除用例都走它。
+ */
+async function pickEraser(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper.get("[data-testid='palette-current']").trigger("click");
+  await wrapper.get("[data-testid='picker-eraser']").trigger("click");
+}
+
 /** 取图纸（载入成功是这些用例的前提；null 当成夹具坏了，响亮失败而不是静默跳过断言）。 */
 function loadedCells(editor: ReturnType<typeof useEditor>): Uint16Array {
   const pattern = editor.pattern;
@@ -1983,7 +1989,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const editor = useEditor();
 
     // 现在的「去背景」= 拿橡皮 + 填充：容差 10 才吃得掉整片背景
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     expect(editor.tool).toBe("fill");
     await tapCell(wrapper, 0, 0);
@@ -1998,7 +2004,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const wrapper = await mountGrid(BACKGROUND_FIXTURE, 3, 3);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 1, 1);
 
@@ -2012,7 +2018,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const editor = useEditor();
     const before = Array.from(loadedCells(editor));
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
     // 一次点击 = 一条命令：撤销按钮此刻可用，点一下就整片回退
@@ -2034,7 +2040,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const editor = useEditor();
     const session = useProjectSession();
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
 
@@ -2062,7 +2068,7 @@ describe("填充工具（原「去背景」，容差随所持颜色变化）", (
     const wrapper = await mountGrid(FILL_NEARBY_FIXTURE, 3, 1);
     const editor = useEditor();
 
-    await wrapper.get("[data-testid='eraser']").trigger("click");
+    await pickEraser(wrapper);
     await wrapper.get("[data-testid='tool-fill']").trigger("click");
     await tapCell(wrapper, 0, 0);
 

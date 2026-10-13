@@ -20,8 +20,6 @@ function mountToolbar(overrides: Record<string, unknown> = {}) {
       tool: "brush",
       showGrid: true,
       showLabels: true,
-      // 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。
-      eraserActive: false,
       ...overrides,
     },
   });
@@ -45,7 +43,6 @@ const ICON_BUTTONS: readonly (readonly [string, string])[] = [
   ["tool-brush", "画笔"],
   ["tool-fill", "填充"],
   ["tool-pan", "拖动"],
-  ["eraser", "橡皮"],
   ["toggle-grid", "网格线"],
   ["toggle-labels", "格内色号"],
   ["zoom-in", "放大"],
@@ -249,9 +246,9 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
   // happy-dom 没有布局（`getBoundingClientRect()` 恒 0，CONTRACT §9.5），屏幕尺寸在 CI 里
   // 不可观察；尺寸的唯一可观察形式就是类名。这是**代理断言**、不是像素断言：
   // 它拦的是「这一栏根本没写尺寸类」，拦不住写错数值。
-  it("4 个主工具 64×64、2 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
+  it("3 个主工具 64×64、2 颗历史按钮 56×56、5 颗「看的方式」52×52", () => {
     const wrapper = mountToolbar();
-    for (const testid of ["tool-brush", "tool-fill", "tool-pan", "eraser"]) {
+    for (const testid of ["tool-brush", "tool-fill", "tool-pan"]) {
       expect(wrapper.get(`[data-testid='${testid}']`).classes()).toEqual(
         expect.arrayContaining(["h-16", "w-16"]), // 4rem = 64px
       );
@@ -317,14 +314,13 @@ describe("触控目标与字号（§6.5 / §7.4）", () => {
  * （存在性、`canRerun` 为假时不渲染、次按钮样式）属于**授权改写**：全部改到 `EditorPage.test.ts`
  * 去钉顶栏那一颗（R2 的口径——哪个组件拥有它就由哪个组件的用例钉）。
  */
-describe("C8 第 3 项：橡皮与历史两颗（重做已搬去顶栏）", () => {
-  it("工具条里有「橡皮」，它带按下态、点它 emit eraser", async () => {
-    const wrapper = mountToolbar({ eraserActive: true });
-    const eraser = wrapper.get("[data-testid='eraser']");
-    expect(eraser.attributes("aria-label")).toBe("橡皮");
-    expect(eraser.attributes("aria-pressed")).toBe("true");
-    await eraser.trigger("click");
-    expect(wrapper.emitted("eraser")).toHaveLength(1);
+describe("C8 第 3 项：历史两颗（重做已搬去顶栏）", () => {
+  // 2026-10-13（规格 §5.2）：工具栏那颗橡皮删了，橡皮是选择器里的一个条目（`PalettePicker`）。
+  // 它本来就不是工具（是「当前色 = `EMPTY`」），与画笔 / 填充并排会让用户以为三者是三选一。
+  it("工具条里不再有橡皮", () => {
+    const wrapper = mountToolbar();
+    expect(wrapper.find("[data-testid='eraser']").exists()).toBe(false);
+    expect(wrapper.emitted("eraser")).toBeUndefined();
   });
 
   it("工具条里不再有查看施工图 / 打印 / 保存（C8 第 3 项 + 任务 12 保存搬去顶栏）", () => {

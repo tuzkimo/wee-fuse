@@ -495,16 +495,6 @@ onBeforeUnmount(() => {
 });
 
 /**
- * 橡皮（C8 第 3 项：按钮从调色板搬进工具栏）。
- * **顺带切回画笔**：在填充工具下只把色槽设成 `EMPTY` 的话，用户点完看不出任何变化
- * （工具还停在填充）。
- */
-function onEraser(): void {
-  editor.setCurrentColor(EMPTY);
-  editor.setTool("brush");
-}
-
-/**
  * 「重做」入口（B2 规格 §7 + B3 规格 §8.5 的接缝；C8 第 3 项从页面中部搬进工具条，
  * T5 起从工具条搬进**顶栏**、与保存同级——实机反馈 6：「重做」与工具按钮放一起不合逻辑）。
  *
@@ -733,7 +723,6 @@ function rerun(): void {
             :tool="editor.tool"
             :show-grid="editor.showGrid"
             :show-labels="editor.showLabels"
-            :eraser-active="editor.currentColor === EMPTY"
             @update:tool="editor.setTool($event)"
             @undo="onCommand('undo')"
             @redo="onCommand('redo')"
@@ -742,7 +731,6 @@ function rerun(): void {
             @fit="onCommand('fit')"
             @zoom-in="onCommand('zoom-in')"
             @zoom-out="onCommand('zoom-out')"
-            @eraser="onEraser"
           />
         </div>
       </div>

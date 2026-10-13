@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // src/components/editor/PatternToolbar.vue
 //
-// 编辑器工具条（§7.4）：**十一颗图标按钮**（撤销/恢复 + 三个主工具 + 五个「看的方式」）。
+// 编辑器工具条（§7.4）：**十颗图标按钮**（撤销/恢复 + 三个主工具 + 五个「看的方式」）。
 // props 进、事件出，**不读 store**；保存按钮与未保存圆点已搬进 `EditorPage` 的顶栏，不在本组件。
 //
 // 三个开关类按钮 emit 的是**翻转后的值**而不是当前值：本组件不持有开关状态，
@@ -36,8 +36,6 @@ defineProps<{
   tool: EditorTool;
   showGrid: boolean;
   showLabels: boolean;
-  /** 当前色槽是不是橡皮（`EMPTY`）——「橡皮」按钮的按下态。 */
-  eraserActive: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -49,8 +47,6 @@ const emit = defineEmits<{
   fit: [];
   "zoom-in": [];
   "zoom-out": [];
-  /** 把当前色槽设为橡皮（`EMPTY`）**并切回画笔**——见 `EditorPage.onEraser`。 */
-  eraser: [];
 }>();
 
 /** 三个主工具：testid 固定为 `tool-<工具名>`（CONTRACT §8），不许另起名字。 */
@@ -61,7 +57,7 @@ const TOOLS: readonly { readonly tool: EditorTool; readonly label: string }[] = 
 ];
 
 /**
- * 十一颗图标按钮共用的尺寸类。
+ * 十颗图标按钮共用的尺寸类。
  *
  * `p-0!`：主/次按钮变体自带 `px-6`（给文字按钮的），图标按钮必须显式清掉——否则 64px 的方框里
  * 左右各 24px 内边距把内容挤成 0 宽，图标会偏出中心。
@@ -78,7 +74,7 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
 
 <template>
   <div class="max-md:space-y-3 md:flex md:flex-wrap md:items-center md:gap-2">
-    <!-- 平板上十一颗（≈700px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
+    <!-- 平板上十颗（≈700px）要排成一条：`gap-2` 是 768px 下能容下的最大同层间距。 -->
     <!-- 左组：撤销 / 恢复 + 三个主工具（手机上占第一行，可横滑）。 -->
     <div
       class="max-md:flex max-md:flex-nowrap max-md:items-center max-md:gap-3 max-md:overflow-x-auto md:contents"
@@ -103,7 +99,7 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
       >
         <PixelIcon name="redo" :size="24" />
       </BeadButton>
-      <!-- 三个主工具 64×64（§6.5）：按下态读 `tool === item.tool`；橡皮读 `eraserActive`。 -->
+      <!-- 三个主工具 64×64（§6.5）：按下态读 `tool === item.tool`。 -->
       <BeadButton
         v-for="item in TOOLS"
         :key="item.tool"
@@ -115,16 +111,6 @@ const VIEW_SIZE = "min-h-[52px]! min-w-[52px]! shrink-0 rounded-bead-md!";
         @click="emit('update:tool', item.tool)"
       >
         <PixelIcon :name="item.tool" :size="36" />
-      </BeadButton>
-      <BeadButton
-        data-testid="eraser"
-        :variant="eraserActive ? 'primary' : 'secondary'"
-        aria-label="橡皮"
-        :aria-pressed="eraserActive"
-        :class="TOOL_SIZE"
-        @click="emit('eraser')"
-      >
-        <PixelIcon name="eraser" :size="36" />
       </BeadButton>
     </div>
 
