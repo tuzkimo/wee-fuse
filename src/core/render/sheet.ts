@@ -14,6 +14,7 @@ import {
   rgbCss,
   type BoardPagePlan,
   type GridGeometry,
+  type GridTilePlan,
   type LegendBandPlan,
   type PageChromePlan,
   type SheetPlan,
@@ -257,7 +258,7 @@ function paintCells(
   target: RenderTarget2D,
   pattern: Pattern,
   palette: Palette,
-  plan: GridStepPlan,
+  plan: TileGeometry,
 ): readonly LabelCell[] {
   const emptyBoxes: PixelRect[] = [];
   const labelCells: LabelCell[] = [];
@@ -294,7 +295,13 @@ function paintCells(
 }
 
 /** 格内色号：字号取 plan 的 labelFontPx、墨色取 labelInk（Lab 的 L*），位置取 cellBox 的中心。 */
-function drawLabels(target: RenderTarget2D, cells: readonly LabelCell[], plan: GridStepPlan): void {
+function drawLabels(
+  target: RenderTarget2D,
+  cells: readonly LabelCell[],
+  plan: { readonly labelFontPx: number },
+): void {
+  // 0 = 「这一档不画色号」（网格块预览在格太小的时候降级，见 `planGridTile`）。
+  if (plan.labelFontPx <= 0) return;
   if (cells.length === 0) return;
   target.font = `${plan.labelFontPx}px sans-serif`;
   target.textAlign = "center";
@@ -315,7 +322,7 @@ function drawCellsAndLabels(
   target: RenderTarget2D,
   pattern: Pattern,
   palette: Palette,
-  plan: GridStepPlan,
+  plan: TileGeometry & { readonly labelFontPx: number },
 ): void {
   drawLabels(target, paintCells(target, pattern, palette, plan), plan);
 }
@@ -368,7 +375,10 @@ function drawGridLines(target: RenderTarget2D, plan: GridGeometry): void {
  * **每 5 格由全局格号判定**（`origin + index`），所以打印页第 2 页的虚线落在 30 / 35… 上，
  * 与「刻度每格都有」同一条口径。**跳过 index 0**：网格外框已经画在 0 上，再叠一条虚线是重复。
  */
-function drawMajorGuides(target: RenderTarget2D, plan: GridStepPlan): void {
+function drawMajorGuides(
+  target: RenderTarget2D,
+  plan: TileGeometry & { readonly ruler: { readonly stepPx: number } },
+): void {
   const { ruler } = plan;
   target.lineWidth = 2;
   target.strokeStyle = SHEET_MAJOR_GUIDE_STROKE;
@@ -396,7 +406,7 @@ function drawMajorGuides(target: RenderTarget2D, plan: GridStepPlan): void {
 }
 
 /** 整图外框（网格四条边），画在最后，让边框压在虚线之上。 */
-function drawGridFrame(target: RenderTarget2D, plan: GridStepPlan): void {
+function drawGridFrame(target: RenderTarget2D, plan: GridGeometry): void {
   target.beginPath();
   target.lineWidth = 2;
   target.strokeStyle = GRID_STROKE;
@@ -406,6 +416,39 @@ function drawGridFrame(target: RenderTarget2D, plan: GridStepPlan): void {
   target.lineTo(plan.grid.x, plan.grid.y + plan.grid.height);
   target.lineTo(plan.grid.x, plan.grid.y);
   target.stroke();
+}
+
+/**
+ * 网格块预览（2026-10-13，规格 §5.3）：**只画施工图里网格那一组层**，别的都不要。
+ *
+ * 层序与 `drawSheet` 完全一致：色 → 空格斜线 → 色号 → 细线/板边界 → 每 5 格虚线 → 外框。
+ * 两个降级开关由**计划**给（`labelFontPx <= 0` / `showGridLines === false`）——渲染器不自己按
+ * 格像素算阈值，那会变成第二份「多大才画」的数学。
+ *
+ * **外框恒画**：它标出网格边界，没有它预览会与宿主的深色板底糊在一起。
+ */
+export function drawGridTile(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  tile: GridTilePlan,
+): void {
+  if ((tile.kind as string) !== "tile") {
+    throw new Error(`plan 的类型不匹配：期望 tile，实际 ${String(tile.kind)}`);
+  }
+  if (pattern.paletteId !== palette.id) {
+    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
+  }
+  // 与 `drawSheet` 同一条守卫：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验，
+  // 没有它一条 cells 短一截的图纸会一路画完（`cellAt` 越界静默取空），不报错、只产出错图。
+  countTileBeads(pattern, tile);
+
+  drawCellsAndLabels(target, pattern, palette, tile);
+  if (tile.showGridLines) {
+    drawGridLines(target, tile);
+    drawMajorGuides(target, tile);
+  }
+  drawGridFrame(target, tile);
 }
 
 /**

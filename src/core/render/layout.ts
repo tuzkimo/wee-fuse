@@ -1,6 +1,7 @@
 import { rgbToLab } from "../color/space";
 import { BEAD_MM, BOARD_COLS } from "../pattern/board";
 import { cellAt } from "../pattern/edit";
+import { GRID_LINE_MIN_CELL_PX } from "../pattern/view";
 import type { ColorUsage } from "../pattern/stats";
 import { EMPTY, type Pattern } from "../pattern/types";
 import type { Palette } from "../palette/types";
@@ -713,6 +714,83 @@ export function planSheet(
     ruler: layout.bands.ruler,
     legend: layout.bands.legend,
     legendTop: layout.bands.legendTop,
+  };
+}
+
+/**
+ * **网格块计划**（2026-10-13 预览改造，规格 §5.3）：只画施工图里网格那一组层，按预览盒子的
+ * **短边**定格像素、网格在盒子里居中。生图页中栏与结果卡片共用它。
+ *
+ * 与 `planSheet` 的两个承重差异：
+ * ① `canvasWidth/Height` **就是盒子**（不是 `豆数 × cellPx`）——绘制仍在画布坐标系里做，所以
+ *    既有的五个网格层函数一行都不用改，盒子比网格大出来的部分就是留白；
+ * ② **降级而不抛错**：`planSheet` 对「色号字号 < `SHEET_MIN_LABEL_FONT_PX`」响亮失败，而预览
+ *    不能因为图纸大就整块不显示 ⇒ 低于下限时 `labelFontPx = 0`（渲染器见 0 早退）；网格线同理
+ *    （`cellPx < GRID_LINE_MIN_CELL_PX` 时 `showGridLines = false`）。**这两条是刻意的，
+ *    不是漏了守卫**：判据与施工图同源（`labelFontAt` 与那两个阈值），只是失败语义不同。
+ */
+export interface GridTilePlan extends TileGeometry {
+  readonly kind: "tile";
+  /** = 盒子宽（**不是** `cols × cellPx`）。 */
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  /** 低于施工图下限时为 0（= 不画色号），**不抛错**。 */
+  readonly labelFontPx: number;
+  readonly showGridLines: boolean;
+  /** 只带网格线要用的 `stepPx`：屏幕预览不画刻度带，宽度与字号都没有消费者。 */
+  readonly ruler: { readonly stepPx: number };
+}
+
+/** 预览盒子：两个方向都必须是 ≥1 的有限数（`ResizeObserver` 量到 0 时组件自己就不该调这里）。 */
+function requireBox(box: { readonly width: number; readonly height: number }): {
+  readonly width: number;
+  readonly height: number;
+} {
+  if (!Number.isFinite(box.width) || box.width < 1) {
+    throw new Error(`预览盒子宽必须是 ≥1 的有限数字（当前 ${String(box.width)}）`);
+  }
+  if (!Number.isFinite(box.height) || box.height < 1) {
+    throw new Error(`预览盒子高必须是 ≥1 的有限数字（当前 ${String(box.height)}）`);
+  }
+  return box;
+}
+
+export function planGridTile(
+  pattern: Pattern,
+  palette: Palette,
+  box: { readonly width: number; readonly height: number },
+): GridTilePlan {
+  requirePattern(pattern);
+  requirePalette(pattern, palette);
+  const { width, height } = requireBox(box);
+  // 「适配短边」的字面含义就是 `min`，**不设人为上限**（上限就是盒子本身）：一张 4×4 的图在
+  // 400px 的盒子里就是 100px/格、色号 36px。下限 1 只挡「盒子小到一格分不到一个像素」。
+  const cellPx = Math.max(1, Math.floor(Math.min(width / pattern.width, height / pattern.height)));
+  const gridWidth = pattern.width * cellPx;
+  const gridHeight = pattern.height * cellPx;
+  const geometry = makeGridGeometry({
+    originCol: 0,
+    originRow: 0,
+    cols: pattern.width,
+    rows: pattern.height,
+    cellPx,
+    x: Math.floor((width - gridWidth) / 2),
+    y: Math.floor((height - gridHeight) / 2),
+  });
+  const font = labelFontAt(cellPx);
+  return {
+    kind: "tile",
+    cellPx,
+    originCol: 0,
+    originRow: 0,
+    cols: pattern.width,
+    rows: pattern.height,
+    ...geometry,
+    canvasWidth: width,
+    canvasHeight: height,
+    labelFontPx: font >= SHEET_MIN_LABEL_FONT_PX ? font : 0,
+    showGridLines: cellPx >= GRID_LINE_MIN_CELL_PX,
+    ruler: { stepPx: cellPx },
   };
 }
 
