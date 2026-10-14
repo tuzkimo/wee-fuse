@@ -1,7 +1,7 @@
 # Android 发布指南
 
 WeeFuse 的出包与发布说明。内容原在 `README.md` 的「正式版发布」一段，2026-10-07 随
-[「README 与开发记录分离」](superpowers/specs/2026-10-07-readme-and-dev-notes-restructure-design.md)
+[「README 与开发记录分离」](archive/specs/2026-10-07-readme-and-dev-notes-restructure-design.md)
 移到这里——README 只留「一句话指路」。
 
 ## 正式版发布（在线）
@@ -63,7 +63,7 @@ keytool -genkeypair -v -keystore src-tauri/gen/android/weefuse.jks -alias weefus
 3. `app/build.gradle.kts` 的 release 签名块（`keystoreProperties` + `signingConfigs.create("release")` + release 挂钩）。
 
 **重跑 `npx tauri android init` 会把这三处一起改回模板** ⇒ 重跑**之前**先读
-[B5 构建记录](superpowers/notes/2026-10-06-app-b5-build-log.md) 的维护须知（§6 的 B5-15），
+[B5 构建记录](archive/notes/2026-10-06-app-b5-build-log.md) 的维护须知（§6 的 B5-15），
 重跑**之后**必须复验「图标是不是我们的」与「页面顶部有没有被系统栏盖住」。
 
 **正确顺序是 `android init` → `npx tauri icon src-tauri/icons/source/manifest.json`**；
@@ -76,6 +76,6 @@ keytool -genkeypair -v -keystore src-tauri/gen/android/weefuse.jks -alias weefus
 
 ## 相关文档
 
-- [B5 设计规格](superpowers/specs/2026-10-06-app-b5-tauri-shell-design.md) / [实现计划](superpowers/plans/2026-10-06-app-b5-tauri-shell.md)
-- [B5 构建记录](superpowers/notes/2026-10-06-app-b5-build-log.md)：§6 延后项、§7 未验证面、§8 的 CI 提案与落地结果
-- [B4 构建记录 §7.1](superpowers/notes/2026-10-05-app-b4-build-log.md)：`EXPORT_MAX_EDGE` 的真机读数与预登记规则
+- [B5 设计规格](archive/specs/2026-10-06-app-b5-tauri-shell-design.md) / [实现计划](archive/plans/2026-10-06-app-b5-tauri-shell.md)
+- [B5 构建记录](archive/notes/2026-10-06-app-b5-build-log.md)：§6 延后项、§7 未验证面、§8 的 CI 提案与落地结果
+- [B4 构建记录 §7.1](archive/notes/2026-10-05-app-b4-build-log.md)：`EXPORT_MAX_EDGE` 的真机读数与预登记规则
