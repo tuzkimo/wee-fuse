@@ -32,11 +32,7 @@ import type { EditorTool } from "@/stores/editor";
 /** 选中色号的高亮填充。 */
 const SELECT_HIGHLIGHT = "rgba(37, 99, 235, 0.45)";
 
-/** 深色拼豆板的板孔点阵（§9：画布深色板底 + 板孔点阵，间距 22px）。 */
-const boardDots = {
-  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
-  backgroundSize: "22px 22px",
-};
+import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
 
 /** `visibleCellRange` 的非空返回值：闭区间，两端都含。 */
 type CellRange = { readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number };

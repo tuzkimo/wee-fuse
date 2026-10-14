@@ -67,11 +67,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: [] }>();
 
-/** 深色拼豆板的板孔点阵（§7.6 主体；间距 22px，与 `PatternCanvas` / `SetupPage` / `ResultPanel` 同一口径）。 */
-const boardDots = {
-  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
-  backgroundSize: "22px 22px",
-};
+import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
 
 /** 覆盖层返回栈（C8 规格 §3.6.2）：Android 返回键先关查看层，而不是离开页面。 */
 useOverlayBack(() => emit("close"));

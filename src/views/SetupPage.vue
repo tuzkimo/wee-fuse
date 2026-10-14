@@ -204,11 +204,7 @@ watch(
   },
 );
 
-/** 中栏深色底的板孔点阵（§7.3：`radial-gradient`，间距 22px）。 */
-const boardDots = {
-  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
-  backgroundSize: "22px 22px",
-};
+import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
 
 /**
  * 页头的返回箭头（C8 规格 §3.6.1，Ruling 21 的分叉口径）。
