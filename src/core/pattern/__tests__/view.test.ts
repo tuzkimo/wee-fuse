@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { Rect } from "../../image/types";
 import { clampView, fitTransform, orientedToScreen, screenToOriented } from "../../crop/view";
 import type { Point, Size, ViewTransform } from "../../crop/view";
 import {
   CELL_LABEL_MIN_CELL_PX,
   GRID_LINE_MIN_CELL_PX,
   MAX_CELL_PX,
-  cellRectFromScreen,
   cellsAlongLine,
   defaultCellView,
   maxCellScale,
@@ -374,87 +372,6 @@ describe("visibleCellRange（§4.5）", () => {
   });
 });
 
-describe("cellRectFromScreen（§4.7）", () => {
-  it("正拖：floor 左上 + ceil 右下，读到的是非整数格坐标", () => {
-    // 比例 20、偏移 (−10, −5)，起止点 (5, 7) → (39, 46)：
-    //   格子坐标 (0.75, 0.6) 与 (2.45, 2.55) ⇒ floor (0,0)、ceil (3,3) ⇒ 3×3。
-    // 这两个非整数坐标是判别的关键：`Math.round` 会给出 (1,1)–(2,3) ⇒ 1×2。
-    expect(cellRectFromScreen({ x: 5, y: 7 }, { x: 39, y: 46 }, V(20, -10, -5), GRID_8)).toEqual({
-      x: 0,
-      y: 0,
-      width: 3,
-      height: 3,
-    });
-  });
-
-  it("反拖（右下往左上）得到同一个矩形", () => {
-    const view = V(20, -10, -5);
-    expect(cellRectFromScreen({ x: 39, y: 46 }, { x: 5, y: 7 }, view, GRID_8)).toEqual(
-      cellRectFromScreen({ x: 5, y: 7 }, { x: 39, y: 46 }, view, GRID_8),
-    );
-  });
-
-  it("起止点落在同一格 / 各自压在格边时都是合法的 1×1（不夹成 2×2）", () => {
-    // ① **真正的同格**：格子坐标 1.2 与 1.8（屏幕 14 与 26，都在格子 (1,1) 的屏幕区间 [10, 30) 内）。
-    // 两端都不在格边上是关键——它才是 JSDoc 里 `ceil(9.2) − floor(9.2) = 1` 那条路径的夹具。
-    expect(cellRectFromScreen({ x: 14, y: 14 }, { x: 26, y: 26 }, V(20, -10, -10), GRID_8)).toEqual({
-      x: 1,
-      y: 1,
-      width: 1,
-      height: 1,
-    });
-    // ② 起点压在格左边、终点压在格内（屏幕 (10, 10) 是格子 (1,1) 的左上角，(29, 29) 在其内）：
-    // floor 给 1、ceil 给 2，宽度仍是 1。
-    expect(cellRectFromScreen({ x: 10, y: 10 }, { x: 29, y: 29 }, V(20, -10, -10), GRID_8)).toEqual({
-      x: 1,
-      y: 1,
-      width: 1,
-      height: 1,
-    });
-    // ③ 非整数视口产出的视图（`defaultCellView(V_FRAC, GRID_8)` = V(15.03125, 15.125, 0)，比例 = 120.25/8）：
-    // 两个屏幕点由**视图自身**算出（`屏幕 = 偏移 + 格子坐标 × 比例`），分别压在格子 (1,1) 与 (2,2) 的
-    // 左 / 上边缘上，闭式解随之重算。
-    const fracView = defaultCellView(V_FRAC, GRID_8);
-    expect(fracView).toEqual(V(15.03125, 15.125, 0));
-    expect(cellRectFromScreen({ x: 30.15625, y: 15.03125 }, { x: 45.1875, y: 30.0625 }, fracView, GRID_8)).toEqual({
-      x: 1,
-      y: 1,
-      width: 1,
-      height: 1,
-    });
-  });
-
-  it("拖出图纸外被夹进 [0, grid] 而不是返回 null：恰好框到最后一列 / 最后一行", () => {
-    // 比例 20、偏移 (−10, −5)，第二点 (400, 300) 落在 8×8 图纸外；
-    // 夹取后 (8, 8)，floor 左上 (0, 0)、ceil 右下 (8, 8) ⇒ 8×8 = 整张图纸。
-    expect(cellRectFromScreen({ x: 5, y: 7 }, { x: 400, y: 300 }, V(20, -10, -5), GRID_8)).toEqual({
-      x: 0,
-      y: 0,
-      width: 8,
-      height: 8,
-    });
-  });
-
-  it("空矩形返回 null，**不**夹成 1×1", () => {
-    // 两个屏幕点都落在图纸右侧之外：夹取后都是 (8, 2)，宽为 0。
-    expect(cellRectFromScreen({ x: 400, y: 30 }, { x: 420, y: 35 }, V(20, -10, -5), GRID_8)).toBeNull();
-    // 大图纸、视口只有左上角一小块：两点都在图纸左上之外 ⇒ 夹成同一点。
-    expect(
-      cellRectFromScreen({ x: -500, y: -500 }, { x: 0, y: 0 }, V(1, 0, 0), { width: 1024, height: 768 }),
-    ).toBeNull();
-  });
-
-  it("非法输入抛中文错误：点分量非有限、视图非法、图纸非整数", () => {
-    expect(() => cellRectFromScreen({ x: Number.NaN, y: 0 }, { x: 10, y: 10 }, V(20, -10, -10), GRID_8)).toThrow(
-      "起点 x必须是有限数字",
-    );
-    expect(() => cellRectFromScreen({ x: 0, y: 0 }, { x: 10, y: 10 }, V(0, 0, 0), GRID_8)).toThrow("视图比例必须大于 0");
-    expect(() => cellRectFromScreen({ x: 0, y: 0 }, { x: 10, y: 10 }, V(20, -10, -10), { width: 0, height: 8 })).toThrow(
-      "显示空间图像宽必须是 ≥1 的整数",
-    );
-  });
-});
-
 describe("cellsAlongLine（§4.6）", () => {
   it("同一格返回单元素（含端点，恒等于入参）", () => {
     expect(cellsAlongLine({ x: 3, y: 4 }, { x: 3, y: 4 })).toEqual([{ x: 3, y: 4 }]);
@@ -583,8 +500,8 @@ describe("cellsAlongLine（§4.6）", () => {
   });
 });
 
-describe("端到端：默认视图 → 平移 → 缩放 → 可见范围 → 框选 → 补格（§4 各节串起来）", () => {
-  it("8×8 小图纸在 100×100 视口里：默认视图、可见范围、框选矩形、补格四者互相自洽", () => {
+describe("端到端：默认视图 → 平移 → 缩放 → 可见范围 → 补格（§4 各节串起来）", () => {
+  it("8×8 小图纸在 100×100 视口里：默认视图、可见范围、补格三者互相自洽", () => {
     const view = defaultCellView(V100, GRID_8); // 适配 12.5 = 下界（不再抬到 24），图像 100×100 正好铺满
     expect(view).toEqual(V(12.5, 0, 0));
     // B6 的诉求落地：默认视图可见的就是**整张图纸**（旧口径 24 时只有 [1, 7]² 那块）
@@ -604,38 +521,13 @@ describe("端到端：默认视图 → 平移 → 缩放 → 可见范围 → �
     expect(zoomed.scale).toBe(48);
     expect(zoomed.scale).toBeLessThanOrEqual(maxCellScale(V100, GRID_8));
     expect(zoomed).toEqual(V(48, -70, -142));
-    // 视图左上角映射回格坐标 (1.458, 2.958) ⇒ 框选左上 (1, 2)；右下角 (3.542, 5.042) ⇒ 右下 (4, 6)。
-    const selection: Rect = { x: 1, y: 2, width: 3, height: 4 };
-    expect(cellRectFromScreen({ x: 0, y: 0 }, { x: 100, y: 100 }, zoomed, GRID_8)).toEqual(selection);
-    // 同一次拖动的补格序列：每一格都落在框选矩形内（含端点）。
+    // 补格序列（视图左上角映射回格坐标 (1.458, 2.958) ⇒ 起手格 (1, 2)）
     expect(cellsAlongLine({ x: 1, y: 2 }, { x: 3, y: 5 })).toEqual([
       { x: 1, y: 2 },
       { x: 2, y: 3 },
       { x: 2, y: 4 },
       { x: 3, y: 5 },
     ]);
-  });
-
-  it("一次拖动跨过好几个格子：框选出的矩形与补格序列必须是同一批格子", () => {
-    const view = fitTransform({ width: 1000, height: 800 }, GRID_8); // 比例 100，偏移 (100, 0)
-    const from: Point = { x: 100, y: 0 };
-    const to: Point = { x: 499, y: 299 };
-    const selection: Rect = { x: 0, y: 0, width: 4, height: 3 };
-    expect(cellRectFromScreen(from, to, view, GRID_8)).toEqual(selection);
-    // 起止点 (0, 0) → (3.99, 2.99) 的格子坐标落在同一个矩形里，补格序列是它的对角线。
-    const path = cellsAlongLine({ x: 0, y: 0 }, { x: 3, y: 2 });
-    expect(path).toEqual([
-      { x: 0, y: 0 },
-      { x: 1, y: 1 },
-      { x: 2, y: 1 },
-      { x: 3, y: 2 },
-    ]);
-    for (const cell of path) {
-      expect(cell.x).toBeGreaterThanOrEqual(selection.x);
-      expect(cell.x).toBeLessThan(selection.x + selection.width);
-      expect(cell.y).toBeGreaterThanOrEqual(selection.y);
-      expect(cell.y).toBeLessThan(selection.y + selection.height);
-    }
   });
 
   it("载入后先落默认视图、再放大一次，然后做一次真正的捏合（非零平移 + 缩放）：两指中点处的格子坐标不变", () => {
