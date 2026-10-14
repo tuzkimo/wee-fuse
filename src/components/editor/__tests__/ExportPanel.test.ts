@@ -164,7 +164,6 @@ const BASE_PROPS = {
   palette,
   usages,
   projectName: "测试工程",
-  revision: 0,
 };
 
 /**
@@ -277,9 +276,8 @@ describe("打印页摘要与选项（C7 起本面板只剩打印这一种形态�
     expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 1 / 1 页");
     expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(1);
 
-    // **只换 pattern（`revision` 刻意不动）**：`beginSession` 会把 `revision` 归零，所以
-    // 「从一张 revision = 0 的图纸换到另一张」时 revision 这一路根本不会触发——少看 `pattern`
-    // 的对象身份时，预览条会停在上一张图纸的页数上。
+    // **只换 pattern**：`cells` 是原地写、图纸又是 `markRaw`，所以「换了一张图纸」只能靠对象
+    // 身份识别——少看 `pattern` 的对象身份时，预览条会停在上一张图纸的页数上。
     const big = makePattern(116, 116, undefined);
     await wrapper.setProps({ pattern: big, usages: patternStats(big, palette).usages });
     await flushPromises();
@@ -358,8 +356,7 @@ describe("打印页摘要与选项（C7 起本面板只剩打印这一种形态�
     wrapper.unmount();
   });
 
-  it("`revision` 可以不给（结果页没有编辑通道）：缺省 0，`pattern` 身份变化仍然重建预览", async () => {
-    // 结果页只有 `pattern` 这一条失效通道，所以 `revision` 必须是可选 prop。
+  it("`pattern` 身份变化即重建预览（1 页 → 16 页）", async () => {
     const wrapper = mount(ExportPanel, {
       props: { pattern: makePattern(6, 6, CELLS_6X6), palette, usages, projectName: "测试工程" },
       global: { stubs: { teleport: true } },

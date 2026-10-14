@@ -49,8 +49,6 @@ const props = defineProps<{
   palette: Palette;
   usages: readonly ColorUsage[];
   projectName: string;
-  /** 编辑页传 `editor.revision`；结果页没有编辑通道，默认 0（「图纸换了」由 `pattern` 身份变化触发）。 */
-  revision?: number;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
@@ -302,10 +300,11 @@ watch(currentPage, (index) => {
 
 /**
  * 重建（**四个源**，缺一不可）：
- * - `revision`：编辑页的 `cells` 原地写，只有它能让 `markRaw` 的图纸失效；
- * - `pattern` 的**对象身份**：`beginSession` 会把 `revision` 归零——从一张 `revision = 0` 的图纸
- *   换到另一张时（`/edit/a → /edit/b` 而面板恰好开着），0 → 0 那一跳**不触发**，预览会停在
- *   上一张图纸上；结果页更是**只有**这一条失效通道（它没有 `revision`）；
+ * - `pattern` 的**对象身份**：`cells` 是原地写的 `Uint16Array`、图纸又是 `markRaw`，所以「换了
+ *   一张图纸」只能靠对象身份识别——从一张 `pattern` 换到另一张时（`/edit/a → /edit/b` 而面板
+ *   恰好开着）这一跳**必须**触发，否则预览会停在上一张图纸上。
+ *   （曾有第二条 `revision` prop 通道，但唯一的挂载点 `SheetViewer` 从来只传 `pattern`，
+ *   那条 prop 恒为 `undefined`、永不触发，已删除。）
  * - `boardSize` / `paper`：页身份与页数由它们决定（29 板 16 页 ↔ 58 板 4 页）——换选项而不重建时，
  *   摘要会说 4 页、预览条却仍是 16 格，且第 5 格之后会拿越界的页索引去算名字抛错。
  * - `pageCount`：上面四源的**导出量**，单独听它才让「页数真的变了」这件事成为判据
@@ -318,7 +317,7 @@ watch(currentPage, (index) => {
  * 当前页超出新页数，那一页的渲染会以「页索引越界」响亮失败——它不是用户的错。
  */
 watch(
-  [() => props.revision, () => props.pattern, boardSize, paper, pageCount],
+  [() => props.pattern, boardSize, paper, pageCount],
   () => {
     generation += 1;
     revokePreview();
