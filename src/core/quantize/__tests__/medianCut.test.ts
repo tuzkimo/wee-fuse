@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addToHistogram, createHistogram } from "../histogram";
-import { buildHistogram } from "../../../__tests__/factories";
+import { buildHistogram } from "@/__tests__/factories";
 import { medianCut } from "../medianCut";
 import type { SampledGrid } from "../../image/types";
 

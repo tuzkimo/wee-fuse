@@ -1,5 +1,6 @@
 import { addToHistogram, createHistogram, type Histogram } from "@/core/quantize/histogram";
 import type { SampledGrid } from "@/core/image/types";
+import type { Pattern } from "@/core/pattern/types";
 
 /**
  * 测试共用的夹具。
@@ -25,4 +26,25 @@ export function buildHistogram(grid: SampledGrid): Histogram {
     addToHistogram(histogram, grid.rgb[i * 3], grid.rgb[i * 3 + 1], grid.rgb[i * 3 + 2]);
   }
   return histogram;
+}
+
+/**
+ * 一张**纯计算用**的图纸：色卡 id 固定 `"test-palette"`，不含真实色卡（渲染器与计划函数都不查表）。
+ *
+ * `values` 省略时全部是空格（`0` 也是合法色号，但 `new Uint16Array` 天然全 0；需要测试「图上有色」
+ * 的用例自己传 `values`）。
+ *
+ * **2026-10-13 合并**：这份曾在 5 个文件里逐字重复（`ExportPanel` / `sheet` / `sheetExport` /
+ * `gridTile` / `layout` 的测试）。其余几份同名函数**没有**一并收进来——它们的色卡 id、尺寸或单元值
+ * 各不相同（`SheetViewer` 用内置色卡、`store` 的用例故意让色号降序、`background` 那份收一个回调），
+ * 硬统一会改掉夹具语义。
+ */
+export function makePattern(
+  width: number,
+  height: number,
+  values?: readonly number[],
+): Pattern {
+  const cells = new Uint16Array(width * height);
+  if (values !== undefined) cells.set(values);
+  return { width, height, paletteId: "test-palette", cells };
 }

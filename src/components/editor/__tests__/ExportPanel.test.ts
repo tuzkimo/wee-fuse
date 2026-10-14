@@ -4,7 +4,7 @@ import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { unlockBodyScroll } from "@/composables/useBodyScrollLock";
 import type { Palette } from "@/core/palette/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
-import { EMPTY, type Pattern } from "@/core/pattern/types";
+import { EMPTY } from "@/core/pattern/types";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
 // `exportFilename` 走 `vi.mock("@/services/exporter")` 的 `importOriginal` **真实现**（见文件头），
 // 所以这里的期望值不是手抄的字符串，而是「同一个函数」的输出——文件名的逐字格式由
@@ -20,6 +20,7 @@ import {
   type MockExporter,
   type RecordingTarget,
 } from "./exportTestKit";
+import { makePattern } from "@/__tests__/factories";
 
 /**
  * 导出面板用例（C8 任务 7：面板从「一页一项 + 每项一个保存」收敛成「多页预览 + 一键顺序保存」）。
@@ -84,10 +85,13 @@ vi.mock("@/services/exporter", async (importOriginal) => {
 /* ---------------- 夹具（与 `services/__tests__/sheetExport.test.ts` 同源） ---------------- */
 
 /*
- * `CELLS_6X6` / `makePalette` / `makePattern` / `makeUsages` **抄自
+ * `CELLS_6X6` / `makePalette` / `makeUsages` **抄自
  * `src/core/render/__tests__/sheet.test.ts`，与之同源**：跨 `.test.ts` 文件互相 import 会让 vitest
  * 把两个文件当成同一个用例集跑，所以只能抄一份。改一处必须改两处。
  * 夹具的值（空格位置、实心格数、各色颗数）是本文件期望值的来源。
+ *
+ * （`makePattern` 不在此列：它已收进 `src/__tests__/factories.ts`——那不是 `.test.ts`，import 它
+ * 不会把两份用例并成一个集，所以不必再抄。）
  */
 
 /**
@@ -127,11 +131,6 @@ function makePalette(): Palette {
   };
 }
 
-function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
-  const cells = new Uint16Array(width * height);
-  if (values !== undefined) cells.set(values);
-  return { width, height, paletteId: "test-palette", cells };
-}
 
 /**
  * 33 个实心格的用量（26 + 5 + 1 + 1 = 33），与 `CELLS_6X6` 的用色一一对应。
