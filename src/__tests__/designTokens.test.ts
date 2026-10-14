@@ -95,11 +95,13 @@ const VUE_SOURCES: Record<string, string> = import.meta.glob<string>("../**/*.vu
 });
 
 /**
- * 唯一的排除名单：三个 DEV-only 探针页（`/lab/canvas`、`/lab/decode`、`/lab/shell`）。
- * 规格 §5 明确本次不改它们，而它们实打实在用 `slate-*` / `amber-*` / `text-sm` / `font-bold`，
- * 按字面扫这条守卫必然红。它们是开发调试工具，不是产品界面，不参与设计语言。
+ * 唯一的排除名单：剩下来的那个 DEV-only 探针页（`/lab/shell`）。
+ * 规格 §5 明确本次不改它，而它实打实在用 `slate-*` / `amber-*` / `text-sm` / `font-bold`，
+ * 按字面扫这条守卫必然红。它是开发调试工具，不是产品界面，不参与设计语言。
+ *
+ * （2026-10-13 之前名单里还有 `CanvasLabPage` / `DecodeLabPage`，随两个探针页删除而收缩。）
  */
-const DEV_PROBE_PAGES = /^src\/views\/(CanvasLabPage|DecodeLabPage|ShellProbePage)\.vue$/;
+const DEV_PROBE_PAGES = /^src\/views\/ShellProbePage\.vue$/;
 
 const MIGRATED = Object.entries(VUE_SOURCES)
   .map(([key, source]) => ({ file: `src/${key.slice(3)}`, source }))
@@ -119,17 +121,13 @@ function styleBlocks(source: string): string[] {
 }
 
 describe("设计语言全量守卫（§10 / §11）", () => {
-  it("扫描机制自检：真的读到了 .vue，且排除名单恰好是那三个探针页", () => {
+  it("扫描机制自检：真的读到了 .vue，且排除名单恰好是那一个探针页", () => {
     // 没有这条，glob 写错（零匹配）会让下面每一条都「空转绿」——守卫形同不存在。
     expect(MIGRATED.length).toBeGreaterThan(0);
     const excluded = Object.keys(VUE_SOURCES).filter((key) =>
       DEV_PROBE_PAGES.test(`src/${key.slice(3)}`),
     );
-    expect(excluded.map((key) => key.replace(/^\.\.\//, ""))).toEqual([
-      "views/CanvasLabPage.vue",
-      "views/DecodeLabPage.vue",
-      "views/ShellProbePage.vue",
-    ]);
+    expect(excluded.map((key) => key.replace(/^\.\.\//, ""))).toEqual(["views/ShellProbePage.vue"]);
   });
 
   it("(a) 不许再用 Tailwind 默认调色板（含 white / black）", () => {

@@ -6,7 +6,7 @@
  * `name`（`Error` / `TypeError` / `NotAllowedError`…）。
  *
  * **为什么必须只有一份**：这段逻辑此前在本仓有 21 处内联三目，另有两处各写了一份 `errorText`
- * （`CanvasLabPage` / `ShellProbePage`），而**只有那两处做了空 message 回落**——同一个问题在同一个
+ * （当时的两个探针页各写了一份 `errorText`），而**只有那两处做了空 message 回落**——同一个问题在同一个
  * 仓里有两个答案，正是「同一口径的第二份实现」。（另有一处形状相近但不属文案提取、因而未收拢的：
  * `services/platform/hiddenFileInput.ts:103` 是把非 `Error` 包成 `Error`，不是取文案。）放在 `services/`：views / stores / components /
  * composables 本来都从 `@/services/*` 取东西，是现成的跨层共享层（本文件不碰任何平台 API）。

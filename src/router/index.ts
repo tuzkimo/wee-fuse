@@ -15,17 +15,17 @@ const routes: RouteRecordRaw[] = [
   { path: "/edit/:id/result", name: "edit-result", component: () => import("@/views/EditResultPage.vue") },
 ];
 
-// 下面三条 lab 路由**只在 DEV 构建注册**（`import.meta.env.DEV` 在生产构建里被静态折叠，
-// 组件连同 `preview` 等探针依赖因此不进生产包）。三条的 path / name / component 与门控前逐字一致。
+// `/lab/shell` **只在 DEV 构建注册**（`import.meta.env.DEV` 在生产构建里被静态折叠，组件连同它的
+// 探针依赖因此不进生产包）。
+//
+// **2026-10-13：`/lab/decode` 与 `/lab/canvas` 已删除**（审计整改，人类伙伴裁定）。两者的使命都是
+// 一次性的：`/lab/canvas` 的 2026-10-06 真机读数已归档（B4 记录 §7.1，`EXPORT_MAX_EDGE` 当年就是按
+// 它定下的）、而 C8 起该常量改由真实测量定界；`/lab/decode` 的「去留」自 2026-10-01 起就挂在
+// B2 规格 §13（B2-55），本次结清。两个页面的原始代码在 git 历史里。
 if (import.meta.env.DEV) {
   routes.push(
-    { path: "/lab/decode", name: "decode-lab", component: () => import("@/views/DecodeLabPage.vue") },
-    // /lab/canvas 是 B4 的 canvas 上限探针页（R-7：**开发期实验台**，不进任何用户入口、页面自标「CI 不测」；
-    // 真机实测结果回写 `EXPORT_MAX_EDGE`、主规格 §12 的 R2 与 B4 规格 §16 的 B4-R1）。
-    { path: "/lab/canvas", name: "canvas-lab", component: () => import("@/views/CanvasLabPage.vue") },
-    // /lab/shell 是任务 2 的六判据探针页（**开发期实验台**，不进任何用户入口、页面自标；判据 A–F 的原始
-    // 读数由人类伙伴从这一页复制进 B5 spike 报告）。它**留存**为第三个实验台——与 `/lab/decode`、
-    // `/lab/canvas` 并列：换设备 / 换 Tauri 版本时还要重测。
+    // 六判据探针页（**开发期实验台**，不进任何用户入口、页面自标）——它是三台里唯一**可复用**的：
+    // 换设备 / 换 Tauri 版本时还要重测。判据 A–F 的原始读数由人类伙伴从这一页复制进 B5 spike 报告。
     { path: "/lab/shell", name: "shell-lab", component: () => import("@/views/ShellProbePage.vue") },
   );
 }
