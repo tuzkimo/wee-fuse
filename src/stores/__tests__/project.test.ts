@@ -212,6 +212,25 @@ describe("工程会话 store", () => {
     expect(session.dirty).toBe(false);
   });
 
+  it("save 成功后内存里的 meta 与存储一致（不留下 adopt 传进来的占位值）", async () => {
+    // **判死什么**：`put` 会从 doc 覆盖 `width` / `height` / `colorCount`，而 `save()` 把**调用方
+    // 给的** `saving` 原样赋回 `record.value`，三个派生字段于是停在 `adopt` 那一刻传进来的值上。
+    // `SetupPage` 建 meta 时刻意写 0（三个字段都由 put 派生）⇒「生成 + 保存」之后内存里是
+    // 「0×0、0 色」。既有用例只断言**库里**的值，而且它们随后都调了 `load()`——load 会拿库里的
+    // 记录覆盖内存，正好把这个不一致盖掉了。
+    const store = await seedStore();
+    const session = useProjectSession();
+    session.adopt(makePattern(), PARAMS, META, null, makeDoc());
+
+    await expect(session.save()).resolves.toBe(true);
+
+    expect(session.record?.meta.width).toBe(3);
+    expect(session.record?.meta.height).toBe(1);
+    expect(session.record?.meta.colorCount).toBe(2);
+    // 真正的判据：内存态与存储态逐字段相等（少同步任何一个派生字段都会红）
+    expect(session.record?.meta).toEqual((await store.get("p1"))?.meta);
+  });
+
   it("save / load 把 removeBackground = true 一路带过去（恒 false 的实现会被这条抓住）", async () => {
     // 上面的夹具用的是 `false`（与默认值相同），把 `save()` 写成恒写 false、或
     // `fromProjectDocument` 写成恒返 false，那些断言照样绿——而这两处正是本项目点名的

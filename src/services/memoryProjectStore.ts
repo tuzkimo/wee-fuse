@@ -1,5 +1,6 @@
 import {
   normalizeProjectName,
+  prepareRecordForPut,
   sortByUpdatedAtDesc,
   type ProjectMeta,
   type ProjectRecord,
@@ -40,20 +41,6 @@ export async function createMemoryProjectStore(): Promise<ProjectStore> {
     };
   }
 
-  /** 从文档里重算列表用的冗余字段。 */
-  function withDerivedMeta(record: ProjectRecord): ProjectRecord {
-    return {
-      meta: {
-        ...record.meta,
-        width: record.doc.width,
-        height: record.doc.height,
-        colorCount: record.doc.palette.codes.length,
-      },
-      doc: record.doc,
-      source: record.source,
-    };
-  }
-
   return {
     async list(): Promise<ProjectMeta[]> {
       return sortByUpdatedAtDesc([...records.values()].map((r) => ({ ...r.meta })));
@@ -63,22 +50,11 @@ export async function createMemoryProjectStore(): Promise<ProjectStore> {
       return found === undefined ? null : cloneRecord(found);
     },
     async put(record: ProjectRecord): Promise<void> {
-      if (typeof record.meta.id !== "string" || record.meta.id.length === 0) {
-        throw new Error("工程 id 必须是非空字符串");
-      }
-      // §12：与 IDB 实现同一条守卫（同一份口径，写在任何写操作之前）。
-      // 列表页会把 `thumbnail` 直接塞进 `<img src>`，所以只放行空串与 `data:image/`。
-      if (
-        typeof record.meta.thumbnail !== "string" ||
-        (record.meta.thumbnail !== "" && !record.meta.thumbnail.startsWith("data:image/"))
-      ) {
-        throw new Error(
-          `工程封面图必须是 data:image/ 开头的字符串或空串（当前 ${String(record.meta.thumbnail)}）`,
-        );
-      }
-      const name = normalizeProjectName(record.meta.name);
-      const stored = withDerivedMeta({ ...record, meta: { ...record.meta, name } });
-      records.set(record.meta.id, cloneRecord(stored));
+      // 守卫 + 归一化工程名 + 按 doc 重算冗余字段：与 IDB 实现共用一份（`prepareRecordForPut`）。
+      // 各写一份时，改口径只改到一处也不会红——而一旦内存实现漏改，生产（IDB）反而是对的，
+      // 漂移是静默的。
+      const stored = prepareRecordForPut(record);
+      records.set(stored.meta.id, cloneRecord(stored));
     },
     async remove(id: string): Promise<void> {
       records.delete(id);

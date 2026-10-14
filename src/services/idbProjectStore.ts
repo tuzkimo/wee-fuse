@@ -1,5 +1,6 @@
 import {
   normalizeProjectName,
+  prepareRecordForPut,
   sortByUpdatedAtDesc,
   type ProjectMeta,
   type ProjectRecord,
@@ -135,16 +136,6 @@ async function readRecord(db: IDBDatabase, id: string): Promise<ProjectRecord | 
   };
 }
 
-/** 从文档里算出列表用的冗余字段。 */
-function deriveMeta(meta: ProjectMeta, doc: ProjectRecord["doc"]): ProjectMeta {
-  return {
-    ...meta,
-    width: doc.width,
-    height: doc.height,
-    colorCount: doc.palette.codes.length,
-  };
-}
-
 export async function createIdbProjectStore(
   options: IdbProjectStoreOptions = {},
 ): Promise<ProjectStore> {
@@ -180,41 +171,26 @@ export async function createIdbProjectStore(
     },
 
     async put(record: ProjectRecord): Promise<void> {
-      if (typeof record.meta.id !== "string" || record.meta.id.length === 0) {
-        throw new Error("工程 id 必须是非空字符串");
-      }
-      // §12：`thumbnail` 是外部可影响的展示字段，而列表页会把它直接塞进 `<img src>`。
-      // 只放行空串与 `data:image/`——`javascript:` / 远程 URL / `data:text/html` 一律拒绝，
-      // 且必须在**任何写操作之前**拒绝。
-      if (
-        typeof record.meta.thumbnail !== "string" ||
-        (record.meta.thumbnail !== "" && !record.meta.thumbnail.startsWith("data:image/"))
-      ) {
-        throw new Error(
-          `工程封面图必须是 data:image/ 开头的字符串或空串（当前 ${String(record.meta.thumbnail)}）`,
-        );
-      }
-      const meta = deriveMeta(
-        { ...record.meta, name: normalizeProjectName(record.meta.name) },
-        record.doc,
-      );
+      // 守卫（id 非空 + thumbnail 白名单）→ 归一化工程名 → 按 doc 重算冗余字段：
+      // 三件事两个实现共用一份（`prepareRecordForPut`），否则改口径只改到一处也不报错。
+      const prepared = prepareRecordForPut(record);
       // **必须在开事务之前**把 Blob 读成 ArrayBuffer：IndexedDB 的事务在「没有挂起请求」时会
       // 自动提交，若在事务内部 `await` 一个非 IDB 的异步操作，等回来时事务已经关了，
       // 后面的 `put` 会抛 TransactionInactiveError（且只在大图上偶发，最难查）。
       const sourceBytes =
-        record.source === null ? null : await record.source.blob.arrayBuffer();
+        prepared.source === null ? null : await prepared.source.blob.arrayBuffer();
       await withDb(async (db) => {
         // 三条记录在同一个事务里写：不能出现「meta 写进去了、原图没写进去」的半状态，
         // 也不能出现 `metas` 与 `projects` 的 meta 不一致（列表显示旧名字、详情是新名字）。
         const tx = db.transaction([STORE_PROJECTS, STORE_METAS, STORE_SOURCES], "readwrite");
-        tx.objectStore(STORE_PROJECTS).put({ meta, doc: record.doc } satisfies StoredProject);
-        tx.objectStore(STORE_METAS).put({ meta } satisfies StoredMeta);
+        tx.objectStore(STORE_PROJECTS).put({ meta: prepared.meta, doc: prepared.doc } satisfies StoredProject);
+        tx.objectStore(STORE_METAS).put({ meta: prepared.meta } satisfies StoredMeta);
         if (sourceBytes === null) {
-          tx.objectStore(STORE_SOURCES).delete(record.meta.id);
+          tx.objectStore(STORE_SOURCES).delete(prepared.meta.id);
         } else {
           tx.objectStore(STORE_SOURCES).put(
-            { bytes: sourceBytes, type: (record.source as { type: string }).type } satisfies StoredSource,
-            record.meta.id,
+            { bytes: sourceBytes, type: (prepared.source as { type: string }).type } satisfies StoredSource,
+            prepared.meta.id,
           );
         }
         await new Promise<void>((resolve, reject) => {
