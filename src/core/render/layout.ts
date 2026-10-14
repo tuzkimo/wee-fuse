@@ -487,21 +487,9 @@ function requirePaper(value: string): PrintPaper {
   return value;
 }
 
-/** 一维上需要几块板（入参已由调用方校验）：两处口径共用它，不写第二份 `Math.ceil`。 */
+/** 一维上需要几块板（入参已由调用方校验）：三处口径共用它，不写第二份 `Math.ceil`。 */
 function boardColsOf(length: number, boardSize: number): number {
   return Math.ceil(length / boardSize);
-}
-
-/**
- * 板阵的**列数**（一行放几块板）= 宽 ÷ 板大小向上取整。
- *
- * **它是「一维上要几块板」的唯一一份除法**（2026-10-08 收口）：`printBoardCount` 的两个轴与
- * 导出面板的页标签（`第 r 行 第 c 列`）都从这里取。面板自己写 `Math.ceil(width / boardSize)`
- * 就是第二份分页数学——它与 `planBoardPage` 的网格口径漂移时不会报错，只会把页标签写成另一页。
- */
-export function printBoardCols(width: number, boardSize: number): number {
-  requirePositiveInteger(width, "图纸宽度");
-  return boardColsOf(width, requireBoardSize(boardSize));
 }
 
 /**
@@ -511,7 +499,7 @@ export function printBoardCols(width: number, boardSize: number): number {
  * 它只回答「几页」，不产生任何页的身份；页身份（`boardRow` / `boardCol` / 本页格范围）由
  * `boardPageRange` 给出（`planBoardPage` 也取它），调用方**不许**自己重算除法（那正是「同一件事的
  * 第二份实现」）。
- * 两个轴各自的那一份除法在 `printBoardCols` 里，本函数只是把它们乘起来。
+ * 两个轴各自的那一份除法在 `boardColsOf` 里，本函数只是把它们乘起来。
  *
  * **宽高必须是 ≥1 的整数**（与 `boardCount` 同口径）：只查安全整数会让 `(0, 0, 29)` 静默返回 0 页
  * ——「0 页」不是一个可展示的答案，调用方拿它去 `v-for` 只会得到一张空白页。
@@ -1092,8 +1080,8 @@ export function boardPageRange(
   requirePositiveInteger(width, "图纸宽度");
   requirePositiveInteger(height, "图纸高度");
   const size = requireBoardSize(boardSize);
-  const boardCols = Math.ceil(width / size);
-  const boardRows = Math.ceil(height / size);
+  const boardCols = boardColsOf(width, size);
+  const boardRows = boardColsOf(height, size);
   const total = boardCols * boardRows;
   requireSafeInteger(index, "页索引");
   if (index < 0 || index >= total) {
