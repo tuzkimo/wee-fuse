@@ -2,6 +2,7 @@ import { rotatedSize } from "../image/rotate";
 import type { Rect, Rotation } from "../image/types";
 import { orientedToSource, sourceRectToOriented, sourceToOriented } from "./view";
 import type { Point, Size } from "./view";
+import { requireFinite, requirePoint, requireRect, requireRotation, requireSize } from "../guards";
 
 /**
  * 选区几何：入参与返回值都是**原图未旋转坐标**上的 `crop`（它唯一的存在形式，规格 §4.1）。
@@ -54,55 +55,11 @@ const ASPECT_RATIOS: Readonly<Record<Exclude<AspectLock, "free">, number>> = {
 // ---------------------------------------------------------------------------
 // 入口校验（规格 §12）
 //
-// 与 `view.ts` 那份**同一口径的第二份**：措辞与边界逐条对齐（`requireFinite` / `requirePoint` /
-// 尺寸守卫 / `requireRect` / `requireRotation`）。规格 §13 第 8 条明确「共享校验模块不修，
-// 保持内联就地校验这一种风格」，所以刻意不抽模块——第三处出现时再回头讨论。
-//
-// 本模块的守卫别名与 `view.ts` 的差异：`view.ts` 里的尺寸守卫叫 `requireImageSize`（因为同文件
-// 还有视口尺寸），这里只有一种尺寸（源图 / 显示空间网格），故叫 `requireSize`。
+// 通用几何守卫（`requireFinite` / `requirePoint` / `requireSize` / `requireRect` / `requireRotation`）
+// 在 `core/guards.ts`，本文件 import 使用——2026-10-13 起收拢，原「内联不抽模块」的裁决已推翻
+// （理由与触发条件见 `core/guards.ts` 的文件头）。本模块**特有**的 `requireAspect` / `requireHandle`
+// 仍留在下面。
 // ---------------------------------------------------------------------------
-
-function requireFinite(value: number, what: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${what}必须是有限数字（当前 ${String(value)}）`);
-  }
-  return value;
-}
-
-function requirePoint(point: Point, what: string): Point {
-  requireFinite(point.x, `${what} x`);
-  requireFinite(point.y, `${what} y`);
-  return point;
-}
-
-/** 尺寸必须**整数且 ≥1**（`AGENTS.md`「入口校验」的网格 / 尺寸类口径）。 */
-function requireSize(size: Size, what: string): Size {
-  if (!Number.isInteger(size.width) || size.width < 1) {
-    throw new Error(`${what}宽必须是 ≥1 的整数（当前 ${String(size.width)}）`);
-  }
-  if (!Number.isInteger(size.height) || size.height < 1) {
-    throw new Error(`${what}高必须是 ≥1 的整数（当前 ${String(size.height)}）`);
-  }
-  return size;
-}
-
-/** 矩形：分量有限、宽高 ≥1。**越界不是错误**（那是 `clampRectToSource` 的职责），此处只拒绝退化矩形。 */
-function requireRect(rect: Rect, what: string): Rect {
-  requireFinite(rect.x, `${what} x`);
-  requireFinite(rect.y, `${what} y`);
-  requireFinite(rect.width, `${what}宽度`);
-  requireFinite(rect.height, `${what}高度`);
-  if (rect.width < 1) throw new Error(`${what}宽度必须 ≥1（当前 ${rect.width}）`);
-  if (rect.height < 1) throw new Error(`${what}高度必须 ≥1（当前 ${rect.height}）`);
-  return rect;
-}
-
-function requireRotation(rotation: Rotation): Rotation {
-  if (rotation !== 0 && rotation !== 1 && rotation !== 2 && rotation !== 3) {
-    throw new Error(`旋转角度非法：${String(rotation)}（必须是 0–3 的整数）`);
-  }
-  return rotation;
-}
 
 function requireAspect(aspect: AspectLock): AspectLock {
   if (aspect !== "free" && aspect !== "1:1" && aspect !== "4:3" && aspect !== "9:16") {

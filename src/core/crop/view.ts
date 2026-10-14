@@ -1,5 +1,6 @@
 import { rotatedSize } from "../image/rotate";
 import type { Rect, Rotation } from "../image/types";
+import { requireFinite, requirePoint, requireRect, requireRotation, requireSize, requireViewport } from "../guards";
 
 /**
  * 屏幕 ↔ 原图坐标的三层映射，以及视图的适配 / 缩放 / 平移。
@@ -38,50 +39,9 @@ export interface ViewTransform {
 // ---------------------------------------------------------------------------
 // 入口校验（规格 §12）
 //
-// 刻意**内联在本文件**，不抽共享校验模块：规格 §13 第 8 条（沿用引擎分支的 L4）已经定过
-// 「共享校验模块明确不修，保持内联就地校验这一种风格」。任务 4 的 `rect.ts` 里那份守卫是
-// 同一口径的第二份，两处的措辞与边界必须一致；出现第三处时再回头讨论抽模块。
+// 通用几何守卫在 `core/guards.ts`（2026-10-13 起收拢，原「内联不抽模块」的裁决已推翻）。
+// 本模块**特有**的 `requireZoom` / `requireView` 仍在下面——它们只服务本文件的量。
 // ---------------------------------------------------------------------------
-
-function requireFinite(value: number, what: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${what}必须是有限数字（当前 ${String(value)}）`);
-  }
-  return value;
-}
-
-function requirePoint(point: Point, what: string): Point {
-  requireFinite(point.x, `${what} x`);
-  requireFinite(point.y, `${what} y`);
-  return point;
-}
-
-/** 视口尺寸是 **CSS 像素**：允许小数（`getBoundingClientRect` 在缩放下就返回小数），只要求有限且 > 0。 */
-function requireViewport(viewport: Size): Size {
-  const width = requireFinite(viewport.width, "视口宽度");
-  const height = requireFinite(viewport.height, "视口高度");
-  if (width <= 0) throw new Error(`视口宽度必须大于 0（当前 ${width}）`);
-  if (height <= 0) throw new Error(`视口高度必须大于 0（当前 ${height}）`);
-  return viewport;
-}
-
-/** 图像尺寸必须**整数且 ≥1**（`AGENTS.md`「入口校验」的网格 / 尺寸类口径）。小数宽高会与长度校验互相放过。 */
-function requireImageSize(size: Size, what: string): Size {
-  if (!Number.isInteger(size.width) || size.width < 1) {
-    throw new Error(`${what}宽必须是 ≥1 的整数（当前 ${String(size.width)}）`);
-  }
-  if (!Number.isInteger(size.height) || size.height < 1) {
-    throw new Error(`${what}高必须是 ≥1 的整数（当前 ${String(size.height)}）`);
-  }
-  return size;
-}
-
-function requireRotation(rotation: Rotation): Rotation {
-  if (rotation !== 0 && rotation !== 1 && rotation !== 2 && rotation !== 3) {
-    throw new Error(`旋转角度非法：${String(rotation)}（必须是 0–3 的整数）`);
-  }
-  return rotation;
-}
 
 function requireZoom(zoom: ZoomLevel): ZoomLevel {
   if (zoom !== "fit" && zoom !== 2 && zoom !== 4) {
@@ -98,24 +58,6 @@ function requireView(view: ViewTransform): ViewTransform {
   return view;
 }
 
-/**
- * 矩形：分量有限、宽高 ≥1。**与任务 4 的 `rect.ts` 同一口径**（规格 §12）。
- *
- * 为什么在本模块也要校验：`sourceRectToOriented` / `sourceRectToScreen` 是公开导出，
- * 直接吃调用方的 `Rect`。只靠「坐标分量有限」这条间接守卫拦不住负宽 / 零宽——
- * 它们会被静默透传成负宽的屏幕矩形（`AGENTS.md` 点名的「不报错、只产出错误结果」路径）。
- * **越界不是错误**（那是 `clampRectToSource` 的职责），本模块不夹取、只拒绝退化矩形。
- */
-function requireRect(rect: Rect, what: string): Rect {
-  requireFinite(rect.x, `${what} x`);
-  requireFinite(rect.y, `${what} y`);
-  requireFinite(rect.width, `${what}宽度`);
-  requireFinite(rect.height, `${what}高度`);
-  if (rect.width < 1) throw new Error(`${what}宽度必须 ≥1（当前 ${rect.width}）`);
-  if (rect.height < 1) throw new Error(`${what}高度必须 ≥1（当前 ${rect.height}）`);
-  return rect;
-}
-
 // ---------------------------------------------------------------------------
 // 第一层：旋转（源图未旋转坐标 ↔ 显示空间）
 // ---------------------------------------------------------------------------
@@ -124,7 +66,7 @@ function requireRect(rect: Rect, what: string): Rect {
 export function sourceToOriented(point: Point, rotation: Rotation, source: Size): Point {
   requirePoint(point, "源坐标");
   requireRotation(rotation);
-  requireImageSize(source, "源图");
+  requireSize(source, "源图");
   const { width: w, height: h } = source;
   switch (rotation) {
     case 0:
@@ -142,7 +84,7 @@ export function sourceToOriented(point: Point, rotation: Rotation, source: Size)
 export function orientedToSource(point: Point, rotation: Rotation, source: Size): Point {
   requirePoint(point, "显示空间坐标");
   requireRotation(rotation);
-  requireImageSize(source, "源图");
+  requireSize(source, "源图");
   const { width: w, height: h } = source;
   switch (rotation) {
     case 0:
@@ -181,7 +123,7 @@ export function sourceRectToOriented(rect: Rect, rotation: Rotation, source: Siz
 /** contain 适配：图像完整放进视口并居中。 */
 export function fitTransform(viewport: Size, oriented: Size): ViewTransform {
   requireViewport(viewport);
-  requireImageSize(oriented, "显示空间图像");
+  requireSize(oriented, "显示空间图像");
   const scale = Math.min(viewport.width / oriented.width, viewport.height / oriented.height);
   return {
     scale,
@@ -198,7 +140,7 @@ export function fitTransform(viewport: Size, oriented: Size): ViewTransform {
  */
 export function withZoom(base: ViewTransform, viewport: Size, oriented: Size, zoom: ZoomLevel): ViewTransform {
   requireViewport(viewport);
-  requireImageSize(oriented, "显示空间图像");
+  requireSize(oriented, "显示空间图像");
   requireZoom(zoom);
   requireView(base);
   const scale = base.scale * (zoom === "fit" ? 1 : zoom);
@@ -225,7 +167,7 @@ export function withZoom(base: ViewTransform, viewport: Size, oriented: Size, zo
  */
 export function clampView(view: ViewTransform, viewport: Size, oriented: Size): ViewTransform {
   requireViewport(viewport);
-  requireImageSize(oriented, "显示空间图像");
+  requireSize(oriented, "显示空间图像");
   requireView(view);
   const clampAxis = (offset: number, scaled: number, extent: number): number =>
     scaled <= extent ? (extent - scaled) / 2 : Math.min(0, Math.max(extent - scaled, offset));
@@ -279,7 +221,7 @@ export function panToCenterSelection(
   selection: Rect,
 ): Point {
   requireViewport(viewport);
-  requireImageSize(oriented, "显示空间图像");
+  requireSize(oriented, "显示空间图像");
   requireZoom(zoom);
   requireView(base);
   requireRect(selection, "选区显示空间矩形");
@@ -351,7 +293,7 @@ export function sourceRectToScreen(rect: Rect, view: ViewTransform, rotation: Ro
  * `core/image/__tests__/rotate.test.ts` 逐条钉死，这里不重抄第二份。
  */
 export function orientedSizeOf(source: Size, rotation: Rotation): Size {
-  requireImageSize(source, "源图");
+  requireSize(source, "源图");
   requireRotation(rotation);
   return rotatedSize(source.width, source.height, rotation);
 }

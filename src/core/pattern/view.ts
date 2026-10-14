@@ -1,5 +1,6 @@
 import { clampView, fitTransform, screenToOriented } from "../crop/view";
 import type { Point, Size, ViewTransform } from "../crop/view";
+import { requireFinite, requirePoint, requireSize, requireViewport } from "../guards";
 
 /**
  * 编辑器视图数学：默认缩放、缩放范围、锚点缩放、平移、可见格范围、拖动补格。
@@ -15,8 +16,8 @@ import type { Point, Size, ViewTransform } from "../crop/view";
  * 「补格少一格」这类只有在真机上才看得出来的手感问题。
  *
  * **守卫口径**（规格 §12）：本模块**复用既有守卫**——`fitTransform` / `clampView` 内部已经守着
- * 视口（有限且 > 0）、图纸（整数且 ≥1）、视图（`scale` 有限 > 0、偏移有限），所以这里**不复制
- * 第四份全套守卫**；本文件只守**自己新引入的量**：`nextScale`（有限 > 0）、`anchorScreen` 与屏幕点
+ * 视口（有限且 > 0）、图纸（整数且 ≥1）、视图（`scale` 有限 > 0、偏移有限），通用几何守卫在
+ * `core/guards.ts`；本文件只守**自己新引入的量**：`nextScale`（有限 > 0）、`anchorScreen` 与屏幕点
  * （分量有限）、`CellPoint`（分量是整数）。
  *
  * **一处例外（如实记录）**：`visibleCellRange` **不调用** `fitTransform` / `clampView`（它只调
@@ -74,31 +75,16 @@ export interface CellPoint {
 }
 
 // ---------------------------------------------------------------------------
-// 入口校验（规格 §12）：内联就地，不抽共享模块。
-// 本文件**只守新引入的量**——视口 / 图纸 / 视图三者的守卫由被调用的
-// `fitTransform` / `clampView` / `screenToOriented` 在内部完成（措辞与 `crop/rect.ts` 一致）。
-// 例外只有 `visibleCellRange` 的视口与图纸两条（见文件头 JSDoc）。
+// 入口校验（规格 §12）：通用几何守卫在 `core/guards.ts`。
+// 本文件**只守新引入的量**：下面的 `requireScale` / `requireCellPoint`。
+// 例外只有 `visibleCellRange` 直接调视口与图纸两条守卫（见文件头 JSDoc）。
 // ---------------------------------------------------------------------------
-
-function requireFinite(value: number, what: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${what}必须是有限数字（当前 ${String(value)}）`);
-  }
-  return value;
-}
 
 /** 视图比例只在本模块的推导里被读一次；其余部分一律交给 `clampView` 复检。 */
 function requireScale(scale: number, what: string): number {
   requireFinite(scale, what);
   if (scale <= 0) throw new Error(`${what}必须大于 0（当前 ${scale}）`);
   return scale;
-}
-
-/** 屏幕点（缩放锚点 / 捏合中点）：分量必须有限。 */
-function requirePoint(point: Point, what: string): Point {
-  requireFinite(point.x, `${what} x`);
-  requireFinite(point.y, `${what} y`);
-  return point;
 }
 
 /**
@@ -115,33 +101,6 @@ function requireCellPoint(point: CellPoint, what: string): CellPoint {
     throw new Error(`${what} y 必须是安全整数（当前 ${String(point.y)}）`);
   }
   return point;
-}
-
-/**
- * 视口尺寸是 **CSS 像素**：允许小数（`getBoundingClientRect` 在缩放下就返回小数），只要求有限且 > 0。
- * 措辞与 `core/crop/view.ts` 的 `requireViewport` 逐字一致。
- */
-function requireViewport(viewport: Size): Size {
-  const width = requireFinite(viewport.width, "视口宽度");
-  const height = requireFinite(viewport.height, "视口高度");
-  if (width <= 0) throw new Error(`视口宽度必须大于 0（当前 ${width}）`);
-  if (height <= 0) throw new Error(`视口高度必须大于 0（当前 ${height}）`);
-  return viewport;
-}
-
-/**
- * 图纸 = 显示空间尺寸，必须**整数且 ≥1**（`AGENTS.md`「入口校验」的网格 / 尺寸类口径）。
- * 措辞与 `core/crop/view.ts` 的 `requireImageSize` 逐字一致（含「显示空间图像」这个叫法）：
- * 同一个 `Size` 参数在 B2 与本模块的错误消息里必须是同一句话。
- */
-function requireGridSize(grid: Size): Size {
-  if (!Number.isInteger(grid.width) || grid.width < 1) {
-    throw new Error(`显示空间图像宽必须是 ≥1 的整数（当前 ${String(grid.width)}）`);
-  }
-  if (!Number.isInteger(grid.height) || grid.height < 1) {
-    throw new Error(`显示空间图像高必须是 ≥1 的整数（当前 ${String(grid.height)}）`);
-  }
-  return grid;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +271,7 @@ export function visibleCellRange(
   grid: Size,
 ): { x0: number; y0: number; x1: number; y1: number } | null {
   requireViewport(viewport);
-  requireGridSize(grid);
+  requireSize(grid, "显示空间图像");
   // 屏幕视口的四角 → 连续格子坐标；`screenToOriented` 内部已复检视图与点分量。
   const topLeft = screenToOriented({ x: 0, y: 0 }, view);
   const bottomRight = screenToOriented({ x: viewport.width, y: viewport.height }, view);
