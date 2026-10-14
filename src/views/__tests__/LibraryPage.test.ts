@@ -199,29 +199,6 @@ describe("LibraryPage", () => {
     expect(wrapper.text()).not.toContain("可用约");
   });
 
-  // 这条不是简报原文：上面那条用的是 `beforeEach` 的内存库（`estimateUsage` 恒返回 null），
-  // 所以**改动前它也是绿的**——它只挡「页面上写死一行字」，挡不住「读点被加回来」。
-  // 这条把读点本身钉死：库**能**报出数字时，`estimateUsage` 也一次都不许被调、那一行也不许出现。
-  it("刷新不再读存储占用：数字拿得到也不调 estimateUsage（C8 第 1 项）", async () => {
-    const base = await createMemoryProjectStore();
-    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
-    let calls = 0;
-    setProjectStore({
-      ...base,
-      estimateUsage: async () => {
-        calls += 1;
-        return { usage: 3 * 1024 * 1024, quota: 128 * 1024 * 1024 };
-      },
-    });
-
-    const wrapper = mount(LibraryPage);
-    await flushPromises();
-
-    expect(calls).toBe(0);
-    expect(wrapper.text()).not.toContain("已用");
-    expect(wrapper.text()).not.toContain("可用约");
-  });
-
   it("右上角是 plus 新建按钮：图标按钮靠中文 aria-label 定锚点，空态虚线卡片同口径", async () => {
     setProjectStore(await createMemoryProjectStore());
     const wrapper = mount(LibraryPage);
@@ -612,8 +589,6 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
       rename: async () => {
         throw new Error("unused");
       },
-      // 只为凑齐 `ProjectStore` 接口：C8 第 1 项之后本页不再有任何 `estimateUsage` 读点
-      estimateUsage: async () => null,
     });
 
     const wrapper = mount(LibraryPage);

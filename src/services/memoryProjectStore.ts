@@ -12,8 +12,6 @@ import {
  *
  * 公开理由是「测试替身」：契约测试用它跑同一套用例，从而保证「换实现不影响调用方」
  * 这个承诺是真的。它同时是将来 Tauri fs 实现的同层替身。
- *
- * 刻意**不**模拟配额：`estimateUsage()` 恒返回 null，与「浏览器不支持」同一条分支。
  */
 export async function createMemoryProjectStore(): Promise<ProjectStore> {
   const records = new Map<string, ProjectRecord>();
@@ -70,9 +68,6 @@ export async function createMemoryProjectStore(): Promise<ProjectStore> {
       };
       records.set(id, { ...existing, meta });
       return { ...meta };
-    },
-    async estimateUsage(): Promise<{ usage: number; quota: number } | null> {
-      return null;
     },
   };
 }

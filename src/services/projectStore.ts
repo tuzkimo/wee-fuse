@@ -41,8 +41,6 @@ export interface ProjectStore {
   put(record: ProjectRecord): Promise<void>;
   remove(id: string): Promise<void>;
   rename(id: string, name: string): Promise<ProjectMeta>;
-  /** 浏览器支持时返回占用与配额（字节）；不支持时返回 null。 */
-  estimateUsage(): Promise<{ usage: number; quota: number } | null>;
 }
 
 /**

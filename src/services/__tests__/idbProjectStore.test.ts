@@ -1,8 +1,7 @@
 import "fake-indexeddb/auto";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { describeProjectStoreContract, makeRecord } from "./projectStoreContract";
 import { createIdbProjectStore } from "@/services/idbProjectStore";
-import { createMemoryProjectStore } from "@/services/memoryProjectStore";
 import type { ProjectStore } from "@/services/projectStore";
 
 let counter = 0;
@@ -161,57 +160,5 @@ describe("IndexedDB 实现：列表不读 grid（白盒）", () => {
     await expect(store.put(record)).rejects.toThrow(/没有 metas/);
     await expect(store.remove("a")).rejects.toThrow(/没有 metas/);
     await expect(store.rename("a", "小狗")).rejects.toThrow(/没有 metas/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 修复轮 1 补充：`estimateUsage()` 此前零断言。
-//
-// 用 `vi.stubGlobal` 注入 `navigator.storage`（happy-dom 自己没有这个 API），三条分支
-// 各自可判别：值透传 / 抛错回落 null / 非数字回落 null。内存实现刻意不模拟配额，
-// 所以即使平台支持也返回 null——这条单独钉住，免得将来有人「顺手」把内存实现改成
-// 读 navigator.storage（那会让两套实现在同一台机器上给出不同结果）。
-// ---------------------------------------------------------------------------
-
-describe("estimateUsage：平台能力是注入出来的", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  function stubStorage(estimate: () => Promise<unknown>): void {
-    vi.stubGlobal("navigator", { storage: { estimate } });
-  }
-
-  it("平台支持时原样透传 usage / quota", async () => {
-    stubStorage(async () => ({ usage: 1, quota: 2 }));
-    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-passthrough" });
-    expect(await store.estimateUsage()).toEqual({ usage: 1, quota: 2 });
-  });
-
-  it("estimate 抛错时返回 null（占用显示只是锦上添花，不该让调用方崩）", async () => {
-    stubStorage(async () => {
-      throw new Error("配额查询失败");
-    });
-    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-throw" });
-    expect(await store.estimateUsage()).toBeNull();
-  });
-
-  it("usage 不是数字时返回 null（不把字符串或 undefined 透传出去）", async () => {
-    stubStorage(async () => ({ usage: "1", quota: 2 }));
-    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-badusage" });
-    expect(await store.estimateUsage()).toBeNull();
-  });
-
-  it("quota 不是数字时返回 null（两半守卫各自可判别）", async () => {
-    // 修复轮 2 补：原来只测了 `usage: "1"`，删掉 `typeof quota !== "number"` 那半仍然全绿。
-    stubStorage(async () => ({ usage: 1, quota: "2" }));
-    const store = await createIdbProjectStore({ databaseName: "wee-fuse-estimate-badquota" });
-    expect(await store.estimateUsage()).toBeNull();
-  });
-
-  it("内存实现即使平台支持也返回 null（刻意不模拟配额）", async () => {
-    stubStorage(async () => ({ usage: 1, quota: 2 }));
-    const store: ProjectStore = await createMemoryProjectStore();
-    expect(await store.estimateUsage()).toBeNull();
   });
 });

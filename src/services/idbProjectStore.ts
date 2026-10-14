@@ -238,21 +238,5 @@ export async function createIdbProjectStore(
         return meta;
       });
     },
-
-    async estimateUsage(): Promise<{ usage: number; quota: number } | null> {
-      // fake-indexeddb 与部分老 WebView 都没有 navigator.storage.estimate。
-      // 走 undefined 分支返回 null，而不是抛错——占用显示只是锦上添花。
-      const storage = typeof navigator === "undefined" ? undefined : navigator.storage;
-      if (storage === undefined || typeof storage.estimate !== "function") return null;
-      try {
-        const estimate = await storage.estimate();
-        const usage = estimate.usage;
-        const quota = estimate.quota;
-        if (typeof usage !== "number" || typeof quota !== "number") return null;
-        return { usage, quota };
-      } catch {
-        return null;
-      }
-    },
   };
 }
