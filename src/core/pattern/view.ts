@@ -1,9 +1,9 @@
 import { clampView, fitTransform, screenToOriented } from "../crop/view";
 import type { Point, Size, ViewTransform } from "../crop/view";
-import type { Rect } from "../image/types";
+import { requireFinite, requirePoint, requireSize, requireViewport } from "../guards";
 
 /**
- * 编辑器视图数学：默认缩放、缩放范围、锚点缩放、平移、可见格范围、框选矩形、拖动补格。
+ * 编辑器视图数学：默认缩放、缩放范围、锚点缩放、平移、可见格范围、拖动补格。
  *
  * **只有一层坐标系**（规格 §4.1）：图纸是无旋转的轴对齐网格，所以
  * `screen = offset + cell × cellPx`（`cellPx = view.scale`）。本模块**不写第二份坐标数学**——
@@ -13,19 +13,19 @@ import type { Rect } from "../image/types";
  *
  * **为什么整块放在 core**：happy-dom 的 canvas 是桩、`getBoundingClientRect()` 返回全 0，
  * 这一层在 CI 里唯一能被保护的形式就是纯函数（规格 §3 的表）。它一旦写错，症状是「偶尔断笔」
- * 「框选少一列」这类只有在真机上才看得出来的手感问题。
+ * 「补格少一格」这类只有在真机上才看得出来的手感问题。
  *
  * **守卫口径**（规格 §12）：本模块**复用既有守卫**——`fitTransform` / `clampView` 内部已经守着
- * 视口（有限且 > 0）、图纸（整数且 ≥1）、视图（`scale` 有限 > 0、偏移有限），所以这里**不复制
- * 第四份全套守卫**；本文件只守**自己新引入的量**：`nextScale`（有限 > 0）、`anchorScreen` 与屏幕点
+ * 视口（有限且 > 0）、图纸（整数且 ≥1）、视图（`scale` 有限 > 0、偏移有限），通用几何守卫在
+ * `core/guards.ts`；本文件只守**自己新引入的量**：`nextScale`（有限 > 0）、`anchorScreen` 与屏幕点
  * （分量有限）、`CellPoint`（分量是整数）。
  *
- * **两处例外（如实记录）**：`visibleCellRange` 与 `cellRectFromScreen` **不调用** `fitTransform` /
- * `clampView`（前者只调 `screenToOriented`，后者连视口都不收），所以它们各自把视口 / 图纸这两条
- * 守卫**内联就地**写了一遍，措辞与 B2 `crop/view.ts` 的 `requireViewport` / `requireImageSize`
- * **逐字一致**（图纸那条沿用「显示空间图像」的措辞——`grid` 就是显示空间的尺寸，两处口径必须能
- * 逐字对上，否则读错误消息的用例会漂）。为什么不「借」一次 `clampView` 的守卫：那会把**夹取后的**
- * 视图当成入参，`visibleCellRange` 就不再回答「按给定视图能看到哪些格子」了。
+ * **一处例外（如实记录）**：`visibleCellRange` **不调用** `fitTransform` / `clampView`（它只调
+ * `screenToOriented`），所以它把视口 / 图纸这两条守卫**内联就地**写了一遍，措辞与 B2
+ * `crop/view.ts` 的 `requireViewport` / `requireImageSize` **逐字一致**（图纸那条沿用「显示空间
+ * 图像」的措辞——`grid` 就是显示空间的尺寸，两处口径必须能逐字对上，否则读错误消息的用例会漂）。
+ * 为什么不「借」一次 `clampView` 的守卫：那会把**夹取后的**视图当成入参，`visibleCellRange`
+ * 就不再回答「按给定视图能看到哪些格子」了。
  * 按 `AGENTS.md`「入口校验」与规格 §13 第 8 条，守卫**内联在本文件**，不抽共享模块。
  */
 
@@ -75,31 +75,16 @@ export interface CellPoint {
 }
 
 // ---------------------------------------------------------------------------
-// 入口校验（规格 §12）：内联就地，不抽共享模块。
-// 本文件**只守新引入的量**——视口 / 图纸 / 视图三者的守卫由被调用的
-// `fitTransform` / `clampView` / `screenToOriented` 在内部完成（措辞与 `crop/rect.ts` 一致）。
-// 例外只有 `visibleCellRange` / `cellRectFromScreen` 的视口与图纸两条（见文件头 JSDoc）。
+// 入口校验（规格 §12）：通用几何守卫在 `core/guards.ts`。
+// 本文件**只守新引入的量**：下面的 `requireScale` / `requireCellPoint`。
+// 例外只有 `visibleCellRange` 直接调视口与图纸两条守卫（见文件头 JSDoc）。
 // ---------------------------------------------------------------------------
-
-function requireFinite(value: number, what: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${what}必须是有限数字（当前 ${String(value)}）`);
-  }
-  return value;
-}
 
 /** 视图比例只在本模块的推导里被读一次；其余部分一律交给 `clampView` 复检。 */
 function requireScale(scale: number, what: string): number {
   requireFinite(scale, what);
   if (scale <= 0) throw new Error(`${what}必须大于 0（当前 ${scale}）`);
   return scale;
-}
-
-/** 屏幕点（锚点 / 框选起止点）：分量必须有限。 */
-function requirePoint(point: Point, what: string): Point {
-  requireFinite(point.x, `${what} x`);
-  requireFinite(point.y, `${what} y`);
-  return point;
 }
 
 /**
@@ -116,33 +101,6 @@ function requireCellPoint(point: CellPoint, what: string): CellPoint {
     throw new Error(`${what} y 必须是安全整数（当前 ${String(point.y)}）`);
   }
   return point;
-}
-
-/**
- * 视口尺寸是 **CSS 像素**：允许小数（`getBoundingClientRect` 在缩放下就返回小数），只要求有限且 > 0。
- * 措辞与 `core/crop/view.ts` 的 `requireViewport` 逐字一致。
- */
-function requireViewport(viewport: Size): Size {
-  const width = requireFinite(viewport.width, "视口宽度");
-  const height = requireFinite(viewport.height, "视口高度");
-  if (width <= 0) throw new Error(`视口宽度必须大于 0（当前 ${width}）`);
-  if (height <= 0) throw new Error(`视口高度必须大于 0（当前 ${height}）`);
-  return viewport;
-}
-
-/**
- * 图纸 = 显示空间尺寸，必须**整数且 ≥1**（`AGENTS.md`「入口校验」的网格 / 尺寸类口径）。
- * 措辞与 `core/crop/view.ts` 的 `requireImageSize` 逐字一致（含「显示空间图像」这个叫法）：
- * 同一个 `Size` 参数在 B2 与本模块的错误消息里必须是同一句话。
- */
-function requireGridSize(grid: Size): Size {
-  if (!Number.isInteger(grid.width) || grid.width < 1) {
-    throw new Error(`显示空间图像宽必须是 ≥1 的整数（当前 ${String(grid.width)}）`);
-  }
-  if (!Number.isInteger(grid.height) || grid.height < 1) {
-    throw new Error(`显示空间图像高必须是 ≥1 的整数（当前 ${String(grid.height)}）`);
-  }
-  return grid;
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +271,7 @@ export function visibleCellRange(
   grid: Size,
 ): { x0: number; y0: number; x1: number; y1: number } | null {
   requireViewport(viewport);
-  requireGridSize(grid);
+  requireSize(grid, "显示空间图像");
   // 屏幕视口的四角 → 连续格子坐标；`screenToOriented` 内部已复检视图与点分量。
   const topLeft = screenToOriented({ x: 0, y: 0 }, view);
   const bottomRight = screenToOriented({ x: viewport.width, y: viewport.height }, view);
@@ -328,39 +286,6 @@ export function visibleCellRange(
   const yRange = axisRange(topLeft.y, bottomRight.y, grid.height);
   if (xRange === null || yRange === null) return null;
   return { x0: xRange[0], y0: yRange[0], x1: xRange[1], y1: yRange[1] };
-}
-
-/**
- * 两个**屏幕点**围出的矩形，单位是**格子**：两点各过 `screenToOriented` 得到连续格子坐标、
- * 夹进 `[0, grid.width] × [0, grid.height]`，再取 `floor` 的左上与 `ceil` 的右下。
- * 空矩形（宽或高为 0）返回 `null`。
- *
- * **关键取舍（不复用 `pointToCell`）**：`pointToCell` 落在图纸之外时返回 `null`，而矩形拖动
- * **经常**拖出图纸边界（想拖到最后一列就会拖过头）；用 `pointToCell` 就得在调用方为「null 时
- * 取哪条边」再写一份判定——那正是「两端各自正确、错在接线」的温床。连续坐标天然支持越界夹取。
- *
- * **关键取舍（空矩形返回 `null`，不夹成 1×1）**：把退化矩形抬成 1×1 会在图纸外凭空产生一次
- * 「涂一格」的命令。1×1 **合法**：起止点落在同一格时 `floor` / `ceil` 自然给出 1×1
- * （`ceil(9.2) − floor(9.2) = 1`），这条路径与空矩形可区分。
- *
- * shortcut: 删框选后只剩测试在用，下次动 core 时一并删或重新接线
- */
-export function cellRectFromScreen(a: Point, b: Point, view: ViewTransform, grid: Size): Rect | null {
-  requireGridSize(grid);
-  requirePoint(a, "起点");
-  requirePoint(b, "终点");
-  // 连续格子坐标 → 夹进 [0, 边长]（上界写 grid 而不是 grid−1：右 / 下边缘落在 grid 上）。
-  const first = screenToOriented(a, view);
-  const second = screenToOriented(b, view);
-  const clampAxis = (value: number, count: number): number => Math.min(Math.max(value, 0), count);
-  const left = Math.floor(clampAxis(Math.min(first.x, second.x), grid.width));
-  const top = Math.floor(clampAxis(Math.min(first.y, second.y), grid.height));
-  const right = Math.ceil(clampAxis(Math.max(first.x, second.x), grid.width));
-  const bottom = Math.ceil(clampAxis(Math.max(first.y, second.y), grid.height));
-  const width = right - left;
-  const height = bottom - top;
-  if (width <= 0 || height <= 0) return null;
-  return { x: left, y: top, width, height };
 }
 
 /**

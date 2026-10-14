@@ -514,12 +514,56 @@ export function drawLegendBand(
 }
 
 /**
+ * 两个导出共用的**正身**：入口守卫 + 固定步序。
+ *
+ * **为什么必须只有一处**：`drawSheet` 与 `drawBoardPage` 除「kind 判据」与「标题文案」外逐字相同
+ * （4 个守卫 + 8 个绘制步骤）。分开写时，新增一步绘制 / 调整守卫顺序都要改两处，漏一处只有
+ * 真跑导出才看得出（两处的版式自 C7 起共用同一套，规格要求它们不能漂）。
+ *
+ * 守卫顺序是承重的，**不是随便排的**：
+ * - `kind` 在调用方判（两者的期望值不同）。
+ * - `requireUsagesInPalette` **必须排在同源校验之前**：非数组 usages 会先撞同源校验——字符串的
+ *   `.length` 让消息变成「按 12 项应为 2 行」（失实），`null` 更是直接 TypeError。
+ * - `countTileBeads` 必须在填白之前：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验。
+ */
+function drawSheetBody(
+  target: RenderTarget2D,
+  pattern: Pattern,
+  palette: Palette,
+  usages: readonly ColorUsage[],
+  plan: SheetPlan | BoardPagePlan,
+  title: string,
+): void {
+  if (pattern.paletteId !== palette.id) {
+    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
+  }
+  // 色号必须在色卡里解析得出来（非数组也在这里抛）。缺了它，「另一张色卡的 usages」会一路画完整张
+  // 网格、直到渲染末段才炸——校验时机属于「任何写操作之前」。
+  requireUsagesInPalette(palette, usages);
+  // `usages` 必须与计划函数收到的是**同一份**。
+  requireLegendSameSource(usages, plan);
+  countTileBeads(pattern, plan);
+
+  target.fillStyle = SHEET_BACKGROUND;
+  target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
+
+  drawTitleLine(target, plan, title);
+  drawRulerBands(target, plan);
+  drawCellsAndLabels(target, pattern, palette, plan);
+  drawGridLines(target, plan);
+  drawMajorGuides(target, plan);
+  drawGridFrame(target, plan);
+  drawLegendBand(target, palette, usages, plan.legend);
+}
+
+/**
  * 单张施工图：整图一块 + 底部用料条。固定步序（C7 规格 §3）：
  * 填白 → 标题行 → 四边刻度带 → 逐格真色 + 空格斜线 → 格内色号 → 每格细线 → 板边界 →
  * 每 5 格橙色虚线 → 外框 → 用料条。**没有页脚、没有免责文字。**
  *
  * **`usages` 是必需入参而不是从 plan 里读**：plan 是纯数据（不含 `usages` 的副本），而且它必须与
  * `planSheet` 收到的是**同一份**——由 `requireLegendSameSource` 守着。
+ * 守卫与步序的正身在 `drawSheetBody`（与打印页共用）。
  */
 export function drawSheet(
   target: RenderTarget2D,
@@ -532,40 +576,21 @@ export function drawSheet(
   if ((plan.kind as string) !== "sheet") {
     throw new Error(`plan 的类型不匹配：期望 sheet，实际 ${String(plan.kind)}`);
   }
-  if (pattern.paletteId !== palette.id) {
-    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
-  }
-  // 入口守卫之二：色号必须在色卡里解析得出来（非数组也在这里抛）。缺了它，「另一张色卡的 usages」
-  // 会一路画完整张网格，直到渲染末段才炸——校验时机属于「任何写操作之前」。
-  requireUsagesInPalette(palette, usages);
-  // 入口守卫之三：`usages` 必须与 `planSheet` 收到的是**同一份**。
-  requireLegendSameSource(usages, plan);
-  // 颗数必须在填白之前算：它顺带跑完 `requirePattern` 的「cells 长度与宽高自洽」校验
-  countTileBeads(pattern, plan);
-
-  target.fillStyle = SHEET_BACKGROUND;
-  target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
-
-  drawTitleLine(target, plan, sheetTitle(pattern, meta));
-  drawRulerBands(target, plan);
-  drawCellsAndLabels(target, pattern, palette, plan);
-  drawGridLines(target, plan);
-  drawMajorGuides(target, plan);
-  drawGridFrame(target, plan);
-  drawLegendBand(target, palette, usages, plan.legend);
+  drawSheetBody(target, pattern, palette, usages, plan, sheetTitle(pattern, meta));
 }
 
 /**
  * 一页打印页：整页 = 标题行 + 一块板（四边刻度带）+ 本页用料条。
  *
  * **它与 `drawSheet` 共用全部步骤函数**与用料条 `drawLegendBand`：两处的差异只有标题行文案
- * 与几何来源（打印页的几何由纸型锁死，来自 `planBoardPage`）。
+ * 与几何来源（打印页的几何由纸型锁死，来自 `planBoardPage`）。守卫与步序的正身在
+ * `drawSheetBody`。
  *
  * **`usages` 是必需入参、语义是「本页那一份」**（不是全图）：用料条只该列本页要用的色，
  * 而 `plan.legend` 的行数是按这份用量扣出来的高度预算 ⇒ 两者必须**同源**。
  *
  * 入口守卫写在**任何写操作之前**，顺序：`kind` → 色卡一致性 → `requireUsagesInPalette` →
- * `usages` 与 `plan.legend` 同源 → `countTileBeads`。
+ * `usages` 与 `plan.legend` 同源 → `countTileBeads`（见 `drawSheetBody`）。
  */
 export function drawBoardPage(
   target: RenderTarget2D,
@@ -578,23 +603,5 @@ export function drawBoardPage(
   if ((plan.kind as string) !== "board-page") {
     throw new Error(`plan 的类型不匹配：期望 board-page，实际 ${String(plan.kind)}`);
   }
-  if (pattern.paletteId !== palette.id) {
-    throw new Error(`图纸的色卡是 ${pattern.paletteId}，与传入的色卡 ${palette.id} 不一致`);
-  }
-  // **必须排在同源校验之前**：非数组 usages 会先撞同源校验——字符串的 `.length` 让消息变成
-  // 「按 12 项应为 2 行」（失实），`null` 更是直接 TypeError。
-  requireUsagesInPalette(palette, usages);
-  requireLegendSameSource(usages, plan);
-  countTileBeads(pattern, plan);
-
-  target.fillStyle = SHEET_BACKGROUND;
-  target.fillRect(0, 0, plan.canvasWidth, plan.canvasHeight);
-
-  drawTitleLine(target, plan, boardPageTitle(plan, meta));
-  drawRulerBands(target, plan);
-  drawCellsAndLabels(target, pattern, palette, plan);
-  drawGridLines(target, plan);
-  drawMajorGuides(target, plan);
-  drawGridFrame(target, plan);
-  drawLegendBand(target, palette, usages, plan.legend);
+  drawSheetBody(target, pattern, palette, usages, plan, boardPageTitle(plan, meta));
 }

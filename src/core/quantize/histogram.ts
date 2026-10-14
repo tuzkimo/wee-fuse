@@ -1,5 +1,3 @@
-import type { SampledGrid } from "../image/types";
-
 /** 每通道保留的高位比特数。5bit → 32 级/通道 → 32768 个桶。 */
 export const HISTOGRAM_BITS = 5;
 
@@ -74,17 +72,6 @@ export function addToHistogram(
   histogram.sums[index * 3 + 1] += g * weight;
   histogram.sums[index * 3 + 2] += b * weight;
   histogram.total += weight;
-}
-
-/** 从采样网格建直方图，空格不参与统计。 */
-export function buildHistogram(grid: SampledGrid): Histogram {
-  const histogram = createHistogram();
-  const cells = grid.width * grid.height;
-  for (let i = 0; i < cells; i++) {
-    if (grid.filled[i] === 0) continue;
-    addToHistogram(histogram, grid.rgb[i * 3], grid.rgb[i * 3 + 1], grid.rgb[i * 3 + 2]);
-  }
-  return histogram;
 }
 
 /**

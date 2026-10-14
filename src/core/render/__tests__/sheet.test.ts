@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Palette } from "../../palette/types";
 import type { ColorUsage } from "../../pattern/stats";
-import { EMPTY, type Pattern } from "../../pattern/types";
+import { EMPTY } from "../../pattern/types";
 import {
   PRINT_MARGIN_MM,
   SHEET_MAJOR_GUIDE_STROKE,
@@ -20,6 +20,7 @@ import {
 } from "../layout";
 import { drawBoardPage, drawSheet, type SheetMeta } from "../sheet";
 import { createMockTarget, type MockCalls, type PathOp } from "./helpers";
+import { makePattern } from "@/__tests__/factories";
 
 /**
  * 夹具：6×6、33 个实心格、3 个空格（(2,0) / (4,2) / (4,5)）、4 种颜色。
@@ -57,11 +58,6 @@ function makePalette(): Palette {
   };
 }
 
-function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
-  const cells = new Uint16Array(width * height);
-  if (values !== undefined) cells.set(values);
-  return { width, height, paletteId: "test-palette", cells };
-}
 
 function makeMeta(overrides: Partial<SheetMeta> = {}): SheetMeta {
   return {

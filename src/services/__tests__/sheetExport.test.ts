@@ -9,12 +9,13 @@ import {
 import { planBoardPage, planSheet } from "@/core/render/layout";
 import type { Palette } from "@/core/palette/types";
 import type { ColorUsage } from "@/core/pattern/stats";
-import { EMPTY, type Pattern } from "@/core/pattern/types";
+import { EMPTY } from "@/core/pattern/types";
 import {
   renderBoardPageBlobFromPlan,
   renderSheetBlob,
   usagesInRange,
 } from "@/services/sheetExport";
+import { makePattern } from "@/__tests__/factories";
 
 /**
  * `@/services/exporter` 的替身。**声明必须走 `vi.hoisted`**：`vi.mock` 的工厂被提升到所有 import
@@ -42,9 +43,12 @@ vi.mock("@/services/exporter", async (importOriginal) => {
 
 /* ------------------------------------------------------------------ 夹具 */
 /*
- * 以下四个夹具（`CELLS_6X6` / `makePalette` / `makePattern` / `makeUsages`）**抄自
+ * 以下三个夹具（`CELLS_6X6` / `makePalette` / `makeUsages`）**抄自
  * `src/core/render/__tests__/sheet.test.ts`，与之同源**：跨 `.test.ts` 文件互相 import 会让 vitest
  * 把两个文件当成同一个用例集跑，所以只能抄一份。`makeUsages` 在 `layout.test.ts` 里也有一份同值的。
+ *
+ * （`makePattern` 不在此列：它已收进 `src/__tests__/factories.ts`——那不是 `.test.ts`，import 它
+ * 不会把两份用例并成一个集，所以不必再抄。）
  *
  * ⇒ **改一处必须改两处（抄了这份就是三处）**：夹具的值（空格位置、实心格数、各色颗数）是这些用例
  * 期望值的来源，任何一处漂移都会让「期望值与被测实现同源」这类假绿重新出现。
@@ -78,11 +82,6 @@ function makePalette(): Palette {
   };
 }
 
-function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
-  const cells = new Uint16Array(width * height);
-  if (values !== undefined) cells.set(values);
-  return { width, height, paletteId: "test-palette", cells };
-}
 
 /**
  * 33 个实心格的用量（26 + 5 + 1 + 1 = 33），与 `CELLS_6X6` 的用色一一对应（下标顺序 = 色卡下标顺序）。

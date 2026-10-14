@@ -4,7 +4,7 @@ import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { unlockBodyScroll } from "@/composables/useBodyScrollLock";
 import type { Palette } from "@/core/palette/types";
 import { patternStats, type ColorUsage } from "@/core/pattern/stats";
-import { EMPTY, type Pattern } from "@/core/pattern/types";
+import { EMPTY } from "@/core/pattern/types";
 import ExportPanel from "@/components/editor/ExportPanel.vue";
 // `exportFilename` 走 `vi.mock("@/services/exporter")` 的 `importOriginal` **真实现**（见文件头），
 // 所以这里的期望值不是手抄的字符串，而是「同一个函数」的输出——文件名的逐字格式由
@@ -20,6 +20,7 @@ import {
   type MockExporter,
   type RecordingTarget,
 } from "./exportTestKit";
+import { makePattern } from "@/__tests__/factories";
 
 /**
  * 导出面板用例（C8 任务 7：面板从「一页一项 + 每项一个保存」收敛成「多页预览 + 一键顺序保存」）。
@@ -84,10 +85,13 @@ vi.mock("@/services/exporter", async (importOriginal) => {
 /* ---------------- 夹具（与 `services/__tests__/sheetExport.test.ts` 同源） ---------------- */
 
 /*
- * `CELLS_6X6` / `makePalette` / `makePattern` / `makeUsages` **抄自
+ * `CELLS_6X6` / `makePalette` / `makeUsages` **抄自
  * `src/core/render/__tests__/sheet.test.ts`，与之同源**：跨 `.test.ts` 文件互相 import 会让 vitest
  * 把两个文件当成同一个用例集跑，所以只能抄一份。改一处必须改两处。
  * 夹具的值（空格位置、实心格数、各色颗数）是本文件期望值的来源。
+ *
+ * （`makePattern` 不在此列：它已收进 `src/__tests__/factories.ts`——那不是 `.test.ts`，import 它
+ * 不会把两份用例并成一个集，所以不必再抄。）
  */
 
 /**
@@ -127,11 +131,6 @@ function makePalette(): Palette {
   };
 }
 
-function makePattern(width: number, height: number, values?: readonly number[]): Pattern {
-  const cells = new Uint16Array(width * height);
-  if (values !== undefined) cells.set(values);
-  return { width, height, paletteId: "test-palette", cells };
-}
 
 /**
  * 33 个实心格的用量（26 + 5 + 1 + 1 = 33），与 `CELLS_6X6` 的用色一一对应。
@@ -164,7 +163,6 @@ const BASE_PROPS = {
   palette,
   usages,
   projectName: "测试工程",
-  revision: 0,
 };
 
 /**
@@ -277,9 +275,8 @@ describe("打印页摘要与选项（C7 起本面板只剩打印这一种形态�
     expect(wrapper.get("[data-testid='print-page-indicator']").text()).toContain("第 1 / 1 页");
     expect(wrapper.findAll("[data-testid^='print-preview-page-']")).toHaveLength(1);
 
-    // **只换 pattern（`revision` 刻意不动）**：`beginSession` 会把 `revision` 归零，所以
-    // 「从一张 revision = 0 的图纸换到另一张」时 revision 这一路根本不会触发——少看 `pattern`
-    // 的对象身份时，预览条会停在上一张图纸的页数上。
+    // **只换 pattern**：`cells` 是原地写、图纸又是 `markRaw`，所以「换了一张图纸」只能靠对象
+    // 身份识别——少看 `pattern` 的对象身份时，预览条会停在上一张图纸的页数上。
     const big = makePattern(116, 116, undefined);
     await wrapper.setProps({ pattern: big, usages: patternStats(big, palette).usages });
     await flushPromises();
@@ -358,8 +355,7 @@ describe("打印页摘要与选项（C7 起本面板只剩打印这一种形态�
     wrapper.unmount();
   });
 
-  it("`revision` 可以不给（结果页没有编辑通道）：缺省 0，`pattern` 身份变化仍然重建预览", async () => {
-    // 结果页只有 `pattern` 这一条失效通道，所以 `revision` 必须是可选 prop。
+  it("`pattern` 身份变化即重建预览（1 页 → 16 页）", async () => {
     const wrapper = mount(ExportPanel, {
       props: { pattern: makePattern(6, 6, CELLS_6X6), palette, usages, projectName: "测试工程" },
       global: { stubs: { teleport: true } },

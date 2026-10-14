@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BEAD_MM, BOARD_COLS, boardCount } from "../../pattern/board";
 import type { ColorUsage } from "../../pattern/stats";
-import { EMPTY, type Pattern } from "../../pattern/types";
+import { EMPTY } from "../../pattern/types";
 import type { Palette } from "../../palette/types";
 import {
   EXPORT_CELL_MAX_PX,
@@ -47,6 +47,7 @@ import {
   printBoardCount,
   rgbCss,
 } from "../layout";
+import { makePattern } from "@/__tests__/factories";
 /**
  * 布局只用 `palette.id` / 色号 / rgb；不需要真色卡（真色卡在 services 层，core 测试不许 import services）。
  */
@@ -64,11 +65,6 @@ function makePalette(count = 4): Palette {
   };
 }
 
-function makePattern(width: number, height: number, fill = 0): Pattern {
-  const cells = new Uint16Array(width * height);
-  cells.fill(fill);
-  return { width, height, paletteId: "test-palette", cells };
-}
 
 /**
  * 工程名（C8 §7.3 起 `planSheet` / `planBoardPage` 都**必须**收它：标题字号由「名字有多宽」与格像素 /
@@ -239,7 +235,7 @@ describe("cellBox：唯一映射", () => {
 
 describe("countTileBeads", () => {
   it("只数本片的实心格（空格不计）", () => {
-    const pattern = makePattern(58, 58, 0);
+    const pattern = makePattern(58, 58);
     pattern.cells[0] = EMPTY;
     pattern.cells[1] = EMPTY;
     const plan = planSheet(pattern, makePalette(), [], PROJECT_NAME);

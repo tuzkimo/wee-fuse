@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { loadPalette } from "../../palette/registry";
 import { EMPTY, type MaxColors, type Pattern } from "../../pattern/types";
 import { fromProjectDocument, toProjectDocument } from "../file";
-import { validateProjectDocument, type ProjectParams } from "../types";
+import {
+  PROJECT_FORMAT,
+  PROJECT_VERSION,
+  validateProjectDocument,
+  type ProjectParams,
+} from "../types";
 
 /**
  * 测试色卡：**221 色**（与内置 MARD 同数），前五色是 A1–A5（下标 0–4，既有断言依赖这组下标）。
@@ -53,6 +58,18 @@ function roundTrip(p: Pattern, fullPalette = palette): Pattern {
 }
 
 describe("toProjectDocument", () => {
+  it("format / version 取自常量，不是第二份字面量（否则升版会写出自己读不回的文件）", () => {
+    // 为什么单独一条：`validateProjectDocument` 只认 `PROJECT_VERSION`，而落盘这里曾把
+    // `"weefuse-project"` / `1` 写成字面量。两处今天同值，所以只有在**升级 `PROJECT_VERSION`
+    // 的那一刻**才暴露——写出的文件带着旧版本号、校验当场拒绝，表现为「刚存的工程打不开」。
+    // 判别力：把 `types.ts` 的 `PROJECT_VERSION` 改成 2，这条必须红。
+    const doc = toProjectDocument(pattern3x3(), palette, params);
+    expect(doc.format).toBe(PROJECT_FORMAT);
+    expect(doc.version).toBe(PROJECT_VERSION);
+    // 兜底：自己写出的文件必须能被自己的校验器接受（版本对不上时这句响亮失败）。
+    expect(validateProjectDocument(doc, palette).version).toBe(PROJECT_VERSION);
+  });
+
   it("子集色号升序、去重，且只包含图上真正用到的色号", () => {
     const doc = toProjectDocument(pattern3x3(), palette, params);
     // 全色卡下标 2 与 4 → 色号 A3 与 A5；A1/A2/A4 未出现，不得进 codes

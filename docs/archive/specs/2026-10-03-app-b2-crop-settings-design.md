@@ -610,6 +610,9 @@ npm run dev       # 浏览器人工走：选图 → 选区（拖 / 锁比例 / �
 7. **`buildPatternFromImage`、`edit.ts` 全部导出**仍缺「为何公开」的 JSDoc：本规格不动这两个模块
    （B2 只补 `patternStats` 与 `renderPatternThumbnail` 的）。
 8. **共享校验模块 / 错误信息口径统一**（L4）：沿用内联就地校验的既有风格，不引入第二种。
+   > **更正注记（2026-10-13）**：本条**已推翻**。触发条件（「第三处出现时再回头讨论」）到齐五处后，
+   > 六条真正重复的守卫收进 `src/core/guards.ts`——逐字比对确认函数体与签名全同，合并是行为保持的。
+   > 现行口径见 `docs/开发约定详解.md` 的「入口校验」一节；本行保留为当时的决策记录（不改正文）。
 9. **`source` 的体积上限或压缩**：B1 规格 §4.3 已定存全尺寸原图字节。
 10. **`probeSourceSize`（`services/imageSource.ts`）在 B2 之后没有生产消费者**：新的
     `loadImageSource` 一次解码同时给出尺寸与预览，`probeSourceSize` 因此被取代（`/lab/decode`

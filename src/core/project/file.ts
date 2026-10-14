@@ -8,7 +8,13 @@ import {
   type MaxColors,
   type Pattern,
 } from "../pattern/types";
-import { validateProjectDocument, type ProjectDocument, type ProjectParams } from "./types";
+import {
+  PROJECT_FORMAT,
+  PROJECT_VERSION,
+  validateProjectDocument,
+  type ProjectDocument,
+  type ProjectParams,
+} from "./types";
 
 /**
  * 把图纸落盘成工程文件。
@@ -90,8 +96,10 @@ export function toProjectDocument(
   }
 
   return {
-    format: "weefuse-project",
-    version: 1,
+    // 版本号只有 `types.ts` 一处真源：写成字面量的话，升级 `PROJECT_VERSION` 时这里会继续写旧值，
+    // 而 `validateProjectDocument` 只认新值 ⇒ 自己刚写的文件自己读不回。
+    format: PROJECT_FORMAT,
+    version: PROJECT_VERSION,
     width: pattern.width,
     height: pattern.height,
     palette: { id: fullPalette.id, codes },

@@ -460,7 +460,7 @@ describe("useShareIntake", () => {
   });
 
   it("④b2 E1：`takeSharedImage` reject 一个**字符串** ⇒ 提示条回退到 `String(error)` 的原样文本", async () => {
-    // `errorText` 的 `String(error)` 那一支此前没有断言读过（真链上抛的都是 `Error`）。
+    // `messageOf` 的 `String(error)` 那一支此前没有断言读过（真链上抛的都是 `Error`）。
     const spies = inboxSpies({ supported: true, takeError: "读不出这行字节" });
     setPlatform(spies.platform);
     stubDecode();

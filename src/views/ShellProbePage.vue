@@ -102,6 +102,7 @@ import {
   createCanvasStrict,
   requireContext2D,
 } from "@/services/exporter";
+import { messageOf } from "@/services/errors";
 import { getPlatform, isTauriRuntime } from "@/services/platform/capabilities";
 import { sniffImageType } from "@/services/platform/sniffImageType";
 // 只用它的 `encodeBase64`（C 块要如实报出 base64 串长）。**这不引入任何 `@tauri-apps/*` 的静态
@@ -132,12 +133,6 @@ const PROBE_EDGE = 64;
  * 离 `(2, 2)` 有 14 像素边距——改这两个常量前先读 `SELF_CHECK_X` / `SELF_CHECK_Y`。
  */
 const PROBE_BLOCK_EDGE = 32;
-
-/** 兜底文案必须非空：空消息的 `Error` 要取 `name`，非 `Error` 要取 `String`。 */
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message === "" ? error.name : error.message;
-  return String(error);
-}
 
 const readings = reactive<ShellProbeReadings>({
   a: null,
@@ -184,7 +179,7 @@ async function readFileInput(
     const size = await probeImageSize(file);
     decode = `${size.width}×${size.height}`;
   } catch (caught) {
-    decode = errorText(caught);
+    decode = messageOf(caught);
   }
   return {
     criterion,
@@ -205,7 +200,7 @@ async function onRawInput(criterion: "A" | "B", event: Event): Promise<void> {
     if (criterion === "A") readings.a = reading;
     else readings.b = reading;
   } catch (caught) {
-    error.value = `${criterion} 块读数失败：${errorText(caught)}`;
+    error.value = `${criterion} 块读数失败：${messageOf(caught)}`;
   }
 }
 
@@ -266,7 +261,7 @@ async function runC(): Promise<void> {
       coldStart = `${file.name} / ${file.size} 字节 / ${file.type === "" ? "（空 MIME）" : file.type}`;
     }
   } catch (caught) {
-    coldStart = `取走失败：${errorText(caught)}`;
+    coldStart = `取走失败：${messageOf(caught)}`;
   }
 
   let requestBody: string;
@@ -276,7 +271,7 @@ async function runC(): Promise<void> {
     const encoded = encodeBase64(new Uint8Array(await probe.arrayBuffer())).length;
     requestBody = `base64 JSON 字符串（图像 ${probe.size} 字节 → base64 ${encoded} 字符）· 端到端一致（${probe.size} 字节，探针图）`;
   } catch (caught) {
-    requestBody = `失败：${errorText(caught)}`;
+    requestBody = `失败：${messageOf(caught)}`;
   }
 
   readings.c = {
@@ -301,7 +296,7 @@ async function runD(): Promise<void> {
     await platform.album.save(blob, filename);
     result = "已受理（去相册 Pictures/WeeFuse 核对文件名与字节数）";
   } catch (caught) {
-    result = errorText(caught);
+    result = messageOf(caught);
   }
   readings.d = { kind: platform.album.kind, filename, bytes, result };
   busy.value = "";
@@ -338,7 +333,7 @@ function runE(): void {
     );
     readings.e = { requested: true, backPresses: [], closeRequests: [], exitResult: "（尚未点按）" };
   } catch (caught) {
-    error.value = `E 块注册失败：${errorText(caught)}`;
+    error.value = `E 块注册失败：${messageOf(caught)}`;
   }
 }
 
@@ -373,8 +368,8 @@ async function exitApp(): Promise<void> {
     exitResult = "已调用（resolve）";
     error.value = "";
   } catch (caught) {
-    exitResult = `调用失败：${errorText(caught)}`;
-    error.value = `明确退出失败：${errorText(caught)}`;
+    exitResult = `调用失败：${messageOf(caught)}`;
+    error.value = `明确退出失败：${messageOf(caught)}`;
   }
   const current = readings.e;
   readings.e =
@@ -400,7 +395,7 @@ onMounted(() => {
       }),
     );
   } catch (caught) {
-    error.value = `热启动订阅失败：${errorText(caught)}`;
+    error.value = `热启动订阅失败：${messageOf(caught)}`;
   }
 });
 
@@ -523,7 +518,7 @@ async function copy(): Promise<void> {
     await clipboard.writeText(text);
     copyStatus.value = `已复制 ${text.split("\n").length} 行到剪贴板。`;
   } catch (caught) {
-    copyStatus.value = `复制失败：${errorText(caught)}；请手动选中下面的读数复制。`;
+    copyStatus.value = `复制失败：${messageOf(caught)}；请手动选中下面的读数复制。`;
   }
 }
 </script>

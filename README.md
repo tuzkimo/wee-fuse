@@ -28,7 +28,7 @@
 
 ## 开发
 
-见[开发约定](AGENTS.md)与[开发文档索引](docs/开发文档索引.md)。
+见[开发约定](AGENTS.md)。
 
 ## License
 

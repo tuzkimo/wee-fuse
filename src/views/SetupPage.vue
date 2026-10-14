@@ -204,11 +204,8 @@ watch(
   },
 );
 
-/** 中栏深色底的板孔点阵（§7.3：`radial-gradient`，间距 22px）。 */
-const boardDots = {
-  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
-  backgroundSize: "22px 22px",
-};
+import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
+import { messageOf } from "@/services/errors";
 
 /**
  * 页头的返回箭头（C8 规格 §3.6.1，Ruling 21 的分叉口径）。
@@ -266,7 +263,7 @@ onMounted(async () => {
   try {
     getProjectStore();
   } catch (e) {
-    storeError.value = e instanceof Error ? e.message : String(e);
+    storeError.value = messageOf(e);
   }
 
   media = window.matchMedia("(min-width: 1024px)");
@@ -301,7 +298,7 @@ onMounted(async () => {
       draft.setSourceSize(loaded.sourceSize);
       draft.setPreview(loaded.preview);
     } catch (e) {
-      draft.setError(e instanceof Error ? e.message : String(e));
+      draft.setError(messageOf(e));
     } finally {
       preparing.value = false;
     }
@@ -457,7 +454,7 @@ async function generate(): Promise<void> {
       draft.setError(`图纸已生成，但保存失败：${session.error}`);
     }
   } catch (e) {
-    draft.setError(e instanceof Error ? e.message : String(e));
+    draft.setError(messageOf(e));
   } finally {
     draft.setBusy(false);
   }

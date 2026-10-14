@@ -48,7 +48,6 @@ vi.mock("vue-router", () => ({
 
 vi.mock("@/services/patternThumbnail", () => ({
   renderPatternThumbnail: () => "data:image/png;base64,AAAA",
-  RESULT_PREVIEW_MAX_EDGE: 1024,
 }));
 /**
  * 渲染通道替身（happy-dom 的 canvas 没有像素语义）。

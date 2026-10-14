@@ -6,6 +6,7 @@ import {
   type MaxColors,
 } from "../pattern/types";
 import type { Palette } from "../palette/types";
+import { requireFinite } from "../guards";
 
 /** 工程文件格式标识。 */
 export const PROJECT_FORMAT = "weefuse-project";
@@ -60,13 +61,6 @@ export interface ProjectDocument {
   /** 行优先，长度 = width*height；下标到 palette.codes；65535 = 空格。 */
   readonly grid: readonly number[];
   readonly params: ProjectParams;
-}
-
-function requireFiniteNumber(value: unknown, what: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${what}必须是有限数字（当前 ${String(value)}）`);
-  }
-  return value;
 }
 
 function requireInteger(value: unknown, what: string): number {
@@ -182,10 +176,10 @@ export function validateProjectDocument(doc: unknown, fullPalette: Palette): Pro
   }
 
   const cropRaw = requireObject(params.crop, "裁剪区域");
-  const x = requireFiniteNumber(cropRaw.x, "裁剪区域 x");
-  const y = requireFiniteNumber(cropRaw.y, "裁剪区域 y");
-  const w = requireFiniteNumber(cropRaw.w, "裁剪区域宽度");
-  const h = requireFiniteNumber(cropRaw.h, "裁剪区域高度");
+  const x = requireFinite(cropRaw.x, "裁剪区域 x");
+  const y = requireFinite(cropRaw.y, "裁剪区域 y");
+  const w = requireFinite(cropRaw.w, "裁剪区域宽度");
+  const h = requireFinite(cropRaw.h, "裁剪区域高度");
   if (w < 1 || h < 1) {
     throw new Error(`裁剪区域尺寸非法：${w}×${h}`);
   }

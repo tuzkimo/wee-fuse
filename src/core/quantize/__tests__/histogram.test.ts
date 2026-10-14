@@ -4,10 +4,10 @@ import {
   addToHistogram,
   bucketIndex,
   bucketLevel,
-  buildHistogram,
   createHistogram,
   histogramBuckets,
 } from "../histogram";
+import { buildHistogram } from "@/__tests__/factories";
 import type { SampledGrid } from "../../image/types";
 
 function gridOf(cells: ReadonlyArray<readonly [number, number, number] | null>): SampledGrid {

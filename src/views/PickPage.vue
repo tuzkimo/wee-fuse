@@ -11,6 +11,7 @@ import { getPlatform } from "@/services/platform/capabilities";
 import { fileFromInput, loadImageSource } from "@/services/imageSource";
 import { useDraft } from "@/stores/draft";
 import { backOrHome } from "@/views/backOrHome";
+import { messageOf } from "@/services/errors";
 
 const router = useRouter();
 const draft = useDraft();
@@ -54,7 +55,7 @@ async function pick(): Promise<void> {
     await router.push({ name: "setup" });
   } catch (e) {
     // 失败时不落任何草稿：留下「有 source 没 preview」的半截状态会让选区页拿到空画布。
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
   } finally {
     busy.value = false;
   }
@@ -96,7 +97,7 @@ async function pickNative(source: "album" | "camera"): Promise<void> {
     await router.push({ name: "setup" });
   } catch (e) {
     // 与 `pick()` 同一口径：失败时不落任何草稿，只把中文原因显示出来。
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
   } finally {
     busy.value = false;
   }

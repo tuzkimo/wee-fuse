@@ -41,8 +41,6 @@ export interface ProjectStore {
   put(record: ProjectRecord): Promise<void>;
   remove(id: string): Promise<void>;
   rename(id: string, name: string): Promise<ProjectMeta>;
-  /** 浏览器支持时返回占用与配额（字节）；不支持时返回 null。 */
-  estimateUsage(): Promise<{ usage: number; quota: number } | null>;
 }
 
 /**
@@ -93,6 +91,49 @@ export function defaultProjectName(fileName: unknown): string {
 /** 按 `updatedAt` 倒序（新的在前）。两个实现共用，保证列表顺序口径一致。 */
 export function sortByUpdatedAtDesc(metas: readonly ProjectMeta[]): ProjectMeta[] {
   return [...metas].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/**
+ * 从文档重算列表用的冗余字段（`width` / `height` / `colorCount` 只由 doc 决定）。
+ *
+ * 两个存储实现与 `stores/project` 的保存路径**共用这一份**：各写一份时，只改到一处也不会红
+ * ——契约用例两个实现都跑，可一旦内存实现漏改，生产（IDB）反而是对的，漂移是静默的。
+ */
+export function deriveMeta(meta: ProjectMeta, doc: ProjectDocument): ProjectMeta {
+  return {
+    ...meta,
+    width: doc.width,
+    height: doc.height,
+    colorCount: doc.palette.codes.length,
+  };
+}
+
+/**
+ * `put` 的共用入口处理：守卫（写在任何写操作之前）→ 归一化工程名 → 按 doc 重算冗余字段。
+ *
+ * **调用方拿到的是将要落盘的那一份**，所以「内存态与存储态一致」不需要第二次推导：`save()`
+ * 把返回值赋回会话即可。原样赋回调用方给的记录时，内存里的 `meta.width` 会停在占位值上
+ * （`SetupPage` 建的 meta 就写着 0）。
+ */
+export function prepareRecordForPut(record: ProjectRecord): ProjectRecord {
+  if (typeof record.meta.id !== "string" || record.meta.id.length === 0) {
+    throw new Error("工程 id 必须是非空字符串");
+  }
+  // §12：`thumbnail` 是外部可影响的展示字段，而列表页会把它直接塞进 `<img src>`。
+  // 只放行空串与 `data:image/`——`javascript:` / 远程 URL / `data:text/html` 一律拒绝。
+  if (
+    typeof record.meta.thumbnail !== "string" ||
+    (record.meta.thumbnail !== "" && !record.meta.thumbnail.startsWith("data:image/"))
+  ) {
+    throw new Error(
+      `工程封面图必须是 data:image/ 开头的字符串或空串（当前 ${String(record.meta.thumbnail)}）`,
+    );
+  }
+  return {
+    meta: deriveMeta({ ...record.meta, name: normalizeProjectName(record.meta.name) }, record.doc),
+    doc: record.doc,
+    source: record.source,
+  };
 }
 
 // ---------------------------------------------------------------------------

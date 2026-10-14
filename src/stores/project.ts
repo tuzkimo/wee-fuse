@@ -4,7 +4,8 @@ import { fromProjectDocument, toProjectDocument } from "@/core/project/file";
 import type { ProjectParams } from "@/core/project/types";
 import type { Pattern } from "@/core/pattern/types";
 import { getBuiltinPalette } from "@/services/palette";
-import { getProjectStore, type ProjectMeta, type ProjectRecord } from "@/services/projectStore";
+import { getProjectStore, prepareRecordForPut, type ProjectMeta, type ProjectRecord } from "@/services/projectStore";
+import { messageOf } from "@/services/errors";
 
 /** `fromProjectDocument` 的返回类型里参数那一半。 */
 export interface RuntimeParams {
@@ -71,7 +72,7 @@ export const useProjectSession = defineStore("projectSession", () => {
       return true;
     } catch (e) {
       clearSession();
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = messageOf(e);
       return false;
     }
   }
@@ -168,12 +169,16 @@ export const useProjectSession = defineStore("projectSession", () => {
         doc,
         source: record.value.source,
       };
-      await getProjectStore().put(saving);
-      record.value = saving;
+      // 过一遍共用入口：`put` 的两个实现都会做同样的守卫、归一化与派生（`prepareRecordForPut`）。
+      // 赋回**将要落盘的那一份**——原样赋回 `saving` 会让内存里的 `width` / `height` / `colorCount`
+      // 停在调用方给的占位值上（`SetupPage` 建 meta 时就写着 0），内存态与存储态从此不一致。
+      const prepared = prepareRecordForPut(saving);
+      await getProjectStore().put(prepared);
+      record.value = prepared;
       dirty.value = false;
       return true;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = messageOf(e);
       return false;
     }
   }

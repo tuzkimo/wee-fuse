@@ -10,6 +10,7 @@ import {
 } from "../layout";
 import { drawGridTile, EMPTY_STROKE, TILE_PAPER } from "../sheet";
 import { createMockTarget } from "./helpers";
+import { makePattern } from "@/__tests__/factories";
 
 /**
  * 网格块预览（规格 §5.3）：**只画「拼出来长什么样」**——纸底 + 逐格真色 + 空格斜线 + 整图外框。
@@ -30,9 +31,6 @@ const PALETTE: Palette = {
   ],
 };
 
-function makePattern(width: number, height: number): Pattern {
-  return { width, height, paletteId: "test-palette", cells: new Uint16Array(width * height) };
-}
 
 describe("planGridTile", () => {
   it("格像素取盒子的短边，网格在盒子里居中，画布就是盒子", () => {

@@ -67,11 +67,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: [] }>();
 
-/** 深色拼豆板的板孔点阵（§7.6 主体；间距 22px，与 `PatternCanvas` / `SetupPage` / `ResultPanel` 同一口径）。 */
-const boardDots = {
-  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
-  backgroundSize: "22px 22px",
-};
+import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
+import { messageOf } from "@/services/errors";
 
 /** 覆盖层返回栈（C8 规格 §3.6.2）：Android 返回键先关查看层，而不是离开页面。 */
 useOverlayBack(() => emit("close"));
@@ -279,6 +276,9 @@ function onPointerMove(event: PointerEvent): void {
    * 也可能被系统丢掉（切窗口 / 手势被浏览器接管），所以这里再按**事件自身的按键状态**兜底：
    * 一次没有按键的 `pointermove` 只可能是悬停，不该平移。
    * 少了它，用户把鼠标移回舞台，图就会自己跑（C8 任务 6 第 1 轮审查的「重要 2」）。
+   *
+   * 但它**要求先来一次 move** 才有机会跑；「捕获丢掉后用户直接落下第二指」那一路没有 move
+   * 可等，由模板上的 `@lostpointercapture` 兜（否则 `pointers.size` 凑成 2、拿幽灵坐标起捏合）。
    */
   if (event.buttons === 0) {
     pointers.delete(event.pointerId);
@@ -444,11 +444,11 @@ onMounted(async () => {
     try {
       blobUrl.value = URL.createObjectURL(blob);
     } catch (e) {
-      error.value = `预览生成失败：${e instanceof Error ? e.message : String(e)}`;
+      error.value = `预览生成失败：${messageOf(e)}`;
     }
   } catch (e) {
     // 中文包裹：`String(e)` 对非 Error 来源（IDB 的 `DOMException`、被抛出的字符串）会露出裸英文。
-    error.value = `图纸生成失败：${e instanceof Error ? e.message : String(e)}`;
+    error.value = `图纸生成失败：${messageOf(e)}`;
   } finally {
     busy.value = false;
   }
@@ -475,7 +475,7 @@ async function save(): Promise<void> {
     await getPlatform().album.save(blob, exportFilename(props.name, "施工图"));
     saveState.value = getPlatform().album.kind === "album" ? "已保存到相册" : "已生成";
   } catch (e) {
-    saveState.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+    saveState.value = `保存失败：${messageOf(e)}`;
   } finally {
     // **失败也要放行**：卡在 `saving = true` 等于「错一次就再也存不了」，而失败原因已经显示出来了。
     saving.value = false;
@@ -559,6 +559,7 @@ async function save(): Promise<void> {
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerUp"
+        @lostpointercapture="onPointerUp"
       >
         <img
           v-if="previewSrc !== ''"

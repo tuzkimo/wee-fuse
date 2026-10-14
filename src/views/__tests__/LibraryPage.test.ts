@@ -6,6 +6,7 @@ import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { toProjectDocument } from "@/core/project/file";
 import { planSheet } from "@/core/render/layout";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
+import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import { getBuiltinPalette } from "@/services/palette";
 import { setProjectStore } from "@/services/projectStore";
 import type { SheetRenderInput } from "@/services/sheetExport";
@@ -194,29 +195,6 @@ describe("LibraryPage", () => {
   it("不再显示存储占用那一行（C8 第 1 项：开发者读数不是用户信息）", async () => {
     const wrapper = mount(LibraryPage);
     await flushPromises();
-    expect(wrapper.text()).not.toContain("已用");
-    expect(wrapper.text()).not.toContain("可用约");
-  });
-
-  // 这条不是简报原文：上面那条用的是 `beforeEach` 的内存库（`estimateUsage` 恒返回 null），
-  // 所以**改动前它也是绿的**——它只挡「页面上写死一行字」，挡不住「读点被加回来」。
-  // 这条把读点本身钉死：库**能**报出数字时，`estimateUsage` 也一次都不许被调、那一行也不许出现。
-  it("刷新不再读存储占用：数字拿得到也不调 estimateUsage（C8 第 1 项）", async () => {
-    const base = await createMemoryProjectStore();
-    await base.put(makeRecord("a", "小猫", "2026-10-03T01:00:00.000Z"));
-    let calls = 0;
-    setProjectStore({
-      ...base,
-      estimateUsage: async () => {
-        calls += 1;
-        return { usage: 3 * 1024 * 1024, quota: 128 * 1024 * 1024 };
-      },
-    });
-
-    const wrapper = mount(LibraryPage);
-    await flushPromises();
-
-    expect(calls).toBe(0);
     expect(wrapper.text()).not.toContain("已用");
     expect(wrapper.text()).not.toContain("可用约");
   });
@@ -518,6 +496,76 @@ describe("LibraryPage", () => {
     expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
     expect(wrapper.get("[data-testid='sheet-preview']").attributes("src")).toBe("blob:sheet-2");
   });
+
+  it("上一次「查看」的读取晚到时不得覆盖当前查看层（连点两条工程）", async () => {
+    // **判死什么**：`openSheet` 先同步写 `sheetTarget = meta`，再 `await get(meta.id)`，回来后
+    // **无判据**地写 `sheetPattern`。连点两条工程时，先点的那条若后结算，查看层就成了
+    // 「B 的名字 + A 的施工图」——`:key="sheetTarget.id"` 只保证重新挂载，挡不住内容错位。
+    // 判据与 `EditorPage` 的 `loadedId` 同源。
+    const base = await createMemoryProjectStore();
+    const putProject = async (
+      id: string,
+      name: string,
+      updatedAt: string,
+      cells: readonly number[],
+    ): Promise<void> => {
+      await base.put({
+        meta: {
+          id,
+          name,
+          createdAt: "2026-10-08T00:00:00.000Z",
+          updatedAt,
+          thumbnail: "",
+          width: 58,
+          height: 58,
+          colorCount: 12,
+        },
+        doc: toProjectDocument(
+          { width: cells.length, height: 1, paletteId: getBuiltinPalette().id, cells: Uint16Array.from(cells) },
+          getBuiltinPalette(),
+          { longSide: 58, maxColors: 221, crop: { x: 0, y: 0, w: cells.length, h: 1, rotate: 0 } },
+        ),
+        source: null,
+      });
+    };
+    // 两张宽度不同的图：谁被喂给查看层，读 `width` 就能分辨（这张图才是这条用例的判别力）
+    await putProject("a", "小猫", "2026-10-08T05:00:00.000Z", [0, 0]);
+    await putProject("b", "小狗", "2026-10-08T01:00:00.000Z", [0, 0, 0]);
+
+    // 只把「小猫」的读卡在闸门上，让用户有机会在它结算前点开「小狗」
+    let openGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    setProjectStore({
+      ...base,
+      get: async (id: string) => {
+        if (id === "a") await gate;
+        return base.get(id);
+      },
+    });
+    const wrapper = mount(LibraryPage, { global: { stubs: { teleport: true } } });
+    await flushPromises();
+    const patternOf = (): { width: number } =>
+      wrapper.findComponent(SheetViewer).props("pattern") as { width: number };
+
+    // 列表按 updatedAt 倒序 ⇒ [0] 是「小猫」(a)，[1] 是「小狗」(b)。先点 a：它的读停在闸门上。
+    await wrapper.get("[data-testid='card-menu']").trigger("click");
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
+    await flushPromises();
+    // 再点 b（查看层 `fixed inset-0`，事件仍可派发）：b 的读立刻结算
+    await wrapper.findAll("[data-testid='card-menu']")[1]?.trigger("click");
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
+    expect(patternOf().width).toBe(3);
+
+    // a 的读取现在才结算：没有判据的话它会把查看层的图纸换成 a 的（宽度 2）
+    openGate();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
+    expect(patternOf().width).toBe(3);
+  });
 });
 
 describe("存储失败的两种语义（B2 规格 §8）", () => {
@@ -541,8 +589,6 @@ describe("存储失败的两种语义（B2 规格 §8）", () => {
       rename: async () => {
         throw new Error("unused");
       },
-      // 只为凑齐 `ProjectStore` 接口：C8 第 1 项之后本页不再有任何 `estimateUsage` 读点
-      estimateUsage: async () => null,
     });
 
     const wrapper = mount(LibraryPage);

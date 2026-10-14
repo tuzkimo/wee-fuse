@@ -54,11 +54,7 @@ const emit = defineEmits<{ rerun: []; edit: []; ok: [] }>();
 /** 查看施工图是否打开。**就地打开，不跳编辑器**：本页已经有图纸与用量。 */
 const sheetOpen = ref(false);
 
-/** 上半屏的板孔点阵（§7.5：`radial-gradient`，间距 22px；与 `SetupPage` 中栏 / `PatternCanvas` 同写法）。 */
-const boardDots = {
-  backgroundImage: "radial-gradient(var(--color-bead-hole) 2px, transparent 2px)",
-  backgroundSize: "22px 22px",
-};
+import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
 </script>
 
 <template>
