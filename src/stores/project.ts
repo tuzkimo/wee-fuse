@@ -5,6 +5,7 @@ import type { ProjectParams } from "@/core/project/types";
 import type { Pattern } from "@/core/pattern/types";
 import { getBuiltinPalette } from "@/services/palette";
 import { getProjectStore, prepareRecordForPut, type ProjectMeta, type ProjectRecord } from "@/services/projectStore";
+import { messageOf } from "@/services/errors";
 
 /** `fromProjectDocument` 的返回类型里参数那一半。 */
 export interface RuntimeParams {
@@ -71,7 +72,7 @@ export const useProjectSession = defineStore("projectSession", () => {
       return true;
     } catch (e) {
       clearSession();
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = messageOf(e);
       return false;
     }
   }
@@ -177,7 +178,7 @@ export const useProjectSession = defineStore("projectSession", () => {
       dirty.value = false;
       return true;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = messageOf(e);
       return false;
     }
   }

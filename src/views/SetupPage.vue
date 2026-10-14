@@ -205,6 +205,7 @@ watch(
 );
 
 import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
+import { messageOf } from "@/services/errors";
 
 /**
  * 页头的返回箭头（C8 规格 §3.6.1，Ruling 21 的分叉口径）。
@@ -262,7 +263,7 @@ onMounted(async () => {
   try {
     getProjectStore();
   } catch (e) {
-    storeError.value = e instanceof Error ? e.message : String(e);
+    storeError.value = messageOf(e);
   }
 
   media = window.matchMedia("(min-width: 1024px)");
@@ -297,7 +298,7 @@ onMounted(async () => {
       draft.setSourceSize(loaded.sourceSize);
       draft.setPreview(loaded.preview);
     } catch (e) {
-      draft.setError(e instanceof Error ? e.message : String(e));
+      draft.setError(messageOf(e));
     } finally {
       preparing.value = false;
     }
@@ -453,7 +454,7 @@ async function generate(): Promise<void> {
       draft.setError(`图纸已生成，但保存失败：${session.error}`);
     }
   } catch (e) {
-    draft.setError(e instanceof Error ? e.message : String(e));
+    draft.setError(messageOf(e));
   } finally {
     draft.setBusy(false);
   }

@@ -16,6 +16,7 @@ import {
   type ProjectStore,
 } from "@/services/projectStore";
 import { formatRelativeTime } from "@/views/relativeTime";
+import { messageOf } from "@/services/errors";
 
 const router = useRouter();
 const projects = ref<ProjectMeta[]>([]);
@@ -108,7 +109,7 @@ async function openSheet(meta: ProjectMeta): Promise<void> {
   } catch (cause) {
     // 失败文案同理：晚到的失败不该顶掉当前这条工程的打开结果。
     if (sheetTarget.value?.id !== id) return;
-    error.value = `打不开这条工程（${cause instanceof Error ? cause.message : String(cause)}）`;
+    error.value = `打不开这条工程（${messageOf(cause)}）`;
   }
 }
 
@@ -128,7 +129,7 @@ async function refresh(): Promise<void> {
     store = getProjectStore();
   } catch (e) {
     storeFailure.value = "uninjected";
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
     return;
   }
 
@@ -138,7 +139,7 @@ async function refresh(): Promise<void> {
     projects.value = await store.list();
   } catch (e) {
     storeFailure.value = "unreadable";
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
     return;
   }
 }
@@ -165,7 +166,7 @@ async function confirmRename(): Promise<void> {
     renamingId.value = null;
     await refresh();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
   }
 }
 
@@ -177,7 +178,7 @@ async function confirmDelete(): Promise<void> {
     pendingDelete.value = null;
     await refresh();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
   }
 }
 

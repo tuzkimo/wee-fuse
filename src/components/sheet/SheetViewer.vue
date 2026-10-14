@@ -68,6 +68,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>();
 
 import { BOARD_DOTS as boardDots } from "@/components/ui/boardDots";
+import { messageOf } from "@/services/errors";
 
 /** 覆盖层返回栈（C8 规格 §3.6.2）：Android 返回键先关查看层，而不是离开页面。 */
 useOverlayBack(() => emit("close"));
@@ -443,11 +444,11 @@ onMounted(async () => {
     try {
       blobUrl.value = URL.createObjectURL(blob);
     } catch (e) {
-      error.value = `预览生成失败：${e instanceof Error ? e.message : String(e)}`;
+      error.value = `预览生成失败：${messageOf(e)}`;
     }
   } catch (e) {
     // 中文包裹：`String(e)` 对非 Error 来源（IDB 的 `DOMException`、被抛出的字符串）会露出裸英文。
-    error.value = `图纸生成失败：${e instanceof Error ? e.message : String(e)}`;
+    error.value = `图纸生成失败：${messageOf(e)}`;
   } finally {
     busy.value = false;
   }
@@ -474,7 +475,7 @@ async function save(): Promise<void> {
     await getPlatform().album.save(blob, exportFilename(props.name, "施工图"));
     saveState.value = getPlatform().album.kind === "album" ? "已保存到相册" : "已生成";
   } catch (e) {
-    saveState.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+    saveState.value = `保存失败：${messageOf(e)}`;
   } finally {
     // **失败也要放行**：卡在 `saving = true` 等于「错一次就再也存不了」，而失败原因已经显示出来了。
     saving.value = false;

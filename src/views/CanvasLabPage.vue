@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
+import { messageOf } from "@/services/errors";
 
 /**
  * `/lab/canvas` 探针页（B4 规格 §11 / 裁决 4）：测量本机 canvas 的**单边上限**与**面积上限**。
@@ -152,7 +153,7 @@ function probeSize(direction: Direction, stage: Stage, value: number): Reading {
           ? `${data[0]},${data[1]},${data[2]},${data[3]}`
           : `读回长度不足（${data.length}）`;
     } catch (e) {
-      pixel = `读取抛错：${e instanceof Error ? e.message : String(e)}`;
+      pixel = `读取抛错：${messageOf(e)}`;
     }
     verdict = pixel === PROBE_EXPECTED ? "pass" : "pixel-mismatch";
   }
@@ -228,17 +229,6 @@ async function runDirection(direction: Direction): Promise<void> {
   await nextTick();
 }
 
-/**
- * 兜底路径的文案：**保证非空**——空消息的 `Error` 取 `name`，非 `Error` 取 `String(e)`。
- *
- * 为什么值得一个函数：这是页面上唯一的兜底路径，而「`e.message` 为 `undefined` / 空串」是最典型的
- * 坏兜底（红字渲染成 `undefined`，看起来像 bug 却指不出原因）。第 6 条用例钉住它。
- */
-function errorText(e: unknown): string {
-  if (e instanceof Error) return e.message === "" ? e.name : e.message;
-  return String(e);
-}
-
 async function run(): Promise<void> {
   busy.value = true;
   error.value = "";
@@ -250,7 +240,7 @@ async function run(): Promise<void> {
     }
   } catch (e) {
     // 探针自己的任何抛错都显示成红字，不静默（已收下的读数保留在表里）
-    error.value = errorText(e);
+    error.value = messageOf(e);
   } finally {
     busy.value = false;
   }
@@ -419,7 +409,7 @@ async function copy(): Promise<void> {
     await clipboard.writeText(text);
     copyStatus.value = `已复制 ${text.split("\n").length} 行到剪贴板。`;
   } catch (e) {
-    copyStatus.value = `复制失败：${errorText(e)}；请手动选中下面的表格复制。`;
+    copyStatus.value = `复制失败：${messageOf(e)}；请手动选中下面的表格复制。`;
   }
 }
 </script>

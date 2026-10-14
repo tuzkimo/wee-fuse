@@ -52,9 +52,9 @@ interface FakeOptions {
    * 用来钉住 `summarize` 的「梯子未跑完」分支（修复波 B-m4）——只跑了前几档时结论只能说「未跑完」。
    */
   readonly throwOnContextAbove?: number | null;
-  /** `getContext("2d")` 抛一个 **message 为空**、`name` 为这个字符串的 `Error`（钉住 `errorText` 的「空串取 name」分支）。 */
+  /** `getContext("2d")` 抛一个 **message 为空**、`name` 为这个字符串的 `Error`（钉住 `messageOf` 的「空串取 name」分支）。 */
   readonly throwEmptyMessageNamed?: string | null;
-  /** `getContext("2d")` 直接抛这个**非 `Error`** 值（钉住 `errorText` 的「非 Error 取 String(e)」分支）。 */
+  /** `getContext("2d")` 直接抛这个**非 `Error`** 值（钉住 `messageOf` 的「非 Error 取 String(e)」分支）。 */
   readonly throwValue?: unknown;
   /** `getImageData` 抛错（模拟超大画布上的读取失败）。 */
   readonly throwOnRead?: boolean;
@@ -481,7 +481,7 @@ describe("/lab/canvas 探针页", () => {
     await wrapper.get('[data-testid="probe-run"]').trigger("click");
     await flushPromises();
 
-    // 这一条钉住 `errorText` 的「空串取 name」分支：改成 `return e.message` 会让红字变成空串
+    // 这一条钉住 `messageOf` 的「空串取 name」分支：改成 `return e.message` 会让红字变成空串
     //（`v-if="error"` 不成立 ⇒ 连 probe-error 都没有），改成 `String(e)` 在这里与 name 恰好同值、拦不住它
     //——拦住 `String(e)` 的是下面那条「非 Error 值」的用例。
     const redText = wrapper.get('[data-testid="probe-error"]').text();
@@ -501,7 +501,7 @@ describe("/lab/canvas 探针页", () => {
     await wrapper.get('[data-testid="probe-run"]').trigger("click");
     await flushPromises();
 
-    // `errorText` 的第三个分支：非 `Error` 取 `String(e)`。改成 `e.message` 会渲染成 `undefined`。
+    // `messageOf` 的第三个分支：非 `Error` 取 `String(e)`。改成 `e.message` 会渲染成 `undefined`。
     const redText = wrapper.get('[data-testid="probe-error"]').text();
     expect(redText).toBe("假平台：字符串抛错");
     expect(redText).not.toContain("undefined");
@@ -520,7 +520,7 @@ describe("/lab/canvas 探针页", () => {
     const redText = wrapper.get('[data-testid="probe-error"]').text();
     // 兜底文案必须非空、且带上桩抛出的原因（不是空串、更不是 "undefined"）
     expect(redText).toContain("无法获取上下文");
-    // 并且是**逐字**的原因：把 `errorText` 整支换成 `String(e)` 时文本会变成
+    // 并且是**逐字**的原因：把 `messageOf` 整支换成 `String(e)` 时文本会变成
     // "Error: 假平台：无法获取上下文"（`toContain` 拦不住它，只有整句相等能拦）。
     expect(redText).toBe("假平台：无法获取上下文");
     expect(redText).not.toContain("undefined");

@@ -13,6 +13,7 @@ import {
   renderRawPreview,
 } from "@/services/preview";
 import { probeImageSize } from "@/services/probe";
+import { messageOf } from "@/services/errors";
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const sourceSize = ref<string>("—");
@@ -145,7 +146,7 @@ async function run() {
       productDelta.value = compareGrids(fast.grid, exact.grid);
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = messageOf(e);
   } finally {
     busy.value = false;
   }

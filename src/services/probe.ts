@@ -12,6 +12,7 @@
  * （尺寸 + 元素都要，画完预览位图再回收）——`img.decode` 在老 WebView 上可能不存在的这处
  * 兼容性处置因此只有一处要维护。
  */
+import { messageOf } from "./errors";
 
 /** `decodeImageElement` 的产物：解码出的元素、自然尺寸，以及回收 object URL 的句柄。 */
 export interface DecodedImage {
@@ -33,8 +34,9 @@ export interface DecodedImage {
 /**
  * 一次 `<img>` 解码，同时交出**元素**与**自然尺寸**；object URL 的生命周期交给调用方。
  *
- * 失败时**统一补中文前缀并附上原始原因**：`cause.message` 通常是英文（如 `EncodingError: …`），
- * 拿不到详情时回落「无错误详情」，页面因此不会只剩一句没有上下文的英文或空消息。抛出前先回收
+ * 失败时**统一补中文前缀并附上原始原因**：`cause.message` 通常是英文（如 `EncodingError: …`）；
+ * 空消息由 `messageOf` 回落成 `name`，连 `name` 都拿不到（例如 `throw ""`）才回落「无错误详情」，
+ * 页面因此不会只剩一句没有上下文的英文或空消息。抛出前先回收
  * object URL——失败路径上调用方拿不到 `release`。成功时**不**回收：调用方拿到 `release()`
  * 自行决定何时撤销。
  */
@@ -56,7 +58,7 @@ export async function decodeImageElement(source: Blob): Promise<DecodedImage> {
     try {
       await element.decode();
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : String(cause);
+      const detail = messageOf(cause);
       throw new Error(`图片解码失败（${detail === "" ? "无错误详情" : detail}）`);
     }
     const width = element.naturalWidth;

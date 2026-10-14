@@ -4,6 +4,7 @@ import { loadImageSource } from "@/services/imageSource";
 import { getPlatform } from "@/services/platform/capabilities";
 import { useDraft } from "@/stores/draft";
 import { useProjectSession } from "@/stores/project";
+import { messageOf } from "@/services/errors";
 
 /** 提示条要用的状态。**页面只读它、调 `retry` / `dismiss`**，摄入逻辑全在本文件里。 */
 export interface ShareIntake {
@@ -15,11 +16,6 @@ export interface ShareIntake {
   retry(): Promise<void>;
   /** 「知道了」：丢弃暂存并清空提示（**释放那张原图的引用**）。 */
   dismiss(): void;
-}
-
-/** 异常 → 提示条文案（`cause.message` 通常是中文前缀之下的英文细节，与 `probe.ts` 同口径）。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -235,7 +231,7 @@ export function useShareIntake(): ShareIntake {
       }
       await intakeOrPark(taken.file, taken.extraCount);
     } catch (error) {
-      message.value = `分享的图片没能读取：${errorText(error)}`;
+      message.value = `分享的图片没能读取：${messageOf(error)}`;
     }
   }
 
@@ -271,7 +267,7 @@ export function useShareIntake(): ShareIntake {
       reportDropped(extraCount);
     } catch (error) {
       // **不落草稿**：失败时草稿必须与「什么都没发生过」一致。
-      message.value = `分享的图片没能处理：${errorText(error)}`;
+      message.value = `分享的图片没能处理：${messageOf(error)}`;
     }
   }
 
@@ -315,7 +311,7 @@ export function useShareIntake(): ShareIntake {
         const taken = await platform.shareInbox.takeSharedImage();
         if (taken !== null) enqueue(taken.file, taken.extraCount, false);
       } catch (error) {
-        message.value = `分享的图片没能读取：${errorText(error)}`;
+        message.value = `分享的图片没能读取：${messageOf(error)}`;
       }
     })();
   }

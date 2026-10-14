@@ -43,6 +43,7 @@ import {
   type BoardPageRenderInput,
   type SheetRenderInput,
 } from "@/services/sheetExport";
+import { messageOf } from "@/services/errors";
 
 const props = defineProps<{
   pattern: Pattern;
@@ -248,7 +249,7 @@ async function showPreview(index: number): Promise<void> {
     blob = await renderBoardPageBlobFromPlan(boardRenderInput(snapshot, index), plan, pageUsages);
   } catch (error) {
     if (stale(token)) return;
-    previewError.value = `预览生成失败：${error instanceof Error ? error.message : String(error)}`;
+    previewError.value = `预览生成失败：${messageOf(error)}`;
     return;
   }
   if (stale(token) || index !== currentPage.value) return;
@@ -443,7 +444,7 @@ async function saveAll(): Promise<void> {
       } catch (error) {
         // 代数判据：这一轮（以及它用的选项 / 页索引）已经被丢弃 ⇒ 不写状态、也不再往下存。
         if (stale(token)) return;
-        saveError.value = error instanceof Error ? error.message : String(error);
+        saveError.value = messageOf(error);
         failedCount.value = index + 1;
         savePhase.value = "error";
         // 落盘本身**照常发生 / 照常失败**——用户那一次手势不该因为面板被关掉而白点。
