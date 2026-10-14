@@ -6,16 +6,14 @@
  * 全部既有单测一行不改；壳实现能在 CI 里被**假驱动**完整驱动；平台判断只有一处
  * （`capabilities.ts`，机检 G2）。
  *
- * **名字是契约面**：这五个接口与它们的字段名被 `tauriPlatform.ts`、`PickPage.vue`（`native-picker`
- * 分支）、`ExportPanel.vue`（已经能力层 `album.save` 落盘）、两个 composable
- * （`useShareIntake.ts` / `useShellLifecycle.ts`）与契约测试同时引用，改名会一次打红多处。
- * **今天的事实（2026-10-06，B5 任务 6 落地后）**：`tauriPlatform.ts` 已存在；两个 composable 与
- * `ExportPanel` 的接线**都已完成**（`ExportPanel.vue` 经 `getPlatform().album.save(...)` 落盘）。真 import 本文件的共 8 处：三条实现的类型标注
- * （`browserPlatform.ts` / `capabilities.ts` / `tauriPlatform.ts`）、共用的契约 harness
- * `__tests__/platformContract.ts`（**自身不是 `.test.ts`、不被 vitest 收集**）与用例文件
- * `__tests__/capabilities.test.ts`、探针页 `views/ShellProbePage.vue`（只取两个 `kind` 别名）与它的
- * 用例、以及 `__tests__/PickPage.test.ts` 的假平台桩。`PickPage.vue` 按 `imagePicking` 的字段分叉，但它
- * **不 import 本文件**（走 `capabilities.getPlatform()`）。改之前先读规格 §4.1。
+ * **名字是契约面**：这五个接口与它们的字段名被三条实现（`browserPlatform` / `capabilities` /
+ * `tauriPlatform`）、共用的契约 harness（`__tests__/platformContract.ts`，**自身不是 `.test.ts`**、
+ * 不被 vitest 收集）、探针页 `ShellProbePage.vue`（只取两个 `kind` 别名）与若干用例替身引用，
+ * 改名会一次打红多处。**`PickPage.vue` 按 `imagePicking.kind` 分叉但不 import 本文件**（它走
+ * `capabilities.getPlatform()`）——所以「谁在用这些字段」不能用「谁 import 了这个文件」来数。
+ *
+ * **刻意不写「共 N 处」这类计数**（2026-10-13 整改）：那种句子要跟着每次增删同步，而它给的信息
+ * `rg 'services/platform/types'` 一秒就有、且不会过期。要权威清单就去 grep。改之前先读规格 §4.1。
  */
 
 /**
@@ -23,7 +21,7 @@
  *
  * **如实记录：别名本身零断言**——没有任何用例对这个**类型别名本身**做穷尽 / 集合级断言（本文件内它只
  * 出现在本行声明与 `ImagePicking.kind` 的字段类型两处）。**取值**被探针页的 F 读数用例间接钉住
- * （`views/__tests__/ShellProbePage.test.ts:321` 断言读数是 `相册选图形态=native-picker`），
+ * （`views/__tests__/ShellProbePage.test.ts` 断言读数是 `相册选图形态=native-picker`），
  * 那是「读数文本」级别的覆盖，不是对这个别名的断言。真 import 它的只有探针页
  * `views/ShellProbePage.vue`（把「入口形态」记进读数），而探针页不按这个别名做任何产品分支。
  * 留着的理由：字段类型必须有具名别名，且它是「入口是哪条分支」这件事的唯一词表
