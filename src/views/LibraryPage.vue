@@ -96,11 +96,18 @@ async function openSheet(meta: ProjectMeta): Promise<void> {
   menuTarget.value = null;
   sheetTarget.value = meta;
   sheetPattern.value = null;
+  const id = meta.id;
   try {
-    const record = await getProjectStore().get(meta.id);
+    const record = await getProjectStore().get(id);
+    // 用户可能在这条读回之前又点了另一条工程（查看层是 `fixed inset-0`，但事件仍可派发）：
+    // `sheetTarget` 已经换人，晚到的结果必须丢弃，否则查看层会成为「B 的名字 + A 的施工图」——
+    // `:key="sheetTarget.id"` 只保证重新挂载，挡不住内容错位。判据与 `EditorPage` 的 `loadedId` 同源。
+    if (sheetTarget.value?.id !== id) return;
     if (record === null) return;
     sheetPattern.value = fromProjectDocument(record.doc, palette).pattern;
   } catch (cause) {
+    // 失败文案同理：晚到的失败不该顶掉当前这条工程的打开结果。
+    if (sheetTarget.value?.id !== id) return;
     error.value = `打不开这条工程（${cause instanceof Error ? cause.message : String(cause)}）`;
   }
 }

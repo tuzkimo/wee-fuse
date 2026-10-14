@@ -6,6 +6,7 @@ import { closeTopOverlay } from "@/composables/useOverlayBack";
 import { toProjectDocument } from "@/core/project/file";
 import { planSheet } from "@/core/render/layout";
 import { createMemoryProjectStore } from "@/services/memoryProjectStore";
+import SheetViewer from "@/components/sheet/SheetViewer.vue";
 import { getBuiltinPalette } from "@/services/palette";
 import { setProjectStore } from "@/services/projectStore";
 import type { SheetRenderInput } from "@/services/sheetExport";
@@ -517,6 +518,76 @@ describe("LibraryPage", () => {
     await flushPromises();
     expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
     expect(wrapper.get("[data-testid='sheet-preview']").attributes("src")).toBe("blob:sheet-2");
+  });
+
+  it("上一次「查看」的读取晚到时不得覆盖当前查看层（连点两条工程）", async () => {
+    // **判死什么**：`openSheet` 先同步写 `sheetTarget = meta`，再 `await get(meta.id)`，回来后
+    // **无判据**地写 `sheetPattern`。连点两条工程时，先点的那条若后结算，查看层就成了
+    // 「B 的名字 + A 的施工图」——`:key="sheetTarget.id"` 只保证重新挂载，挡不住内容错位。
+    // 判据与 `EditorPage` 的 `loadedId` 同源。
+    const base = await createMemoryProjectStore();
+    const putProject = async (
+      id: string,
+      name: string,
+      updatedAt: string,
+      cells: readonly number[],
+    ): Promise<void> => {
+      await base.put({
+        meta: {
+          id,
+          name,
+          createdAt: "2026-10-08T00:00:00.000Z",
+          updatedAt,
+          thumbnail: "",
+          width: 58,
+          height: 58,
+          colorCount: 12,
+        },
+        doc: toProjectDocument(
+          { width: cells.length, height: 1, paletteId: getBuiltinPalette().id, cells: Uint16Array.from(cells) },
+          getBuiltinPalette(),
+          { longSide: 58, maxColors: 221, crop: { x: 0, y: 0, w: cells.length, h: 1, rotate: 0 } },
+        ),
+        source: null,
+      });
+    };
+    // 两张宽度不同的图：谁被喂给查看层，读 `width` 就能分辨（这张图才是这条用例的判别力）
+    await putProject("a", "小猫", "2026-10-08T05:00:00.000Z", [0, 0]);
+    await putProject("b", "小狗", "2026-10-08T01:00:00.000Z", [0, 0, 0]);
+
+    // 只把「小猫」的读卡在闸门上，让用户有机会在它结算前点开「小狗」
+    let openGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    setProjectStore({
+      ...base,
+      get: async (id: string) => {
+        if (id === "a") await gate;
+        return base.get(id);
+      },
+    });
+    const wrapper = mount(LibraryPage, { global: { stubs: { teleport: true } } });
+    await flushPromises();
+    const patternOf = (): { width: number } =>
+      wrapper.findComponent(SheetViewer).props("pattern") as { width: number };
+
+    // 列表按 updatedAt 倒序 ⇒ [0] 是「小猫」(a)，[1] 是「小狗」(b)。先点 a：它的读停在闸门上。
+    await wrapper.get("[data-testid='card-menu']").trigger("click");
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
+    await flushPromises();
+    // 再点 b（查看层 `fixed inset-0`，事件仍可派发）：b 的读立刻结算
+    await wrapper.findAll("[data-testid='card-menu']")[1]?.trigger("click");
+    await wrapper.get("[data-testid='view-sheet']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
+    expect(patternOf().width).toBe(3);
+
+    // a 的读取现在才结算：没有判据的话它会把查看层的图纸换成 a 的（宽度 2）
+    openGate();
+    await flushPromises();
+    expect(wrapper.get("[data-testid='sheet-title']").text()).toBe("小狗 · 施工图");
+    expect(patternOf().width).toBe(3);
   });
 });
 
