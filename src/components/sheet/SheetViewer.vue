@@ -279,6 +279,9 @@ function onPointerMove(event: PointerEvent): void {
    * 也可能被系统丢掉（切窗口 / 手势被浏览器接管），所以这里再按**事件自身的按键状态**兜底：
    * 一次没有按键的 `pointermove` 只可能是悬停，不该平移。
    * 少了它，用户把鼠标移回舞台，图就会自己跑（C8 任务 6 第 1 轮审查的「重要 2」）。
+   *
+   * 但它**要求先来一次 move** 才有机会跑；「捕获丢掉后用户直接落下第二指」那一路没有 move
+   * 可等，由模板上的 `@lostpointercapture` 兜（否则 `pointers.size` 凑成 2、拿幽灵坐标起捏合）。
    */
   if (event.buttons === 0) {
     pointers.delete(event.pointerId);
@@ -559,6 +562,7 @@ async function save(): Promise<void> {
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerUp"
+        @lostpointercapture="onPointerUp"
       >
         <img
           v-if="previewSrc !== ''"

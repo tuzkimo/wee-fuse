@@ -528,6 +528,35 @@ describe("SheetViewer 的看图手势（C8 第 2 项）", () => {
     expect(preview()).not.toBe(before);
   });
 
+  it("指针捕获被系统丢掉后，紧接落下的第二指不得被当成捏合（幽灵指针）", async () => {
+    // **判死什么**：`setPointerCapture` 的捕获也会被系统无声丢掉（切窗口、手势被浏览器接管），此时
+    // 舞台收不到 `pointerup`，`pointers` 里留下一条幽灵 id。`onPointerMove` 的 `buttons === 0` 那条
+    // 兜底**必须先来一次 move** 才清得掉；用户直接落下第二指时 `pointers.size` 就成了 2 ⇒ 旧实现拿
+    // 幽灵坐标起捏合，视图当场跳一下。同构的 `PatternCanvas.vue` 绑了 `@lostpointercapture`（并注明
+    // 「否则画布会永久卡死」），本组件此前只绑了 `pointerup` / `pointercancel`。
+    // 刻意**不预放大**（与捏合那条同一档 `fit`）：若先按 12 下放大到 `maxCellScale`，捏合会被夹住、
+    // 比例不变量照样成立 —— 那样这条用例就算有幽灵也绿，等于没断言。
+    const wrapper = mount(SheetViewer, {
+      props: { pattern: makePattern(100, 100), palette, name: "测试工程", thumbnail: "" },
+      global: { stubs: { teleport: true } },
+    });
+    await flushPromises();
+    await withViewport(wrapper);
+    const plan = requireRenderedPlan();
+    const fit = minCellScale(VIEWPORT, sheetCellsOf(plan)) / plan.cellPx;
+    // 前提检查：这一档必须真的还能再放大一倍，否则「没捏合」与「捏合了但被夹住」分不开
+    expect(fit * 2).toBeLessThanOrEqual(maxCellScale(VIEWPORT, sheetCellsOf(plan)));
+    const stage = wrapper.get("[data-testid='sheet-stage']");
+
+    await stage.trigger("pointerdown", { pointerId: 1, button: 0, buttons: 1, clientX: 300, clientY: 300 });
+    // 捕获被丢掉：**中间刻意没有 move**，所以 `buttons === 0` 那条兜底没有机会执行
+    await stage.trigger("lostpointercapture", { pointerId: 1 });
+    // 第二指落下并按到位：幽灵还在的话，这里就凑成了「两指捏合」（间距 100 → 200，比例 ×2）
+    await stage.trigger("pointerdown", { pointerId: 2, button: 0, buttons: 1, clientX: 400, clientY: 300 });
+    await stage.trigger("pointermove", { pointerId: 2, buttons: 1, clientX: 500, clientY: 300 });
+    expect(scaleOf(wrapper)).toBeCloseTo(fit, 6);
+  });
+
   it("捏合收拢后的最后一抬不算轻点：紧接着的一次轻点不会被误判成双击", async () => {
     // **判死什么**（C8 任务 6 第 1 轮审查的「次要 4」）：第二指落下时若不清 `pressOrigin`，
     // 两指落回第一指落点 12px 内时，最后一抬会被记成一次轻点 ⇒ 紧接着的一次真轻点就成了双击。
