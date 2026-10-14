@@ -280,6 +280,50 @@ export const useDraft = defineStore("draft", () => {
   }
 
   /** 视图三段（比例锁 / 缩放档位 / 平移）回到刚进向导时的初始态。它们都不是图纸参数。 */
+  /**
+   * 把草稿重置成「新建一稿」的默认态，再按调用方给的 11 个字段播种；尾段（视图 / 阶段 / 生成标记 /
+   * busy / error）三个入口完全一致，一并收在这里。
+   *
+   * **为什么必须只有一处**：`adoptImage` / `adoptProject` / `reset` 原先各自把这 16 个字段逐个赋值。
+   * `removeBackground`（2026-10-11 新增）当时就要同时改四处，而漏清的后果是**静默**的——换一张图
+   * 之后旧的去开关残留、下一次生成按错的参数跑，不报错。
+   *
+   * **参数刻意全必填**（不是 `Partial`）：字段一旦进了这个签名，三个调用点就是同步的，不会只改到一处。
+   * 但**编译器拦不住“新增了一个 ref 却没把它加进 `seedState`”**——那一路由
+   * `draft.test.ts` 的「`reset()` 回到与全新 store 逐字段相同」兜：它的字段清单是**从 store 实例
+   * 现取的**，所以新 ref 漏清一定会红（2026-10-13 用删掉 `removeBackground` 那一行验过）。
+   */
+  function seedState(seed: {
+    readonly source: DraftSource | null;
+    readonly sourceSize: Size | null;
+    readonly preview: HTMLCanvasElement | null;
+    readonly rerunOf: RerunTarget | null;
+    readonly name: string;
+    readonly pendingCrop: Rect | null;
+    readonly crop: Rect | null;
+    readonly rotation: Rotation;
+    readonly longSide: number;
+    readonly maxColors: MaxColors;
+    readonly removeBackground: boolean;
+  }): void {
+    source.value = seed.source;
+    sourceSize.value = seed.sourceSize;
+    preview.value = seed.preview === null ? null : markRaw(seed.preview);
+    rerunOf.value = seed.rerunOf;
+    name.value = seed.name;
+    pendingCrop.value = seed.pendingCrop;
+    crop.value = seed.crop;
+    rotation.value = seed.rotation;
+    resetView();
+    longSide.value = seed.longSide;
+    maxColors.value = seed.maxColors;
+    removeBackground.value = seed.removeBackground;
+    stage.value = "edit";
+    generated.value = false;
+    busy.value = false;
+    error.value = "";
+  }
+
   function resetView(): void {
     aspect.value = "free";
     zoom.value = "fit";
@@ -303,22 +347,20 @@ export const useDraft = defineStore("draft", () => {
     const nextSize = requireSourceSizeInput(input.sourceSize);
     const nextName = defaultProjectName(input.source.name);
 
-    source.value = input.source;
-    sourceSize.value = nextSize;
-    preview.value = markRaw(input.preview);
-    rerunOf.value = null;
-    name.value = nextName;
-    pendingCrop.value = null;
-    crop.value = centerSquare(nextSize);
-    rotation.value = 0;
-    resetView();
-    longSide.value = DEFAULT_LONG_SIDE;
-    maxColors.value = DEFAULT_MAX_COLORS;
-    removeBackground.value = false;
-    stage.value = "edit";
-    generated.value = false;
-    busy.value = false;
-    error.value = "";
+    // 只隔下一张图与它的默认参数；其余字段由 `seedState` 统一回默认（含尾段）。
+    seedState({
+      source: input.source,
+      sourceSize: nextSize,
+      preview: input.preview,
+      rerunOf: null,
+      name: nextName,
+      pendingCrop: null,
+      crop: centerSquare(nextSize),
+      rotation: 0,
+      longSide: DEFAULT_LONG_SIDE,
+      maxColors: DEFAULT_MAX_COLORS,
+      removeBackground: false,
+    });
   }
 
   /**
@@ -349,22 +391,21 @@ export const useDraft = defineStore("draft", () => {
     // 名字的校验（trim / 非空 / 长度）在**任何写操作之前**：非法的记录名不该留下半截草稿。
     const nextName = normalizeProjectName(input.meta.name);
 
-    source.value = input.source;
-    sourceSize.value = null;
-    preview.value = null;
-    rerunOf.value = { id: input.meta.id, createdAt: input.meta.createdAt };
-    name.value = nextName;
-    pendingCrop.value = nextCrop;
-    crop.value = null;
-    rotation.value = nextRotation;
-    resetView();
-    longSide.value = nextLongSide;
-    maxColors.value = nextMaxColors;
-    removeBackground.value = nextRemoveBackground;
-    stage.value = "edit";
-    generated.value = false;
-    busy.value = false;
-    error.value = "";
+    // 原图尺寸与预览留空（等 `SetupPage` 解码后经 `setSourceSize` / `setPreview` 落下），
+    // 选区存进 `pendingCrop` 等尺寸到位再夹取——其余字段同样交给 `seedState`（含尾段）。
+    seedState({
+      source: input.source,
+      sourceSize: null,
+      preview: null,
+      rerunOf: { id: input.meta.id, createdAt: input.meta.createdAt },
+      name: nextName,
+      pendingCrop: nextCrop,
+      crop: null,
+      rotation: nextRotation,
+      longSide: nextLongSide,
+      maxColors: nextMaxColors,
+      removeBackground: nextRemoveBackground,
+    });
   }
 
   /**
@@ -529,22 +570,19 @@ export const useDraft = defineStore("draft", () => {
 
   /** 把草稿清成「还没选图」的初始态（`onLeaveSetup` 的作废分支与用户主动放弃共用）。 */
   function reset(): void {
-    source.value = null;
-    sourceSize.value = null;
-    preview.value = null;
-    rerunOf.value = null;
-    name.value = "";
-    pendingCrop.value = null;
-    crop.value = null;
-    rotation.value = 0;
-    resetView();
-    longSide.value = DEFAULT_LONG_SIDE;
-    maxColors.value = DEFAULT_MAX_COLORS;
-    removeBackground.value = false;
-    stage.value = "edit";
-    generated.value = false;
-    busy.value = false;
-    error.value = "";
+    seedState({
+      source: null,
+      sourceSize: null,
+      preview: null,
+      rerunOf: null,
+      name: "",
+      pendingCrop: null,
+      crop: null,
+      rotation: 0,
+      longSide: DEFAULT_LONG_SIDE,
+      maxColors: DEFAULT_MAX_COLORS,
+      removeBackground: false,
+    });
   }
 
   return {

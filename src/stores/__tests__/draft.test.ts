@@ -45,6 +45,16 @@ function seedImage() {
   return draft;
 }
 
+/**
+ * store 上的**全部状态字段**（去掉方法）。
+ *
+ * 从实例现取、不手写清单：手写清单在新增字段时不会红，而那正是它要挡的东西（见下面那条
+ * 「回到与全新 store 逐字段相同」的用例）。
+ */
+function stateOf(draft: ReturnType<typeof useDraft>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(draft).filter(([, value]) => typeof value !== "function"));
+}
+
 beforeEach(() => {
   setActivePinia(createPinia());
 });
@@ -526,6 +536,36 @@ describe("releasePreview / reset", () => {
     expect(draft.error).toBe("");
     // C8 §3.7：名字也是草稿的一段，`reset` 必须一起清掉。
     expect(draft.name).toBe("");
+  });
+
+  it("reset() 回到与全新 store 逐字段相同：字段清单从 store 现取，新增字段漏清会在这里红", () => {
+    // **为什么另起一条**：上面那条是**手写清单**，新增字段时它不会红（得有人记得回来加一行）。
+    // `removeBackground`（2026-10-11 新增）当时就要同时改 `adoptImage` / `adoptProject` / `reset` 三处，
+    // 漏一处的后果是**静默**的：换一张图之后旧的去背景开关残留、下一次生成按错参数跑，不报错。
+    // 这里把「每一段状态都清回去了」变成判据：清单从实例上现取，新增字段自动进入比对。
+    const draft = useDraft();
+    const fresh = stateOf(draft);
+
+    // 把能设的都设脏，包括只有两个 adopt 入口才写得进去的 source / sourceSize / preview / rerunOf
+    draft.adoptImage({ source: SOURCE, sourceSize: { width: 800, height: 600 }, preview: fakePreview() });
+    draft.setRerunOf({ id: "p1", createdAt: "2026-10-01T00:00:00.000Z" });
+    draft.setName("改过的名字");
+    draft.setRotation(3);
+    draft.setAspect("1:1");
+    draft.setZoom(4);
+    draft.setPan({ x: 5, y: 6 });
+    draft.setLongSide(116);
+    draft.setMaxColors(32);
+    draft.setRemoveBackground(true);
+    draft.setStage("result");
+    draft.markGenerated();
+    draft.setBusy(true);
+    draft.setError("炸了");
+    // 前提检查：确实脏了——否则下面那句可能空转绿（例如 `stateOf` 取不到字段）
+    expect(stateOf(draft)).not.toEqual(fresh);
+
+    draft.reset();
+    expect(stateOf(draft)).toEqual(fresh);
   });
 
   it("setBusy / setError / setStage 是纯 setter，不改 generated", () => {
