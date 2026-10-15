@@ -6,6 +6,28 @@
 [![ci](https://github.com/tuzkimo/wee-fuse/actions/workflows/ci.yml/badge.svg)](https://github.com/tuzkimo/wee-fuse/actions/workflows/ci.yml)
 [![release-android](https://github.com/tuzkimo/wee-fuse/actions/workflows/release-android.yml/badge.svg)](https://github.com/tuzkimo/wee-fuse/actions/workflows/release-android.yml)
 
+## 截图
+
+平板：
+
+| 图库 | 选图 | 生图 |
+|:---:|:---:|:---:|
+| ![图库](docs/screenshots/tablet_library.jpg) | ![选图](docs/screenshots/tablet_pick.jpg) | ![生图](docs/screenshots/tablet_setup.jpg) |
+
+| 出图结果 | 编辑 | 施工图 | 打印 |
+|:---:|:---:|:---:|:---:|
+| ![出图结果](docs/screenshots/tablet_result.jpg) | ![编辑](docs/screenshots/tablet_editor.jpg) | ![施工图](docs/screenshots/tablet_sheet.jpg) | ![打印](docs/screenshots/tablet_print.jpg) |
+
+手机：
+
+| 图库 | 选图 | 生图 |
+|:---:|:---:|:---:|
+| ![图库](docs/screenshots/phone_library.jpg) | ![选图](docs/screenshots/phone_pick.jpg) | ![生图](docs/screenshots/phone_setup.jpg) |
+
+| 出图结果 | 编辑 | 施工图 | 打印 |
+|:---:|:---:|:---:|:---:|
+| ![出图结果](docs/screenshots/phone_result.jpg) | ![编辑](docs/screenshots/phone_editor.jpg) | ![施工图](docs/screenshots/phone_sheet.jpg) | ![打印](docs/screenshots/phone_print.jpg) |
+
 ## 功能特性
 
 - **照片变图纸**：从相册或相机选一张图，拖一拖选框框住要拼的部分——可以旋转，可以锁比例
